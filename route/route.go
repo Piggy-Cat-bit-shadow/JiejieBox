@@ -1757,18 +1757,44 @@ func (r *Router) actionSniff(
 // Destination therefore keeps meaning "what the client asked for" and
 // DestinationAddresses means "where we may dial instead".
 func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundContext, action *R.RuleActionResolve) error {
+	addresses, strategy, _, err := r.lookupResolveAction(ctx, metadata, action)
+	if err != nil {
+		return err
+	}
+	if addresses == nil {
+		return nil
+	}
+	metadata.DestinationAddresses = mergeOriginalDestination(metadata.Destination, addresses, strategy)
+	r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
+	return nil
+}
+
+// lookupResolveAction performs one resolve action's DNS query and reports the EFFECTIVE strategy.
+//
+// It is the half shared by the production walk and the active diagnostic: the same server, the same
+// options and the same strategy resolution, so a diagnostic reports the decision production made
+// instead of re-deriving one. It returns nil addresses when the request has nothing to resolve,
+// which is not an error.
+//
+// The strategy it returns is the EFFECTIVE one, not the raw field: the lookup honours AsIS by
+// applying the router's configured default, and the planner needs the value that was actually
+// applied. A router that cannot report its strategy keeps the previous behaviour, which is the safe
+// default: the original's family leads.
+func (r *Router) lookupResolveAction(ctx context.Context, metadata *adapter.InboundContext, action *R.RuleActionResolve) ([]netip.Addr, C.DomainStrategy, string, error) {
 	lookupName := resolveLookupName(metadata)
 	if lookupName == "" {
-		return nil
+		return nil, action.Strategy, "", nil
 	}
 
 	var transport adapter.DNSTransport
+	serverType := ""
 	if action.Server != "" {
 		var loaded bool
 		transport, loaded = r.dnsTransport.Transport(action.Server)
 		if !loaded {
-			return E.New("DNS server not found: ", action.Server)
+			return nil, action.Strategy, "", E.New("DNS server not found: ", action.Server)
 		}
+		serverType = transport.Type()
 	}
 	addresses, err := r.dns.Lookup(adapter.WithContext(ctx, metadata), lookupName, adapter.DNSQueryOptions{
 		Transport:              transport,
@@ -1780,7 +1806,7 @@ func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundCon
 		ClientSubnet:           action.ClientSubnet,
 	})
 	if err != nil {
-		return err
+		return nil, action.Strategy, serverType, err
 	}
 	// Plan with the EFFECTIVE strategy, not the raw one.
 	//
@@ -1791,10 +1817,6 @@ func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundCon
 	// arrived". Handing it the raw value therefore discarded the preference the resolver had just
 	// applied: a router configured for prefer_ipv6 with an IPv4 original produced an IPv4-first
 	// plan.
-	//
-	// A router that cannot report its strategy (a third-party implementation of the optional
-	// interface) keeps the previous behaviour, which is the safe default: the original's family
-	// leads.
 	strategy := action.Strategy
 	if strategy == C.DomainStrategyAsIS {
 		if resolver, isResolver := r.dns.(adapter.DNSStrategyResolver); isResolver {
@@ -1804,9 +1826,7 @@ func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundCon
 			})
 		}
 	}
-	metadata.DestinationAddresses = mergeOriginalDestination(metadata.Destination, addresses, strategy)
-	r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
-	return nil
+	return addresses, strategy, serverType, nil
 }
 
 // resolveLookupName reports which name to resolve, or empty when there is nothing to do.

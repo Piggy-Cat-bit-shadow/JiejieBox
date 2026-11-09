@@ -20,6 +20,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/physicalpath"
+	"github.com/sagernet/sing-box/route"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -85,6 +86,21 @@ func newConnectionTestPath(exit string, member adapter.Outbound) *fakeConnection
 		status:   physicalpath.PathStatus{Root: "proxy", Network: "tcp", Exit: exit},
 		outbound: manager,
 	}
+}
+
+// routeDecisionPath is a fake path that can execute a PREPARED production decision. Since the
+// decision and the dial belong to one execution now, the fake returns the whole fact set at once.
+type routeDecisionPath struct {
+	*fakeConnectionTestPath
+	decide func(ctx context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error)
+}
+
+func (p *routeDecisionPath) DialRoute(ctx context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error, bool) {
+	if p.decide == nil {
+		return route.RouteDiagnoseResult{}, nil, false
+	}
+	result, err := p.decide(ctx, request)
+	return result, err, true
 }
 
 // stagesByID indexes the report's stages.
@@ -331,31 +347,30 @@ func TestConnectionTestReportsRootSemanticsAndTheDivergence(t *testing.T) {
 }
 
 // TestConnectionTestFollowsTheRouteDecisionWhenNoRootIsGiven is the real-routing mode: an empty
-// root asks "which path would this request actually take", and the dial goes through THAT outbound.
+// root asks "which path would this request actually take", and the ONE execution that answers it
+// also dials its result.
 func TestConnectionTestFollowsTheRouteDecisionWhenNoRootIsGiven(t *testing.T) {
-	var dialledA, dialledB atomic.Int32
-	memberA := &fakeConnectionOutbound{tag: "node-a", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-		dialledA.Add(1)
-		return stubConn{}, nil
-	}}
-	memberB := &fakeConnectionOutbound{tag: "node-b", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-		dialledB.Add(1)
-		return stubConn{}, nil
-	}}
-	base := newConnectionTestPath("node-a", memberA)
-	base.outbound = &fakeOutboundManager{members: map[string]adapter.Outbound{
-		"node-a": memberA,
-		"node-b": memberB,
-	}}
-	path := &rulePreviewingPath{
+	var decisions atomic.Int32
+	base := newConnectionTestPath("node-a", nil)
+	path := &routeDecisionPath{
 		fakeConnectionTestPath: base,
-		ok:                     true,
-		preview: connectionTestRulePreview{
-			Matched:    true,
-			RuleIndex:  1,
-			Rule:       "domain:example.com",
-			ActionType: "route",
-			Outbound:   "node-b",
+		decide: func(ctx context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error) {
+			decisions.Add(1)
+			require.Equal(t, "example.com", request.Destination.Fqdn)
+			require.EqualValues(t, 443, request.Destination.Port)
+			return route.RouteDiagnoseResult{
+				Matched:             true,
+				RuleIndex:           1,
+				Rule:                "domain:example.com",
+				ActionType:          "route",
+				Outbound:            "node-b",
+				OriginalDestination: request.Destination,
+				FinalDestination:    request.Destination,
+				Dialed:              true,
+				DialedOutbound:      "node-b",
+				DialedDestination:   "example.com:443",
+				Conn:                stubConn{},
+			}, nil
 		},
 	}
 	report := runConnectionTest(context.Background(), path, "", "tcp", "https://example.com/path")
@@ -367,24 +382,27 @@ func TestConnectionTestFollowsTheRouteDecisionWhenNoRootIsGiven(t *testing.T) {
 	require.Equal(t, connectionTestStageOK, stages[connectionTestStageDial].Status)
 	require.Contains(t, stages[connectionTestStageDial].Detail, "node-b")
 	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
-	require.Zero(t, dialledA.Load(), "the root outbound is NOT dialled in real-routing mode")
-	require.EqualValues(t, 1, dialledB.Load(), "the rule's outbound is what the request would use")
+	require.EqualValues(t, 1, decisions.Load(), "the decision and the dial are one execution")
 }
 
 // TestConnectionTestUsesTheDefaultOutboundWhenNoRuleMatches covers the other half of real routing:
 // nothing matched, so the final outbound is the answer.
 func TestConnectionTestUsesTheDefaultOutboundWhenNoRuleMatches(t *testing.T) {
-	var defaultDials atomic.Int32
-	direct := &fakeConnectionOutbound{tag: "direct", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-		defaultDials.Add(1)
-		return stubConn{}, nil
-	}}
 	base := newConnectionTestPath("node-a", nil)
-	base.outbound = &fakeOutboundManager{members: map[string]adapter.Outbound{}, defaultOutbound: direct}
-	path := &rulePreviewingPath{
+	path := &routeDecisionPath{
 		fakeConnectionTestPath: base,
-		ok:                     true,
-		preview:                connectionTestRulePreview{Matched: false},
+		decide: func(ctx context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error) {
+			return route.RouteDiagnoseResult{
+				Matched:             false,
+				Outbound:            "direct",
+				OriginalDestination: request.Destination,
+				FinalDestination:    request.Destination,
+				Dialed:              true,
+				DialedOutbound:      "direct",
+				DialedDestination:   request.Destination.String(),
+				Conn:                stubConn{},
+			}, nil
+		},
 	}
 	report := runConnectionTest(context.Background(), path, "", "tcp", "https://example.com/path")
 
@@ -392,29 +410,48 @@ func TestConnectionTestUsesTheDefaultOutboundWhenNoRuleMatches(t *testing.T) {
 	stages := stagesByID(report)
 	require.Equal(t, connectionTestStageOK, stages[connectionTestStageDial].Status)
 	require.Contains(t, stages[connectionTestStageDial].Detail, "direct")
-	require.EqualValues(t, 1, defaultDials.Load())
+	require.Contains(t, stages[connectionTestStageRules].Detail, "no rule matched")
 }
 
-// TestConnectionTestRefusesRealRoutingOnAnUnknownDecision is the honest half: a decision the preview
-// cannot make must not become "dial something and call it a test".
+// TestConnectionTestRefusesRealRoutingOnAnUnknownDecision is the honest half: a decision the
+// production walk cannot make must not become "dial something and call it a test".
 func TestConnectionTestRefusesRealRoutingOnAnUnknownDecision(t *testing.T) {
+	base := newConnectionTestPath("node-a", nil)
+	path := &routeDecisionPath{
+		fakeConnectionTestPath: base,
+		decide: func(ctx context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error) {
+			return route.RouteDiagnoseResult{
+				Unknown:             "the decision depends on process facts a diagnostic request does not have",
+				OriginalDestination: request.Destination,
+				FinalDestination:    request.Destination,
+			}, nil
+		},
+	}
+	report := runConnectionTest(context.Background(), path, "", "tcp", "https://example.com/path")
+
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageRules].Status)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
+	require.Contains(t, stages[connectionTestStageDial].Detail, "unknown")
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+}
+
+// TestConnectionTestRefusesRealRoutingWithoutTheProductionDecision covers a build/path that cannot
+// execute the decision at all: it must not fall back to "dial the text and call it a test".
+func TestConnectionTestRefusesRealRoutingWithoutTheProductionDecision(t *testing.T) {
 	var dials atomic.Int32
 	member := &fakeConnectionOutbound{tag: "node-a", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 		dials.Add(1)
 		return stubConn{}, nil
 	}}
-	path := &rulePreviewingPath{
-		fakeConnectionTestPath: newConnectionTestPath("node-a", member),
-		ok:                     true,
-		preview:                connectionTestRulePreview{Unknown: "the decision depends on a process path this preview was not given"},
-	}
-	report := runConnectionTest(context.Background(), path, "", "tcp", "https://example.com/path")
+	report := runConnectionTest(context.Background(), newConnectionTestPath("node-a", member), "", "tcp", "https://example.com/path")
 
 	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageRules].Status)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "cannot execute the production route decision")
 	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
-	require.Contains(t, stages[connectionTestStageDial].Detail, "unknown")
 	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
-	require.Zero(t, dials.Load(), "nothing may be dialled when the route decision is unknown")
+	require.Zero(t, dials.Load(), "nothing may be dialled without the production decision")
 }
 
 // dnsPreviewingPath is a fake path that can also explain which DNS rule/server would answer.

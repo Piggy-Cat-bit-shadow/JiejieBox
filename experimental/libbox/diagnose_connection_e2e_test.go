@@ -88,6 +88,19 @@ func routeConfig(rule string) string {
 	return config + `}}`
 }
 
+// diagnoseConfig builds a box with optional DNS servers and route rules.
+func diagnoseConfig(dnsServers string, routeRules string) string {
+	config := `{"log":{"level":"error"}`
+	if dnsServers != "" {
+		config += `,"dns":{"servers":` + dnsServers + `,"final":"local"}`
+	}
+	config += `,"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"`
+	if routeRules != "" {
+		config += `,"rules":[` + routeRules + `]`
+	}
+	return config + `}}`
+}
+
 // TestTheActiveDiagnosticDialsTheRewrittenPort is the reviewed failure, end to end.
 func TestTheActiveDiagnosticDialsTheRewrittenPort(t *testing.T) {
 	original := newCountingListener(t)
@@ -171,4 +184,120 @@ func TestTheRealDNSStageReportsThePendingDependency(t *testing.T) {
 	require.NotEmpty(t, preview.Unknown, "a process-path rule is undecidable without a process fact")
 	require.Contains(t, preview.Unknown, "process_path")
 	require.Empty(t, preview.Server, "no server may be named for an undecided query")
+}
+
+// TestTheActiveDiagnosticRejectsALiteralAddressRule is reviewed failure 1: the rule is an
+// `ip_cidr` REJECT and the target is a literal address. The diagnostic used to hand the literal to
+// the rule matcher as a FQDN, so the rule never matched and the connection was made.
+func TestTheActiveDiagnosticRejectsALiteralAddressRule(t *testing.T) {
+	listener := newCountingListener(t)
+	server := startDiagnoseTestCommandServer(t, routeConfig(`{"ip_cidr":["127.0.0.0/8"],"action":"reject"}`))
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://127.0.0.1:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageOK, stages[connectionTestStageRules].Status)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "ip_cidr")
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
+	require.Contains(t, stages[connectionTestStageDial].Detail, "rejects")
+	time.Sleep(100 * time.Millisecond)
+	require.Zero(t, listener.count.Load(), "a rejected request must not reach the listener")
+}
+
+// TestTheActiveDiagnosticRejectsAnIPv6Literal keeps the literal branch dual-stack: the reviewed
+// failure was an IPv4 literal in a FQDN field, and an IPv6 literal has the same shape.
+func TestTheActiveDiagnosticRejectsAnIPv6Literal(t *testing.T) {
+	server := startDiagnoseTestCommandServer(t, routeConfig(`{"ip_cidr":["::1/128"],"action":"reject"}`))
+
+	report := runDiagnoseTest(t, server, "", "tcp", "http://[::1]:9/path")
+
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+	stages := stagesByID(report)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "ip_cidr")
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDNS].Status)
+	require.Contains(t, stages[connectionTestStageDNS].Detail, "literal address",
+		"a literal target has no DNS decision to explain")
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
+}
+
+// TestTheActiveDiagnosticUsesTheResolveActionsResolver is reviewed failure 2: a route `resolve`
+// action names its own DNS server, and the diagnostic must dial the address THAT server returned.
+func TestTheActiveDiagnosticUsesTheResolveActionsResolver(t *testing.T) {
+	listener := newCountingListener(t)
+	server := startDiagnoseTestCommandServer(t, diagnoseConfig(
+		`[{"type":"hosts","tag":"local","predefined":{"review.test":["127.0.0.2"]}},`+
+			`{"type":"hosts","tag":"forced","predefined":{"review.test":["127.0.0.1"]}}]`,
+		`{"domain":["review.test"],"action":"resolve","server":"forced","strategy":"ipv4_only"}`))
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://review.test:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageOK, stages[connectionTestStageDNS].Status)
+	require.Contains(t, stages[connectionTestStageDNS].Detail, "forced",
+		"the report names the resolver the resolve action actually used")
+	require.Contains(t, stages[connectionTestStageDNS].Detail, "127.0.0.1")
+	require.Contains(t, stages[connectionTestStageResolve].Detail, "127.0.0.1")
+	require.Eventually(t, func() bool { return listener.count.Load() == 1 }, 5*time.Second, time.Millisecond,
+		"the connection must reach the address the named resolver returned")
+}
+
+// TestTheActiveDiagnosticMatchesRulesAgainstTheResolvedAddress keeps the post-resolve rule order:
+// a rule AFTER the resolve action sees the candidates it produced.
+func TestTheActiveDiagnosticMatchesRulesAgainstTheResolvedAddress(t *testing.T) {
+	listener := newCountingListener(t)
+	server := startDiagnoseTestCommandServer(t, diagnoseConfig(
+		`[{"type":"hosts","tag":"local","predefined":{"review.test":["127.0.0.2"]}},`+
+			`{"type":"hosts","tag":"forced","predefined":{"review.test":["127.0.0.1"]}}]`,
+		`{"domain":["review.test"],"action":"resolve","server":"forced"},`+
+			`{"ip_cidr":["127.0.0.1/32"],"action":"reject"}`))
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://review.test:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+	stages := stagesByID(report)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "rule[1]",
+		"the rule after the resolve decision is the one that decides")
+	require.Contains(t, stages[connectionTestStageRules].Detail, "reject")
+	time.Sleep(100 * time.Millisecond)
+	require.Zero(t, listener.count.Load(), "the resolved address must not be dialled after a rejecting rule matched")
+}
+
+// TestTheActiveDiagnosticReportsAProcessRuleAsUnknown keeps the honesty rule: a socketless request
+// cannot supply a process fact, so a process rule ends the walk as unknown instead of being
+// evaluated against an empty record and silently "not matching".
+func TestTheActiveDiagnosticReportsAProcessRuleAsUnknown(t *testing.T) {
+	listener := newCountingListener(t)
+	server := startDiagnoseTestCommandServer(t, routeConfig(
+		`{"process_path":["/usr/bin/curl"],"action":"route","outbound":"direct"}`))
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://127.0.0.1:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageRules].Status)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "process facts")
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
+	time.Sleep(100 * time.Millisecond)
+	require.Zero(t, listener.count.Load(), "an undecidable request must not be dialled")
+}
+
+// TestTheActiveDiagnosticFallsBackWithinOneConfig is the controlled fallback: the named resolver
+// answers with a dead address first and the live one second, and the SAME execution connects.
+func TestTheActiveDiagnosticFallsBackWithinOneConfig(t *testing.T) {
+	listener := newCountingListener(t)
+	server := startDiagnoseTestCommandServer(t, diagnoseConfig(
+		`[{"type":"hosts","tag":"local","predefined":{"localhost":["127.0.0.1"]}},`+
+			`{"type":"hosts","tag":"forced","predefined":{"fallback.test":["127.0.0.2","127.0.0.1"]}}]`,
+		`{"domain":["fallback.test"],"action":"resolve","server":"forced","strategy":"ipv4_only"}`))
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://fallback.test:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
+	stages := stagesByID(report)
+	require.Contains(t, stages[connectionTestStageResolve].Detail, "127.0.0.1")
+	require.Contains(t, stages[connectionTestStageDial].Detail, "127.0.0.1")
+	require.Eventually(t, func() bool { return listener.count.Load() == 1 }, 5*time.Second, time.Millisecond,
+		"the second candidate is the one that answers, inside the same diagnostic execution")
 }

@@ -67,6 +67,25 @@ func (p *boxConnectionTestPath) PreviewRouteRule(network string, domain string, 
 	}, true
 }
 
+// DialRoute runs the PRODUCTION route decision for one socketless request and dials its result.
+//
+// It is the active counterpart of PreviewRouteRule: the preview explains what would happen, this
+// entry actually runs the walk (including `resolve` actions, which name their own DNS server and
+// strategy) and then dials through the outbound that decision selected. The runner builds its
+// report from this one execution, so the rule it names, the DNS server it names, the address it
+// names and the connection it made cannot disagree.
+func (p *boxConnectionTestPath) DialRoute(ctx context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error, bool) {
+	routeRouter, isRouteRouter := p.box.Router().(*route.Router)
+	if !isRouteRouter || routeRouter == nil {
+		return route.RouteDiagnoseResult{}, nil, false
+	}
+	result, err := routeRouter.DiagnoseRoute(ctx, request)
+	if err != nil {
+		return result, err, true
+	}
+	return result, nil, true
+}
+
 // ResolveDomain resolves a name through the box's real DNS path, so the diagnostic dials the
 // address production would dial. It is the ACTIVE counterpart of the passive DNS stage.
 func (p *boxConnectionTestPath) ResolveDomain(ctx context.Context, domain string) (netip.Addr, error) {

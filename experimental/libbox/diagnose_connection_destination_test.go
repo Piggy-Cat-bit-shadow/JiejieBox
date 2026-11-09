@@ -14,33 +14,38 @@ import (
 	"testing"
 
 	"github.com/sagernet/sing-box/common/physicalpath"
+	"github.com/sagernet/sing-box/route"
 	M "github.com/sagernet/sing/common/metadata"
 
 	"github.com/stretchr/testify/require"
 )
 
-// destinationRecordingPath previews a decided route with a rewritten destination.
+// destinationRecordingPath executes a prepared production decision that rewrote the destination.
 type destinationRecordingPath struct {
 	*fakeConnectionTestPath
-	preview connectionTestRulePreview
+	result route.RouteDiagnoseResult
 }
 
-func (p *destinationRecordingPath) PreviewRouteRule(string, string, uint16) (connectionTestRulePreview, bool) {
-	return p.preview, true
+func (p *destinationRecordingPath) DialRoute(_ context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error, bool) {
+	result := p.result
+	result.OriginalDestination = request.Destination
+	result.Dialed = true
+	result.DialedDestination = result.FinalDestination.String()
+	result.DialedOutbound = result.Outbound
+	result.Conn = stubConn{}
+	return result, nil, true
 }
 
 func TestConnectionTestDialsTheRouteDecisionsDestination(t *testing.T) {
-	var dialed atomic.Pointer[M.Socksaddr]
 	member := &fakeConnectionOutbound{tag: "direct", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-		recorded := destination
-		dialed.Store(&recorded)
-		return stubConn{}, nil
+		t.Fatal("the dial belongs to the decision execution and must not be re-done by the runner")
+		return nil, nil
 	}}
 	base := newConnectionTestPath("direct", member)
 	base.status = physicalpath.PathStatus{Root: "direct", Network: "tcp", Exit: "direct"}
 	path := &destinationRecordingPath{
 		fakeConnectionTestPath: base,
-		preview: connectionTestRulePreview{
+		result: route.RouteDiagnoseResult{
 			Matched:    true,
 			RuleIndex:  0,
 			Rule:       "port:443",
@@ -53,10 +58,6 @@ func TestConnectionTestDialsTheRouteDecisionsDestination(t *testing.T) {
 	report := runConnectionTest(context.Background(), path, "", "tcp", "http://127.0.0.1:443/path")
 
 	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
-	recorded := dialed.Load()
-	require.NotNil(t, recorded)
-	require.Equal(t, "127.0.0.1:8080", recorded.String(),
-		"the dial must use the destination the route decision produced, not the URL's original port")
 	stages := stagesByID(report)
 	require.Contains(t, stages[connectionTestStageResolve].Detail, "8080")
 	require.Contains(t, stages[connectionTestStageDial].Detail, "8080")
@@ -83,12 +84,9 @@ func TestConnectionTestSaysNoDNSForALiteralTarget(t *testing.T) {
 
 // TestConnectionTestSaysNoDNSWhenTheRouteRewroteToALiteral is the same rule after a rewrite.
 func TestConnectionTestSaysNoDNSWhenTheRouteRewroteToALiteral(t *testing.T) {
-	member := &fakeConnectionOutbound{tag: "direct", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-		return stubConn{}, nil
-	}}
 	path := &destinationRecordingPath{
-		fakeConnectionTestPath: newConnectionTestPath("direct", member),
-		preview: connectionTestRulePreview{
+		fakeConnectionTestPath: newConnectionTestPath("direct", nil),
+		result: route.RouteDiagnoseResult{
 			Matched:          true,
 			RuleIndex:        0,
 			ActionType:       "route",
