@@ -537,8 +537,18 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 	if err != nil {
 		return continueResult
 	}
+	// The full lookup was already done when it had to happen up front; otherwise a path rule
+	// completes it when the walk reaches it (see the loop below).
+	pathsCompleted := r.needProcessPaths
 	for currentRuleIndex, currentRule := range r.rules {
 		metadata.ResetRuleCache()
+		if !pathsCompleted && currentRuleIndex < len(r.ruleNeedsPaths) && r.ruleNeedsPaths[currentRuleIndex] {
+			// The rule about to be evaluated reads a path, so complete the owner-only answer now.
+			// Everything evaluated BEFORE this point was decided without needing one, which is the
+			// saving: a flow that matches an earlier rule never walks /proc at all.
+			r.ensureProcessPaths(ctx, &metadata)
+			pathsCompleted = true
+		}
 		if !currentRule.Match(&metadata) {
 			continue
 		}
@@ -1329,9 +1339,16 @@ func (r *Router) matchRule(
 		return
 	}
 
+	// The full lookup was already done when it had to happen up front; otherwise a path rule
+	// completes it when the walk reaches it.
+	pathsCompleted := r.needProcessPaths
 match:
 	for currentRuleIndex, currentRule := range r.rules {
 		metadata.ResetRuleCache()
+		if !pathsCompleted && currentRuleIndex < len(r.ruleNeedsPaths) && r.ruleNeedsPaths[currentRuleIndex] {
+			r.ensureProcessPaths(ctx, metadata)
+			pathsCompleted = true
+		}
 		if !currentRule.Match(metadata) {
 			continue
 		}

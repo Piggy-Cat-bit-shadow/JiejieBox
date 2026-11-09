@@ -54,6 +54,14 @@ type Router struct {
 	rules             []adapter.Rule
 	needFindProcess   bool
 	needProcessPaths  bool
+	// deferredProcessPaths marks the configuration whose path rules may be completed on demand:
+	// the owner is resolved up front (cheap, from the socket table) and the /proc walk happens only
+	// when a rule that reads a path is actually reached. A rule-set reference cannot be deferred,
+	// because a remote document may carry process conditions this configuration never mentions.
+	deferredProcessPaths bool
+	// ruleNeedsPaths is parallel to rules: ruleNeedsPaths[i] reports that evaluating rules[i] may
+	// read a path, so the walk must be completed before that evaluation.
+	ruleNeedsPaths    []bool
 	needFindNeighbor  bool
 	leaseFiles        []string
 	ruleSets          []adapter.RuleSet
@@ -93,6 +101,16 @@ func (r *Router) SetReferenceManager(manager *ReferenceManager) {
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
+	// A rule-set document is remote and mutable, so it can carry process conditions this
+	// configuration never mentions; a DNS rule is evaluated before the connection's rule walk; and
+	// the explicit find_process option asks for the process of every flow. All three keep the
+	// up-front full lookup. Everything else - a plain process_name/process_path/package_name rule -
+	// is completed when that rule is actually reached, so a flow decided by an earlier domain or
+	// address rule never pays for the /proc walk.
+	needProcessPaths := hasRule(options.Rules, usesRuleSet) ||
+		needsProcessPathDNSRules(dnsOptions.Rules) ||
+		options.FindProcess
+	deferredProcessPaths := !needProcessPaths && hasRule(options.Rules, isProcessPathRule)
 	return &Router{
 		ctx:               ctx,
 		logger:            logFactory.NewLogger("router"),
@@ -109,11 +127,13 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		rules:             make([]adapter.Rule, 0, len(options.Rules)),
 		ruleSetMap:        make(map[string]adapter.RuleSet),
 		needFindProcess:   hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
-		needProcessPaths:  needsProcessPaths(options.Rules) || needsProcessPathDNSRules(dnsOptions.Rules) || options.FindProcess,
-		needFindNeighbor:  hasRule(options.Rules, isNeighborRule) || hasDNSRule(dnsOptions.Rules, isNeighborDNSRule) || hasLocalNeighborDNSServer(dnsOptions.Servers) || options.FindNeighbor,
-		leaseFiles:        options.DHCPLeaseFiles,
-		pauseManager:      service.FromContext[pause.Manager](ctx),
-		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
+		needProcessPaths:  needProcessPaths,
+
+		deferredProcessPaths: deferredProcessPaths,
+		needFindNeighbor:     hasRule(options.Rules, isNeighborRule) || hasDNSRule(dnsOptions.Rules, isNeighborDNSRule) || hasLocalNeighborDNSServer(dnsOptions.Servers) || options.FindNeighbor,
+		leaseFiles:           options.DHCPLeaseFiles,
+		pauseManager:         service.FromContext[pause.Manager](ctx),
+		platformInterface:    service.FromContext[adapter.PlatformInterface](ctx),
 	}
 }
 
@@ -128,6 +148,10 @@ func (r *Router) Initialize(rules []option.Rule, ruleSets []option.RuleSet) erro
 			return E.Cause(err, "parse rule[", i, "]")
 		}
 		r.rules = append(r.rules, rule)
+		// Computed from the OPTIONS, in the same order as r.rules is built, so the flag and the
+		// rule can never drift apart. needsProcessPaths treats a rule-set reference as a path
+		// need, which is the conservative reading: the document may carry process conditions.
+		r.ruleNeedsPaths = append(r.ruleNeedsPaths, needsProcessPaths([]option.Rule{options}))
 	}
 	for i, options := range ruleSets {
 		for _, tag := range options.Tag {
