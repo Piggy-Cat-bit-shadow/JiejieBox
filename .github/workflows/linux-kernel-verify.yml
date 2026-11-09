@@ -67,7 +67,8 @@ jobs:
 
   linux-process:
     runs-on: ubuntu-latest
-    timeout-minutes: 15    steps:
+    timeout-minutes: 15
+    steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
