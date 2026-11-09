@@ -95,9 +95,21 @@ func (s *StartedService) persistRunningConfig(profile string) (status string, wa
 	if err != nil {
 		return persistenceDegraded, err.Error()
 	}
-	result, err := store.Commit(staged)
+	references := s.runningArtifactReferences()
+	result, err := store.CommitWithReferences(staged, references)
 	if err != nil {
 		return persistenceDegraded, err.Error()
+	}
+	if result.Persisted {
+		s.rememberPersistedReferences(references)
+		// The running Box must also retain them: its own periodic refresh collects older
+		// versions, and the one a recovery would return to has no reader between updates.
+		s.serviceAccess.RLock()
+		instance := s.instance
+		s.serviceAccess.RUnlock()
+		if instance != nil && instance.artifactRefs != nil {
+			instance.artifactRefs.RetainAll(references)
+		}
 	}
 	if !result.Persisted {
 		return persistenceDegraded, result.Warning
@@ -107,25 +119,72 @@ func (s *StartedService) persistRunningConfig(profile string) (status string, wa
 	return persistenceSaved, result.Warning
 }
 
+// runningArtifactReferences snapshots the exact versions the running Box published, for the
+// configuration transaction to persist with the document.
+func (s *StartedService) runningArtifactReferences() map[string]string {
+	s.serviceAccess.RLock()
+	instance := s.instance
+	s.serviceAccess.RUnlock()
+	if instance == nil || instance.artifactRefs == nil {
+		return nil
+	}
+	return instance.artifactRefs.Snapshot()
+}
+
+// persistedReferenceSnapshot returns the exact versions of the configuration the store would
+// recover right now, so collection keeps them alive even while no reader holds a lease.
+func (s *StartedService) persistedReferenceSnapshot() map[string]string {
+	s.configRecoveryAccess.Lock()
+	defer s.configRecoveryAccess.Unlock()
+	if len(s.persistedReferences) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(s.persistedReferences))
+	for key, id := range s.persistedReferences {
+		copied[key] = id
+	}
+	return copied
+}
+
+// rememberPersistedReferences records the references of the configuration that just became the
+// store's active document.
+func (s *StartedService) rememberPersistedReferences(references map[string]string) {
+	s.configRecoveryAccess.Lock()
+	defer s.configRecoveryAccess.Unlock()
+	if len(references) == 0 {
+		s.persistedReferences = nil
+		return
+	}
+	copied := make(map[string]string, len(references))
+	for key, id := range references {
+		copied[key] = id
+	}
+	s.persistedReferences = copied
+}
+
 // recoverLastGood returns the last-good profile when it is usable and different from the failed
-// one. An empty result means there is nothing to recover.
-func (s *StartedService) recoverLastGood(failedProfile string) (string, bool) {
+// one, together with the revision and the exact artifact versions it used. An empty result means
+// there is nothing to recover.
+func (s *StartedService) recoverLastGood(failedProfile string) (profile string, revision string, references map[string]string, usable bool) {
 	if !s.recoverToLastGood {
-		return "", false
+		return "", "", nil, false
 	}
 	store := s.configStore()
 	if store == nil {
-		return "", false
+		return "", "", nil, false
 	}
 	recovery, err := store.Recover()
 	if err != nil || len(recovery.Active) == 0 {
-		return "", false
+		return "", "", nil, false
 	}
 	if bytes.Equal(recovery.Active, []byte(failedProfile)) {
 		// The requested profile IS the last-good one: retrying cannot help.
-		return "", false
+		return "", "", nil, false
 	}
-	return string(recovery.Active), true
+	activeProfile := string(recovery.Active)
+	activeRevision := configRevisionOf(activeProfile)
+	references, _ = store.References(activeRevision)
+	return activeProfile, activeRevision, references, true
 }
 
 // recordConfigRecovery stores the recovery event.
@@ -188,6 +247,14 @@ func (s *StartedService) ConfigureConfigRecovery(directory string, recoverToLast
 	s.recoveryOpenError = err
 	if err == nil {
 		s.configRecovery = store
+		// Seed the retained versions from the document the store would recover today, so a
+		// process that starts after a crash still protects them from collection.
+		s.persistedReferences = nil
+		if active, activeErr := store.Active(); activeErr == nil {
+			if references, referenceErr := store.References(configRevisionOf(string(active))); referenceErr == nil {
+				s.persistedReferences = references
+			}
+		}
 	}
 }
 

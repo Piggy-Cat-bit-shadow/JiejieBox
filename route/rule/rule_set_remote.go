@@ -225,12 +225,43 @@ func (s *RemoteRuleSet) newArtifactManifest() artifact.Manifest {
 	)
 }
 
-// restoreStoredRuleSet loads the newest stored version, adopts its lease and builds the live rules
-// from it. The lease is what keeps the bytes alive for as long as this rule set serves them.
+// referenceSet returns the per-Box record of exact artifact versions, or nil outside a Box.
+func (s *RemoteRuleSet) referenceSet() *artifact.ReferenceSet {
+	return service.FromContext[*artifact.ReferenceSet](s.ctx)
+}
+
+// recordArtifact notes the exact version this rule set published, for the daemon to persist with
+// the configuration that started it.
+func (s *RemoteRuleSet) recordArtifact(version *artifact.Version) {
+	if version == nil {
+		return
+	}
+	if references := s.referenceSet(); references != nil {
+		references.Record(s.artifactKey, version.ID())
+	}
+}
+
+// restoreStoredRuleSet loads the stored version this Box is pinned to, or the newest one when the
+// configuration did not name a version. The lease is what keeps the bytes alive for as long as this
+// rule set serves them.
 func (s *RemoteRuleSet) restoreStoredRuleSet() bool {
-	version, err := s.artifactStore.Load(s.artifactKey)
-	if err != nil {
-		return false
+	var version *artifact.Version
+	if references := s.referenceSet(); references != nil {
+		if pinnedID, pinned := references.Pinned(s.artifactKey); pinned {
+			loaded, err := s.artifactStore.LoadExact(s.artifactKey, pinnedID)
+			if err == nil {
+				version = loaded
+			} else {
+				s.logger.Warn(E.Cause(err, "pinned rule-set version ", pinnedID, " is not loadable; falling back to the newest"))
+			}
+		}
+	}
+	if version == nil {
+		loaded, err := s.artifactStore.Load(s.artifactKey)
+		if err != nil {
+			return false
+		}
+		version = loaded
 	}
 	content, readErr := os.ReadFile(version.Path())
 	if readErr == nil {
@@ -242,6 +273,7 @@ func (s *RemoteRuleSet) restoreStoredRuleSet() bool {
 		return false
 	}
 	s.adoptArtifact(version)
+	s.recordArtifact(version)
 	s.setUpdateMetadata(time.Unix(0, version.Manifest().Created), "")
 	return true
 }
@@ -283,6 +315,7 @@ func (s *RemoteRuleSet) migrateCachedRuleSet(content []byte, updated time.Time) 
 		return
 	}
 	s.adoptArtifact(version)
+	s.recordArtifact(version)
 }
 
 // lastUpdateTime and updateMetadata read the refresh bookkeeping under the lock that concurrent
@@ -623,10 +656,17 @@ func (s *RemoteRuleSet) publishDownload(content []byte, started time.Time, gener
 	}
 	if version != nil {
 		s.adoptArtifact(version)
+		s.recordArtifact(version)
 		// The live rules hold the newest version's lease, so collection cannot remove what they
-		// serve. Older unleased generations are what this removes; a pinned recovery reference is
-		// passed as a retained id by its owner.
-		if collectErr := s.artifactStore.Collect(s.artifactKey); collectErr != nil {
+		// serve. The previous configuration's last-good version is retained explicitly: it has no
+		// reader but a recovery may still name it.
+		var retained []string
+		if references := s.referenceSet(); references != nil {
+			if retainedID, ok := references.RetainedID(s.artifactKey); ok {
+				retained = append(retained, retainedID)
+			}
+		}
+		if collectErr := s.artifactStore.Collect(s.artifactKey, retained...); collectErr != nil {
 			s.logger.Warn(E.Cause(collectErr, "collect rule-set artifacts"))
 		}
 	}

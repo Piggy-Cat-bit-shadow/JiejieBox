@@ -159,6 +159,17 @@ func (s *Store) Stage(content []byte) (*Staged, error) {
 
 // Commit promotes the staged candidate to active, copying the current active to last-good.
 func (s *Store) Commit(staged *Staged) (*Result, error) {
+	return s.commit(staged, nil)
+}
+
+// CommitWithReferences does what Commit does and also records the exact artifact versions this
+// configuration used, keyed by the staged revision. A failure to write the references does not
+// undo a configuration that already reached the disk: it is reported as a warning.
+func (s *Store) CommitWithReferences(staged *Staged, references map[string]string) (*Result, error) {
+	return s.commit(staged, references)
+}
+
+func (s *Store) commit(staged *Staged, references map[string]string) (*Result, error) {
 	if staged == nil {
 		return nil, E.New("config transaction: nothing staged")
 	}
@@ -195,6 +206,16 @@ func (s *Store) Commit(staged *Staged) (*Result, error) {
 		return result, nil
 	}
 	result.Persisted = true
+	if len(references) > 0 {
+		if referenceErr := s.writeReferencesLocked(staged.Revision, references); referenceErr != nil {
+			// The configuration is in force; only exact dependency recovery is degraded.
+			if result.Warning == "" {
+				result.Warning = "references were not saved: " + referenceErr.Error()
+			} else {
+				result.Warning += "; references were not saved: " + referenceErr.Error()
+			}
+		}
+	}
 	_ = s.remove(pendingName)
 	return result, nil
 }

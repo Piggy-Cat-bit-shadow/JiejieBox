@@ -7,6 +7,7 @@ import (
 
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/artifact"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
@@ -46,7 +47,10 @@ type Instance struct {
 	// providerManager is the box's provider set. It is a narrow interface so a manual refresh
 	// can be tested without a live box, and so this holds only what the refresh needs.
 	providerManager providerSource
-	logFactory      log.Factory
+	// artifactRefs is what this Box published, by artifact key. Persisted with the configuration
+	// so a recovery can pin the exact versions it ran.
+	artifactRefs *artifact.ReferenceSet
+	logFactory   log.Factory
 }
 
 func (s *StartedService) CheckConfig(ctx context.Context, configContent string) error {
@@ -198,12 +202,14 @@ func (s *StartedService) parseEffectiveOptions(ctx context.Context, profileConte
 	return options, nil
 }
 
-func (s *StartedService) newInstance(ctx context.Context, options option.Options, revision string, reloading bool) (*Instance, error) {
+func (s *StartedService) newInstance(ctx context.Context, options option.Options, revision string, reloading bool, pinnedReferences map[string]string, retainedReferences map[string]string) (*Instance, error) {
 	selectedLocale := locale.FromContext(ctx)
 	ctx, _ = locale.ContextWithLocale(s.ctx, selectedLocale.Locale)
 	ctx = service.ExtendContext(ctx)
 	service.MustRegister[deprecated.Manager](ctx, new(deprecatedManager))
 	ctx, cancel := context.WithCancel(ctx)
+	artifactReferences := artifact.NewReferenceSet(pinnedReferences, retainedReferences)
+	service.MustRegister[*artifact.ReferenceSet](ctx, artifactReferences)
 	urlTestHistoryStorage := urltest.NewHistoryStorage()
 	ctx = service.ContextWithPtr(ctx, urlTestHistoryStorage)
 	// ONE measurement budget for this Box.
@@ -217,6 +223,7 @@ func (s *StartedService) newInstance(ctx context.Context, options option.Options
 		options:               options,
 		revision:              revision,
 		urlTestHistoryStorage: urlTestHistoryStorage,
+		artifactRefs:          artifactReferences,
 	}
 	boxInstance, err := box.New(box.Options{
 		Context:           ctx,
