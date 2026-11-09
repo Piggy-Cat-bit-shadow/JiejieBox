@@ -17,6 +17,42 @@ import (
 
 var errHTTP2DialSuperseded = E.New("the network changed while the HTTP/2 connection was being dialled")
 
+// http2DialGate is the single flight that serialises HTTP/2 dials.
+//
+// It is a channel rather than a sync.Mutex because the wait must honour the WAITER's context: a
+// tunnel setup with a 3 s window must not spend it queued behind somebody else's 15 s handshake.
+// A mutex cannot be abandoned, so the setup would overrun its own window and the caller would be
+// gone long before it returned.
+type http2DialGate struct {
+	done chan struct{}
+}
+
+// acquireHTTP2DialSlot takes the dial slot or gives up with the caller's context.
+func (c *Client) acquireHTTP2DialSlot(ctx context.Context) (func(), error) {
+	for {
+		c.http2GateAccess.Lock()
+		if c.http2DialGate == nil {
+			gate := &http2DialGate{done: make(chan struct{})}
+			c.http2DialGate = gate
+			c.http2GateAccess.Unlock()
+			return func() {
+				c.http2GateAccess.Lock()
+				c.http2DialGate = nil
+				close(gate.done)
+				c.http2GateAccess.Unlock()
+			}, nil
+		}
+		waiting := c.http2DialGate.done
+		c.http2GateAccess.Unlock()
+		select {
+		case <-waiting:
+			// The dial finished; go around and try to take the slot, or use its connection.
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 func (c *Client) acquireHTTP2(ctx context.Context) (*http2ClientConn, net.Conn, error) {
 	if clientConn, conn, reserved := c.reserveHTTP2Conn(); reserved {
 		return clientConn, conn, nil
@@ -28,10 +64,13 @@ func (c *Client) acquireHTTP2(ctx context.Context) (*http2ClientConn, net.Conn, 
 	// ResetConnections runs on every network change and has to clear this pool. While the dial
 	// held http2Access for its whole TLS handshake, a transition waited for a handshake that
 	// belonged to the network being left - up to the TLS timeout - before it could start tearing
-	// the old network down. The dial is serialised by its own mutex instead, and its result is
+	// the old network down. The dial is serialised by its own gate instead, and its result is
 	// only published if the network it was made on is still the current one.
-	c.http2DialAccess.Lock()
-	defer c.http2DialAccess.Unlock()
+	releaseSlot, err := c.acquireHTTP2DialSlot(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer releaseSlot()
 	// Another setup may have finished a dial while this one waited for the slot.
 	if clientConn, conn, reserved := c.reserveHTTP2Conn(); reserved {
 		return clientConn, conn, nil
