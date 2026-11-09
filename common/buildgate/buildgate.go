@@ -44,6 +44,42 @@ type Gate struct {
 	inner    *resourceguard.Gate
 	deferred atomic.Uint64
 	admitted atomic.Uint64
+	observer atomic.Pointer[func(context.Context, Admission)]
+}
+
+// Admission is one completed Acquire, reported to an observer.
+//
+// It exists so a sampler can separate the time spent WAITING for the reservation from the time
+// spent building after it: the gate is taken before the download, so "average fetch" folds the
+// queue into the build and a change that only moves the queue would look like a build regression.
+type Admission struct {
+	// Wait is how long Acquire took, including the time spent queued.
+	Wait time.Duration
+	// Admitted is false when the attempt was deferred (queue full or wait timeout).
+	Admitted bool
+}
+
+// Observe installs an optional observer, replacing any previous one. Nil removes it.
+//
+// The observer runs synchronously on the acquiring goroutine, inside Acquire, so it must be cheap
+// and must not block. It receives the caller's context, which lets a sampler correlate the
+// admission with the attempt that caused it without the gate having to know about workers. The
+// default is nil: a gate that nobody observes pays one atomic load per build and nothing else.
+func (g *Gate) Observe(observer func(context.Context, Admission)) {
+	if g == nil {
+		return
+	}
+	if observer == nil {
+		g.observer.Store(nil)
+		return
+	}
+	g.observer.Store(&observer)
+}
+
+func (g *Gate) notify(ctx context.Context, admission Admission) {
+	if observer := g.observer.Load(); observer != nil {
+		(*observer)(ctx, admission)
+	}
 }
 
 // Stats is one consistent snapshot of the reservation's accounting.
@@ -71,15 +107,19 @@ func (g *Gate) Acquire(ctx context.Context) (func(), error) {
 	if g == nil {
 		return func() {}, nil
 	}
+	started := time.Now()
 	permit, err := g.inner.Acquire(ctx, resourceguard.ClassNormal)
+	wait := time.Since(started)
 	if err != nil {
 		if E.IsMulti(err, resourceguard.ErrQueueFull, resourceguard.ErrWaitTimeout) {
 			g.deferred.Add(1)
+			g.notify(ctx, Admission{Wait: wait})
 			return nil, ErrDeferred
 		}
 		return nil, err
 	}
 	g.admitted.Add(1)
+	g.notify(ctx, Admission{Wait: wait, Admitted: true})
 	return permit.Release, nil
 }
 

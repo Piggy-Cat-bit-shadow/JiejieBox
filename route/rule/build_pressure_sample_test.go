@@ -15,10 +15,19 @@ package rule
 //	SING_BOX_PERF_OUT=C:\evidence\sample.csv \
 //	go test ./route/rule -run TestBuildPressureSample -count=1 -v -timeout 30m
 //
-// The run stops at SING_BOX_PERF_TARGET successful builds (or the overall deadline). Each attempt
-// records its queue latency and build time; the sampler records peak heap and heap system bytes.
-// Run the baseline and the candidate with the SAME corpus, workers, gate and target; compare only
-// runs that reached the target, and report cancelled/deferred/timeout attempts separately.
+// The run stops at SING_BOX_PERF_TARGET successful builds (or the overall deadline). The gate is
+// taken BEFORE the download, so the whole-fetch number folds the queue into the build: a change
+// that only moves the queue would look like a build regression. The gate's observer therefore
+// reports the wait, and every attempt records three separate figures:
+//
+//	queueMs  time spent waiting for the reservation (the gate's own admission)
+//	buildMs  the rest of the fetch: request, download, parse, compile and swap
+//	fetchMs  queueMs + buildMs, which is what "average successful build" used to report alone
+//
+// Run the baseline and the candidate with the SAME corpus, workers, gate and target, and with the
+// SAME instrument: compare only runs that reached the target, and report cancelled/deferred/
+// timeout attempts separately. The sampler records peak heap and heap system bytes; RSS, CPU and
+// the request count come from the process observer outside the test.
 
 import (
 	"context"
@@ -55,9 +64,27 @@ type buildSample struct {
 	Worker    int
 	Attempt   int
 	StartedAt time.Time
-	Elapsed   time.Duration
+	Fetch     time.Duration
+	Queue     time.Duration
 	Status    string
 	Error     string
+}
+
+// sampleWorkerKey tags an attempt's context with its worker, so the gate observer - which runs on
+// the acquiring goroutine but knows nothing about this test - can attribute an admission to the
+// attempt that caused it.
+type sampleWorkerKey struct{}
+
+type buildPressureSampler struct {
+	access  sync.Mutex
+	samples []*buildSample
+}
+
+func (s *buildPressureSampler) appendSample(sample *buildSample) int {
+	s.access.Lock()
+	defer s.access.Unlock()
+	s.samples = append(s.samples, sample)
+	return len(s.samples) - 1
 }
 
 func TestBuildPressureSample(t *testing.T) {
@@ -84,13 +111,32 @@ func TestBuildPressureSample(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	gate := buildgate.New(gateLimit, workers*2, 2*time.Second)
+	sampler := &buildPressureSampler{}
+	// One index per worker: a worker runs one attempt at a time, so the index that is current when
+	// the observer fires is the attempt that is waiting. The observer runs inside Acquire, on the
+	// worker's own goroutine, which is what makes that true without a per-goroutine lookup.
+	currentAttempt := make([]atomic.Int64, workers)
+	for worker := range currentAttempt {
+		currentAttempt[worker].Store(-1)
+	}
+	gate.Observe(func(attemptContext context.Context, admission buildgate.Admission) {
+		worker, ok := attemptContext.Value(sampleWorkerKey{}).(int)
+		if !ok {
+			return
+		}
+		index := currentAttempt[worker].Load()
+		if index < 0 {
+			return
+		}
+		sampler.access.Lock()
+		sampler.samples[index].Queue = admission.Wait
+		sampler.access.Unlock()
+	})
 	ctx, cancel := context.WithTimeout(buildgate.ContextWithGate(context.Background(), gate), deadline)
 	defer cancel()
 
 	var completed atomic.Int32
 	var reserved atomic.Int32
-	var samplesAccess sync.Mutex
-	var samples []buildSample
 	var peakHeap, peakSys atomic.Uint64
 	stopSampling := make(chan struct{})
 	samplingDone := make(chan struct{})
@@ -121,7 +167,8 @@ func TestBuildPressureSample(t *testing.T) {
 		runners.Add(1)
 		go func(worker int) {
 			defer runners.Done()
-			ruleSet, createErr := NewRemoteRuleSet(ctx, log.NewNOPFactory().Logger(), "sample", option.RuleSet{
+			workerContext := context.WithValue(ctx, sampleWorkerKey{}, worker)
+			ruleSet, createErr := NewRemoteRuleSet(workerContext, log.NewNOPFactory().Logger(), "sample", option.RuleSet{
 				Type:   C.RuleSetTypeRemote,
 				Format: C.RuleSetFormatBinary,
 				RemoteOptions: option.RemoteRuleSet{
@@ -134,7 +181,7 @@ func TestBuildPressureSample(t *testing.T) {
 			ruleSet.httpClient = server.Client()
 			defer ruleSet.Close()
 			for attempt := 0; ; attempt++ {
-				if ctx.Err() != nil {
+				if workerContext.Err() != nil {
 					return
 				}
 				// Reserve one of the target SUCCESS slots. A failed/deferred attempt returns its
@@ -148,14 +195,16 @@ func TestBuildPressureSample(t *testing.T) {
 					return
 				}
 				attemptStarted := time.Now()
-				fetchErr := ruleSet.fetch(ctx, false)
-				elapsed := time.Since(attemptStarted)
-				sample := buildSample{
+				sample := &buildSample{
 					Worker:    worker,
 					Attempt:   attempt,
 					StartedAt: attemptStarted,
-					Elapsed:   elapsed,
 				}
+				index := sampler.appendSample(sample)
+				currentAttempt[worker].Store(int64(index))
+				fetchErr := ruleSet.fetch(workerContext, false)
+				currentAttempt[worker].Store(-1)
+				sample.Fetch = time.Since(attemptStarted)
 				switch {
 				case fetchErr == nil:
 					sample.Status = "success"
@@ -174,9 +223,6 @@ func TestBuildPressureSample(t *testing.T) {
 					sample.Error = fetchErr.Error()
 					reserved.Add(-1)
 				}
-				samplesAccess.Lock()
-				samples = append(samples, sample)
-				samplesAccess.Unlock()
 			}
 		}(worker)
 	}
@@ -185,13 +231,15 @@ func TestBuildPressureSample(t *testing.T) {
 	<-samplingDone
 
 	var successes, deferred, failed, cancelled, timedOut int
-	var totalBuild time.Duration
-	samplesAccess.Lock()
-	for _, sample := range samples {
+	var totalQueue, totalBuild, totalFetch time.Duration
+	sampler.access.Lock()
+	for _, sample := range sampler.samples {
 		switch sample.Status {
 		case "success":
 			successes++
-			totalBuild += sample.Elapsed
+			totalQueue += sample.Queue
+			totalBuild += sample.Fetch - sample.Queue
+			totalFetch += sample.Fetch
 		case "deferred":
 			deferred++
 		case "cancelled":
@@ -207,13 +255,17 @@ func TestBuildPressureSample(t *testing.T) {
 		file, createErr := os.Create(outPath)
 		require.NoError(t, createErr)
 		writer := csv.NewWriter(file)
-		require.NoError(t, writer.Write([]string{"worker", "attempt", "startedAt", "elapsedMs", "status", "error"}))
-		for _, sample := range samples {
+		require.NoError(t, writer.Write([]string{
+			"worker", "attempt", "startedAt", "queueMs", "buildMs", "fetchMs", "status", "error",
+		}))
+		for _, sample := range sampler.samples {
 			require.NoError(t, writer.Write([]string{
 				strconv.Itoa(sample.Worker),
 				strconv.Itoa(sample.Attempt),
 				sample.StartedAt.UTC().Format(time.RFC3339Nano),
-				strconv.FormatFloat(float64(sample.Elapsed)/float64(time.Millisecond), 'f', 3, 64),
+				strconv.FormatFloat(float64(sample.Queue)/float64(time.Millisecond), 'f', 3, 64),
+				strconv.FormatFloat(float64(sample.Fetch-sample.Queue)/float64(time.Millisecond), 'f', 3, 64),
+				strconv.FormatFloat(float64(sample.Fetch)/float64(time.Millisecond), 'f', 3, 64),
 				sample.Status,
 				sample.Error,
 			}))
@@ -222,17 +274,22 @@ func TestBuildPressureSample(t *testing.T) {
 		require.NoError(t, writer.Error())
 		require.NoError(t, file.Close())
 	}
-	samplesAccess.Unlock()
+	sampler.access.Unlock()
 
 	wall := time.Since(started)
-	average := time.Duration(0)
-	if successes > 0 {
-		average = totalBuild / time.Duration(successes)
+	average := func(total time.Duration) time.Duration {
+		if successes == 0 {
+			return 0
+		}
+		return total / time.Duration(successes)
 	}
 	t.Logf("corpus=%s bytes=%d workers=%d gate=%d target=%d", corpusPath, len(corpus), workers, gateLimit, target)
 	t.Logf("wall=%s successes=%d deferred=%d failed=%d cancelled=%d timeout=%d",
 		wall.Round(time.Millisecond), successes, deferred, failed, cancelled, timedOut)
-	t.Logf("average successful build=%s peakHeap=%d peakHeapSys=%d gate=%+v",
-		average.Round(time.Microsecond), peakHeap.Load(), peakSys.Load(), gate.Stats())
+	t.Logf("average queue=%s build=%s fetch=%s peakHeap=%d peakHeapSys=%d gate=%+v",
+		average(totalQueue).Round(time.Microsecond),
+		average(totalBuild).Round(time.Microsecond),
+		average(totalFetch).Round(time.Microsecond),
+		peakHeap.Load(), peakSys.Load(), gate.Stats())
 	require.NotZero(t, successes, "the corpus must build at least once")
 }
