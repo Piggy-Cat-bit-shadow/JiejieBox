@@ -17,6 +17,8 @@ package dns
 //     the bus counts what it dropped, so a missing event is a fact rather than a mystery.
 
 import (
+	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +26,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	R "github.com/sagernet/sing-box/route/rule"
 	E "github.com/sagernet/sing/common/exceptions"
 
 	"github.com/miekg/dns"
@@ -40,6 +43,13 @@ const (
 	QuerySourceCacheNXDomain QuerySource = "cache-nxdomain"
 	QuerySourceLocal         QuerySource = "local"
 	QuerySourceBlocked       QuerySource = "blocked"
+	// QuerySourceRejected is a rule action that rejected the query: a REFUSED answer or a drop.
+	// It is distinct from "blocked" (adblock), because the operator wrote a different decision and
+	// one answers with a code while the other produces no response at all.
+	QuerySourceRejected QuerySource = "rejected"
+	// QuerySourceCanceled is the caller going away or its deadline expiring before any verdict.
+	// It is not an upstream failure: nothing was learned about the server.
+	QuerySourceCanceled QuerySource = "canceled"
 )
 
 const (
@@ -72,6 +82,17 @@ type QueryEvent struct {
 	Err        string   `json:"err,omitempty"`
 	DurationMs int64    `json:"durationMs"`
 	Answers    []string `json:"answers,omitempty"`
+	// Final marks the query's TERMINAL verdict, reached without any upstream exchange: a rule
+	// rejected or answered it locally, the entry policy suppressed it, or the caller cancelled.
+	//
+	// These are the terminations the client cannot report, because they never reach it. An event
+	// without Final is a CANDIDATE ATTEMPT reported by the client (an upstream query, a cache hit,
+	// a joined exchange); a query may have several of those, and the router emits no final event
+	// for it, so one termination is never counted twice.
+	Final bool `json:"final,omitempty"`
+	// Rule describes the rule that produced a Final verdict, empty when no rule was involved
+	// (an entry policy decision, a structural early answer, a cancellation).
+	Rule string `json:"rule,omitempty"`
 }
 
 // eventSubscriber is one subscriber's delivery state.
@@ -233,6 +254,95 @@ func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTranspor
 		event.Err = E.New(err).Error()
 	}
 	bus.emit(event)
+}
+
+// emitFinalQueryEvent records the query's terminal verdict when it was reached WITHOUT an upstream
+// exchange.
+//
+// # What it exists for
+//
+// The client emits an event per candidate attempt: an upstream query, a cache hit, a joined
+// exchange. A rule that rejects or answers a query locally never reaches the client, so those
+// terminations used to be invisible in both the event stream and the bounded history - the query
+// came back REFUSED and the history was empty. This is the missing half of the contract, emitted at
+// the point the exchange actually terminates.
+//
+// # Why it cannot double count
+//
+// It is only called where transport == nil, which is exactly "no client exchange ran for this
+// query". A query that did reach a transport has its attempt events and no final event, so one
+// termination is recorded once.
+func (r *Router) emitFinalQueryEvent(started time.Time, message *dns.Msg, source QuerySource, rule adapter.DNSRule, response *dns.Msg, err error) {
+	bus := r.events
+	if bus == nil || !bus.Active() {
+		return
+	}
+	if message == nil || len(message.Question) == 0 {
+		return
+	}
+	event := QueryEvent{
+		Time:       started,
+		Source:     source,
+		RCode:      -1,
+		Final:      true,
+		DurationMs: time.Since(started).Milliseconds(),
+	}
+	if rule != nil {
+		event.Rule = rule.String()
+	}
+	event.Name = message.Question[0].Name
+	event.QType = message.Question[0].Qtype
+	if response != nil {
+		event.RCode = response.Rcode
+		if limit, wanted := bus.AnswerBudget(); wanted {
+			event.Answers = renderAnswers(response, limit)
+		}
+	}
+	if err != nil {
+		event.Err = E.New(err).Error()
+	}
+	bus.emit(event)
+}
+
+// localVerdictSource classifies a terminal verdict reached without a client exchange.
+//
+// The order matters: a rejected query is reported as rejected even though a rule produced it, and
+// an adblock answer keeps its own source because "the operator blocked this name" and "the rules
+// rejected this query" are different decisions with different responses.
+func localVerdictSource(result exchangeWithRulesResult) QuerySource {
+	if result.rejectAction != nil {
+		return QuerySourceRejected
+	}
+	if result.err != nil {
+		if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) {
+			return QuerySourceCanceled
+		}
+	}
+	if result.rule != nil {
+		switch result.rule.Action().(type) {
+		case *R.RuleActionAdblock:
+			return QuerySourceBlocked
+		}
+	}
+	return QuerySourceLocal
+}
+
+// legacyLocalVerdictSource classifies a local verdict from the legacy exchange.
+//
+// The legacy path does not carry the deciding rule, so the classification uses what the termination
+// looks like: a drop or a REFUSED answer is a reject action, a cancellation is the caller leaving,
+// and anything else that terminated without a transport was answered locally.
+func legacyLocalVerdictSource(response *dns.Msg, err error) QuerySource {
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return QuerySourceCanceled
+		}
+		return QuerySourceRejected
+	}
+	if response != nil && response.Rcode == dns.RcodeRefused {
+		return QuerySourceRejected
+	}
+	return QuerySourceLocal
 }
 
 // renderAnswers renders up to limit answer records in a stable, bounded form.

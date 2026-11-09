@@ -588,6 +588,9 @@ type exchangeWithRulesResult struct {
 	response     *mDNS.Msg
 	transport    adapter.DNSTransport
 	rejectAction *R.RuleActionReject
+	// rule is the rule that produced a local verdict, when one did. It is carried so the final
+	// event can name the decision that terminated the query (see emitFinalQueryEvent).
+	rule adapter.DNSRule
 	// localAction records that `response` was PRODUCED by a rule action rather than received from
 	// an upstream server. It is what lets the dialer-path conversion below mark the rcode error as
 	// a verdict, so the router logs a configured answer at Debug instead of reporting it as a
@@ -871,6 +874,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 				return exchangeWithRulesResult{
 					response:  namedResponse,
 					transport: state.namedTransports[responseTag],
+					rule:      currentRule,
 				}, nil
 			}
 			if !hasBindings {
@@ -887,6 +891,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 			return exchangeWithRulesResult{
 				response:  response,
 				transport: state.anonymousFuture.transport,
+				rule:      currentRule,
 			}, nil
 		case *R.RuleActionDNSRoute:
 			queryOptions := state.effectiveOptions
@@ -920,11 +925,13 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 				return exchangeWithRulesResult{
 					response:     dnsRefusedResponse(message),
 					rejectAction: action,
+					rule:         currentRule,
 				}, nil
 			case C.RuleActionRejectMethodDrop:
 				return exchangeWithRulesResult{
 					rejectAction: action,
 					err:          R.ErrDrop,
+					rule:         currentRule,
 				}, nil
 			}
 		case *R.RuleActionPredefined:
@@ -933,6 +940,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 			}
 			return exchangeWithRulesResult{
 				response: action.Response(message),
+				rule:     currentRule,
 				// A response-producing action answers LOCALLY: the name never left this process,
 				// so a non-success rcode is the configuration working rather than a failure. See
 				// localAction and ErrLocalVerdict. Both actions are marked here because both can
@@ -957,6 +965,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 			return exchangeWithRulesResult{
 				response:    action.Response(message),
 				localAction: true,
+				rule:        currentRule,
 			}, nil
 		}
 	}
@@ -1100,6 +1109,7 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
 			return exchangeWithRulesResult{
 				response:    action.Response(message),
 				localAction: true,
+				rule:        armed.rule,
 			}, nil, true
 		}
 	}
@@ -1933,14 +1943,22 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
 }
 
 func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapter.DNSQueryOptions) (*mDNS.Msg, error) {
+	started := time.Now()
 	exchangeCtx, earlyResponse, err := r.prepareExchange(ctx, message)
 	if exchangeCtx == nil {
+		// A structural early answer (a malformed question, a resolver-discovery query, an entry
+		// policy suppression) never reaches the client, so this is its only event.
+		if err == nil && earlyResponse != nil {
+			r.emitFinalQueryEvent(started, message, QuerySourceLocal, nil, earlyResponse, nil)
+		}
 		return earlyResponse, err
 	}
 	ctx = exchangeCtx.ctx
 	var (
-		response  *mDNS.Msg
-		transport adapter.DNSTransport
+		response    *mDNS.Msg
+		transport   adapter.DNSTransport
+		localSource = QuerySourceLocal
+		localRule   adapter.DNSRule
 	)
 	if options.Transport != nil {
 		transport = options.Transport
@@ -1948,8 +1966,15 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
 	} else if !exchangeCtx.legacyDNSMode {
 		exchangeResult := r.exchangeWithRules(ctx, exchangeCtx.rules, message, options, true)
 		response, transport, err = exchangeResult.response, exchangeResult.transport, exchangeResult.err
+		localSource, localRule = localVerdictSource(exchangeResult), exchangeResult.rule
 	} else {
 		response, transport, err = r.exchangeLegacy(ctx, exchangeCtx, message, options)
+		localSource = legacyLocalVerdictSource(response, err)
+	}
+	if transport == nil {
+		// No client exchange ran, so this verdict has no attempt event of its own. Emitting it here
+		// is what makes a local REFUSED visible in the event stream and the bounded history.
+		r.emitFinalQueryEvent(started, message, localSource, localRule, response, err)
 	}
 	if err != nil {
 		return nil, err
@@ -1959,8 +1984,12 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
 }
 
 func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options adapter.DNSQueryOptions, callback func(response *mDNS.Msg, err error)) {
+	started := time.Now()
 	exchangeCtx, earlyResponse, err := r.prepareExchange(ctx, message)
 	if exchangeCtx == nil {
+		if err == nil && earlyResponse != nil {
+			r.emitFinalQueryEvent(started, message, QuerySourceLocal, nil, earlyResponse, nil)
+		}
 		callback(earlyResponse, err)
 		return
 	}
@@ -1972,11 +2001,17 @@ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options a
 		})
 	} else if !exchangeCtx.legacyDNSMode {
 		r.exchangeWithRulesAsync(ctx, exchangeCtx.rules, message, options, true, func(result exchangeWithRulesResult) {
+			if result.transport == nil {
+				r.emitFinalQueryEvent(started, message, localVerdictSource(result), result.rule, result.response, result.err)
+			}
 			r.finishExchangeAsync(message, result.transport, result.response, result.err, exchangeCtx.generation, callback)
 		})
 	} else {
 		go func() {
 			response, transport, exchangeErr := r.exchangeLegacy(ctx, exchangeCtx, message, options)
+			if transport == nil {
+				r.emitFinalQueryEvent(started, message, legacyLocalVerdictSource(response, exchangeErr), nil, response, exchangeErr)
+			}
 			r.finishExchangeAsync(message, transport, response, exchangeErr, exchangeCtx.generation, callback)
 		}()
 	}
