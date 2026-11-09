@@ -68,7 +68,7 @@ func TestPacketUpSharedBudgetKeepsThePerStreamBound(t *testing.T) {
 		t.Fatalf("Write = (%d, %v), want (%d, nil)", result.n, result.err, bound*3)
 	}
 	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
-		return stats.Used+stats.ReservedUsed == 0
+		return stats.Total() == 0
 	})
 }
 
@@ -119,12 +119,12 @@ func TestPacketUpSharedBudgetSettlesAPartialWriteOnClose(t *testing.T) {
 
 	// The accepted bytes are still charged: the posts that own them have not
 	// returned.
-	if held := pool.stats().Used + pool.stats().ReservedUsed; held != result.n {
+	if held := pool.stats().Total(); held != result.n {
 		t.Fatalf("pool holds %d bytes, want the %d accepted", held, result.n)
 	}
 	close(gate)
 	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
-		return stats.Used+stats.ReservedUsed == 0
+		return stats.Total() == 0
 	})
 	requireUplinkLedger(t, packet.uplink.stats())
 }
@@ -185,14 +185,14 @@ func TestPacketUpSharedBudgetReturnsAChargeThatOutlivesClose(t *testing.T) {
 	}
 	// The wedge outlived Close, so the bytes - and their charge - are still there.
 	held := pool.stats()
-	if held.Used+held.ReservedUsed != len(payload) {
+	if held.Total() != len(payload) {
 		t.Fatalf("pool holds %d bytes after a timed-out Close, want the %d the post still owns",
-			held.Used+held.ReservedUsed, len(payload))
+			held.Total(), len(payload))
 	}
 
 	close(gate)
 	waitForPool(t, pool, "late settlement", func(stats uplinkBudgetStats) bool {
-		return stats.Used+stats.ReservedUsed == 0
+		return stats.Total() == 0
 	})
 	final := pool.stats()
 	if final.GrantedBytes != final.ReleasedBytes || final.ExcessReleases != 0 || final.LeftoverBytes != 0 {

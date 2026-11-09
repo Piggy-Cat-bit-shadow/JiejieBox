@@ -354,8 +354,8 @@ func runExperimentArm(t *testing.T, scenario expScenario, arm expArm) expResult 
 	if arm.pooled {
 		poolStats := client.budget.stats()
 		result.poolPeak = poolStats.Peak
-		if result.poolPeak > poolStats.Capacity+poolStats.Reserve {
-			t.Fatalf("arm %s: pool peak %d exceeds its bound %d", arm.name, result.poolPeak, poolStats.Capacity+poolStats.Reserve)
+		if bound := poolStats.Capacity + poolStats.Control + poolStats.Reserve; result.poolPeak > bound {
+			t.Fatalf("arm %s: pool peak %d exceeds its bound %d", arm.name, result.poolPeak, bound)
 		}
 	}
 
@@ -442,7 +442,7 @@ func runControlProbe(t *testing.T, arm expArm) expControlResult {
 	result := expControlResult{arm: arm.name}
 	if arm.pooled {
 		stats := client.budget.stats()
-		result.saturatedBytes = stats.Used + stats.ReservedUsed
+		result.saturatedBytes = stats.Total()
 		result.writeBlockedOnPool = stats.Waiters > 0
 	}
 
