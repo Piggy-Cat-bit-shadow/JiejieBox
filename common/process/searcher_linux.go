@@ -36,6 +36,14 @@ const (
 	// limit only bounds different UIDs, so a burst for one app still runs one
 	// scan while unrelated apps cannot each start a full walk of /proc.
 	processPathScanLimit = 4
+
+	// Misses are cached separately from the process-table snapshots. A miss is
+	// a tuple the last walk did not find; caching it must not evict a snapshot
+	// that other lookups still use, and it must expire faster than the snapshot
+	// because a socket can be created immediately after the walk that missed it.
+	processMissCacheSize = 256
+	processMissLifetime  = 250 * time.Millisecond
+	processSnapshotLife  = time.Second
 )
 
 var _ Searcher = (*linuxSearcher)(nil)
@@ -45,6 +53,9 @@ type linuxSearcher struct {
 	packageManager   tun.PackageManager
 	diagConns        [4]*socketDiagConn
 	processPathCache *freelru.Cache[uint32, *uidProcessPaths]
+	// processMissCache holds (scanUID, inode) tuples a walk did not find, with a
+	// shorter lifetime than the snapshot it was derived from.
+	processMissCache *freelru.Cache[uint64, struct{}]
 
 	// scanPaths is the /proc walk. It is buildProcessPaths in production and a
 	// barrier-controlled function in tests.
@@ -76,11 +87,14 @@ type uidProcessPaths struct {
 
 func NewSearcher(config Config) (Searcher, error) {
 	processPathCache := common.Must1(freelru.New[uint32, *uidProcessPaths](64, maphash.NewHasher[uint32]().Hash32, true))
-	processPathCache.SetLifetime(time.Second)
+	processPathCache.SetLifetime(processSnapshotLife)
+	processMissCache := common.Must1(freelru.New[uint64, struct{}](processMissCacheSize, maphash.NewHasher[uint64]().Hash32, true))
+	processMissCache.SetLifetime(processMissLifetime)
 	searcher := &linuxSearcher{
 		logger:           config.Logger,
 		packageManager:   config.PackageManager,
 		processPathCache: processPathCache,
+		processMissCache: processMissCache,
 		scans:            make(map[uint32]*processPathsScan),
 		scanSlots:        make(chan struct{}, processPathScanLimit),
 	}
@@ -108,6 +122,7 @@ func (s *linuxSearcher) invalidate() {
 	s.cacheAccess.Lock()
 	s.generation.Add(1)
 	s.processPathCache.Purge()
+	s.processMissCache.Purge()
 	s.cacheAccess.Unlock()
 }
 
@@ -194,11 +209,16 @@ func (s *linuxSearcher) findProcessPaths(targetInode, uid uint32) ([]string, err
 		scanUIDs = append(scanUIDs, processPathsAllUsers)
 	}
 	for _, scanUID := range scanUIDs {
+		missKey := uint64(scanUID)<<32 | uint64(targetInode)
+		if _, missed := s.processMissCache.Get(missKey); missed {
+			continue
+		}
 		if cached, ok := s.processPathCache.Get(scanUID); ok {
 			if processPaths, found := cached.entries[targetInode]; found {
 				return processPaths, nil
 			}
 		}
+		generation := s.generation.Load()
 		processPaths, err := s.scanProcessPaths(scanUID)
 		if err != nil {
 			return nil, err
@@ -207,6 +227,13 @@ func (s *linuxSearcher) findProcessPaths(targetInode, uid uint32) ([]string, err
 		if found {
 			return inodePaths, nil
 		}
+		// A miss is only publishable when no reset landed while the walk was in
+		// flight; otherwise it would describe a process table the reset dropped.
+		s.cacheAccess.Lock()
+		if generation == s.generation.Load() {
+			s.processMissCache.Add(missKey, struct{}{})
+		}
+		s.cacheAccess.Unlock()
 	}
 	return nil, E.New("process of uid(", uid, "), inode(", targetInode, ") not found")
 }

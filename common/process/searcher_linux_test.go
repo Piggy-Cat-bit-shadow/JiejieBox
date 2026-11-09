@@ -153,3 +153,45 @@ func TestResetDeniesAnInFlightScanPublication(t *testing.T) {
 		return found
 	}, 2*time.Second, time.Millisecond, "a scan started after the reset must publish")
 }
+
+func TestMissIsCachedAndExpires(t *testing.T) {
+	var scans atomic.Int32
+	searcher := newScanTestSearcher(t, func(uid uint32) (map[uint32][]string, error) {
+		scans.Add(1)
+		return map[uint32][]string{}, nil
+	})
+
+	_, err := searcher.findProcessPaths(42, 7)
+	require.Error(t, err)
+	// One walk for the UID and one for all users.
+	require.EqualValues(t, 2, scans.Load())
+
+	_, err = searcher.findProcessPaths(42, 7)
+	require.Error(t, err)
+	require.EqualValues(t, 2, scans.Load(),
+		"a tuple the last walk missed must not be walked again inside the miss window")
+
+	time.Sleep(processMissLifetime + 100*time.Millisecond)
+	_, err = searcher.findProcessPaths(42, 7)
+	require.Error(t, err)
+	require.EqualValues(t, 4, scans.Load(),
+		"the miss must expire faster than the snapshot so a new socket is seen")
+}
+
+func TestResetPurgesTheMissCache(t *testing.T) {
+	var scans atomic.Int32
+	searcher := newScanTestSearcher(t, func(uid uint32) (map[uint32][]string, error) {
+		scans.Add(1)
+		return map[uint32][]string{}, nil
+	})
+
+	_, err := searcher.findProcessPaths(42, 7)
+	require.Error(t, err)
+	require.EqualValues(t, 2, scans.Load())
+
+	searcher.ResetCache()
+	_, err = searcher.findProcessPaths(42, 7)
+	require.Error(t, err)
+	require.EqualValues(t, 4, scans.Load(),
+		"ResetCache must drop cached misses as well as snapshots")
+}
