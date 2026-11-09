@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/artifact"
 	"github.com/sagernet/sing-box/common/buildgate"
 	"github.com/sagernet/sing-box/common/srs"
 	C "github.com/sagernet/sing-box/constant"
@@ -55,11 +58,26 @@ type RemoteRuleSet struct {
 	metadata       adapter.RuleSetMetadata
 	lastUpdated    time.Time
 	lastEtag       string
+	metaAccess     sync.Mutex
 	cacheFile      adapter.CacheFile
 	pauseManager   pause.Manager
 	callbacks      list.List[adapter.RuleSetUpdateCallback]
 	refs           atomic.Int32
 	closed         atomic.Bool
+	// artifactStore is the versioned store the downloaded bytes are published into, or nil when
+	// it could not be opened (the legacy cache keeps working in that case). artifactKey names the
+	// store entry for this rule set: its tag and source URL, so two tags pointing at one document
+	// share a version and two sources never do.
+	artifactStore *artifact.Store
+	artifactKey   string
+	// artifactLease is the source version the live rules were built from. It is held until the
+	// next publish replaces it or the set closes, so a collector can never remove the bytes a
+	// live rule set still needs.
+	artifactLease *artifact.Version
+	// generation orders overlapping refreshes: a fetch that started before another one must not
+	// publish after the newer one committed. It is compared immediately before the live rules are
+	// swapped in.
+	generation atomic.Uint64
 }
 
 func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, tag string, options option.RuleSet) (*RemoteRuleSet, error) {
@@ -120,30 +138,22 @@ func (s *RemoteRuleSet) String() string {
 
 func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
 	s.cacheFile = service.FromContext[adapter.CacheFile](s.ctx)
+	s.openArtifactStore()
 	transport, err := s.resolveTransport()
 	if err != nil {
 		return E.Cause(err, "create rule-set http client")
 	}
 	startContext.Register(transport)
 	s.httpClient = &http.Client{Transport: transport, Timeout: remoteRuleSetHTTPTimeout}
-	if s.cacheFile != nil {
-		savedSet := s.cacheFile.LoadRuleSet(s.tag)
-		if savedSet != nil {
-			if len(savedSet.URLHash) > 0 && !bytes.Equal(savedSet.URLHash, s.urlHash[:]) {
-				s.logger.Info("cached rule-set was downloaded from another URL, will refetch")
-			} else {
-				err = s.loadBytes(savedSet.Content)
-				if err != nil {
-					s.logger.Warn(E.Cause(err, "restore cached rule-set, will refetch"))
-				} else {
-					s.lastUpdated = savedSet.LastUpdated
-					s.lastEtag = savedSet.LastEtag
-				}
-			}
-		}
+	restored := false
+	if s.artifactStore != nil {
+		restored = s.restoreStoredRuleSet()
+	}
+	if !restored && s.cacheFile != nil {
+		restored = s.restoreCachedRuleSet()
 	}
 	var loadedFromInitialPath bool
-	if s.lastUpdated.IsZero() && s.initialPath != "" {
+	if !restored && s.lastUpdateTime().IsZero() && s.initialPath != "" {
 		var content []byte
 		content, err = filemanager.ReadFile(s.ctx, s.initialPath)
 		if err == nil {
@@ -155,13 +165,156 @@ func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.
 			loadedFromInitialPath = true
 		}
 	}
-	if s.lastUpdated.IsZero() && !loadedFromInitialPath {
+	if s.lastUpdateTime().IsZero() && !loadedFromInitialPath {
 		err = s.fetch(ctx, true)
 		if err != nil {
 			return E.Cause(err, "initial rule-set: ", s.tag)
 		}
 	}
 	return nil
+}
+
+// openArtifactStore prepares the versioned store the downloaded bytes are kept in.
+//
+// The store lives under the process's file base directory, next to the other persisted state, and
+// every rule set opens the same directory: the store shares leases across handles by canonical
+// path, so one rule set's collector cannot remove another's live version.
+func (s *RemoteRuleSet) openArtifactStore() {
+	store, err := artifact.Open(filemanager.BasePath(s.ctx, "rule-set-artifacts"))
+	if err != nil {
+		s.logger.Warn(E.Cause(err, "open rule-set artifact store"))
+		return
+	}
+	s.artifactStore = store
+	s.artifactKey = artifactKeyFor(s.tag, s.url)
+}
+
+// artifactKeyFor names the store entry for one rule set: the tag (sanitised, because it becomes a
+// directory name) and a digest of the source URL. The URL is part of the identity so re-pointing a
+// tag at another document does not load the previous document's bytes as if they were current.
+func artifactKeyFor(tag string, sourceURL string) string {
+	name := strings.Map(func(character rune) rune {
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= 'A' && character <= 'Z',
+			character >= '0' && character <= '9',
+			character == '-', character == '_', character == '.':
+			return character
+		default:
+			return '_'
+		}
+	}, tag)
+	if name == "" {
+		name = "rule-set"
+	}
+	digest := sha256.Sum256([]byte(sourceURL))
+	return name + "-" + hex.EncodeToString(digest[:8])
+}
+
+// newArtifactManifest records what produced the bytes and what they are: the format, the build
+// that wrote them, the tag, and the exact source URL (with its digest, so two URLs that sanitise
+// to the same key are still distinguishable in the manifest).
+func (s *RemoteRuleSet) newArtifactManifest() artifact.Manifest {
+	return artifact.NewManifest(
+		"rule-set/"+s.options.Format,
+		C.Version,
+		"tag="+s.tag,
+		"url="+s.url,
+		"url-sha256="+hex.EncodeToString(s.urlHash[:]),
+		"cache-key="+s.tag,
+	)
+}
+
+// restoreStoredRuleSet loads the newest stored version, adopts its lease and builds the live rules
+// from it. The lease is what keeps the bytes alive for as long as this rule set serves them.
+func (s *RemoteRuleSet) restoreStoredRuleSet() bool {
+	version, err := s.artifactStore.Load(s.artifactKey)
+	if err != nil {
+		return false
+	}
+	content, readErr := os.ReadFile(version.Path())
+	if readErr == nil {
+		readErr = s.loadBytes(content)
+	}
+	if readErr != nil {
+		version.Release()
+		s.logger.Warn(E.Cause(readErr, "restore stored rule-set, will refetch"))
+		return false
+	}
+	s.adoptArtifact(version)
+	s.setUpdateMetadata(time.Unix(0, version.Manifest().Created), "")
+	return true
+}
+
+// restoreCachedRuleSet reads the legacy single-slot cache. An installation that predates the
+// versioned store keeps its rules, and the bytes are migrated into the store once so the next
+// start (and a pinned recovery) can find them there. The legacy cache is not removed: an older
+// build that only knows the cache keeps working.
+func (s *RemoteRuleSet) restoreCachedRuleSet() bool {
+	savedSet := s.cacheFile.LoadRuleSet(s.tag)
+	if savedSet == nil {
+		return false
+	}
+	if len(savedSet.URLHash) > 0 && !bytes.Equal(savedSet.URLHash, s.urlHash[:]) {
+		s.logger.Info("cached rule-set was downloaded from another URL, will refetch")
+		return false
+	}
+	if err := s.loadBytes(savedSet.Content); err != nil {
+		s.logger.Warn(E.Cause(err, "restore cached rule-set, will refetch"))
+		return false
+	}
+	s.setUpdateMetadata(savedSet.LastUpdated, savedSet.LastEtag)
+	s.migrateCachedRuleSet(savedSet.Content, savedSet.LastUpdated)
+	return true
+}
+
+// migrateCachedRuleSet copies one legacy cache entry into the versioned store.
+func (s *RemoteRuleSet) migrateCachedRuleSet(content []byte, updated time.Time) {
+	if s.artifactStore == nil {
+		return
+	}
+	manifest := s.newArtifactManifest()
+	if !updated.IsZero() {
+		manifest.Created = updated.UnixNano()
+	}
+	version, err := s.artifactStore.Commit(s.artifactKey, manifest, bytes.NewReader(content))
+	if err != nil {
+		s.logger.Warn(E.Cause(err, "migrate cached rule-set"))
+		return
+	}
+	s.adoptArtifact(version)
+}
+
+// lastUpdateTime and updateMetadata read the refresh bookkeeping under the lock that concurrent
+// refreshes write it through.
+func (s *RemoteRuleSet) lastUpdateTime() time.Time {
+	s.metaAccess.Lock()
+	defer s.metaAccess.Unlock()
+	return s.lastUpdated
+}
+
+func (s *RemoteRuleSet) updateMetadata() (time.Time, string) {
+	s.metaAccess.Lock()
+	defer s.metaAccess.Unlock()
+	return s.lastUpdated, s.lastEtag
+}
+
+func (s *RemoteRuleSet) setUpdateMetadata(updated time.Time, etag string) {
+	s.metaAccess.Lock()
+	s.lastUpdated = updated
+	s.lastEtag = etag
+	s.metaAccess.Unlock()
+}
+
+// adoptArtifact makes version the source of the live rules and releases the one it replaces.
+func (s *RemoteRuleSet) adoptArtifact(version *artifact.Version) {
+	s.access.Lock()
+	previous := s.artifactLease
+	s.artifactLease = version
+	s.access.Unlock()
+	if previous != nil && previous != version {
+		previous.Release()
+	}
 }
 
 func (s *RemoteRuleSet) Metadata() adapter.RuleSetMetadata {
@@ -207,25 +360,46 @@ func (s *RemoteRuleSet) UnregisterCallback(element *list.Element[adapter.RuleSet
 }
 
 func (s *RemoteRuleSet) loadBytes(content []byte) error {
-	var (
-		ruleSet option.PlainRuleSetCompat
-		err     error
-	)
-	switch s.options.Format {
-	case C.RuleSetFormatSource:
-		ruleSet, err = json.UnmarshalExtended[option.PlainRuleSetCompat](content)
-		if err != nil {
-			return err
-		}
-	case C.RuleSetFormatBinary:
-		ruleSet, err = srs.Read(bytes.NewReader(content), false)
-		if err != nil {
-			return err
-		}
-	default:
-		return E.New("unknown rule-set format: ", s.options.Format)
+	ruleSet, err := s.decodeRuleSet(content)
+	if err != nil {
+		return err
 	}
 	return s.publishRules(ruleSet)
+}
+
+// decodeRuleSet parses the downloaded bytes according to the declared format. It touches no live
+// state: a candidate that fails here has published nothing.
+func (s *RemoteRuleSet) decodeRuleSet(content []byte) (option.PlainRuleSetCompat, error) {
+	switch s.options.Format {
+	case C.RuleSetFormatSource:
+		return json.UnmarshalExtended[option.PlainRuleSetCompat](content)
+	case C.RuleSetFormatBinary:
+		return srs.Read(bytes.NewReader(content), false)
+	default:
+		return option.PlainRuleSetCompat{}, E.New("unknown rule-set format: ", s.options.Format)
+	}
+}
+
+// buildRules turns a parsed document into the headless rules and metadata the router serves. This
+// is the validation step: nothing is visible until it succeeds.
+func (s *RemoteRuleSet) buildRules(ruleSet option.PlainRuleSetCompat) ([]adapter.HeadlessRule, adapter.RuleSetMetadata, error) {
+	plainRuleSet, err := mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet).Upgrade()
+	if err != nil {
+		return nil, adapter.RuleSetMetadata{}, err
+	}
+	rules := make([]adapter.HeadlessRule, len(plainRuleSet.Rules))
+	for i, ruleOptions := range plainRuleSet.Rules {
+		rules[i], err = NewHeadlessRule(s.ctx, ruleOptions)
+		if err != nil {
+			return nil, adapter.RuleSetMetadata{}, E.Cause(err, "parse rule_set.rules.[", i, "]")
+		}
+	}
+	metadata := buildRuleSetMetadata(plainRuleSet.Rules)
+	err = validateRuleSetMetadataUpdate(s.ctx, s.tag, metadata)
+	if err != nil {
+		return nil, adapter.RuleSetMetadata{}, err
+	}
+	return rules, metadata, nil
 }
 
 // loadBinaryStream parses a binary rule-set straight from the response body.
@@ -253,7 +427,7 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 // The drain happens BEFORE publish, and its error is returned, for that reason. (It also lets
 // net/http return the connection to the idle pool, but the updater closes idle connections after
 // every non-initial refresh anyway; the framing check is the load-bearing reason.)
-func (s *RemoteRuleSet) loadBinaryStream(body io.ReadCloser) error {
+func (s *RemoteRuleSet) loadBinaryStream(body io.ReadCloser, generation uint64) error {
 	ruleSet, err := srs.Read(body, false)
 	if err != nil {
 		return err
@@ -262,29 +436,30 @@ func (s *RemoteRuleSet) loadBinaryStream(body io.ReadCloser) error {
 	if err != nil {
 		return err
 	}
-	return s.publishRules(ruleSet)
+	rules, metadata, err := s.buildRules(ruleSet)
+	if err != nil {
+		return err
+	}
+	if s.generation.Load() != generation {
+		return E.New("rule-set update superseded by a newer one")
+	}
+	return s.publishBuilt(rules, metadata)
 }
 
-// publishRules is the one place a parsed generation becomes the live one: build, validate, store,
-// then notify. Both loaders (bytes and stream) must go through it so a cache-less update cannot
-// publish rules with different validation than a cached one.
+// publishRules builds and publishes one parsed generation. It is used by the paths that are not a
+// network refresh (the initial path and the cache restore), where there is no generation to order.
 func (s *RemoteRuleSet) publishRules(ruleSet option.PlainRuleSetCompat) error {
-	plainRuleSet, err := mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet).Upgrade()
+	rules, metadata, err := s.buildRules(ruleSet)
 	if err != nil {
 		return err
 	}
-	rules := make([]adapter.HeadlessRule, len(plainRuleSet.Rules))
-	for i, ruleOptions := range plainRuleSet.Rules {
-		rules[i], err = NewHeadlessRule(s.ctx, ruleOptions)
-		if err != nil {
-			return E.Cause(err, "parse rule_set.rules.[", i, "]")
-		}
-	}
-	metadata := buildRuleSetMetadata(plainRuleSet.Rules)
-	err = validateRuleSetMetadataUpdate(s.ctx, s.tag, metadata)
-	if err != nil {
-		return err
-	}
+	return s.publishBuilt(rules, metadata)
+}
+
+// publishBuilt is the one place a validated generation becomes the live one: store, then notify.
+// Both loaders (bytes and stream) must go through it so a cache-less update cannot publish rules
+// with different validation than a cached one.
+func (s *RemoteRuleSet) publishBuilt(rules []adapter.HeadlessRule, metadata adapter.RuleSetMetadata) error {
 	s.access.Lock()
 	if s.closed.Load() {
 		s.access.Unlock()
@@ -316,12 +491,18 @@ func (s *RemoteRuleSet) updateOnce() {
 
 func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	s.logger.Debug("updating rule-set ", s.tag, " from URL: ", s.url)
+	// One refresh attempt is one generation. A refresh that started earlier and finishes later
+	// must not publish over the one that started after it; the generation is checked immediately
+	// before the live rules are swapped.
+	generation := s.generation.Add(1)
+	started := time.Now()
 	request, err := http.NewRequest("GET", s.url, nil)
 	if err != nil {
 		return err
 	}
-	if s.lastEtag != "" {
-		request.Header.Set("If-None-Match", s.lastEtag)
+	_, lastEtag := s.updateMetadata()
+	if lastEtag != "" {
+		request.Header.Set("If-None-Match", lastEtag)
 	}
 	if !isStart {
 		defer s.httpClient.CloseIdleConnections()
@@ -344,11 +525,12 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	switch response.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotModified:
-		s.lastUpdated = time.Now()
+		updated := time.Now()
+		s.setUpdateMetadata(updated, lastEtag)
 		if s.cacheFile != nil {
 			savedRuleSet := s.cacheFile.LoadRuleSet(s.tag)
 			if savedRuleSet != nil {
-				savedRuleSet.LastUpdated = s.lastUpdated
+				savedRuleSet.LastUpdated = updated
 				savedRuleSet.URLHash = s.urlHash[:]
 				err = s.cacheFile.SaveRuleSet(s.tag, savedRuleSet)
 				if err != nil {
@@ -363,29 +545,33 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 		return E.New("unexpected status: ", response.Status)
 	}
 	var content []byte
-	if s.cacheFile == nil && s.options.Format == C.RuleSetFormatBinary {
-		// No cache to write, so the download does not need to exist as a slice: parse the stream.
-		err = s.loadBinaryStream(response.Body)
+	if s.artifactStore == nil && s.cacheFile == nil && s.options.Format == C.RuleSetFormatBinary {
+		// No store and no cache to write, so the download does not need to exist as a slice: parse
+		// the stream. A configured store needs the bytes to commit them, and a cache needs them
+		// to save them.
+		err = s.loadBinaryStream(response.Body, generation)
 	} else {
 		content, err = io.ReadAll(response.Body)
 		if err != nil {
 			return err
 		}
-		err = s.loadBytes(content)
+		err = s.publishDownload(content, started, generation)
 	}
 	if err != nil {
 		return err
 	}
 	eTagHeader := response.Header.Get("Etag")
+	finalEtag := lastEtag
 	if eTagHeader != "" {
-		s.lastEtag = eTagHeader
+		finalEtag = eTagHeader
 	}
-	s.lastUpdated = time.Now()
+	updated := time.Now()
+	s.setUpdateMetadata(updated, finalEtag)
 	if s.cacheFile != nil {
 		err = s.cacheFile.SaveRuleSet(s.tag, &adapter.SavedBinary{
-			LastUpdated: s.lastUpdated,
+			LastUpdated: updated,
 			Content:     content,
-			LastEtag:    s.lastEtag,
+			LastEtag:    finalEtag,
 			URLHash:     s.urlHash[:],
 		})
 		if err != nil {
@@ -393,6 +579,51 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 		}
 	}
 	s.logger.Info("updated rule-set ", s.tag)
+	return nil
+}
+
+// publishDownload turns one downloaded body into a validated generation, stores the bytes as a
+// version, and only then swaps the live rules in.
+//
+// The order is the contract: a body that does not parse or does not build publishes nothing; a
+// version is committed before the rules that were built from it become live, so the lease this
+// rule set takes can always be traced to the bytes it is serving; and a refresh superseded while
+// it worked commits no live change, even though it may have stored its bytes.
+func (s *RemoteRuleSet) publishDownload(content []byte, started time.Time, generation uint64) error {
+	ruleSet, err := s.decodeRuleSet(content)
+	if err != nil {
+		return err
+	}
+	rules, metadata, err := s.buildRules(ruleSet)
+	if err != nil {
+		return err
+	}
+	var version *artifact.Version
+	if s.artifactStore != nil {
+		manifest := s.newArtifactManifest()
+		// Created is the time the REFRESH STARTED, not the time it finished: an older refresh
+		// that finishes later must not become the "newest" version a restart loads.
+		manifest.Created = started.UnixNano()
+		version, err = s.artifactStore.Commit(s.artifactKey, manifest, bytes.NewReader(content))
+		if err != nil {
+			return E.Cause(err, "store rule-set artifact")
+		}
+	}
+	if s.generation.Load() != generation {
+		if version != nil {
+			version.Release()
+		}
+		return E.New("rule-set update superseded by a newer one")
+	}
+	if err = s.publishBuilt(rules, metadata); err != nil {
+		if version != nil {
+			version.Release()
+		}
+		return err
+	}
+	if version != nil {
+		s.adoptArtifact(version)
+	}
 	return nil
 }
 
@@ -426,7 +657,12 @@ func (s *RemoteRuleSet) Close() error {
 	}
 	s.access.Lock()
 	s.rules = nil
+	lease := s.artifactLease
+	s.artifactLease = nil
 	s.access.Unlock()
+	if lease != nil {
+		lease.Release()
+	}
 	s.cancel()
 	return nil
 }
