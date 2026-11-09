@@ -150,6 +150,13 @@ type Router struct {
 	// a test drives the invalidation through the router's own entry points rather than through a
 	// reimplementation of them.
 	testReverseMappingRecordHook func(answers []reverseMappingAnswer, generation uint64)
+	// events is the query-event bus every DNS client of this router publishes to. It is always
+	// created: with no subscriber it costs one atomic check per query, and it is the only place a
+	// diagnostic consumer (the bounded history, see history_access.go) can attach.
+	events *EventBus
+	// historyState owns the OPTIONAL history subscription. Zero value means "history is off",
+	// which is the state a process that never asked for diagnostics stays in.
+	historyState historyState
 	// testReverseMappingComparisonHook, when set, runs inside commitReverseMappingAnswers immediately
 	// after the epoch comparison has been evaluated and while dnsEnvironmentAccess is still held.
 	//
@@ -189,8 +196,10 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOp
 			optimisticTimeout = 3 * 24 * time.Hour
 		}
 	}
+	router.events = NewEventBus(defaultEventQueue)
 	router.concreteClient = NewClient(ClientOptions{
 		Context:           ctx,
+		EventBus:          router.events,
 		Timeout:           time.Duration(options.DNSClientOptions.Timeout),
 		DisableCache:      options.DNSClientOptions.DisableCache,
 		DisableExpire:     options.DNSClientOptions.DisableExpire,
@@ -262,6 +271,9 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			closeRules(runtimeRules)
 			return nil
 		})
+		// The history subscription belongs to this box: its goroutine must not outlive the box that
+		// started it, and a shutdown must stop consuming events even if the process keeps running.
+		scope.Add(r.closeHistory)
 		// Resolved here rather than in NewRouter because the manager is constructed AFTER this
 		// router (box.go builds the DNS router first and the network manager second), so it is not
 		// in the context yet at construction time. By Start it is, and it does not change for the
