@@ -99,11 +99,13 @@ type ServiceChangeReport struct {
 	// RestartRequired repeats the plan's answer, so a caller that only reads the report sees it.
 	RestartRequired bool `json:"restartRequired"`
 	// Retained is true when the configuration that was running before the attempt is still the one
-	// running: a rejected candidate, or a failure the last-good recovery brought back.
+	// running: a rejected candidate, or a recovery back to the document that was already running.
+	// A recovery to a DIFFERENT saved document (the one that ran was never saved) is not retention.
 	Retained bool `json:"retained"`
 	// ActiveRevision is the revision that is actually running after the attempt. It is the target
 	// when the target was applied or rebuilt, the stored last-good revision when a recovery ran,
-	// and the previous revision when the attempt left the old configuration in place.
+	// the previous revision when the attempt left the old configuration in place, and EMPTY when
+	// the attempt left nothing running (a failed build without a recovery, an interrupted start).
 	ActiveRevision string `json:"activeRevision,omitempty"`
 	// Persistence is what the last-good store did with the configuration that now runs: "saved",
 	// "degraded" (running, but a later failed start cannot return to it) or "not_configured".
