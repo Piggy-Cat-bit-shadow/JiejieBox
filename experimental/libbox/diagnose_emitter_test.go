@@ -122,7 +122,17 @@ func TestTheSubscriberSeesTheSameNarrativeAsTheReport(t *testing.T) {
 			case event := <-emitter.Events():
 				sink.Emit(renderEvent(event))
 			case <-emitter.Finished():
-				return
+				// The stream is finished, but events queued before it closed may not have been
+				// consumed yet. Draining them is what makes "the subscriber saw the narrative"
+				// deterministic instead of dependent on which channel a select happened to pick.
+				for {
+					select {
+					case event := <-emitter.Events():
+						sink.Emit(renderEvent(event))
+					default:
+						return
+					}
+				}
 			}
 		}
 	}()
