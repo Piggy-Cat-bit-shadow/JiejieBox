@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 
@@ -183,4 +184,46 @@ func TestHistoryUnderPressureStaysBoundedAndReportsDrops(t *testing.T) {
 
 	router.DisableHistory()
 	require.False(t, router.events.Active())
+}
+
+// TestFailuresAndTimeoutsAreReadableInTheHistory is the failure-attribution side: a diagnosis must
+// be able to tell "the upstream refused" from "the caller's deadline expired", and both from a
+// successful answer - and all of it must survive into the bounded history.
+func TestFailuresAndTimeoutsAreReadableInTheHistory(t *testing.T) {
+	bus := NewEventBus(8)
+	history := NewHistory(HistoryOptions{MaxEntries: 8})
+	detach := history.Subscribe(bus)
+	defer detach()
+
+	// An upstream failure: the transport refuses.
+	failingTransport := &herdTransport{failures: 1}
+	failingClient := newEventClient(t, failingTransport, bus, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, err := failingClient.Exchange(ctx, failingTransport, herdMessage(), adapter.DNSQueryOptions{}, nil)
+	cancel()
+	require.Error(t, err)
+
+	// A timeout: the transport never answers and the caller's deadline ends the query.
+	heldTransport := &herdTransport{holdFirst: make(chan struct{})}
+	timeoutClient := newEventClient(t, heldTransport, bus, true)
+	timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	_, err = timeoutClient.Exchange(timeoutCtx, heldTransport, herdMessage(), adapter.DNSQueryOptions{}, nil)
+	timeoutCancel()
+	require.Error(t, err)
+
+	require.Eventually(t, func() bool {
+		records, queryErr := history.Query(HistoryQuery{Limit: 8})
+		return queryErr == nil && len(records) == 2
+	}, time.Second, time.Millisecond, "both failures must be recorded")
+
+	records, err := history.Query(HistoryQuery{Limit: 8})
+	require.NoError(t, err)
+	for _, record := range records {
+		require.NotEmpty(t, record.Event.Err, "a failed query carries its failure text")
+		require.Equal(t, -1, record.Event.RCode, "no response was produced")
+		require.Equal(t, QuerySourceUpstream, record.Event.Source)
+	}
+	// The two failures are distinguishable by their text, which is the point of recording it.
+	require.NotEqual(t, records[0].Event.Err, records[1].Event.Err,
+		"a refused upstream and an expired deadline must not read the same: %q", records[0].Event.Err)
 }
