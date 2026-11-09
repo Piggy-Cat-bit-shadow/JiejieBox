@@ -113,19 +113,23 @@ type http3Client interface {
 var NewHTTP3Client func(options ClientOptions, authorization string) (http3Client, error)
 
 type Client struct {
-	dialer                          N.Dialer
-	http1Dialer                     N.Dialer
-	tlsDialer                       tlsDialer
-	server                          M.Socksaddr
-	authorityOverride               string
-	authorization                   string
-	host                            string
-	path                            string
-	headers                         http.Header
-	version                         int
-	disableVersionFallback          bool
-	http2Transport                  *http2.Transport
-	http2Access                     sync.Mutex
+	dialer                 N.Dialer
+	http1Dialer            N.Dialer
+	tlsDialer              tlsDialer
+	server                 M.Socksaddr
+	authorityOverride      string
+	authorization          string
+	host                   string
+	path                   string
+	headers                http.Header
+	version                int
+	disableVersionFallback bool
+	http2Transport         *http2.Transport
+	http2Access            sync.Mutex
+	// http2DialAccess serialises HTTP/2 dials without holding http2Access. ResetConnections takes
+	// http2Access on every network change and must not queue behind a TLS handshake that belongs
+	// to the network being left; see acquireHTTP2.
+	http2DialAccess                 sync.Mutex
 	http2Conns                      []*http2ClientConn
 	http2Unsupported                atomic.Bool
 	http2ExtendedConnectUnsupported atomic.Bool
@@ -677,10 +681,14 @@ func (c *Client) ResetConnections() {
 	c.http2Unsupported.Store(false)
 	c.http2ExtendedConnectUnsupported.Store(false)
 	c.http3ExtendedConnectUnsupported.Store(false)
-	c.capabilityAccess.Unlock()
+	// The pool is cleared INSIDE the same critical section as the epoch bump, so a dial that
+	// finishes concurrently either lands in the pool before this clear (and is cleared) or sees
+	// the new epoch and is discarded. Taking http2Access here can wait for a reserve, which is a
+	// handful of instructions - it never waits for a dial, because dials no longer hold it.
 	c.http2Access.Lock()
 	c.closeHTTP2Locked()
 	c.http2Access.Unlock()
+	c.capabilityAccess.Unlock()
 	if c.http3 != nil {
 		c.http3.ResetConnection()
 		// Anything already in flight belongs to the network being left, so it is superseded AND
