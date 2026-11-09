@@ -50,14 +50,12 @@ func (m *epochOnlyManager) NetworkEnvironment() uint64 { return m.epoch }
 func TestTheProductionMeasurementKeyNamesEveryFactThatCanVary(t *testing.T) {
 	expected, err := urltest.ParseExpectedStatus("204")
 	require.NoError(t, err)
-	batch := &urlTestBatch{expected: expected, mode: TestHistoryHealth}
-	outbound := &keyTestOutbound{tag: "node-a"}
-	link := "https://probe.example/generate_204"
-
 	// The purpose comes from the round's evidence layer, so the round has to be named here.
 	// A urlTestBatch with the zero mode is a DISPLAY round by design; a test that wants the
 	// health key must say so, exactly as every production caller does.
-	batch.mode = TestHistoryHealth
+	batch := &urlTestBatch{expected: expected, mode: TestHistoryHealth}
+	outbound := &keyTestOutbound{tag: "node-a"}
+	link := "https://probe.example/generate_204"
 
 	key := batch.measurementKey(context.Background(), link, outbound)
 	require.NotNil(t, key)
@@ -75,20 +73,13 @@ func TestTheProductionMeasurementKeyNamesEveryFactThatCanVary(t *testing.T) {
 	displayBatch := &urlTestBatch{expected: expected, mode: TestHistoryDisplayOnly}
 	displayKey := displayBatch.measurementKey(context.Background(), link, outbound)
 	require.Equal(t, urltest.PurposeDisplay, displayKey.Purpose)
+	require.NotEqual(t, key.Purpose, displayKey.Purpose,
+		"the two layers must not collapse into one measurement question")
 	require.False(t, key.SharesEvidenceWith(*displayKey),
 		"a manual/display measurement is never shared as health evidence")
-	require.False(t, key.SharesEvidenceWith(*displayKey))
 	require.NotEqual(t, key.NodeIdentity, (&urlTestBatch{expected: expected, mode: TestHistoryHealth}).measurementKey(
 		context.Background(), link, &keyTestOutbound{tag: "node-a"}).NodeIdentity,
 		"two objects with the same tag are two identities")
-
-	// The same target measured for DISPLAY asks a different question: the record goes to the
-	// display layer, so a display probe must neither answer nor be answered by a health round.
-	displayBatch := &urlTestBatch{expected: expected, mode: TestHistoryDisplayOnly}
-	displayKey := displayBatch.measurementKey(context.Background(), link, outbound)
-	require.Equal(t, urltest.PurposeDisplay, displayKey.Purpose)
-	require.NotEqual(t, key.Purpose, displayKey.Purpose,
-		"the two layers must not collapse into one measurement question")
 
 	// Without a network manager the epoch is zero, which means "no cross-generation sharing"
 	// rather than "share with everything".
