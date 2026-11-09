@@ -16,7 +16,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -196,4 +198,75 @@ func TestARecoveryPinsTheExactProviderNodeSource(t *testing.T) {
 			require.True(t, served(), "recovery must serve through A's provider node, not the block now in the file")
 		})
 	}
+}
+
+// TestARecoveryPinsARemoteSubscriptionSnapshot covers the network subscription source: A's nodes
+// are downloaded and saved, the subscription URL then serves a dead node, and recovery must use
+// A's snapshot rather than the current subscription.
+func TestARecoveryPinsARemoteSubscriptionSnapshot(t *testing.T) {
+	ctx := recoveryBusinessContext(t)
+	socksPort := startProviderSocksServer(t)
+	var documentAccess sync.RWMutex
+	document := providerNodeDocument(socksPort)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		documentAccess.RLock()
+		content := document
+		documentAccess.RUnlock()
+		_, _ = writer.Write([]byte(content))
+	}))
+	t.Cleanup(server.Close)
+	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	t.Cleanup(target.Close)
+
+	directory := t.TempDir()
+	proxyPort := freeLoopbackPort(t)
+	provider := fmt.Sprintf(`{"type": "remote", "tag": "nodes", "url": %q, "update_interval": "1h"}`, server.URL)
+	configA := providerRecoveryProfile(proxyPort, provider, "error")
+	configB := providerRecoveryProfile(proxyPort, provider, "warn")
+	revisionA := configRevisionOf(configA)
+
+	store := recoveryStoreWithWriteFault(t, directory, []byte(configB))
+	service := NewStartedService(ServiceOptions{Context: ctx})
+	t.Cleanup(func() {
+		_ = service.CloseService()
+		service.Close()
+	})
+	service.ConfigureConfigRecovery(directory, true)
+	installStore(service, store)
+
+	require.NoError(t, service.StartOrReloadService(context.Background(), configA, nil))
+	// A remote provider loads its document on its own schedule; the production manual refresh is
+	// what publishes the first nodes, and an identical reload persists their exact snapshot.
+	_, err := service.RefreshProviders(context.Background(), nil, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, service.StartOrReloadService(context.Background(), configA, nil))
+	client := newProxyClient(t, proxyPort)
+	defer client.CloseIdleConnections()
+	served := func() bool {
+		status, err := proxyStatus(t, client, target.URL)
+		return err == nil && status == http.StatusOK
+	}
+	require.True(t, served(), "A's downloaded provider node carries the request")
+	referencesA, err := store.References(revisionA)
+	require.NoError(t, err)
+	require.NotEmpty(t, referencesA)
+
+	// The subscription now serves a dead node. The online provider applies it...
+	documentAccess.Lock()
+	document = providerNodeDocument(1)
+	documentAccess.Unlock()
+	_, err = service.RefreshProviders(context.Background(), nil, 5*time.Second)
+	require.NoError(t, err)
+	require.False(t, served(), "the changed subscription is what the running Box has now")
+
+	// ...B starts from the updated cache but cannot be saved; C fails; recovery returns to A.
+	require.NoError(t, service.StartOrReloadService(context.Background(), configB, nil))
+	client.CloseIdleConnections()
+	require.Equal(t, persistenceDegraded, service.LastServiceChange().Persistence)
+	require.NoError(t, service.StartOrReloadService(context.Background(), buildFailingConfig, nil))
+	client.CloseIdleConnections()
+	require.Equal(t, ServiceChangeStatusRecovered, service.LastServiceChange().Status)
+	require.True(t, served(), "recovery must use A's snapshot, not the changed subscription")
 }

@@ -283,6 +283,11 @@ func (s *ProviderRemote) restorePinned() (bool, error) {
 	}
 	s.adoptArtifact(version)
 	references.Record(s.artifactKey, version.ID())
+	// The restored document is as fresh as the snapshot; without this the update loop would see a
+	// zero lastUpdated and immediately refetch the changed subscription.
+	s.infoMu.Lock()
+	s.lastUpdated = time.Unix(0, version.Manifest().Created)
+	s.infoMu.Unlock()
 	return true, nil
 }
 
