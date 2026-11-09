@@ -2,41 +2,31 @@
 
 package v2rayquic
 
-// The measured capability boundary of the pinned QUIC library for this window.
+// The cross-path migration acceptance test for the pinned QUIC library.
 //
-// # What the window needs
+// # What this pins
 //
-// One active V2Ray QUIC stream must keep carrying checked payload while the physical path
-// changes, and the old socket must then be physically closed. The pinned fork exports
-// `Conn.AddPath` / `Path.Probe` / `Path.Switch` for client-initiated migration, so the first
-// question is whether that API can complete a probe at all before any production code is
-// written around it.
+// The window's deliverable is "one active V2Ray QUIC flow keeps carrying checked payload while
+// the physical path changes, and the old socket is then physically closed". The capability
+// lives in the dependency, so this test drives it through the pinned module exactly the way the
+// transport will:
 //
-// It cannot, on this pin, and this file records the exact failure rather than a belief:
+//   - a second real UDP socket becomes a candidate path on the SAME connection
+//     (Conn.AddPath), it is validated (Path.Probe) and switched to (Path.Switch);
+//   - one already-open stream keeps carrying sequenced, CRC-checked records across the
+//     switch, and the endpoint still sees ONE connection and ONE stream - a reconnect cannot
+//     pass this;
+//   - the transport that carried the handshake is retired and its socket physically closed,
+//     and the same stream still carries records afterwards. Without the retirement the
+//     socket's read error is a transport failure and would destroy the connection.
 //
-//   - `AddPath` on a second real UDP socket succeeds and refuses `Switch` until validated;
-//   - `Probe` never validates: the probe packet reaches the server (the server answers with
-//     its own PATH_CHALLENGE for the new path), but no PATH_RESPONSE is ever processed by the
-//     client, so the path stays unvalidated until the deadline;
-//   - the connection is NOT damaged by the attempt: the already-open stream keeps carrying
-//     records on the original path, the endpoint sees one connection and one stream, and the
-//     abandoned candidate closes cleanly.
+// The capacity is on the pinned fork branch network/path-length-fix (commit d981f089): it
+// carries both the path-transport connection-ID-length fix and Conn.RetireHandshakeTransport.
+// A pin that predates it makes Probe hang until its deadline and the retirement API disappear,
+// which is why this test is load-bearing rather than illustrative.
 //
-// The consequence for this window is the fallback the task already names: migration is not
-// available on this pin, so the supported route is the bounded reconnect that
-// protocol/{vless,vmess,trojan}.Outbound.InterfaceUpdated already drives through
-// `Reset` -> new dial (pinned end-to-end by
-// protocol/vless/outbound_quic_transition_test.go:TestNetworkTransitionKeepsTheOutboundDialable).
-// Enabling real migration needs the dependency, not this package; see the window handoff for
-// the exact fork requirements.
-//
-// # Why a failing behaviour is asserted
-//
-// This is a characterization test: it pins what the dependency does today so the boundary
-// cannot move silently. When a fork pin (or an upstream change) makes the probe complete,
-// this test fails by design - that failure is the signal to replace it with the positive form
-// (same connection, same stream, records continuing across the switch). The assertions are
-// all observable outcomes, never internals.
+// Everything here is real: real QUIC handshake, real UDP sockets, real streams, sequence
+// numbers and an application-layer digest.
 
 import (
 	"context"
@@ -115,8 +105,8 @@ func decodeMigrationRecord(header []byte, payload []byte) (migrationRecord, bool
 	return migrationRecord{sequence: sequence, payload: payload}, true
 }
 
-// migrationServer is one real QUIC endpoint that records, per stream, the records it
-// accepted and any protocol violation.
+// migrationServer is one real QUIC endpoint that records, per stream, the records it accepted
+// and any protocol violation.
 type migrationServer struct {
 	listener    *quic.Listener
 	addr        net.Addr
@@ -218,21 +208,15 @@ func (s *migrationServer) waitRecords(t *testing.T, index int, want int) []migra
 	return seen
 }
 
-func (s *migrationServer) failureError() error {
-	s.access.Lock()
-	defer s.access.Unlock()
-	return s.failure
-}
-
-// TestCandidatePathProbeDoesNotCompleteOnThisPin records the boundary described in the file
-// header: the candidate path can be created, is correctly unusable before validation, never
-// validates, and leaves the connection untouched when abandoned.
-func TestCandidatePathProbeDoesNotCompleteOnThisPin(t *testing.T) {
+// TestActiveStreamSurvivesAPathSwitchAndTheOldSocketsClose is the acceptance: one connection,
+// one already-open stream, records continuing across a switch, then the handshake socket is
+// physically closed and records keep flowing.
+func TestActiveStreamSurvivesAPathSwitchAndTheOldSocketsClose(t *testing.T) {
 	server := startMigrationServer(t)
 
 	primary, err := net.ListenPacket("udp", "127.0.0.1:0")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = primary.Close() })
+	require.NotNil(t, primary)
 
 	ctx, cancel := context.WithTimeout(context.Background(), migrationSettle)
 	defer cancel()
@@ -242,45 +226,71 @@ func TestCandidatePathProbeDoesNotCompleteOnThisPin(t *testing.T) {
 
 	stream, err := conn.OpenStream()
 	require.NoError(t, err)
-	_, err = stream.Write(encodeMigrationRecord(0, []byte("before-the-attempt")))
+
+	_, err = stream.Write(encodeMigrationRecord(0, []byte("before-the-switch")))
 	require.NoError(t, err)
 	require.Len(t, server.waitRecords(t, 0, 1), 1)
 
-	// A second, real path: its own UDP socket and its own transport, same connection.
+	// The second real path: its own UDP socket, its own transport, the same connection.
 	candidate, err := net.ListenPacket("udp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = candidate.Close() })
 	path, err := conn.AddPath(&quic.Transport{Conn: candidate})
-	require.NoError(t, err, "the pinned library must accept a candidate path on a second socket")
+	require.NoError(t, err, "the pinned library must offer a candidate path on a second socket")
 	require.ErrorIs(t, path.Switch(), quic.ErrPathNotValidated,
-		"a candidate must not be switchable before validation")
+		"a path must not be switchable before it is validated")
 
-	// The measurement: validation does not complete inside a bounded window.
-	probeCtx, probeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	probeCtx, probeCancel := context.WithTimeout(ctx, migrationSettle)
 	defer probeCancel()
-	probeErr := path.Probe(probeCtx)
-	require.Error(t, probeErr, "path validation completed: the boundary moved - replace this test with the "+
-		"positive form (same connection and stream carrying records across the switch)")
-	require.ErrorIs(t, probeErr, context.DeadlineExceeded)
+	require.NoError(t, path.Probe(probeCtx), "path validation must complete on a live second socket")
+	require.NoError(t, path.Switch())
+	// Switch only registers the request; the run loop installs the new send path. The test does
+	// not poll Conn.LocalAddr to observe that: LocalAddr reads the send connection without
+	// synchronization, so polling it during a switch is a data race in the library (recorded in
+	// the window handoff). The records below and the retirement wait force and then prove the
+	// applied state instead.
 
-	// Abandoning the candidate is safe and bounded: the path closes, and the connection and
-	// its already-open stream are exactly where they were.
-	require.NoError(t, path.Close())
-	_, err = stream.Write(encodeMigrationRecord(1, []byte("after-the-attempt")))
-	require.NoError(t, err, "a failed candidate must not damage the connection's current path")
+	// The same stream continues with an unbroken sequence.
+	for sequence := uint64(1); sequence <= 3; sequence++ {
+		payload := []byte(fmt.Sprintf("after-the-switch-%d", sequence))
+		_, err = stream.Write(encodeMigrationRecord(sequence, payload))
+		require.NoError(t, err, "record %d must be accepted on the migrated stream", sequence)
+	}
+	seen := server.waitRecords(t, 0, 4)
+	require.Len(t, seen, 4)
+	for index, record := range seen {
+		require.Equal(t, uint64(index), record.sequence, "the endpoint must see unbroken sequence numbers")
+	}
+	require.Equal(t, int32(1), server.handshakes.Load(), "the switch must not establish a second connection")
+	require.Equal(t, int32(1), server.streamCount.Load(), "the switch must not open a second stream")
 
-	seen := server.waitRecords(t, 0, 2)
-	require.Len(t, seen, 2)
-	require.Equal(t, uint64(1), seen[1].sequence, "the same stream must continue its sequence")
-	require.Equal(t, int32(1), server.handshakes.Load(),
-		"the attempt must not establish a second QUIC connection")
-	require.Equal(t, int32(1), server.streamCount.Load(),
-		"the attempt must not open a second stream")
-	require.NoError(t, server.failureError())
+	// Retire the transport that carried the handshake, then physically close its socket.
+	require.NoError(t, conn.RetireHandshakeTransport())
+	require.NoError(t, primary.Close())
+	select {
+	case <-conn.Context().Done():
+		t.Fatal("closing the retired socket ended the migrated connection")
+	case <-time.After(150 * time.Millisecond):
+	}
 
-	// The local path is still the original socket: nothing switched.
-	require.Equal(t, primary.LocalAddr().String(), conn.LocalAddr().String())
+	// The same stream still carries data in both directions after the old socket is gone.
+	_, err = stream.Write(encodeMigrationRecord(4, []byte("after-the-old-socket-closed")))
+	require.NoError(t, err, "the migrated stream must survive the old socket's close")
+	seen = server.waitRecords(t, 0, 5)
+	require.Len(t, seen, 5)
+	require.Equal(t, uint64(4), seen[4].sequence)
 
-	// Abandoning is idempotent: a second close is a no-op, not a double-teardown.
-	require.NoError(t, path.Close())
+	header := make([]byte, 16)
+	require.NoError(t, stream.SetReadDeadline(time.Now().Add(migrationSettle)))
+	_, err = io.ReadFull(stream, header)
+	require.NoError(t, err, "the migrated stream must still receive data from the endpoint")
+	ackPayload := make([]byte, binary.BigEndian.Uint32(header[0:4]))
+	_, err = io.ReadFull(stream, ackPayload)
+	require.NoError(t, err)
+	_, ok := decodeMigrationRecord(header, ackPayload)
+	require.True(t, ok, "the acknowledgement must be a well-formed record")
+
+	require.Nil(t, conn.Context().Err(), "the connection must still be live")
+	require.Equal(t, int32(1), server.handshakes.Load())
+	require.Equal(t, int32(1), server.streamCount.Load())
 }
