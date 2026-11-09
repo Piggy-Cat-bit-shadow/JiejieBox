@@ -363,3 +363,164 @@ func TestClientCloseIdleConnections(t *testing.T) {
 		})
 	}
 }
+
+// admitMarkerKey is a context value the fake dial looks for, standing in for a
+// marker an outer admission seam would put on the caller's context.
+type admitMarkerKey struct{}
+
+// TestClientAdmitsOneSharedCreation pins the admission seam: one creation is
+// admitted once, the admitted context reaches the dial, and finish runs once
+// with the dial result.
+func TestClientAdmitsOneSharedCreation(t *testing.T) {
+	for _, protocol := range clientProtocols() {
+		protocol := protocol
+		t.Run(protocol, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			client := newSharedOfferClient(t, protocol, func(ctx context.Context) (sessionConn, error) {
+				if ctx.Value(admitMarkerKey{}) != "admitted" {
+					t.Errorf("dial context lost the admitted marker: %v", ctx.Value(admitMarkerKey{}))
+				}
+				started <- struct{}{}
+				<-release
+				return newFakeSession(), nil
+			})
+			var admits, finishes atomic.Int32
+			finishResult := make(chan error, 1)
+			client.admitCreation = func(ctx context.Context) (context.Context, func(error), error) {
+				admits.Add(1)
+				return context.WithValue(ctx, admitMarkerKey{}, "admitted"), func(err error) {
+					finishes.Add(1)
+					select {
+					case finishResult <- err:
+					default:
+					}
+				}, nil
+			}
+			ctx := testContext(t)
+			results := make(chan error, 3)
+			for index := 0; index < 3; index++ {
+				go func() {
+					conn, err := client.DialContext(ctx, holdDestination())
+					if err == nil {
+						_ = conn.Close()
+					}
+					results <- err
+				}()
+			}
+			<-started
+			time.Sleep(20 * time.Millisecond)
+			close(release)
+			for index := 0; index < 3; index++ {
+				require.NoError(t, <-results)
+			}
+			require.EqualValues(t, 1, admits.Load(), "one creation must be admitted once")
+			require.EqualValues(t, 1, finishes.Load(), "one creation must be finished once")
+			select {
+			case finishErr := <-finishResult:
+				require.NoError(t, finishErr)
+			default:
+				t.Fatal("the creation was never finished")
+			}
+		})
+	}
+}
+
+// TestClientAdmitFailureDoesNotDial pins the refusal path: a creation the
+// admission policy refuses never reaches the dialer, and the caller sees the
+// admission error.
+func TestClientAdmitFailureDoesNotDial(t *testing.T) {
+	for _, protocol := range clientProtocols() {
+		protocol := protocol
+		t.Run(protocol, func(t *testing.T) {
+			client := newSharedOfferClient(t, protocol, func(ctx context.Context) (sessionConn, error) {
+				t.Error("the dialer ran after admission refused the creation")
+				return nil, errors.New("unexpected dial")
+			})
+			admitErr := errors.New("admission refused")
+			finishRan := atomic.Bool{}
+			client.admitCreation = func(ctx context.Context) (context.Context, func(error), error) {
+				return nil, func(error) { finishRan.Store(true) }, admitErr
+			}
+			_, err := client.DialContext(testContext(t), holdDestination())
+			require.Error(t, err)
+			require.ErrorIs(t, err, admitErr)
+			require.False(t, finishRan.Load(), "a refused creation has no dial to finish")
+		})
+	}
+}
+
+// TestClientDialKeepsCallerValues pins that the shared offer keeps the caller's
+// context values: an outer seam's marker must reach the dial even though this
+// caller's cancellation no longer bounds it.
+func TestClientDialKeepsCallerValues(t *testing.T) {
+	for _, protocol := range clientProtocols() {
+		protocol := protocol
+		t.Run(protocol, func(t *testing.T) {
+			client := newSharedOfferClient(t, protocol, func(ctx context.Context) (sessionConn, error) {
+				if ctx.Value(admitMarkerKey{}) != "outer" {
+					t.Errorf("dial context lost the caller value: %v", ctx.Value(admitMarkerKey{}))
+				}
+				return newFakeSession(), nil
+			})
+			ctx := context.WithValue(testContext(t), admitMarkerKey{}, "outer")
+			conn, err := client.DialContext(ctx, holdDestination())
+			require.NoError(t, err)
+			require.NoError(t, conn.Close())
+		})
+	}
+}
+
+// TestClientOwnerCancelKeepsTheSharedDial pins the owner rule from the other
+// side: the first caller cancelling its wait must not cancel the creation the
+// client owns, and a later demand still receives it.
+func TestClientOwnerCancelKeepsTheSharedDial(t *testing.T) {
+	for _, protocol := range clientProtocols() {
+		protocol := protocol
+		t.Run(protocol, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			client := newSharedOfferClient(t, protocol, func(ctx context.Context) (sessionConn, error) {
+				started <- struct{}{}
+				<-release
+				if err := ctx.Err(); err != nil {
+					t.Errorf("the shared dial was cancelled by the first caller: %v", err)
+				}
+				return newFakeSession(), nil
+			})
+			ownerCtx, cancelOwner := context.WithCancel(testContext(t))
+			ownerResult := make(chan error, 1)
+			go func() {
+				conn, err := client.DialContext(ownerCtx, holdDestination())
+				if err == nil {
+					_ = conn.Close()
+				}
+				ownerResult <- err
+			}()
+			<-started
+			cancelOwner()
+			select {
+			case err := <-ownerResult:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(3 * time.Second):
+				t.Fatal("the cancelled owner did not return")
+			}
+			waiterResult := make(chan error, 1)
+			go func() {
+				conn, err := client.DialContext(testContext(t), holdDestination())
+				if err == nil {
+					_ = conn.Close()
+				}
+				waiterResult <- err
+			}()
+			time.Sleep(10 * time.Millisecond)
+			close(release)
+			select {
+			case err := <-waiterResult:
+				require.NoError(t, err, "a later demand must receive the creation the client owns")
+			case <-time.After(5 * time.Second):
+				t.Fatal("the waiter did not receive the shared session")
+			}
+		})
+	}
+}

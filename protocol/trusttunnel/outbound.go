@@ -9,7 +9,9 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/trafficclass"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -101,6 +103,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
+	// The process admission policy, or nil on every platform without one: a
+	// nil guard admits everything and keeps the plain path.
+	guard := resourceguard.FromContext(ctx)
 	client, err := trusttunnel.NewClient(trusttunnel.ClientOptions{
 		Context:   ctx,
 		Logger:    logger,
@@ -111,14 +116,21 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		QUIC: &trusttunnel.QUICOptions{
 			CongestionControl: options.QUICCongestionControl,
 		},
-		Username:    options.Username,
-		Password:    options.Password,
-		AppName:     appName,
-		HealthCheck: options.HealthCheck,
-		IdleTimeout: idleWindow(options.IdleTimeout, 0),
+		Username:      options.Username,
+		Password:      options.Password,
+		AppName:       appName,
+		HealthCheck:   options.HealthCheck,
+		IdleTimeout:   idleWindow(options.IdleTimeout, 0),
+		AdmitCreation: admitSession(guard),
 	})
 	if err != nil {
 		return nil, err
+	}
+	if guard != nil {
+		// Reclaiming a session that carries no stream is safe at any pressure:
+		// it is the only resource this outbound can give back without cutting a
+		// flow, and it never dials.
+		guard.RegisterShed(client.CloseIdleConnections)
 	}
 	return &Outbound{
 		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeTrustTunnel, tag, networkList, options.DialerOptions),
@@ -127,6 +139,41 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:    service.FromContext[adapter.DNSRouter](ctx),
 		queryOptions: queryOptions,
 	}, nil
+}
+
+// admitSession bounds one TrustTunnel session creation with the process
+// admission policy. The permit covers the whole creation (dial, TLS handshake
+// and HTTP/2 or QUIC setup), because that is the expensive operation; streams
+// on an established session are not admitted here. The shared client creates
+// at most one session at a time, so waiters that join that creation are not
+// charged a second time.
+//
+// A nested dial carries resourceguard.HeldPermit - TrustTunnel dialled through
+// another admitted outbound, or the TLS handshake inside this very creation -
+// and the shared offer preserves the caller's context values, so the marker
+// reaches the TLS seam and no second permit is acquired behind our own.
+func admitSession(guard *resourceguard.Guard) func(context.Context) (context.Context, func(error), error) {
+	if guard == nil {
+		return nil
+	}
+	return func(ctx context.Context) (context.Context, func(error), error) {
+		if resourceguard.HasHeldPermit(ctx) {
+			return ctx, nil, nil
+		}
+		class := resourceguard.ClassNormal
+		if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
+			class = resourceguard.ClassInteractive
+		}
+		started := time.Now()
+		permit, err := guard.Acquire(ctx, class)
+		if err != nil {
+			return nil, nil, err
+		}
+		return resourceguard.WithHeldPermit(ctx), func(dialErr error) {
+			guard.ObserveOutcome(started, dialErr)
+			permit.Release()
+		}, nil
+	}
 }
 
 // idleWindow picks the session's idle teardown: the node's own idle_timeout
