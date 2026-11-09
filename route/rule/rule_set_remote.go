@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/buildgate"
 	"github.com/sagernet/sing-box/common/srs"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/deprecated"
@@ -325,6 +326,16 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	if !isStart {
 		defer s.httpClient.CloseIdleConnections()
 	}
+	// F03: a rule-set refresh is a BUILD - it downloads a document, parses it into a matcher
+	// index and swaps it in - so it shares the box's build reservation with provider refreshes.
+	// The reservation is taken BEFORE the request: a deferred build must not download at all,
+	// and the version currently serving traffic stays untouched.
+	buildRelease, buildErr := buildgate.AcquireFromContext(ctx)
+	if buildErr != nil {
+		s.logger.Debug("rule-set ", s.tag, " build deferred: ", buildErr)
+		return buildErr
+	}
+	defer buildRelease()
 	response, err := s.httpClient.Do(request.WithContext(ctx))
 	if err != nil {
 		return err
