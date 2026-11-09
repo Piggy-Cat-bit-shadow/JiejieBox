@@ -60,8 +60,8 @@ cache.db
 # provisioning profile in Git history cannot be un-leaked by a later deletion.
 # The password for the .p12 is stored beside it and is covered by the same rule,
 # so `git add -A` cannot stage any of it.
-签名证书/
-证书/
+绛惧悕璇佷功/
+璇佷功/
 *.p12
 *.mobileprovision
 *.ipa
@@ -112,3 +112,8 @@ _consolidation/
 # build product of running the tests, not a source artifact.
 __pycache__/
 *.pyc
+
+# The versioned rule-set store writes under the file manager's base path (rule-set-artifacts).
+# A test that runs with the package directory as that base leaves the directory behind; it is a
+# runtime artifact of the store, not source, and must not be committed by accident.
+rule-set-artifacts/
