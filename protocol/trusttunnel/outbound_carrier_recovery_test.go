@@ -50,12 +50,17 @@ const (
 type trustTunnelCarrierHandler struct {
 	target  string
 	streams atomic.Int32
+	// closed counts the CONNECT streams that ended. The server side ending is the observable for
+	// "the session that carried the old network is really gone"; a client-side write can be
+	// buffered and is therefore not evidence on its own.
+	closed atomic.Int32
 }
 
 func (h *trustTunnelCarrierHandler) NewConnection(ctx context.Context, conn *trusttunnel.ServerConn, metadata trusttunnel.Metadata) {
 	h.streams.Add(1)
 	go func() {
 		defer conn.Close()
+		defer h.closed.Add(1)
 		peer, err := net.Dial("tcp", h.target)
 		if err != nil {
 			return
@@ -195,10 +200,12 @@ func TestARealTrustTunnelFlowSurvivesANetworkChangeByReconnecting(t *testing.T) 
 	// The production entry: what NetworkManager calls on every physical network change.
 	outbound.InterfaceUpdated(context.Background())
 
-	_ = before.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	if _, err := before.Write([]byte("stale")); err == nil {
-		t.Fatal("the pre-change TrustTunnel flow still accepted a write: the old session was not retired")
-	}
+	// The server's CONNECT for the pre-change flow ends: the session that carried the old network
+	// is gone, not merely unreferenced. A client-side write is not used as the observable here
+	// because a tunnelled write can be buffered by the HTTP/2 stream.
+	require.Eventually(t, func() bool { return handler.closed.Load() >= 1 }, 5*time.Second, 5*time.Millisecond,
+		"the pre-change TrustTunnel CONNECT never ended: the old session was not retired")
+	_ = before.Close()
 
 	after := trustTunnelRoundTrip(t, outbound, "after-the-change")
 	_ = after.Close()
