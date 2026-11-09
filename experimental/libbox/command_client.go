@@ -563,15 +563,42 @@ func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClie
 		return
 	}
 
+	// Every subscription starts from a baseline, whatever the peer sent.
+	//
+	// The server's first message IS the snapshot (daemon: buildInitialConnectionState with Reset), so
+	// this normally only confirms it. It exists for the two cases where the flag cannot be relied on:
+	//   - an older daemon that never set it, and
+	//   - a RECONNECT, where the platform may still hold rows from the stream that just died. Marking
+	//     the first batch as a reset tells the consumer to discard them before this stream's events
+	//     apply, so a stale row cannot be carried into the new session.
+	baselinePending := true
 	for {
 		events, err := stream.Recv()
 		if err != nil {
 			c.handler.Disconnected(E.Cause(err, "connections stream recv").Error())
 			return
 		}
-		libboxEvents := connectionEventsFromGRPC(events)
+		libboxEvents, nextBaseline := connectionEventsForDelivery(events, baselinePending)
+		baselinePending = nextBaseline
 		c.handler.WriteConnectionEvents(libboxEvents)
 	}
+}
+
+// connectionEventsForDelivery converts one received batch and applies the first-batch baseline rule.
+//
+// It is a function rather than two inline statements so the rule can be pinned without a gRPC
+// stream: the batch a consumer receives first must ALWAYS be a reset, because the consumer's duty is
+// to discard whatever it held before this subscription.
+func connectionEventsForDelivery(events *daemon.ConnectionEvents, baselinePending bool) (*ConnectionEvents, bool) {
+	libboxEvents := connectionEventsFromGRPC(events)
+	if baselinePending {
+		if libboxEvents == nil {
+			libboxEvents = &ConnectionEvents{}
+		}
+		libboxEvents.Reset = true
+		return libboxEvents, false
+	}
+	return libboxEvents, false
 }
 
 func (c *CommandClient) handleOutboundsStream(client daemon.StartedServiceClient, ctx context.Context) {

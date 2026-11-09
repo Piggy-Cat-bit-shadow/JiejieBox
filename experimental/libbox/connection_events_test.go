@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/daemon"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -236,4 +238,56 @@ func TestConnectionReconnectSnapshotDropsRowsAndStaleUpdatesCannotRevive(t *test
 	activeIDs, _ = rowsByState(connections, ConnectionStateActive)
 	require.Equal(t, []string{"kept"}, activeIDs,
 		"a late close for a dropped id must not become an active row either")
+}
+
+// O02/O05 — the consumer's first batch is always a baseline.
+//
+// The server sends a reset snapshot first, so this normally just confirms the flag. The rule exists
+// for the two cases where the flag cannot be relied on: an older daemon that never set it, and a
+// reconnect, where the platform may still hold rows from the stream that just died.
+func TestTheFirstDeliveredBatchIsABaseline(t *testing.T) {
+	// An older peer: the first batch carries events but no reset flag.
+	first, pending := connectionEventsForDelivery(&daemon.ConnectionEvents{
+		Events: []*daemon.ConnectionEvent{{Type: daemon.ConnectionEventType_CONNECTION_EVENT_NEW, Id: "a"}},
+	}, true)
+	require.True(t, first.Reset,
+		"the consumer must be told to discard its previous state even when the peer did not say so")
+	require.False(t, pending)
+
+	// The second batch is delivered as the peer sent it: a per-event message is not a reset.
+	second, pending := connectionEventsForDelivery(&daemon.ConnectionEvents{
+		Events: []*daemon.ConnectionEvent{{Type: daemon.ConnectionEventType_CONNECTION_EVENT_CLOSED, Id: "a"}},
+	}, pending)
+	require.False(t, second.Reset)
+	require.False(t, pending)
+
+	// A reconnect starts again: the new stream's first batch is a baseline even if the daemon set
+	// nothing, which is what keeps a stale row out of the new session.
+	reconnected, _ := connectionEventsForDelivery(&daemon.ConnectionEvents{}, true)
+	require.True(t, reconnected.Reset)
+	require.NotNil(t, reconnected)
+}
+
+// TestTheBaselineRebuildsTheClientMap ties the delivery rule to the map that consumes it: the batch
+// the consumer receives first must clear the rows a dead stream left behind.
+func TestTheBaselineRebuildsTheClientMap(t *testing.T) {
+	connections := NewConnections()
+	connections.ApplyEvents(&ConnectionEvents{
+		Reset:  true,
+		events: []*ConnectionEvent{{Type: ConnectionEventNew, ID: "stale", Connection: &Connection{ID: "stale"}}},
+	})
+	countBefore := 0
+	iterator := connections.Iterator()
+	for iterator.HasNext() {
+		iterator.Next()
+		countBefore++
+	}
+	require.Equal(t, 1, countBefore)
+
+	// A reconnect delivers an EMPTY first batch (a box with no connections), which must still be a
+	// baseline: the stale row is gone instead of being carried into the new session.
+	baseline, _ := connectionEventsForDelivery(&daemon.ConnectionEvents{}, true)
+	connections.ApplyEvents(baseline)
+	iterator = connections.Iterator()
+	require.False(t, iterator.HasNext(), "a baseline clears the rows from the previous subscription")
 }
