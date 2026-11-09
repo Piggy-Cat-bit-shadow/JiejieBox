@@ -294,6 +294,14 @@ func (s *Store) Recover() (*Recovery, error) {
 	} else if record != nil {
 		current := []byte(record.Current.Content)
 		if s.validator == nil || s.validator(current) == nil {
+			// The legacy active may be from a commit that crashed after writing it but before the
+			// record rename. Converge it to the authoritative record so older readers see the
+			// same complete combination.
+			if legacy, legacyErr := os.ReadFile(s.path(activeName)); legacyErr != nil || string(legacy) != record.Current.Content {
+				if writeErr := s.write(activeName, current); writeErr != nil && recovery.Warning == "" {
+					recovery.Warning = writeErr.Error()
+				}
+			}
 			recovery.Active = current
 			recovery.References = copyReferenceMap(record.Current.References)
 			recovery.Combined = true
