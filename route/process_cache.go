@@ -54,6 +54,26 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 	return result, err
 }
 
+// processTruth is what the rule walk actually proved about the process metadata of THIS flow.
+//
+// # Why the flow has to state it
+//
+// "ProcessInfo is not nil" does not mean the process was found. The Linux lookup returns an
+// owner-only record ({UserId}, no paths, no error) whenever the /proc scan is restricted - that is
+// what searcher_linux.go does when it logs the walk's error and keeps the uid. A path rule evaluated
+// against that record does not match, and reading that as "the path rule does not apply" is how a
+// flow reaches a direct outbound through a rule that was never actually evaluated.
+//
+// The walk is the only place that knows a path-reading rule WAS reached, so it carries that fact
+// here. A flow decided before any such rule has nothing unknown: the rule could not have changed
+// the decision.
+type processTruth struct {
+	// pathsUnknown: a rule reading the process path was evaluated and the record has no path.
+	pathsUnknown bool
+	// packagesUnknown: a rule reading a package name was evaluated and the record has no package.
+	packagesUnknown bool
+}
+
 // processMetadataIsProven reports whether the process metadata needed to judge a bypass was
 // actually obtained.
 //
@@ -62,13 +82,17 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 // when it is nil the rule simply does not match. A flow that then reaches the default direct
 // outbound would take an irreversible native bypass decided by the ABSENCE of metadata.
 //
-// Two cases genuinely have nothing to prove:
+// Three cases genuinely have nothing to prove:
+//   - the walk reached no rule that reads a process field (truth is zero)
 //   - no searcher is configured, so no process rule can exist for this platform
 //   - the source is not local, so the lookup was never applicable
 //
-// Otherwise, ProcessInfo being nil after the search means the answer is unknown, and an unknown
-// answer must fail closed.
-func (r *Router) processMetadataIsProven(metadata *adapter.InboundContext) bool {
+// Otherwise an owner-only record is unknown, not proof: the field the rule reads was never
+// obtained, and an unknown answer must fail closed.
+func (r *Router) processMetadataIsProven(metadata *adapter.InboundContext, truth processTruth) bool {
+	if truth.pathsUnknown || truth.packagesUnknown {
+		return false
+	}
 	if r.processSearcher == nil {
 		return true
 	}
@@ -76,6 +100,43 @@ func (r *Router) processMetadataIsProven(metadata *adapter.InboundContext) bool 
 		return true
 	}
 	return !r.isLocalSource(metadata.Source.Addr)
+}
+
+// processTruthFor turns the accumulated need of the rules the walk reached into the truth that
+// decision may rely on.
+//
+// A need only counts when the lookup could have answered it at all: a non-local source and a build
+// with no searcher have no process to find, and the old behaviour (nothing to prove) is correct
+// there.
+func (r *Router) processTruthFor(metadata *adapter.InboundContext, reached processNeed) processTruth {
+	if reached == processNeedNone || r.processSearcher == nil || !r.isLocalSource(metadata.Source.Addr) {
+		return processTruth{}
+	}
+	// matchRule's owner-only answer says the uid is known and nothing else. If the walk never
+	// completed it (because no path-reading rule was reached) the reach mask is zero and this is
+	// not unknown - which is the whole point of tracking the reach mask instead of the config.
+	if metadata.ProcessInfo == nil {
+		return processTruth{}
+	}
+	return processTruth{
+		pathsUnknown:    reached&processNeedPath != 0 && len(metadata.ProcessInfo.ProcessPaths) == 0,
+		packagesUnknown: reached&processNeedPackage != 0 && len(metadata.ProcessInfo.PackageNames) == 0,
+	}
+}
+
+// processNeedAt reports which process facts the rule at this index may read. A router built directly
+// in a test may carry only ruleNeedsPaths; that is read as a path need, the conservative reading.
+func (r *Router) processNeedAt(ruleIndex int) processNeed {
+	if ruleIndex < 0 {
+		return processNeedNone
+	}
+	if ruleIndex < len(r.ruleProcessNeeds) {
+		return r.ruleProcessNeeds[ruleIndex]
+	}
+	if ruleIndex < len(r.ruleNeedsPaths) && r.ruleNeedsPaths[ruleIndex] {
+		return processNeedPath
+	}
+	return processNeedNone
 }
 
 // processCacheQuery derives the tuple both process lookups share.

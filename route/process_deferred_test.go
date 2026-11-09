@@ -197,7 +197,7 @@ func TestAFailedCompletionIsNotProofThatThePathRuleDoesNotApply(t *testing.T) {
 	require.Nil(t, selected, "no rule matches when the path could not be read")
 	require.Nil(t, metadata.ProcessInfo,
 		"a failed completion must leave the metadata UNPROVEN so a bypass is refused")
-	require.False(t, router.processMetadataIsProven(metadata))
+	require.False(t, router.processMetadataIsProven(metadata, processTruth{}))
 }
 
 // failingCompletionSearcher answers the owner-only lookup and refuses the full one.
@@ -215,6 +215,143 @@ func (s *failingCompletionSearcher) FindProcessOwner(context.Context, string, ne
 
 func (s *failingCompletionSearcher) Close() error { return nil }
 func (s *failingCompletionSearcher) ResetCache()  {}
+
+// ownerOnlySearcher returns an owner-only record from BOTH lookups without an error.
+//
+// This is the shape searcher_linux.go returns when the /proc walk is restricted: it logs the walk's
+// error, keeps the uid it already resolved from the socket table, and returns nil error. The record
+// is non-nil and contains no path - exactly the case "ProcessInfo != nil" used to accept as proof.
+type ownerOnlySearcher struct {
+	owner *adapter.ConnectionOwner
+	full  *adapter.ConnectionOwner
+
+	ownerCalls atomic.Int32
+	fullCalls  atomic.Int32
+}
+
+func (s *ownerOnlySearcher) FindProcessInfo(context.Context, string, netip.AddrPort, netip.AddrPort) (*adapter.ConnectionOwner, error) {
+	s.fullCalls.Add(1)
+	return s.full, nil
+}
+
+func (s *ownerOnlySearcher) FindProcessOwner(context.Context, string, netip.AddrPort, netip.AddrPort) (*adapter.ConnectionOwner, error) {
+	s.ownerCalls.Add(1)
+	return s.owner, nil
+}
+
+func (s *ownerOnlySearcher) Close() error { return nil }
+func (s *ownerOnlySearcher) ResetCache()  {}
+
+// newBypassProcessRouter builds the PreMatch shape: a direct outbound that can bypass, a proxy that
+// cannot, and the DNS fakes prepareMatchMetadata needs.
+func newBypassProcessRouter(searcher process.Searcher, rules []adapter.Rule, ruleNeedsPaths []bool) *Router {
+	direct := &plainDirectOutbound{}
+	direct.canBypass.Store(1)
+	proxy := &nonBypassableOutbound{}
+	router := newDeferredTestRouter(searcher, rules, ruleNeedsPaths)
+	router.ctx = context.Background()
+	router.outbound = &stubOutboundManager{
+		byTag: map[string]adapter.Outbound{"direct": direct, "proxy": proxy},
+		def:   direct,
+	}
+	router.dns = &verdictDNSRouter{}
+	router.dnsTransport = &verdictDNSTransport{}
+	return router
+}
+
+func curlPathRule() *deferredTestRule {
+	return &deferredTestRule{
+		description: "process path",
+		matches: func(metadata *adapter.InboundContext) bool {
+			return metadata.ProcessInfo != nil && slices.Contains(metadata.ProcessInfo.ProcessPaths, "/usr/bin/curl")
+		},
+		action: &R.RuleActionRoute{Outbound: "proxy"},
+	}
+}
+
+// portDirectRule decides the flow on a fact that does not disqualify the native fast path by itself.
+//
+// A rule matching a sniffed DOMAIN would make the flow ineligible for an unrelated reason
+// (BypassRefusedSniffedDomain), so a test built on one could never show that the process truth is
+// what refuses the bypass.
+func portDirectRule() *deferredTestRule {
+	return &deferredTestRule{
+		description: "destination port",
+		matches:     func(metadata *adapter.InboundContext) bool { return metadata.Destination.Port == 443 },
+		action:      &R.RuleActionRoute{Outbound: "direct"},
+	}
+}
+
+// TestAnOwnerOnlyAnswerRefusesTheNativeBypass is the review reproduction.
+//
+// The flow reaches a process-path rule first. The completion returns an owner-only record with no
+// error, so the path rule does not match, and the next rule sends the flow to a plain direct
+// outbound. A non-nil ProcessInfo used to be accepted as proof, which let the flow leave userspace
+// through a rule that was never actually evaluated: "no match" meant "could not tell".
+func TestAnOwnerOnlyAnswerRefusesTheNativeBypass(t *testing.T) {
+	searcher := &ownerOnlySearcher{
+		owner: &adapter.ConnectionOwner{UserId: 1000},
+		full:  &adapter.ConnectionOwner{UserId: 1000},
+	}
+	router := newBypassProcessRouter(searcher, []adapter.Rule{curlPathRule(), portDirectRule()}, []bool{true, false})
+
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+	metadata := fastBypassMetadata(N.NetworkTCP, destination)
+
+	result := router.PreMatch(metadata, nil)
+	require.NotEqual(t, adapter.PreMatchBypass, result.Action,
+		"the path rule was evaluated against an owner-only answer, so whether it applies is UNKNOWN; "+
+			"letting the flow bypass natively would decide it by missing metadata")
+	require.EqualValues(t, 1, searcher.fullCalls.Load(),
+		"the walk did reach the path rule, so the owner-only answer is what it evaluated")
+	require.EqualValues(t, 1, searcher.ownerCalls.Load())
+}
+
+// TestAUIDRuleStillMatchesAfterAnOwnerOnlyCompletion is the other half of the same rule: refusing
+// the bypass must not cost the uid that a rule was configured to match.
+func TestAUIDRuleStillMatchesAfterAnOwnerOnlyCompletion(t *testing.T) {
+	searcher := &ownerOnlySearcher{
+		owner: &adapter.ConnectionOwner{UserId: 1000},
+		full:  &adapter.ConnectionOwner{UserId: 1000},
+	}
+	var uidRuleMatched atomic.Bool
+	uidRule := &deferredTestRule{
+		description: "user id",
+		matches: func(metadata *adapter.InboundContext) bool {
+			matched := metadata.ProcessInfo != nil && metadata.ProcessInfo.UserId == 1000
+			uidRuleMatched.Store(matched)
+			return matched
+		},
+		action: &R.RuleActionRoute{Outbound: "direct"},
+	}
+	router := newBypassProcessRouter(searcher, []adapter.Rule{curlPathRule(), uidRule}, []bool{true, false})
+
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+	metadata := fastBypassMetadata(N.NetworkTCP, destination)
+
+	result := router.PreMatch(metadata, nil)
+	require.True(t, uidRuleMatched.Load(),
+		"the uid rule matches on the uid the owner-only answer DID prove: the known owner must keep serving UID rules")
+	require.NotEqual(t, adapter.PreMatchBypass, result.Action,
+		"the bypass is still refused: the path was asked for and could not be obtained")
+}
+
+// TestACompleteAnswerStillAllowsTheBypass proves the refusal above is about the missing field, not
+// about the configuration: the same rules with a record that contains the path still bypass.
+func TestACompleteAnswerStillAllowsTheBypass(t *testing.T) {
+	searcher := &ownerOnlySearcher{
+		owner: &adapter.ConnectionOwner{UserId: 1000},
+		full:  &adapter.ConnectionOwner{UserId: 1000, ProcessPaths: []string{"/usr/bin/wget"}},
+	}
+	router := newBypassProcessRouter(searcher, []adapter.Rule{curlPathRule(), portDirectRule()}, []bool{true, false})
+
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+	metadata := fastBypassMetadata(N.NetworkTCP, destination)
+
+	result := router.PreMatch(metadata, nil)
+	require.Equal(t, adapter.PreMatchBypass, result.Action,
+		"the path was obtained and the rule does not apply to it, so the bypass IS provable")
+}
 
 // TestTheRouterOnlyDefersPlainPathRules pins the mode decision itself.
 //

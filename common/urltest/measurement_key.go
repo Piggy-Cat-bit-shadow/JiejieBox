@@ -34,6 +34,14 @@ type MeasurementKey struct {
 	NetworkEpoch uint64
 	// Node is the outbound tag whose delay is measured.
 	Node string
+	// NodeIdentity distinguishes two LIVE OBJECTS that carry the same tag.
+	//
+	// A tag is a name, not an identity. A provider refresh replaces a member object without
+	// changing its tag, and a probe already in flight against the retired object would then answer
+	// a question about the new one: the answer describes a socket, a TLS session and a route the
+	// new object may not share. The tag stays in the key because it is what a reader recognises in
+	// a log; the identity is what makes the share correct.
+	NodeIdentity string
 	// Path is the resolved detour chain the probe goes through.
 	Path string
 	// Target is the URL being probed.

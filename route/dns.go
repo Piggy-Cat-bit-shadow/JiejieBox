@@ -19,6 +19,12 @@ import (
 )
 
 func (r *Router) hijackDNSStream(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) error {
+	// Keep the client's socket tuple. Destination is cleared below because the destination of a DNS
+	// query is not a connection target, but the process lookup needs the address the client opened
+	// the socket against - and a path-reading DNS rule triggers that lookup later, inside the DNS
+	// rule walk, long after Destination is gone. OriginDestination is the field that already means
+	// "the address the client intended", and processCacheQuery prefers it.
+	metadata.OriginDestination = metadata.Destination
 	r.searchProcessInfo(ctx, &metadata)
 	metadata.Destination = M.Socksaddr{}
 	err := N.ReportConnHandshakeSuccess(conn, conn)
@@ -39,6 +45,9 @@ func (r *Router) hijackDNSStream(ctx context.Context, conn net.Conn, metadata ad
 }
 
 func (r *Router) hijackDNSPacket(ctx context.Context, conn N.PacketConn, packetBuffers []*N.PacketBuffer, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) error {
+	// Same reason as hijackDNSStream: the per-query completion inside the DNS rule walk needs the
+	// tuple, and NewDNSPacketConnection clears Destination immediately.
+	metadata.OriginDestination = metadata.Destination
 	r.searchProcessInfo(ctx, &metadata)
 	err := N.ReportPacketConnHandshakeSuccess(conn, nil)
 	if err != nil {
@@ -55,8 +64,12 @@ func (r *Router) hijackDNSPacket(ctx context.Context, conn N.PacketConn, packetB
 }
 
 func (r *Router) dispatchDNSPacket(ctx context.Context, message *mDNS.Msg, writer N.PacketWriter, metadata adapter.InboundContext) {
-	r.searchProcessInfo(ctx, &metadata)
 	destination := metadata.Destination
+	// Preserve the client's socket tuple for the process lookup before Destination is cleared: a
+	// DNS path rule reached inside the DNS rule walk completes the process path with THIS query's
+	// metadata, and a lookup without a destination describes a socket that does not exist.
+	metadata.OriginDestination = destination
+	r.searchProcessInfo(ctx, &metadata)
 	metadata.Destination = M.Socksaddr{}
 	r.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata), message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, exchangeErr error) {
 		if exchangeErr == nil {

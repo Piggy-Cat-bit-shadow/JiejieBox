@@ -540,14 +540,24 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 	// The full lookup was already done when it had to happen up front; otherwise a path rule
 	// completes it when the walk reaches it (see the loop below).
 	pathsCompleted := r.needProcessPaths
+	// reachedProcessNeed accumulates WHAT the walk asked the process lookup for. The up-front full
+	// lookup answers for the whole flow; a deferred completion answers for the rules at or after
+	// the one that triggered it. The bypass decision reads this together with what the record
+	// actually contains, so an owner-only answer cannot be mistaken for "the path rule does not
+	// apply" (see processTruth).
+	reachedProcessNeed := r.upfrontProcessNeed
 	for currentRuleIndex, currentRule := range r.rules {
 		metadata.ResetRuleCache()
-		if !pathsCompleted && currentRuleIndex < len(r.ruleNeedsPaths) && r.ruleNeedsPaths[currentRuleIndex] {
-			// The rule about to be evaluated reads a path, so complete the owner-only answer now.
-			// Everything evaluated BEFORE this point was decided without needing one, which is the
-			// saving: a flow that matches an earlier rule never walks /proc at all.
-			r.ensureProcessPaths(ctx, &metadata)
-			pathsCompleted = true
+		ruleProcessNeed := r.processNeedAt(currentRuleIndex)
+		if ruleProcessNeed != processNeedNone {
+			reachedProcessNeed |= ruleProcessNeed
+			if !pathsCompleted {
+				// The rule about to be evaluated reads a process field, so complete the owner-only
+				// answer now. Everything evaluated BEFORE this point was decided without needing
+				// one, which is the saving: a flow that matches an earlier rule never walks /proc.
+				r.ensureProcessPaths(ctx, &metadata)
+				pathsCompleted = true
+			}
 		}
 		if !currentRule.Match(&metadata) {
 			continue
@@ -619,7 +629,7 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 			// Applied before the flow decision, so the metadata canFastBypass inspects matches
 			// what the slow path would have seen.
 			applyActionRouteOptions(&metadata, action)
-			return r.preMatchFlow(ctx, &metadata, packetDestination, currentRule, action.Outbound)
+			return r.preMatchFlowWithNeed(ctx, &metadata, packetDestination, currentRule, action.Outbound, reachedProcessNeed)
 		case *R.RuleActionBypass:
 			// This is an explicit operator instruction, not the implicit Direct Fast Path: it
 			// returns the bypass verdict without consulting canFastBypass, so a tracker, a power
@@ -641,9 +651,9 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 				return adapter.PreMatchResult{Action: adapter.PreMatchBypass}
 			}
 			if metadata.Destination.IsDomain() || metadata.Destination != packetDestination {
-				return r.preMatchFlow(ctx, &metadata, packetDestination, currentRule, action.Outbound)
+				return r.preMatchFlowWithNeed(ctx, &metadata, packetDestination, currentRule, action.Outbound, reachedProcessNeed)
 			}
-			result := r.preMatchFlow(ctx, &metadata, packetDestination, currentRule, action.Outbound)
+			result := r.preMatchFlowWithNeed(ctx, &metadata, packetDestination, currentRule, action.Outbound, reachedProcessNeed)
 			if result.Action != adapter.PreMatchFlow {
 				return adapter.PreMatchResult{Action: adapter.PreMatchBypass}
 			}
@@ -673,7 +683,7 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 			return continueResult
 		}
 	}
-	return r.preMatchFlow(ctx, &metadata, packetDestination, nil, "")
+	return r.preMatchFlowWithNeed(ctx, &metadata, packetDestination, nil, "", reachedProcessNeed)
 }
 
 // applyRouteOptionsMetadata applies a route action's options to the connection metadata.
@@ -852,7 +862,15 @@ func applyRouteOptionsMetadata(metadata *adapter.InboundContext, routeOptions *R
 //
 // An unauthorised group flow therefore still gets BypassRefusedOutboundChain, unchanged, and no
 // other blocker in this function is touched.
+// canFastBypass is the form used by callers that have no process-truth to report (tests, and any
+// future caller whose flow never touched a process rule). Production goes through
+// canFastBypassWithTruth from preMatchFlowWithTruth.
 func (r *Router) canFastBypass(metadata *adapter.InboundContext, packetDestination M.Socksaddr, chain []adapter.Outbound, outbound adapter.Outbound, fastPathAuthorized bool) BypassVerdict {
+	return r.canFastBypassWithTruth(metadata, packetDestination, chain, outbound, fastPathAuthorized, processTruth{})
+}
+
+// canFastBypassWithTruth is canFastBypass plus what the rule walk proved about the process metadata.
+func (r *Router) canFastBypassWithTruth(metadata *adapter.InboundContext, packetDestination M.Socksaddr, chain []adapter.Outbound, outbound adapter.Outbound, fastPathAuthorized bool, truth processTruth) BypassVerdict {
 	// v1 targets TUN only. ActionBypass is the platform handing the flow back to the OS's own
 	// routing; other inbounds have no equivalent, so they keep their existing path.
 	if metadata.InboundType != C.TypeTun {
@@ -968,7 +986,7 @@ func (r *Router) canFastBypass(metadata *adapter.InboundContext, packetDestinati
 	// evaluated against a nil ProcessInfo does not match, so a transient lookup failure is
 	// indistinguishable from "no process rule applies" - and the default direct outbound would
 	// then take an irreversible bypass chosen by missing data rather than by the configuration.
-	if !r.processMetadataIsProven(metadata) {
+	if !r.processMetadataIsProven(metadata, truth) {
 		return BypassRefusedProcessMetadataUnproven
 	}
 
@@ -998,8 +1016,19 @@ func (r *Router) canFastBypass(metadata *adapter.InboundContext, packetDestinati
 	return BypassAllowed
 }
 
-// preMatchFlow resolves the outbound for a matched rule and decides how the flow proceeds.
+// preMatchFlow resolves the outbound for a matched rule and decides how the flow proceeds. It is the
+// form for callers with no process truth to report; the production walk uses preMatchFlowWithNeed.
 func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundContext, packetDestination M.Socksaddr, matchedRule adapter.Rule, outboundTag string) adapter.PreMatchResult {
+	return r.preMatchFlowWithTruth(ctx, metadata, packetDestination, matchedRule, outboundTag, processTruth{})
+}
+
+// preMatchFlowWithNeed derives the process truth from what the walk reached and delegates.
+func (r *Router) preMatchFlowWithNeed(ctx context.Context, metadata *adapter.InboundContext, packetDestination M.Socksaddr, matchedRule adapter.Rule, outboundTag string, reached processNeed) adapter.PreMatchResult {
+	return r.preMatchFlowWithTruth(ctx, metadata, packetDestination, matchedRule, outboundTag, r.processTruthFor(metadata, reached))
+}
+
+// preMatchFlowWithTruth is preMatchFlow with what the rule walk proved about the process metadata.
+func (r *Router) preMatchFlowWithTruth(ctx context.Context, metadata *adapter.InboundContext, packetDestination M.Socksaddr, matchedRule adapter.Rule, outboundTag string, truth processTruth) adapter.PreMatchResult {
 	continueResult := adapter.PreMatchResult{Action: adapter.PreMatchContinue}
 	var outbound adapter.Outbound
 	if outboundTag == "" {
@@ -1047,7 +1076,7 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 	// chain cannot change where the bytes go - and are not computed at all.
 	if metadata.ConsumesBypassVerdict {
 		fastPathAuthorized := resolveFastPathRequest(chain, r.fastPathPolicies)
-		if r.canFastBypass(metadata, packetDestination, chain, outbound, fastPathAuthorized).BypassAllowed() {
+		if r.canFastBypassWithTruth(metadata, packetDestination, chain, outbound, fastPathAuthorized, truth).BypassAllowed() {
 			// The message is built only when it will be emitted.
 			//
 			// The arguments to a debug call are evaluated before the logger decides the level is off, and
