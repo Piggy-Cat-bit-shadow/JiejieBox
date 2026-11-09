@@ -1659,6 +1659,10 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 				// if it were a fresh look at the new one, and it must not replace a result that a
 				// later attempt already stored.
 				attemptStart := time.Now()
+				// The epoch of the evidence this attempt belongs to. A drop (a retired node, a
+				// failed path, a reset) bumps it, and a result from before the drop must not
+				// recreate the entry the drop removed.
+				attemptEpoch := b.history.Epoch()
 				// NO per-member timeout here.
 				//
 				// Measure establishes the active probe budget itself, starting from the moment it
@@ -1744,9 +1748,9 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 						Delay: measurement.Delay,
 					}
 					if b.mode == TestHistoryHealth {
-						b.history.StoreHealthHistory(tag, measurement.Scope, health)
+						b.history.StoreHealthHistoryIfUnchanged(tag, measurement.Scope, health, attemptEpoch)
 					} else {
-						b.history.StoreDisplayHistory(tag, measurement.Scope, health)
+						b.history.StoreDisplayHistoryIfUnchanged(tag, measurement.Scope, health, attemptEpoch)
 					}
 					b.access.Lock()
 					b.result[tag] = measurement.Delay

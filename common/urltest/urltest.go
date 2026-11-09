@@ -78,6 +78,13 @@ type HistoryStorage struct {
 	// closed makes Close terminal. A measurement that finishes afterwards must not write.
 	closed bool
 
+	// evidenceEpoch counts the evidence DROPS this storage has performed (a retired node, a failed
+	// path, a group reset). A measurement captures it before it starts and may only store if it is
+	// unchanged: a probe that started before a reset describes a node/path the reset was meant to
+	// forget, so its late result must not recreate the entry - that would put stale evidence back
+	// into the layer selection reads, which is exactly what the reset was for.
+	evidenceEpoch uint64
+
 	updateHooks []*observable.Subscriber[struct{}]
 }
 
@@ -160,6 +167,13 @@ func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope,
 		s.access.Unlock()
 		return
 	}
+	s.storeDisplayLocked(tag, scope, history)
+	s.access.Unlock()
+	s.notifyUpdated()
+}
+
+// storeDisplayLocked writes one display record, rejecting older evidence. Caller holds the lock.
+func (s *HistoryStorage) storeDisplayLocked(tag string, scope MeasurementScope, history *adapter.URLTestHistory) {
 	if existing, loaded := s.displayHistory[tag]; loaded && existing.History.Time.After(history.Time) {
 		// Older evidence for the same node: the newer entry wins.
 		//
@@ -167,12 +181,9 @@ func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope,
 		// while a newer one ran and finished cannot describe the node as it is now. Without this a
 		// slow probe - the one most likely to be measuring a path that has since changed - would
 		// be the last writer and would undo the newer measurement.
-		s.access.Unlock()
 		return
 	}
 	s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
-	s.access.Unlock()
-	s.notifyUpdated()
 }
 
 // StoreHealthHistory records an automatic health measurement, in both layers.
@@ -191,20 +202,84 @@ func (s *HistoryStorage) StoreHealthHistory(tag string, scope MeasurementScope, 
 		s.access.Unlock()
 		return
 	}
-	healthUpdated := false
-	if existing, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded || isNewerEvidence(history.Time, existing.Time) {
-		s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}] = *history
-		healthUpdated = true
-	}
-	displayUpdated := false
-	if existing, loaded := s.displayHistory[tag]; !loaded || isNewerEvidence(history.Time, existing.History.Time) {
-		s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
-		displayUpdated = true
-	}
+	healthUpdated, displayUpdated := s.storeHealthLocked(tag, scope, history)
 	s.access.Unlock()
 	if healthUpdated || displayUpdated {
 		s.notifyUpdated()
 	}
+}
+
+// Epoch reports how many evidence drops this storage has performed.
+//
+// A measurement captures it BEFORE it starts and passes it to StoreHealthHistoryIfUnchanged: a
+// result whose epoch is stale belongs to evidence that a reset already forgot.
+func (s *HistoryStorage) Epoch() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.evidenceEpoch
+}
+
+// StoreHealthHistoryIfUnchanged stores a health measurement only when no evidence drop has happened
+// since the measurement started.
+//
+// It reports whether the result was stored. The check and the write happen under one lock, so a
+// reset cannot land between them and be overwritten by the write it was meant to invalidate.
+func (s *HistoryStorage) StoreHealthHistoryIfUnchanged(tag string, scope MeasurementScope, history *adapter.URLTestHistory, epoch uint64) bool {
+	if s == nil || history == nil {
+		return false
+	}
+	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return false
+	}
+	if s.evidenceEpoch != epoch {
+		s.access.Unlock()
+		return false
+	}
+	healthUpdated, displayUpdated := s.storeHealthLocked(tag, scope, history)
+	s.access.Unlock()
+	if healthUpdated || displayUpdated {
+		s.notifyUpdated()
+	}
+	return healthUpdated || displayUpdated
+}
+
+// storeHealthLocked writes one health measurement into BOTH layers. Caller holds the write lock.
+func (s *HistoryStorage) storeHealthLocked(tag string, scope MeasurementScope, history *adapter.URLTestHistory) (healthUpdated bool, displayUpdated bool) {
+	if existing, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded || isNewerEvidence(history.Time, existing.Time) {
+		s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}] = *history
+		healthUpdated = true
+	}
+	if existing, loaded := s.displayHistory[tag]; !loaded || isNewerEvidence(history.Time, existing.History.Time) {
+		s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
+		displayUpdated = true
+	}
+	return
+}
+
+// StoreDisplayHistoryIfUnchanged is the display-layer counterpart: a manual probe that started
+// before an evidence drop must not recreate the entry the drop removed.
+func (s *HistoryStorage) StoreDisplayHistoryIfUnchanged(tag string, scope MeasurementScope, history *adapter.URLTestHistory, epoch uint64) bool {
+	if s == nil || history == nil {
+		return false
+	}
+	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return false
+	}
+	if s.evidenceEpoch != epoch {
+		s.access.Unlock()
+		return false
+	}
+	s.storeDisplayLocked(tag, scope, history)
+	s.access.Unlock()
+	s.notifyUpdated()
+	return true
 }
 
 // isNewerEvidence reports whether a measurement is newer evidence than the one already stored.
@@ -233,6 +308,9 @@ func (s *HistoryStorage) DeleteHealthHistory(tag string, scope MeasurementScope)
 		return
 	}
 	delete(s.healthHistory, scopedHistoryKey{Tag: tag, Scope: scope})
+	// This is an evidence DROP, not the failure path of one attempt: an in-flight probe that
+	// started before it must not store its result afterwards.
+	s.evidenceEpoch++
 	s.access.Unlock()
 	s.notifyUpdated()
 }
@@ -284,6 +362,9 @@ func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
 			delete(s.healthHistory, key)
 		}
 	}
+	// The node is gone or its evidence was dropped: any probe that started before this point
+	// describes a member the drop was meant to forget.
+	s.evidenceEpoch++
 	s.access.Unlock()
 	s.notifyUpdated()
 }
