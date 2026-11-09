@@ -553,6 +553,17 @@ const (
 	migrationUnknown
 )
 
+// migrationTrace, when set, receives one line per network-change attempt and the reason it ended.
+// It is nil in production (no allocation, no formatting) and set by the namespace evidence test,
+// whose failure modes are only visible from inside the attempt.
+var migrationTrace func(format string, args ...any)
+
+func traceMigration(format string, args ...any) {
+	if migrationTrace != nil {
+		migrationTrace(format, args...)
+	}
+}
+
 // migrate moves conn onto a candidate socket created through the production dialer. It owns the
 // candidate for the whole attempt: every failure closes the socket it created, and the one
 // success hands the socket to the connection.
@@ -560,8 +571,15 @@ func (c *Client) migrate(conn *clientConnection) migrationOutcome {
 	ctx, cancel := context.WithTimeout(c.ctx, migrationProbeBudget+migrationRetireBudget)
 	defer cancel()
 
+	// A network change is exactly when the old socket starts failing: the route is gone and a
+	// write on it returns a hard error. Open the migration window so that failure is treated as
+	// the path being left instead of ending the connection the attempt is trying to save.
+	stopExpectation := conn.ExpectPathSwitch(migrationProbeBudget + migrationRetireBudget + time.Second)
+	defer stopExpectation()
+
 	candidateSocket, err := c.dialer.DialContext(ctx, "udp", c.serverAddr)
 	if err != nil {
+		traceMigration("candidate dial failed: %v", err)
 		return migrationUnchanged
 	}
 	candidate := &pathSocket{socket: candidateSocket}
@@ -577,6 +595,7 @@ func (c *Client) migrate(conn *clientConnection) migrationOutcome {
 	candidate.transport = candidateTransport
 	path, err := conn.AddPath(candidateTransport)
 	if err != nil {
+		traceMigration("add path failed: %v", err)
 		candidate.close()
 		return migrationUnchanged
 	}
@@ -584,6 +603,7 @@ func (c *Client) migrate(conn *clientConnection) migrationOutcome {
 	err = path.Probe(probeCtx)
 	probeCancel()
 	if err != nil {
+		traceMigration("probe failed: %v", err)
 		// Abandoning the path detaches the connection from the candidate transport, which is what
 		// makes closing its socket safe: otherwise the socket's read error would destroy conn.
 		_ = path.Close()
@@ -594,6 +614,7 @@ func (c *Client) migrate(conn *clientConnection) migrationOutcome {
 		return migrationUnchanged
 	}
 	if err := path.Switch(); err != nil {
+		traceMigration("switch failed: %v", err)
 		_ = path.Close()
 		candidate.close()
 		return migrationUnchanged
@@ -603,12 +624,14 @@ func (c *Client) migrate(conn *clientConnection) migrationOutcome {
 	// candidate, so a failure here cannot be reported as "nothing changed".
 	previous := conn.currentPath()
 	if previous == nil {
+		traceMigration("no previous path recorded for this connection")
 		return migrationUnknown
 	}
 	retireCtx, retireCancel := context.WithTimeout(ctx, migrationRetireBudget)
 	err = conn.RetireTransport(retireCtx, previous.transport)
 	retireCancel()
 	if err != nil {
+		traceMigration("retire failed: %v", err)
 		return migrationUnknown
 	}
 	// The old transport no longer routes to this connection, so closing its socket cannot reach it.

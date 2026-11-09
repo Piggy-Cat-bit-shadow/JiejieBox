@@ -130,8 +130,14 @@ type migrationStreamState struct {
 }
 
 func startMigrationServer(t *testing.T, acknowledge func(sequence uint64) bool) *migrationServer {
+	return startMigrationServerAt(t, "127.0.0.1:0", acknowledge)
+}
+
+// startMigrationServerAt is the same endpoint bound to a given address: the namespace test needs
+// every address of its namespace, the loopback tests need the default one.
+func startMigrationServerAt(t *testing.T, address string, acknowledge func(sequence uint64) bool) *migrationServer {
 	t.Helper()
-	listener, err := quic.ListenAddr("127.0.0.1:0", migrationTLSConfig(t), &quic.Config{})
+	listener, err := quic.ListenAddr(address, migrationTLSConfig(t), &quic.Config{})
 	require.NoError(t, err)
 	server := &migrationServer{listener: listener, addr: listener.Addr(), acknowledge: acknowledge}
 	t.Cleanup(func() { _ = listener.Close() })
