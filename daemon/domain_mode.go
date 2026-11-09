@@ -35,7 +35,10 @@ import (
 type DomainStatus string
 
 const (
-	DomainStatusCommitted       DomainStatus = "committed"
+	DomainStatusCommitted DomainStatus = "committed"
+	// DomainStatusPartial means part of the domain's work was applied and part was not; the
+	// report carries the per-item detail so a caller can retry exactly what is left.
+	DomainStatusPartial         DomainStatus = "partial"
 	DomainStatusUnchanged       DomainStatus = "unchanged"
 	DomainStatusUnsupported     DomainStatus = "unsupported"
 	DomainStatusRestartRequired DomainStatus = "restart_required"
