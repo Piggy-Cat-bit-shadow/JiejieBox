@@ -29,6 +29,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// configRecoveryDirectoryName is where the daemon keeps the last-good configuration transaction
+// inside the per-user working directory. It is beside configuration.json: the snapshot is what the
+// last start asked for, this directory is what actually worked.
+const configRecoveryDirectoryName = "config-recovery"
+
 type Daemon struct {
 	ctx                     context.Context
 	logger                  log.ContextLogger
@@ -215,6 +220,11 @@ func (d *Daemon) startServiceLocked(ctx context.Context, ownerUserID string, con
 	if err != nil {
 		return err
 	}
+	// The last-good configuration transaction runs on the daemon's real start path, against the
+	// same persistent per-user directory the configuration snapshot lives in. It is enabled HERE
+	// rather than in the constructor because the directory is only resolved at start time; other
+	// embedders (libbox's clients, attached services) keep the opt-in default and are unaffected.
+	d.startedService.ConfigureConfigRecovery(filepath.Join(directory, configRecoveryDirectoryName), true)
 	_ = os.WriteFile(filepath.Join(directory, configSnapshotFileName), []byte(configContent), 0o600)
 	libbox.ReloadSetupOptions(&libbox.SetupOptions{
 		OomKillerEnabled:   options.OOMKillerEnabled,
@@ -239,6 +249,10 @@ func (d *Daemon) startServiceLocked(ctx context.Context, ownerUserID string, con
 		}
 	}
 	err = d.startedService.StartOrReloadService(ctx, configContent, nil)
+	if recovery := d.startedService.LastConfigRecovery(); recovery != nil {
+		d.logger.Warn("configuration recovered after a failed start: ", recovery.Error,
+			"; running revision ", recovery.ActiveRevision, " instead of ", recovery.FailedRevision)
+	}
 	if err != nil && d.platform != nil {
 		return E.Errors(err, d.platform.ResetPlatformOptions())
 	}
