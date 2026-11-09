@@ -1022,6 +1022,13 @@ type packetUplink struct {
 	// It is a byte queue rather than a list of write-sized slices so that a
 	// batch is a subslice of it: no copy is made on the way to the wire.
 	pending []byte
+	// pendingAlloc and inFlightAlloc are the allocation ledger's ownership records
+	// for the array behind pending (see packetup_alloc.go). Each live array is
+	// charged once by capacity; pendingAlloc is the queue's reference and
+	// inFlightAlloc the reference a POST holds while it carries a slice of the same
+	// array. The last reference to leave releases the capacity.
+	pendingAlloc  *packetUpAllocation
+	inFlightAlloc *packetUpAllocation
 	// maxPending bounds the queue. A writer that would exceed it waits, so a
 	// stalled path applies backpressure instead of growing memory without limit.
 	// The shared budget bounds the SUM across streams; this bounds one.
@@ -1040,10 +1047,11 @@ type packetUplink struct {
 	// Accounting for the byte budget. These are read only under access, so a
 	// snapshot is one consistent moment rather than a set of separately current
 	// reads. PendingBytes is the LOGICAL queued count; RetainedCapacity is the
-	// array the queue is using, which can be larger after a burst and is
-	// reported separately rather than presented as footprint. InFlightBytes is
-	// the slice a POST currently owns: it has left the queue but the allocation
-	// is still alive, so a reader must add it to know what the stream retains.
+	// capacity of the array the queue holds, which can be larger than the payload and
+	// is reported separately rather than presented as footprint. InFlightBytes is
+	// the slice a POST currently owns: it has left the queue but the array is still
+	// alive, so a reader must look at AllocatedCapacity (which counts both) to know
+	// what the stream retains.
 	inFlightBytes int
 	// High-water marks are for tests and diagnosis: they answer "what was the
 	// worst moment", which a snapshot after the burst cannot.
@@ -1086,17 +1094,30 @@ type packetUplinkStats struct {
 	// the two numbers are one charge seen from two owners. Zero means the uplink
 	// was built without a shared pool, so the per-stream bound is the only one.
 	SharedHeldBytes int
+	// AllocatedCapacity is what this stream's queue ARRAYS hold in the allocation
+	// ledger: the capacity the stream retains, which can exceed
+	// PendingBytes+InFlightBytes when a batch's suffix still references the array the
+	// POST is reading, and can exceed RetainedCapacity when the POST holds an array
+	// the queue has already stopped using. Zero means no shared pool.
+	AllocatedCapacity int
 }
 
 // stats reads the accounting under the queue lock.
 func (u *packetUplink) stats() packetUplinkStats {
 	u.access.Lock()
 	defer u.access.Unlock()
-	retained := cap(u.pending)
-	// held() takes the pool's own lock, which is always ordered AFTER this one
-	// (see uplink_budget.go), so snapshotting both here is safe and gives one
-	// consistent pair.
+	// The array's capacity, not cap(pending): cap() of a re-sliced queue shrinks as
+	// batches leave the front, which would under-report exactly the retention this
+	// field exists to expose (the audit's P1-B).
+	retained := 0
+	if u.pendingAlloc != nil {
+		retained = u.pendingAlloc.capacity
+	}
+	// held() and allocatedFor() take the pool's own lock, which is always ordered
+	// AFTER this one (see uplink_budget.go), so snapshotting both here is safe and
+	// gives one consistent pair.
 	held := u.budget.held(u)
+	allocated := u.budget.allocatedFor(u)
 	return packetUplinkStats{
 		MaxPending:        u.maxPending,
 		PendingBytes:      len(u.pending),
@@ -1108,6 +1129,7 @@ func (u *packetUplink) stats() packetUplinkStats {
 		PostedBytes:       u.postedBytes,
 		AbandonedBytes:    u.abandonedBytes,
 		SharedHeldBytes:   held,
+		AllocatedCapacity: allocated,
 	}
 }
 
@@ -1320,6 +1342,35 @@ func (u *packetUplink) write(b []byte) (int, error) {
 		if want > available {
 			want = available
 		}
+		// No single array needs to be larger than everything the logical pools can
+		// charge: a stream whose append is bigger than that queues the rest in later
+		// chunks, and this cap is what keeps one stream's array inside the allocation
+		// ledger's bound (see packetup_alloc.go).
+		if maxArray := u.budget.maxArrayBytes(); maxArray > 0 && want > maxArray {
+			want = maxArray
+		}
+		// Reserve the queue array's capacity BEFORE the logical pools are charged and
+		// before append can allocate: see packetup_alloc.go. If the allocation ledger
+		// is full, leave without holding anything and wait for a release; nothing is
+		// charged, so there is nothing to unwind.
+		if !u.ensureQueueCapacityLocked(want) {
+			// reserveAllocation registered this stream as an allocation waiter. It
+			// must STAY registered: that list is how a capacity release reaches this
+			// writer's wake channel. Withdrawing here would drop the only signal the
+			// wait depends on.
+			//
+			// It must, however, give up the MAIN pool's head: only the head may draw
+			// on the main pool, and this writer is not waiting for that. Holding the
+			// head while waiting for an array would stall the writers behind it, whose
+			// progress is what frees the arrays it is waiting for.
+			u.budget.yieldMainWaiter(u)
+			u.access.Unlock()
+			select {
+			case <-wake:
+			case <-u.done:
+			}
+			continue
+		}
 		granted := u.takeBudget(want, small, openLeft)
 		if granted > 0 {
 			u.pending = append(u.pending, b[written:written+granted]...)
@@ -1459,16 +1510,18 @@ func (u *packetUplink) run() {
 		}
 		payload := u.pending[:size]
 		u.pending = u.pending[size:]
-		if len(u.pending) == 0 {
+		// The payload has left the queue but still owns its bytes: a POST is
+		// building the request over this slice, so the ARRAY is alive until the post
+		// returns. Ownership moves to the post when the queue is now empty, or is
+		// shared with it otherwise; either way the allocation stays charged until the
+		// last reference leaves (see packetup_alloc.go).
+		remaining := len(u.pending)
+		u.takeInFlightAllocationLocked(remaining)
+		if remaining == 0 {
 			// Drop the consumed prefix so the next burst starts a fresh array
 			// instead of carrying a growing offset.
 			u.pending = nil
 		}
-		// The payload has left the queue but still owns its bytes: a POST is
-		// building the request over this slice, so the allocation is alive until
-		// the post returns. It is accounted separately from pending for exactly
-		// that reason - summing only pending would understate what the stream
-		// retains during a post.
 		u.inFlightBytes = len(payload)
 		if u.inFlightBytes > u.inFlightHighWater {
 			u.inFlightHighWater = u.inFlightBytes
@@ -1493,8 +1546,10 @@ func (u *packetUplink) run() {
 		// Settlement: whether the post was delivered or lost, the bytes it owned
 		// stop being retained here, so they stop being charged here. Posted and
 		// abandoned are two outcomes of ONE ownership release, not two code paths
-		// that each have to remember the pool.
+		// that each have to remember the pool. The array's capacity is released by
+		// the same step, when this was its last reference.
 		u.releaseBudgetLocked(len(payload))
+		u.releaseInFlightAllocationLocked()
 		u.access.Unlock()
 		u.budget.wakeWaiters()
 		if postErr != nil {
@@ -1507,9 +1562,9 @@ func (u *packetUplink) run() {
 // sendPacket posts one batch as a single sequenced upload request.
 //
 // The payload is a subslice of the queue, so it must not be written to after the
-// hand-off; writers only ever append past the region this post owns, and append
-// reallocating the array leaves this slice pointing at the old one, which is
-// still intact.
+// hand-off; writers only ever append past the region this post owns. A write that
+// needs a bigger queue copies to a NEW array (see ensureQueueCapacityLocked), so the
+// array this slice belongs to is never overwritten while the post reads it.
 func (u *packetUplink) sendPacket(payload []byte) error {
 	u.access.Lock()
 	// Only a failed or aborted queue stops a post. `closed` deliberately does
@@ -1673,12 +1728,14 @@ func (u *packetUplink) fail(err error) {
 func (u *packetUplink) abandonPendingLocked() {
 	if len(u.pending) == 0 {
 		u.pending = nil
+		u.dropPendingAllocationLocked()
 		return
 	}
 	abandoned := len(u.pending)
 	u.abandonedBytes += uint64(abandoned)
 	u.pending = nil
 	u.releaseBudgetLocked(abandoned)
+	u.dropPendingAllocationLocked()
 }
 
 func (c *packetConn) Close() error {

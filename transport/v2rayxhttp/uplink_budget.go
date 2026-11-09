@@ -106,10 +106,32 @@ type sharedUplinkBudget struct {
 	// "what did the worst moment look like" that a snapshot after the burst cannot
 	// give.
 	peak int
+	// The allocation ledger: the queue's ARRAYS, charged by capacity before they are
+	// allocated and released when their last reference leaves. It is a separate
+	// ledger from the logical byte pools because the two measure different things:
+	// the pools bound what is queued, this bounds what is retained. See
+	// packetup_alloc.go for why that distinction is a correctness requirement and
+	// not a reporting detail.
+	//
+	// maxArray is the largest array one stream can need: the logical aggregate, since
+	// no stream can queue more than every pool together can charge. A single append
+	// is chunked to that size, which keeps one stream's array inside the ledger's
+	// bound while the whole write still completes.
+	allocCapacity int
+	allocated     int
+	allocPeak     int
+	allocGranted  uint64
+	allocReleased uint64
+	allocLeftover uint64
+	maxArray      int
 	// charges is the per-stream breakdown: one entry per live uplink.
 	charges map[*packetUplink]*uplinkBudgetCharge
-	// waiters holds the streams waiting for capacity, oldest first.
+	// waiters holds the streams waiting for main-pool capacity, oldest first.
 	waiters []*packetUplink
+	// allocWaiters holds the streams waiting for allocation capacity. It is a
+	// separate list on purpose: sharing one list would let a stream waiting for
+	// memory become the main pool's head and stall capacity it is not asking for.
+	allocWaiters []*packetUplink
 	// granted and released are the pool's lifetime flow, and the conservation
 	// check: granted - released == used + controlUsed + reservedUsed at every
 	// quiescent point.
@@ -131,6 +153,11 @@ type uplinkBudgetCharge struct {
 	main    int
 	control int
 	reserve int
+	// alloc is the capacity this stream's live queue arrays have charged to the
+	// allocation ledger. It is tracked per stream so a snapshot can name the owner;
+	// the individual allocations each carry their own charge as well, because one
+	// array can be shared by the queue and a post (see packetup_alloc.go).
+	alloc int
 }
 
 // uplinkBudgetStats is a consistent snapshot of the shared pool.
@@ -139,10 +166,14 @@ type uplinkBudgetCharge struct {
 //
 //	Used            == Σ stream.main
 //	ControlUsed     == Σ stream.control      ReservedUsed == Σ stream.reserve
+//	Allocated       == Σ stream.alloc
 //	GrantedBytes - ReleasedBytes == Used + ControlUsed + ReservedUsed
+//	AllocGrantedBytes - AllocReleasedBytes == Allocated
 //	Used <= Capacity
 //	ControlUsed <= Control                   ReservedUsed <= Reserve
+//	Allocated <= AllocCapacity
 //	Peak <= Capacity + Control + Reserve
+//	AllocPeak >= Allocated
 type uplinkBudgetStats struct {
 	Capacity     int
 	Control      int
@@ -153,14 +184,30 @@ type uplinkBudgetStats struct {
 	Peak         int
 	Streams      int
 	Waiters      int
-	// GrantedBytes and ReleasedBytes count every pool's grants and releases.
+	// The allocation ledger. AllocCapacity bounds Allocated, the capacity of the queue
+	// arrays the streams retain right now: a different number from
+	// Used+ControlUsed+ReservedUsed whenever an array is larger than its payload, and
+	// the one that answers "how much memory does the queue hold". AllocPeak is the
+	// worst (Allocated plus the old array a replacement still had to copy from), i.e.
+	// the real overlap peak rather than the settled one.
+	AllocCapacity int
+	Allocated     int
+	AllocPeak     int
+	AllocWaiters  int
+	// GrantedBytes and ReleasedBytes count every logical pool's grants and releases.
 	GrantedBytes  uint64
 	ReleasedBytes uint64
+	// AllocGrantedBytes and AllocReleasedBytes are the same flow for the capacity
+	// ledger.
+	AllocGrantedBytes  uint64
+	AllocReleasedBytes uint64
 	// ExcessReleases and LeftoverBytes are defect counters, not policy: both
 	// must be zero. ExcessReleases counts over-releases; LeftoverBytes counts
 	// charges still held by a stream whose flusher exited.
 	ExcessReleases uint64
 	LeftoverBytes  uint64
+	// LeftoverAllocBytes is LeftoverBytes for the allocation ledger.
+	LeftoverAllocBytes uint64
 }
 
 // Total is the aggregate the three pools have charged, the number that must return
@@ -276,8 +323,30 @@ func newSharedUplinkBudgetWithControl(capacity, reserve, control int) *sharedUpl
 		capacity: capacity,
 		control:  control,
 		reserve:  reserve,
-		charges:  make(map[*packetUplink]*uplinkBudgetCharge),
+		// The allocation ledger's bound: the queue arrays are grown geometrically
+		// (see packetUpQueueCapacity), so the controlled capacity can exceed the
+		// logical aggregate by at most that growth factor. The bound is expressed as a
+		// multiple of the logical aggregate so the two scale together with
+		// sc_max_each_post_bytes instead of drifting apart. The extra granule covers
+		// the rounding of a replacement that is sized from the logical aggregate
+		// (pktUpMaxArray), so one stream's array always fits the bound on its own.
+		allocCapacity: packetUpAllocOverCommit*(capacity+control+reserve) + 2*packetUpAllocGranule,
+		maxArray:      pktUpMaxArray(capacity, control, reserve),
+		charges:       make(map[*packetUplink]*uplinkBudgetCharge),
 	}
+}
+
+// pktUpMaxArray is the largest single append the pool will accept into one queue
+// array: the logical aggregate. A stream cannot queue more than all three pools
+// together can charge, so a larger array could never be filled; chunking a huge Write
+// to this size keeps every array inside the allocation bound while Write still accepts
+// the whole payload over successive chunks.
+func pktUpMaxArray(capacity, control, reserve int) int {
+	total := capacity + control + reserve
+	if total < packetUpAllocGranule {
+		return packetUpAllocGranule
+	}
+	return total
 }
 
 // register adds an uplink to the pool. It is called once, from newPacketUplink,
@@ -432,7 +501,7 @@ func (b *sharedUplinkBudget) release(u *packetUplink, n int) {
 	b.wakeWaiters()
 }
 
-// withdraw removes u from the waiters list. A writer calls it when it leaves
+// withdraw removes u from both waiters lists. A writer calls it when it leaves
 // without a charge (closed, failed), so a dead stream cannot sit at the head and
 // block the others.
 func (b *sharedUplinkBudget) withdraw(u *packetUplink) {
@@ -441,6 +510,7 @@ func (b *sharedUplinkBudget) withdraw(u *packetUplink) {
 	}
 	b.access.Lock()
 	moved := b.removeWaiterLocked(u)
+	b.removeAllocWaiterLocked(u)
 	b.access.Unlock()
 	if moved {
 		b.wakeWaiters()
@@ -449,7 +519,8 @@ func (b *sharedUplinkBudget) withdraw(u *packetUplink) {
 
 // unregister drops a stream whose flusher exited, releasing anything it still
 // held (which must be nothing) and returning the leftover for the caller to
-// report. Leftover bytes are counted in the snapshot's LeftoverBytes.
+// report. Leftover bytes are counted in the snapshot's LeftoverBytes, and leftover
+// allocation capacity in LeftoverAllocBytes.
 func (b *sharedUplinkBudget) unregister(u *packetUplink) int {
 	if b == nil {
 		return 0
@@ -461,13 +532,20 @@ func (b *sharedUplinkBudget) unregister(u *packetUplink) int {
 		return 0
 	}
 	leftover := charge.main + charge.control + charge.reserve
+	leftoverAlloc := charge.alloc
 	b.used -= charge.main
 	b.controlUsed -= charge.control
 	b.reservedUsed -= charge.reserve
+	b.allocated -= leftoverAlloc
 	b.released += uint64(leftover)
+	b.allocReleased += uint64(leftoverAlloc)
 	b.leftover += uint64(leftover)
+	if leftoverAlloc > 0 {
+		b.allocLeftover += uint64(leftoverAlloc)
+	}
 	delete(b.charges, u)
 	b.removeWaiterLocked(u)
+	b.removeAllocWaiterLocked(u)
 	b.access.Unlock()
 	b.wakeWaiters()
 	return leftover
@@ -497,34 +575,44 @@ func (b *sharedUplinkBudget) stats() uplinkBudgetStats {
 	b.access.Lock()
 	defer b.access.Unlock()
 	return uplinkBudgetStats{
-		Capacity:       b.capacity,
-		Control:        b.control,
-		Reserve:        b.reserve,
-		Used:           b.used,
-		ControlUsed:    b.controlUsed,
-		ReservedUsed:   b.reservedUsed,
-		Peak:           b.peak,
-		Streams:        len(b.charges),
-		Waiters:        len(b.waiters),
-		GrantedBytes:   b.granted,
-		ReleasedBytes:  b.released,
-		ExcessReleases: b.excessReleases,
-		LeftoverBytes:  b.leftover,
+		Capacity:           b.capacity,
+		Control:            b.control,
+		Reserve:            b.reserve,
+		Used:               b.used,
+		ControlUsed:        b.controlUsed,
+		ReservedUsed:       b.reservedUsed,
+		Peak:               b.peak,
+		Streams:            len(b.charges),
+		Waiters:            len(b.waiters),
+		AllocCapacity:      b.allocCapacity,
+		Allocated:          b.allocated,
+		AllocPeak:          b.allocPeak,
+		AllocWaiters:       len(b.allocWaiters),
+		GrantedBytes:       b.granted,
+		ReleasedBytes:      b.released,
+		AllocGrantedBytes:  b.allocGranted,
+		AllocReleasedBytes: b.allocReleased,
+		ExcessReleases:     b.excessReleases,
+		LeftoverBytes:      b.leftover,
+		LeftoverAllocBytes: b.allocLeftover,
 	}
 }
 
 // wakeWaiters wakes every stream currently waiting for capacity. It is called
-// after a release, after a grant (the head moved) and after a waiter left. The
-// broadcast happens after the pool lock is dropped, so a wake-up can never
-// participate in a lock cycle even when the caller still holds its own uplink's
-// lock.
+// after a release, after a grant (the head moved), after an allocation release and
+// after a waiter left. AllocWaiters is included: a stream parked for a new array
+// waits on the same per-uplink wake channel as a stream parked for main-pool room,
+// and only this broadcast can reach it. The broadcast happens after the pool lock is
+// dropped, so a wake-up can never participate in a lock cycle even when the caller
+// still holds its own uplink's lock.
 func (b *sharedUplinkBudget) wakeWaiters() {
 	if b == nil {
 		return
 	}
 	b.access.Lock()
-	waiters := make([]*packetUplink, len(b.waiters))
-	copy(waiters, b.waiters)
+	waiters := make([]*packetUplink, 0, len(b.waiters)+len(b.allocWaiters))
+	waiters = append(waiters, b.waiters...)
+	waiters = append(waiters, b.allocWaiters...)
 	b.access.Unlock()
 	for _, waiter := range waiters {
 		waiter.broadcastWake()
