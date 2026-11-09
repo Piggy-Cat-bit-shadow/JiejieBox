@@ -4,9 +4,12 @@ package v2rayquic
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
@@ -35,6 +38,14 @@ var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
 //
 // The shape mirrors the QUIC shared offer in the pinned sing-quic client (pending offer + per-waiter
 // select + discard-once on the owner); this transport is the in-repo owner of the same pattern.
+//
+// # A network change keeps the flow
+//
+// Reset runs on every physical network change. Closing the shared connection there drops every
+// stream on it, so the client first tries to MOVE that connection onto a socket of the new
+// network: candidate socket -> AddPath -> bounded Probe -> Switch -> wait until the run loop has
+// actually installed the new send path -> retire the old transport -> close the old socket. Only
+// when that cannot be done is the generation retired the old way and replaced by a later dial.
 type Client struct {
 	ctx        context.Context
 	cancel     context.CancelCauseFunc
@@ -48,10 +59,69 @@ type Client struct {
 	// connAccess; the offer goroutine owns the result and publishes it under the same lock.
 	pending   *clientOffer
 	closeIdle atomic.Bool
+	// migrateAccess serializes network-change migrations: one candidate is in flight per client,
+	// so a burst of interface notifications cannot leave a pile of sockets behind.
+	migrateAccess sync.Mutex
 	// dialConn is the constructor a pending offer runs. NewClient points it at offerNew; the
 	// shared-task tests replace it so they can hold a dial open and decide its result without a QUIC
 	// handshake. Production never reads it from outside this package.
 	dialConn func(ctx context.Context) (*clientConnection, error)
+}
+
+// The migration budgets. A candidate is validated in at most migrationProbeBudget, and the wait
+// for the run loop to install the new send path is bounded separately, so a network change with
+// open flows costs at most the two together before it decides to keep or retire the generation.
+const (
+	migrationProbeBudget  = 2 * time.Second
+	migrationRetireBudget = 2 * time.Second
+)
+
+// pathSocket is one socket the shared connection sends on, the transport that owns it, and its
+// one close action. The transport is nil only if the pinned library did not report the transport
+// it dialed through, which it does for every client connection.
+type pathSocket struct {
+	socket    net.Conn
+	transport *quic.Transport
+	closeOnce sync.Once
+}
+
+// close closes the socket exactly once. Several owners reach here - the failed attempt that
+// created it, the migration that replaced it, and the goroutine waiting for the connection to end
+// - and only the first of them is the close.
+func (p *pathSocket) close() {
+	p.closeOnce.Do(func() {
+		_ = p.socket.Close()
+	})
+}
+
+// connectedPacketConn presents the connected socket a dialer returns for "udp" as the
+// net.PacketConn a path transport needs: every packet goes to the peer the socket is already
+// connected to, and the address argument is ignored. quic-go's own quic.DialConn wraps a socket
+// the same way; a path transport needs the same shape because a path is validated by sending to
+// the destination on that socket, not by opening a second connection.
+type connectedPacketConn struct {
+	net.Conn
+}
+
+func (c connectedPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+	read, err := c.Conn.Read(buffer)
+	return read, c.Conn.RemoteAddr(), err
+}
+
+func (c connectedPacketConn) WriteTo(buffer []byte, _ net.Addr) (int, error) {
+	return c.Conn.Write(buffer)
+}
+
+// SyscallConn forwards the raw socket when the dialer's conn exposes one, so the path transport
+// keeps the receive/send buffer tuning and batching quic-go only enables for a socket it can
+// reach through syscall.RawConn. It returns an error instead of panicking for a dialer whose conn
+// is not a real socket: quic-go then falls back to its basic (unoptimized) transport.
+func (c connectedPacketConn) SyscallConn() (syscall.RawConn, error) {
+	raw, isRaw := c.Conn.(syscall.Conn)
+	if !isRaw {
+		return nil, errors.New("the dialed socket is not a syscall.Conn")
+	}
+	return raw.SyscallConn()
 }
 
 // clientConnection is one shared QUIC connection plus the ownership state the pool needs.
@@ -69,6 +139,40 @@ type clientConnection struct {
 	streams   int
 	closed    bool
 	closeIdle *atomic.Bool
+	// failedMigrations counts candidate validations that ended at their own deadline without a
+	// switch. A path that cannot be validated once is worth one retry, because a probe can be
+	// lost on a bad moment of a live network; after two, the connection-ID budget this peer
+	// offers for path validation is spent and every later attempt would only stall the network
+	// change by the probe budget. The generation is then retired the way it was before migration.
+	failedMigrations int
+	// pathAccess guards the socket the connection currently sends on. It is replaced only by a
+	// successful migration, under the client's migrateAccess.
+	pathAccess sync.Mutex
+	path       *pathSocket
+}
+
+// noteFailedMigration records a candidate that ended at its own deadline, and reports whether
+// another candidate is still worth trying for this connection.
+func (c *clientConnection) noteFailedMigration() bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	c.failedMigrations++
+	return c.failedMigrations < 2
+}
+
+// migrationAvailable reports whether another candidate is worth trying for this connection.
+func (c *clientConnection) migrationAvailable() bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return c.failedMigrations < 2
+}
+
+// noteMigrated clears the failure count: the connection moved, so the next network change starts
+// its validation budget over.
+func (c *clientConnection) noteMigrated() {
+	c.access.Lock()
+	c.failedMigrations = 0
+	c.access.Unlock()
 }
 
 func (c *clientConnection) active() bool {
@@ -104,6 +208,36 @@ func (c *clientConnection) markClosedLocked() bool {
 	}
 	c.closed = true
 	return true
+}
+
+// hasStreams reports whether the connection carries flows that a network change must preserve.
+// A generation with nothing on it is retired the old way: a fresh dial is both cheaper and
+// simpler than moving a socket nobody is using.
+func (c *clientConnection) hasStreams() bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return c.streams > 0 && !c.closed
+}
+
+// currentPath returns the socket the connection sends on, as of the last applied switch.
+func (c *clientConnection) currentPath() *pathSocket {
+	c.pathAccess.Lock()
+	defer c.pathAccess.Unlock()
+	return c.path
+}
+
+// adoptPath publishes the socket a migration moved the connection to and closes nothing here:
+// the caller retires the transport of the previous path first and lets adopt close its socket.
+func (c *clientConnection) adoptPath(path *pathSocket) {
+	c.pathAccess.Lock()
+	previous := c.path
+	c.path = path
+	c.pathAccess.Unlock()
+	if previous != nil {
+		// The transport behind the previous socket has been retired already, which is what makes
+		// closing its socket safe: no connection is registered on it any more.
+		previous.close()
+	}
 }
 
 // closeConn tears the underlying QUIC connection down exactly once. The once guard is the release
@@ -235,14 +369,16 @@ func (c *Client) offerNew(ctx context.Context) (*clientConnection, error) {
 	}
 	// quic-go does not take ownership of the conn passed to Dial:
 	// when the connection ends it only stops reading.
+	socket := &pathSocket{socket: udpConn, transport: quicConn.HandshakeTransport()}
 	go func() {
 		<-quicConn.Context().Done()
-		udpConn.Close()
+		socket.close()
 	}()
 	conn := &clientConnection{
 		Conn:      quicConn,
 		ctx:       quicConn.Context(),
 		closeIdle: &c.closeIdle,
+		path:      socket,
 	}
 	conn.closeFn = func() { _ = quicConn.CloseWithError(0, "") }
 	return conn, nil
@@ -319,8 +455,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Reset aborts the CURRENT connection and any creation in flight, but keeps the client usable:
-// a later offer may establish a fresh connection from the client's still-live context.
+// Reset handles one physical network change, and keeps the client usable afterwards.
 //
 // # Why this is not Close
 //
@@ -329,9 +464,30 @@ func (c *Client) Close() error {
 // the network hook therefore left a VLESS/VMess/Trojan transport.type=quic instance unable to dial
 // again after the first change. Reset performs the same discard-and-close of the current object
 // without ending the client's lifetime; Scope.Close (or the explicit Close call) still does that.
+//
+// # What happens to the flows
+//
+// A network change used to end every stream on the shared connection. Reset now tries to move the
+// connection instead (see Client): with open flows it creates ONE candidate socket through the
+// same dialer, validates it, switches the connection onto it, retires the old transport and closes
+// the old socket. The already-open streams continue, with their sequence and both directions, on
+// the same QUIC connection.
+//
+// The outcome decides what is left behind:
+//
+//   - migrated: the connection and its streams continue on the new socket. Nothing is closed.
+//   - candidate failed before any switch was requested: the connection was never touched, so it
+//     stays exactly as it was (the old path may still be healthy). If that path has failed in the
+//     meantime the QUIC connection ends on its own, and the next demand dials a new generation.
+//   - switch requested but not confirmed: the send path is in an unknown state, so the generation
+//     is retired (close exactly once) and the next demand dials a bounded fresh connection.
+//
+// A generation with no open flows is always retired the old way: moving an idle connection keeps
+// a socket alive for nothing.
 func (c *Client) Reset() error {
+	// A creation that is still in flight belongs to the generation that just ended. It is
+	// discarded and its waiters are released, exactly as before the migration existed.
 	c.connAccess.Lock()
-	conn := c.conn.Swap(nil)
 	pending := c.pending
 	if pending != nil {
 		pending.discarded = true
@@ -353,12 +509,122 @@ func (c *Client) Reset() error {
 		}
 	}
 	c.connAccess.Unlock()
-
 	if pending != nil && pending.cancel != nil {
 		pending.cancel(net.ErrClosed)
 	}
-	if conn != nil {
-		conn.closeConn()
+
+	// One candidate per client: a second change waits for the first attempt to settle instead of
+	// running its own, so the socket peak stays at one extra.
+	c.migrateAccess.Lock()
+	defer c.migrateAccess.Unlock()
+
+	conn := c.conn.Load()
+	if conn == nil {
+		return nil
 	}
-	return nil
+	if !conn.hasStreams() || !conn.migrationAvailable() {
+		// Nothing to preserve, or no candidate can be validated any more: retire the generation
+		// the way it always was and let the next demand dial a fresh connection.
+		c.retireConnection(conn)
+		return nil
+	}
+	switch c.migrate(conn) {
+	case migrationMigrated, migrationUnchanged:
+		// The connection is still the published generation, either on its new socket or on the
+		// one it had. Nothing to retire.
+		return nil
+	default:
+		c.retireConnection(conn)
+		return nil
+	}
+}
+
+// migrationOutcome is what one network-change attempt achieved.
+type migrationOutcome int
+
+const (
+	// migrationMigrated: the connection now sends on the candidate socket.
+	migrationMigrated migrationOutcome = iota
+	// migrationUnchanged: the candidate failed before a switch was requested; the connection was
+	// never touched.
+	migrationUnchanged
+	// migrationUnknown: a switch has been requested and the connection's applied send path is
+	// not confirmed to be the candidate, so this generation must be retired.
+	migrationUnknown
+)
+
+// migrate moves conn onto a candidate socket created through the production dialer. It owns the
+// candidate for the whole attempt: every failure closes the socket it created, and the one
+// success hands the socket to the connection.
+func (c *Client) migrate(conn *clientConnection) migrationOutcome {
+	ctx, cancel := context.WithTimeout(c.ctx, migrationProbeBudget+migrationRetireBudget)
+	defer cancel()
+
+	candidateSocket, err := c.dialer.DialContext(ctx, "udp", c.serverAddr)
+	if err != nil {
+		return migrationUnchanged
+	}
+	candidate := &pathSocket{socket: candidateSocket}
+	// From here the socket is owned by this attempt or by the connection, never by both: if the
+	// connection ends the socket is closed exactly once by this goroutine, and a failed attempt
+	// closes it directly. pathSocket.close is idempotent.
+	go func() {
+		<-conn.Context().Done()
+		candidate.close()
+	}()
+
+	candidateTransport := &quic.Transport{Conn: connectedPacketConn{Conn: candidateSocket}}
+	candidate.transport = candidateTransport
+	path, err := conn.AddPath(candidateTransport)
+	if err != nil {
+		candidate.close()
+		return migrationUnchanged
+	}
+	probeCtx, probeCancel := context.WithTimeout(ctx, migrationProbeBudget)
+	err = path.Probe(probeCtx)
+	probeCancel()
+	if err != nil {
+		// Abandoning the path detaches the connection from the candidate transport, which is what
+		// makes closing its socket safe: otherwise the socket's read error would destroy conn.
+		_ = path.Close()
+		candidate.close()
+		if errors.Is(err, context.DeadlineExceeded) {
+			conn.noteFailedMigration()
+		}
+		return migrationUnchanged
+	}
+	if err := path.Switch(); err != nil {
+		_ = path.Close()
+		candidate.close()
+		return migrationUnchanged
+	}
+
+	// The switch is requested. Whatever happens next, the connection may already be sending on the
+	// candidate, so a failure here cannot be reported as "nothing changed".
+	previous := conn.currentPath()
+	if previous == nil {
+		return migrationUnknown
+	}
+	retireCtx, retireCancel := context.WithTimeout(ctx, migrationRetireBudget)
+	err = conn.RetireTransport(retireCtx, previous.transport)
+	retireCancel()
+	if err != nil {
+		return migrationUnknown
+	}
+	// The old transport no longer routes to this connection, so closing its socket cannot reach it.
+	// adoptPath performs that close and publishes the new socket.
+	conn.adoptPath(candidate)
+	conn.noteMigrated()
+	return migrationMigrated
+}
+
+// retireConnection removes conn from the pool (only if it is still the published generation) and
+// closes it exactly once. A newer generation published in the meantime is never touched.
+func (c *Client) retireConnection(conn *clientConnection) {
+	c.connAccess.Lock()
+	if c.conn.Load() == conn {
+		c.conn.Store(nil)
+	}
+	c.connAccess.Unlock()
+	conn.closeConn()
 }
