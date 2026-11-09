@@ -124,6 +124,18 @@ func (r *Router) HistoryStats() (HistoryStats, uint64, error) {
 	return history.Stats(), r.events.Dropped(), nil
 }
 
+// ClearHistory empties the live history and reports how many records it dropped.
+//
+// It is the management "start a fresh window" entry. A disabled history reports ErrHistoryNotEnabled
+// rather than pretending an empty window: the caller asked to clear a feature that is not running.
+func (r *Router) ClearHistory() (int, error) {
+	history := r.DNSHistory()
+	if history == nil {
+		return 0, ErrHistoryNotEnabled
+	}
+	return history.Clear(), nil
+}
+
 // closeHistory is the box-shutdown hook: the subscription belongs to the box, so it must not
 // outlive it.
 func (r *Router) closeHistory() error {
