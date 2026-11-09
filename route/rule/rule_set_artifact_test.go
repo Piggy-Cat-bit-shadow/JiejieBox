@@ -95,6 +95,11 @@ func TestRemoteRuleSetServesTheNewestStoredVersionAndKeepsTheOldOneExact(t *test
 	firstID := ruleSet.artifactLease.ID()
 	require.Equal(t, ruleSetDigest(payloads[0]), firstID, "the version reference is the content digest")
 
+	// A reader holds the first version across the update and the collection that follows it. This
+	// is the exact lease a pinned recovery would take: the bytes must stay readable.
+	oldLease, err := ruleSet.artifactStore.LoadExact(ruleSet.artifactKey, firstID)
+	require.NoError(t, err)
+
 	served.Store(1)
 	require.NoError(t, ruleSet.fetch(ctx, true))
 	require.True(t, remoteRuleSetMatches(t, ruleSet, "192.168.1.1"), "the refreshed version is live")
@@ -108,22 +113,20 @@ func TestRemoteRuleSetServesTheNewestStoredVersionAndKeepsTheOldOneExact(t *test
 	require.Equal(t, secondID, newest.ID())
 	newest.Release()
 
-	// LoadExact is the pinned entry point: the record of the first version still resolves to the
-	// bytes that were published for it.
-	exact, err := ruleSet.artifactStore.LoadExact(ruleSet.artifactKey, firstID)
-	require.NoError(t, err, "a published version must be addressable by its exact digest")
-	content, err := os.ReadFile(exact.Path())
-	require.NoError(t, err)
+	// The old version was not collected while its lease was held, and its bytes are the ones that
+	// were published for it.
+	content, err := os.ReadFile(oldLease.Path())
+	require.NoError(t, err, "a leased version must survive the update and its collection")
 	require.Equal(t, payloads[0], content)
 	require.Equal(t, firstID, ruleSetDigest(content))
-	exact.Release()
+	oldLease.Release()
 
-	// The live rule set holds a lease on the version it serves. Closing it drops that lease; the
-	// next collection removes the older version and keeps the newest.
+	// Without the lease, the next collection removes the older version and keeps the newest. The
+	// live rule set's own lease is dropped by Close first.
 	require.NoError(t, ruleSet.Close())
 	require.NoError(t, ruleSet.artifactStore.Collect(ruleSet.artifactKey))
 	_, err = ruleSet.artifactStore.LoadExact(ruleSet.artifactKey, firstID)
-	require.ErrorIs(t, err, os.ErrNotExist, "once no rule set serves the first version it is collectable")
+	require.ErrorIs(t, err, os.ErrNotExist, "once no reader holds the first version it is collectable")
 	newest, err = ruleSet.artifactStore.Load(ruleSet.artifactKey)
 	require.NoError(t, err, "the newest version is kept even when unleased")
 	require.Equal(t, secondID, newest.ID())

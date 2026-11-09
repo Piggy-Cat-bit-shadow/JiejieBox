@@ -387,7 +387,8 @@ func (s *Store) loadOnce(key string) (version *Version, vanished bool, err error
 }
 
 // Collect removes temp leftovers and unleased versions of key, keeping the newest version this
-// build can actually load.
+// build can actually load and any version named in retained (an exact reference a recovery record
+// still points at).
 //
 // "Can actually load" is the predicate Load uses, not a weaker one: the manifest must read, the
 // artifact must match the size and digest the manifest declares, and the manifest must be
@@ -395,9 +396,15 @@ func (s *Store) loadOnce(key string) (version *Version, vanished bool, err error
 // corrupted newest version and deleted the last one that loads - the corruption destroyed the
 // fallback instead of being removed - and it let another build's newer version evict the one this
 // build needs.
-func (s *Store) Collect(key string) error {
+func (s *Store) Collect(key string, retained ...string) error {
 	if s == nil {
 		return nil
+	}
+	retainedIDs := make(map[string]bool, len(retained))
+	for _, id := range retained {
+		if id != "" {
+			retainedIDs[id] = true
+		}
 	}
 	keyDir := filepath.Join(s.dir, key)
 	entries, err := os.ReadDir(keyDir)
@@ -416,6 +423,7 @@ func (s *Store) Collect(key string) error {
 	type candidate struct {
 		dir     string
 		created int64
+		digest  string
 	}
 	var valid []candidate
 	for _, entry := range entries {
@@ -453,11 +461,11 @@ func (s *Store) Collect(key string) error {
 		}
 		// A leased version still takes part in the ranking: "newest" is a property of the
 		// versions, not of who happens to be reading them. It is only protected from removal.
-		valid = append(valid, candidate{dir: full, created: manifest.Created})
+		valid = append(valid, candidate{dir: full, created: manifest.Created, digest: manifest.Digest})
 	}
 	sort.Slice(valid, func(i, j int) bool { return valid[i].created > valid[j].created })
 	for index, entry := range valid {
-		if index == 0 {
+		if index == 0 || retainedIDs[entry.digest] {
 			continue
 		}
 		s.removeIfUnleased(entry.dir)
