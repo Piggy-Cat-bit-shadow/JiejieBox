@@ -39,13 +39,15 @@ const (
 
 // carrierHandler answers every stream the AnyTLS service accepts with a loopback echo.
 type carrierHandler struct {
-	target  string
-	streams atomic.Int32
+	target     string
+	streams    atomic.Int32
+	streamEnds atomic.Int32
 }
 
 func (h *carrierHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	h.streams.Add(1)
 	go func() {
+		defer h.streamEnds.Add(1)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
@@ -200,6 +202,15 @@ func TestARealAnyTLSFlowSurvivesANetworkChangeByReconnecting(t *testing.T) {
 	if _, err := before.Write([]byte("stale")); err == nil {
 		t.Fatal("the pre-change AnyTLS flow still accepted a write: the old session was not retired")
 	}
+
+	// The retirement is also visible where it happens: the server-side stream that carried the old
+	// path finishes, within a bound. That is the release observation and the time bound this matrix
+	// row was missing.
+	retiredAt := time.Now()
+	require.Eventually(t, func() bool { return handler.streamEnds.Load() >= 1 },
+		5*time.Second, 10*time.Millisecond,
+		"the server never saw the retired AnyTLS stream end: the old session's release has no bound")
+	t.Logf("MEASURED old AnyTLS stream released %s after the network change", time.Since(retiredAt).Round(time.Millisecond))
 
 	after := roundTrip(t, outbound, "after-the-change")
 	_ = after.Close()

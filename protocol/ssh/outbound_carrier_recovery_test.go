@@ -46,6 +46,7 @@ type carrierSSHServer struct {
 	listener net.Listener
 	config   *ssh.ServerConfig
 	streams  atomic.Int32
+	closed   atomic.Int32
 }
 
 func startCarrierSSHServer(t *testing.T) *carrierSSHServer {
@@ -110,14 +111,25 @@ func (s *carrierSSHServer) serve(conn net.Conn) {
 		go ssh.DiscardRequests(channelRequests)
 		s.streams.Add(1)
 		go func() {
+			defer s.closed.Add(1)
 			defer channel.Close()
 			peer, dialErr := net.Dial("tcp", net.JoinHostPort(payload.Host, strconv.Itoa(int(payload.Port))))
 			if dialErr != nil {
 				return
 			}
 			defer peer.Close()
-			go func() { _, _ = io.Copy(peer, channel) }()
+			// The route path closes the whole flow when EITHER direction fails; this server must do the same,
+			// or a client that dies leaves the handler blocked on a peer that is still waiting for bytes.
+			uploadDone := make(chan struct{})
+			go func() {
+				defer close(uploadDone)
+				_, _ = io.Copy(peer, channel)
+				if tcpPeer, isTCP := peer.(*net.TCPConn); isTCP {
+					_ = tcpPeer.CloseWrite()
+				}
+			}()
 			_, _ = io.Copy(channel, peer)
+			<-uploadDone
 		}()
 	}
 }
@@ -208,6 +220,14 @@ func TestARealSSHFlowSurvivesANetworkChangeByReconnecting(t *testing.T) {
 	if _, err := before.Write([]byte("stale")); err == nil {
 		t.Fatal("the pre-change SSH flow still accepted a write: the old session was not retired")
 	}
+
+	// The retirement is also visible at the server: the channel that carried the old path finishes,
+	// within a bound.
+	retiredAt := time.Now()
+	require.Eventually(t, func() bool { return server.closed.Load() >= 1 },
+		5*time.Second, 10*time.Millisecond,
+		"the SSH server never saw the retired channel end: the old session's release has no bound")
+	t.Logf("MEASURED old SSH channel released %s after the network change", time.Since(retiredAt).Round(time.Millisecond))
 
 	after := sshRoundTrip(t, outbound, echo, "after-the-change")
 	_ = after.Close()
