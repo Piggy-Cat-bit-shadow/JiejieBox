@@ -38,6 +38,7 @@ import (
 	"github.com/sagernet/sing-box/protocol/direct"
 	boxGroup "github.com/sagernet/sing-box/protocol/group"
 	"github.com/sagernet/sing-box/route"
+	"github.com/sagernet/sing-box/transport/v2rayxhttp"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
@@ -131,6 +132,13 @@ type Box struct {
 	httpClientService   adapter.LifecycleService
 	internalService     []adapter.LifecycleService
 	ntpService          *ntp.Service
+	// uploadBudget holds the one packet-up upload budget the XHTTP outbounds of this Box
+	// share. It is created on the construction path (before any outbound exists) and
+	// handed to the transport through the construction context, so every XHTTP client a
+	// configured outbound builds is bound to the same aggregate. A replaced Box builds a
+	// NEW holder: the old Box's streams keep returning their charges to the old ledger,
+	// which is what makes a config swap's late returns harmless.
+	uploadBudget *boxUploadBudget
 	// runtimeCoordinator publishes network generations to registered network-bound resources. It is
 	// registered as a service so a subsystem asks it instead of inventing a second epoch.
 	runtimeCoordinator *runtimecoord.Coordinator
@@ -340,6 +348,13 @@ func New(options Options) (*Box, error) {
 	// document). Callers that do not fit wait; beyond the queue they receive a retryable
 	// deferral instead of an unbounded queue of blocked refreshes.
 	ctx = withBuildGate(ctx)
+	// One packet-up upload budget for the whole Box. The XHTTP transport asks the
+	// construction context for it when the first client is built (the client is created
+	// inside the vless outbound constructor, which is why the provider travels through
+	// the context rather than an argument). See box_upload_budget.go for the sizing rule
+	// and for the replaced-Box lifecycle.
+	uploadBudget := newBoxUploadBudget()
+	ctx = v2rayxhttp.WithUploadBudgetProvider(ctx, uploadBudget)
 
 	endpointRegistry := service.FromContext[adapter.EndpointRegistry](ctx)
 	inboundRegistry := service.FromContext[adapter.InboundRegistry](ctx)
@@ -1058,6 +1073,7 @@ func New(options Options) (*Box, error) {
 		createdAt:           createdAt,
 		powerGovernor:       powerGovernor,
 		runtimeCoordinator:  runtimeCoordinator,
+		uploadBudget:        uploadBudget,
 		pauseManager:        pauseManager,
 		pauseCallback:       pauseCallback,
 		debugOptions:        debugOptions,
