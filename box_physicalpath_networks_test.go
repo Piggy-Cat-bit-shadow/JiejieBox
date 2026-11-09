@@ -491,14 +491,22 @@ func TestRepeatedStartAndCloseOnARefusedBox(t *testing.T) {
 // the URL-test history, the network manager, the power governor - and the Box's own error path is
 // what releases them. This asserts that path rather than trusting it.
 func TestRefusedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
+	// settle waits until the goroutine count STOPS FALLING and returns that value.
+	//
+	// It used to return the FIRST sample whenever the second one was lower, i.e. exactly when
+	// goroutines were still exiting - the opposite of what "settled" means. A Box.Close returns
+	// before every goroutine it signalled has been scheduled, so that sample measures the teardown
+	// in progress: measured here as 6 right after a close and 2 twenty-five milliseconds later, on
+	// a tree that leaves nothing behind.
 	settle := func() int {
-		var count int
+		count := runtime.NumGoroutine()
 		for attempt := 0; attempt < 40; attempt++ {
-			count = runtime.NumGoroutine()
 			time.Sleep(25 * time.Millisecond)
-			if runtime.NumGoroutine() <= count {
-				return count
+			next := runtime.NumGoroutine()
+			if next >= count {
+				return next
 			}
+			count = next
 		}
 		return count
 	}
@@ -527,14 +535,22 @@ func TestRefusedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
 // a recheck or cloned a group would leave something behind on the instances that DO start - which
 // is the case a "refused configurations do not leak" assertion would never see.
 func TestStartedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
+	// settle waits until the goroutine count STOPS FALLING and returns that value.
+	//
+	// It used to return the FIRST sample whenever the second one was lower, i.e. exactly when
+	// goroutines were still exiting - the opposite of what "settled" means. A Box.Close returns
+	// before every goroutine it signalled has been scheduled, so that sample measures the teardown
+	// in progress: measured here as 6 right after a close and 2 twenty-five milliseconds later, on
+	// a tree that leaves nothing behind.
 	settle := func() int {
-		var count int
+		count := runtime.NumGoroutine()
 		for attempt := 0; attempt < 40; attempt++ {
-			count = runtime.NumGoroutine()
 			time.Sleep(25 * time.Millisecond)
-			if runtime.NumGoroutine() <= count {
-				return count
+			next := runtime.NumGoroutine()
+			if next >= count {
+				return next
 			}
+			count = next
 		}
 		return count
 	}
