@@ -108,6 +108,16 @@ type URLTest struct {
 	useAllProviders bool
 	started         bool
 	lifecycleScope  *adapter.Scope
+
+	// failoverAccess guards the configured probing policy. It is applied to EVERY group this
+	// wrapper builds, because a provider publication rebuilds the group: a policy stored only on
+	// the current group would be silently lost on the first republication.
+	failoverAccess sync.RWMutex
+	failoverPolicy urltest.FailoverPolicy
+	// failoverConfigured distinguishes "no policy was configured" (the compatibility mode) from a
+	// configured policy whose fields happen to be zero. The zero FailoverPolicy is NOT disabled, so
+	// treating it as the default would turn the policy on for every existing configuration.
+	failoverConfigured bool
 }
 
 func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
@@ -264,7 +274,69 @@ func (s *URLTest) buildGroup(outbounds []adapter.Outbound) (*URLTestGroup, error
 	if len(outbounds) == 0 {
 		return nil, nil
 	}
-	return NewURLTestGroupWithExpected(s.ctx, s.outbound, s.logger, outbounds, s.link, s.expectedStatus, s.interval, s.tolerance, s.idleTimeout, s.interruptExternalConnections)
+	group, err := NewURLTestGroupWithExpected(s.ctx, s.outbound, s.logger, outbounds, s.link, s.expectedStatus, s.interval, s.tolerance, s.idleTimeout, s.interruptExternalConnections)
+	if err != nil {
+		return nil, err
+	}
+	// The configured policy is re-applied to EVERY generation. A provider publication replaces the
+	// group object, so a policy installed only on the previous one would silently revert the
+	// configuration to the compatibility mode after the first refresh.
+	s.failoverAccess.RLock()
+	policy := s.failoverPolicy
+	configured := s.failoverConfigured
+	s.failoverAccess.RUnlock()
+	if !configured {
+		policy = urltest.FailoverPolicy{Disabled: true}
+	}
+	group.ApplyFailoverPolicy(policy)
+	return group, nil
+}
+
+// ApplyFailoverPolicy installs the stable/failover probing policy on this group and on every group
+// it rebuilds after a provider publication.
+//
+// It is the WIRING POINT for the configuration surface: the configuration window maps its fields to
+// a FailoverPolicy and calls this once, at construction time. A configuration that does not call it
+// keeps the historical behaviour - every member probed every round - byte for byte.
+func (s *URLTest) ApplyFailoverPolicy(policy urltest.FailoverPolicy) {
+	if s == nil {
+		return
+	}
+	s.failoverAccess.Lock()
+	s.failoverPolicy = policy
+	s.failoverConfigured = true
+	s.failoverAccess.Unlock()
+	if group := s.group.Load(); group != nil {
+		group.ApplyFailoverPolicy(policy)
+	}
+}
+
+// HealthSnapshot samples the current group's health and queue state.
+func (s *URLTest) HealthSnapshot() HealthSnapshot {
+	if s == nil {
+		return HealthSnapshot{}
+	}
+	group := s.group.Load()
+	if group == nil {
+		return HealthSnapshot{Disabled: true}
+	}
+	return group.HealthSnapshot()
+}
+
+// CheckOutboundsHealth runs one health round on the current group with explicit force semantics.
+//
+// force=false is the periodic semantics, where the stable/failover probing policy decides the probe
+// set; force=true measures every member. It is exported on the wrapper so a caller that holds the
+// OUTBOUND (a diagnostics or scale harness) can drive a round without reaching into the group, and
+// so the two round shapes are the same ones the ticker and a manual test use. The zero-argument
+// CheckOutbounds entry is the background form and stays forced, which is what its callers mean.
+func (s *URLTest) CheckOutboundsHealth(ctx context.Context, force bool) {
+	if s == nil {
+		return
+	}
+	if group := s.group.Load(); group != nil {
+		group.CheckOutbounds(ctx, force)
+	}
 }
 
 // onProviderUpdated rebuilds the probe group after a provider published a new node set.
@@ -1113,6 +1185,82 @@ func (g *URLTestGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
 	return g.urlTest(ctx, true)
 }
 
+// ApplyFailoverPolicy installs the stable/failover probing policy on this group.
+//
+// It is the WIRING POINT for the configuration surface: the configuration window maps its fields to
+// a FailoverPolicy and calls this once, at construction time, before the group starts. The zero
+// policy (or a nil call) keeps the historical behaviour - every member probed every round - so an
+// installation that does not call it is byte-for-byte the compatibility mode.
+//
+// It must be called before the group's first round (PostStart starts the ticker). The policy is
+// read by the health-round worker, which is serialised by checking; a later call would race that
+// reader, which is why this is a construction-time setter rather than a live knob.
+func (g *URLTestGroup) ApplyFailoverPolicy(policy urltest.FailoverPolicy) {
+	if g == nil {
+		return
+	}
+	g.failover = urltest.NewFailoverState(policy, g.currentSelectedTag())
+}
+
+// HealthSnapshot is the per-group health state a scale or recovery run can record.
+//
+// It exists so a real-Box test can state the SELECTION facts per window (members, selected, stable,
+// widened) instead of inferring them from probe counts. It returns no policy internals: the stable
+// slot and the widened flag are the two facts that describe which probe set the next round will use.
+//
+// The coordinator/share counters are sampled from the group's own Box context, so a test can record
+// the real queue depth and probe concurrency per window - the two numbers a probe count cannot give.
+type HealthSnapshot struct {
+	Members  int
+	Selected string
+	Stable   string
+	Widened  bool
+	Disabled bool
+
+	// CoordinatorInFlight and CoordinatorQueued are the Box-wide measurement admission counters at
+	// sampling time. CoordinatorLimit is the configured bound (0 means no coordinator).
+	CoordinatorInFlight int
+	CoordinatorQueued   int
+	CoordinatorLimit    int
+	// SharedProbesInFlight and Participants are the shared-measurement registry's counters.
+	SharedProbesInFlight int
+	Participants         int
+	// NextProbes is the probe set the policy would measure in the NEXT periodic round. A narrowed
+	// set is one member; a widened one is every member. It makes "the probe set stays narrow"
+	// assertable even when the round itself skips because the evidence is fresh.
+	NextProbes []string
+}
+
+// HealthSnapshot samples the group's current health state.
+func (g *URLTestGroup) HealthSnapshot() HealthSnapshot {
+	if g == nil {
+		return HealthSnapshot{}
+	}
+	snapshot := HealthSnapshot{Members: len(g.outbounds), Selected: g.currentSelectedTag()}
+	if coordinator := urltest.CoordinatorFromContext(g.ctx); coordinator != nil {
+		snapshot.CoordinatorInFlight = coordinator.InFlight()
+		snapshot.CoordinatorQueued = coordinator.Queued()
+		snapshot.CoordinatorLimit = coordinator.Limit()
+	}
+	if share := urltest.MeasurementShareFromContext(g.ctx); share != nil {
+		snapshot.SharedProbesInFlight = share.InFlight()
+		snapshot.Participants = share.Participants()
+	}
+	if g.failover == nil {
+		snapshot.Disabled = true
+		return snapshot
+	}
+	snapshot.Disabled = g.failover.Disabled()
+	snapshot.Stable = g.failover.Stable()
+	snapshot.Widened = g.failover.Widened()
+	tags := make([]string, 0, len(g.outbounds))
+	for _, member := range g.outbounds {
+		tags = append(tags, member.Tag())
+	}
+	snapshot.NextProbes = g.failover.Probes(tags)
+	return snapshot
+}
+
 // operationContext anchors a health operation to the group's own Box context.
 //
 // # Why the caller's context cannot be the base
@@ -1269,6 +1417,17 @@ func (g *URLTestGroup) runHealthRound(ctx context.Context, force bool) (result m
 	members, nextCursorTag := g.orderHealthRoundMembers()
 	if nextCursorTag != "" {
 		g.probeCursorTag.Store(&nextCursorTag)
+	}
+	// Seed the policy's stable slot from the group's COMMITTED selection before any round, including
+	// a forced one.
+	//
+	// A forced round measures every member, so the policy sees a full observation set and would
+	// otherwise pick the fastest measurement as its stable member - a second selection authority
+	// beside the group's own tolerance rule. AdoptStable only fills an EMPTY slot, so a policy that
+	// already holds a member is never overridden; what this guarantees is that a freshly built group
+	// (a provider republication rebuilds it) starts from what traffic actually uses.
+	if g.failover != nil {
+		g.failover.AdoptStable(g.currentSelectedTag())
 	}
 	probeMembers := g.healthProbeMembers(members, force)
 	result = URLTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, probeMembers, g.link, g.expected, g.interval, force, TestHistoryHealth)

@@ -1,6 +1,6 @@
 package libbox
 
-// Section 5 scale — a REAL Box with two remote providers and two URLTest groups over thousands of
+// Section 5 scale 鈥?a REAL Box with two remote providers and two URLTest groups over thousands of
 // nodes, driven through the real service.
 //
 // The component-level budget tests use a synthetic registry; this one exercises the actual provider
@@ -34,13 +34,24 @@ type scaleProviderServer struct {
 	server    *httptest.Server
 	probes    atomic.Int32
 	documents map[string]string
+	// documentsAccess guards documents: a recovery run REPLACES the published set to model a
+	// republication, while the provider fetch reads it from another goroutine.
+	documentsAccess sync.RWMutex
+	// port is the live proxy port every published node points at.
+	port int
+	// deadPort is a closed port, so a node pointed at it fails its probe the way an unreachable
+	// path does.
+	deadPort int
 }
 
 func newScaleProviderServer(t *testing.T, nodes int) *scaleProviderServer {
 	t.Helper()
 	scale := &scaleProviderServer{documents: map[string]string{}}
 	scale.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if document, loaded := scale.documents[strings.TrimPrefix(request.URL.Path, "/")]; loaded && !request.URL.IsAbs() {
+		scale.documentsAccess.RLock()
+		document, loaded := scale.documents[strings.TrimPrefix(request.URL.Path, "/")]
+		scale.documentsAccess.RUnlock()
+		if loaded && !request.URL.IsAbs() {
 			_, _ = writer.Write([]byte(document))
 			return
 		}
@@ -69,23 +80,58 @@ func newScaleProviderServer(t *testing.T, nodes int) *scaleProviderServer {
 	}))
 	t.Cleanup(scale.server.Close)
 
-	port := scale.server.Listener.Addr().(*net.TCPAddr).Port
+	scale.port = scale.server.Listener.Addr().(*net.TCPAddr).Port
+	// A port that is certainly closed: a listener that was closed immediately after binding.
+	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a dead port: %v", err)
+	}
+	scale.deadPort = deadListener.Addr().(*net.TCPAddr).Port
+	_ = deadListener.Close()
+
+	scale.setDocuments(scale.buildDocuments(nodes, nil, false))
+	return scale
+}
+
+// buildDocuments renders both provider documents. dead marks a node tag whose proxy port is the
+// closed one, so its probe fails without changing the node's membership.
+func (s *scaleProviderServer) buildDocuments(nodes int, dead map[string]bool, reverse bool) map[string]string {
 	buildDocument := func(prefix string, count int) string {
 		var builder strings.Builder
 		builder.WriteString(`{"outbounds":[`)
-		for index := 0; index < count; index++ {
-			if index > 0 {
+		order := make([]int, count)
+		for index := range order {
+			order[index] = index
+			if reverse {
+				order[index] = count - 1 - index
+			}
+		}
+		for position, index := range order {
+			if position > 0 {
 				builder.WriteByte(',')
 			}
-			fmt.Fprintf(&builder, `{"type":"http","tag":"%s%d","server":"127.0.0.1","server_port":%d}`, prefix, index, port)
+			tag := fmt.Sprintf("%s%d", prefix, index)
+			port := s.port
+			if dead[tag] {
+				port = s.deadPort
+			}
+			fmt.Fprintf(&builder, `{"type":"http","tag":"%s","server":"127.0.0.1","server_port":%d}`, tag, port)
 		}
 		builder.WriteString(`]}`)
 		return builder.String()
 	}
 	half := nodes / 2
-	scale.documents["p1"] = buildDocument("a", half)
-	scale.documents["p2"] = buildDocument("b", nodes-half)
-	return scale
+	return map[string]string{
+		"p1": buildDocument("a", half),
+		"p2": buildDocument("b", nodes-half),
+	}
+}
+
+// setDocuments publishes a new provider generation.
+func (s *scaleProviderServer) setDocuments(documents map[string]string) {
+	s.documentsAccess.Lock()
+	s.documents = documents
+	s.documentsAccess.Unlock()
 }
 
 // providerScaleConfig wires both providers into both groups.

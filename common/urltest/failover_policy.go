@@ -140,6 +140,18 @@ func (s *FailoverState) Disabled() bool {
 	return s == nil || s.policy.Disabled
 }
 
+// Widened reports whether the probe set is currently every member.
+//
+// It is the observable half of a degradation episode: a caller that samples it per round can tell
+// "the stable member is healthy and only it is probed" from "the set was widened because it is
+// failing", without re-deriving it from the probe set.
+func (s *FailoverState) Widened() bool {
+	if s == nil || s.policy.Disabled {
+		return false
+	}
+	return s.widened
+}
+
 // Probes returns the members this policy wants measured in the CURRENT round. A disabled or
 // uninitialised policy probes everything, which is the historical behaviour.
 func (s *FailoverState) Probes(members []string) []string {
