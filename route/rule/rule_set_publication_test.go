@@ -68,6 +68,46 @@ func TestADelayedOlderNotificationCannotReplaceTheNewerGeneration(t *testing.T) 
 	}
 }
 
+func TestASuperseded304DoesNotOverwriteTheNewerETag(t *testing.T) {
+	ctx := ruleSetArtifactContext(t)
+	first := writeRuleSetPayload(t, "10.0.0.0/8")
+	second := writeRuleSetPayload(t, "192.168.0.0/16")
+	releaseStale := make(chan struct{})
+	staleStarted := make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch requests.Add(1) {
+		case 1:
+			writer.Header().Set("Etag", `"v1"`)
+			_, _ = writer.Write(first)
+		case 2:
+			// The stale conditional request: its 304 arrives after the newer refresh committed.
+			close(staleStarted)
+			<-releaseStale
+			writer.WriteHeader(http.StatusNotModified)
+		default:
+			writer.Header().Set("Etag", `"v2"`)
+			_, _ = writer.Write(second)
+		}
+	}))
+	t.Cleanup(server.Close)
+	ruleSet := newStoredRemoteRuleSet(t, ctx, server.URL, "superseded-304")
+	ruleSet.httpClient = server.Client()
+	require.NoError(t, ruleSet.fetch(ctx, true))
+
+	staleResult := make(chan error, 1)
+	go func() { staleResult <- ruleSet.fetch(ctx, true) }()
+	<-staleStarted
+	require.NoError(t, ruleSet.fetch(ctx, true))
+	close(releaseStale)
+	require.NoError(t, <-staleResult)
+
+	_, etag := ruleSet.updateMetadata()
+	require.Equal(t, `"v2"`, etag, "a superseded 304 must not replace the newer ETag")
+	require.True(t, remoteRuleSetMatches(t, ruleSet, "192.168.1.1"))
+	require.Equal(t, ruleSetDigest(second), ruleSet.artifactLease.ID())
+}
+
 func TestClosingDuringADelayedNotificationDoesNotReinstallTheLease(t *testing.T) {
 	ctx := ruleSetArtifactContext(t)
 	payload := writeRuleSetPayload(t, "10.0.0.0/8")
