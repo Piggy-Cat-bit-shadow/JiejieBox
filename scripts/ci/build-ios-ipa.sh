@@ -175,7 +175,23 @@ else
   fi
 fi
 
-xcodebuild build "${build_settings[@]}" 2>&1 | tail -40
+# The build output is kept, not only tailed: `| tail -40` threw away the diagnostics and kept
+# the last forty lines, which after a Swift frontend failure are the failing command's enormous
+# `-index-unit-output-path` list and nothing that names the file or the error. On failure this
+# prints the error lines first and the tail second, so one run is enough to act on.
+build_log="$work/xcodebuild.log"
+if xcodebuild build "${build_settings[@]}" >"$build_log" 2>&1; then
+  tail -40 "$build_log"
+else
+  status=$?
+  echo "FAIL: xcodebuild failed (exit $status). Diagnostics:" >&2
+  echo "--- error and file:line lines ---" >&2
+  { grep -nE '(fatal )?error:|Failed frontend command|^[^ ]*\.swift:[0-9]+:[0-9]+:' "$build_log" | head -60 || true; } >&2
+  echo "--- last 40 lines ---" >&2
+  tail -40 "$build_log" >&2
+  echo "FAIL: the IPA was not produced; the diagnostics above are from $build_log" >&2
+  exit 1
+fi
 
 # --- 3. Locate the built app. ---------------------------------------------------
 # The bundle name is NOT the scheme name, and it is not fixed either. It follows
