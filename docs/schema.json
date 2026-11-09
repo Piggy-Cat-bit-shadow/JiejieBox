@@ -265,6 +265,19 @@
         }
       ]
     },
+    "AWGRange": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        {
+          "type": "string",
+          "pattern": "^\\s*\\d+\\s*(-\\s*\\d+\\s*)?$"
+        }
+      ]
+    },
     "AnyTLSUser": {
       "type": "object",
       "properties": {
@@ -5546,6 +5559,104 @@
               "type": "integer"
             },
             "on_demand": {
+              "type": "boolean"
+            },
+            "jc": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "jmin": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "jmax": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "s1": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "s2": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "s3": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "s4": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "h1": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "h2": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "h3": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "h4": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "i1": {
+              "type": "string"
+            },
+            "i2": {
+              "type": "string"
+            },
+            "i3": {
+              "type": "string"
+            },
+            "i4": {
+              "type": "string"
+            },
+            "i5": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "ip": {
+              "type": "string"
+            },
+            "ib": {
+              "type": "string"
+            },
+            "header_protection_key": {
+              "type": "string"
+            },
+            "content_padding_addition": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "rekey_after_time": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "rekey_timeout": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "reject_after_time": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "keepalive_timeout": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "max_handshake_attempts": {
+              "$ref": "#/$defs/AWGRange"
+            },
+            "random_trailers": {
+              "type": "boolean"
+            },
+            "disable_cookies": {
               "type": "boolean"
             },
             "detour": {
