@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -28,6 +30,12 @@ const (
 	pathProc = "/proc"
 
 	processPathsAllUsers = ^uint32(0)
+
+	// processPathScanLimit bounds how many distinct UIDs may have a /proc scan
+	// in flight. One UID's scan is shared by every lookup for that UID; the
+	// limit only bounds different UIDs, so a burst for one app still runs one
+	// scan while unrelated apps cannot each start a full walk of /proc.
+	processPathScanLimit = 4
 )
 
 var _ Searcher = (*linuxSearcher)(nil)
@@ -37,6 +45,29 @@ type linuxSearcher struct {
 	packageManager   tun.PackageManager
 	diagConns        [4]*socketDiagConn
 	processPathCache *freelru.Cache[uint32, *uidProcessPaths]
+
+	// scanPaths is the /proc walk. It is buildProcessPaths in production and a
+	// barrier-controlled function in tests.
+	scanPaths func(uid uint32) (map[uint32][]string, error)
+
+	// cacheAccess serialises cache publication against invalidation, so a scan
+	// that started before ResetCache cannot republish the snapshot it walked.
+	cacheAccess sync.Mutex
+	generation  atomic.Uint64
+
+	// scanAccess guards scans. Waiter management and deletion are one critical
+	// section; the scan itself and the slot wait happen outside it.
+	scanAccess sync.Mutex
+	scans      map[uint32]*processPathsScan
+	scanSlots  chan struct{}
+}
+
+// processPathsScan is one in-flight /proc walk shared by every lookup for the
+// same UID. done is closed after paths/err are published.
+type processPathsScan struct {
+	done  chan struct{}
+	paths map[uint32][]string
+	err   error
 }
 
 type uidProcessPaths struct {
@@ -50,6 +81,8 @@ func NewSearcher(config Config) (Searcher, error) {
 		logger:           config.Logger,
 		packageManager:   config.PackageManager,
 		processPathCache: processPathCache,
+		scans:            make(map[uint32]*processPathsScan),
+		scanSlots:        make(chan struct{}, processPathScanLimit),
 	}
 	for _, family := range []uint8{syscall.AF_INET, syscall.AF_INET6} {
 		for _, protocol := range []uint8{syscall.IPPROTO_TCP, syscall.IPPROTO_UDP} {
@@ -64,10 +97,22 @@ func NewSearcher(config Config) (Searcher, error) {
 }
 
 func (s *linuxSearcher) ResetCache() {
+	s.invalidate()
+}
+
+// invalidate drops the cached snapshots and denies every scan already in
+// flight the right to publish its result. Without the generation a scan that
+// started before the reset could finish afterwards and put a snapshot taken
+// under the old process table back into the cache.
+func (s *linuxSearcher) invalidate() {
+	s.cacheAccess.Lock()
+	s.generation.Add(1)
 	s.processPathCache.Purge()
+	s.cacheAccess.Unlock()
 }
 
 func (s *linuxSearcher) Close() error {
+	s.invalidate()
 	var errs []error
 	for _, conn := range s.diagConns {
 		if conn == nil {
@@ -154,17 +199,67 @@ func (s *linuxSearcher) findProcessPaths(targetInode, uid uint32) ([]string, err
 				return processPaths, nil
 			}
 		}
-		processPaths, err := buildProcessPaths(scanUID)
+		processPaths, err := s.scanProcessPaths(scanUID)
 		if err != nil {
 			return nil, err
 		}
-		s.processPathCache.Add(scanUID, &uidProcessPaths{entries: processPaths})
 		inodePaths, found := processPaths[targetInode]
 		if found {
 			return inodePaths, nil
 		}
 	}
 	return nil, E.New("process of uid(", uid, "), inode(", targetInode, ") not found")
+}
+
+// scanProcessPaths returns the process table of one UID, sharing one walk
+// between every concurrent lookup for that UID and bounding how many distinct
+// UIDs may walk /proc at once.
+//
+// A lookup that finds a scan already in flight waits for it instead of
+// starting a second walk: the first snapshot is the one the second caller
+// would have produced, and a burst of flows for one app must not multiply the
+// cost by the number of flows. Different UIDs are bounded by processPathScanLimit
+// rather than serialised, so unrelated apps still make progress.
+//
+// The result is published into the cache only when no ResetCache/Close landed
+// while the walk was in flight: after a reset the walk's snapshot describes a
+// process table the reset was called to forget.
+func (s *linuxSearcher) scanProcessPaths(uid uint32) (map[uint32][]string, error) {
+	s.scanAccess.Lock()
+	if scan, loaded := s.scans[uid]; loaded {
+		s.scanAccess.Unlock()
+		<-scan.done
+		return scan.paths, scan.err
+	}
+	scan := &processPathsScan{done: make(chan struct{})}
+	s.scans[uid] = scan
+	s.scanAccess.Unlock()
+
+	s.scanSlots <- struct{}{}
+	generation := s.generation.Load()
+	processPaths, err := s.scan(uid)
+	<-s.scanSlots
+
+	s.cacheAccess.Lock()
+	if err == nil && generation == s.generation.Load() {
+		s.processPathCache.Add(uid, &uidProcessPaths{entries: processPaths})
+	}
+	s.cacheAccess.Unlock()
+
+	scan.paths = processPaths
+	scan.err = err
+	s.scanAccess.Lock()
+	delete(s.scans, uid)
+	s.scanAccess.Unlock()
+	close(scan.done)
+	return processPaths, err
+}
+
+func (s *linuxSearcher) scan(uid uint32) (map[uint32][]string, error) {
+	if s.scanPaths != nil {
+		return s.scanPaths(uid)
+	}
+	return buildProcessPaths(uid)
 }
 
 func buildProcessPaths(uid uint32) (map[uint32][]string, error) {
