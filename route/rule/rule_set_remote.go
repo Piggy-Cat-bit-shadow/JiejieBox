@@ -623,6 +623,12 @@ func (s *RemoteRuleSet) publishDownload(content []byte, started time.Time, gener
 	}
 	if version != nil {
 		s.adoptArtifact(version)
+		// The live rules hold the newest version's lease, so collection cannot remove what they
+		// serve. Older unleased generations are what this removes; a pinned recovery reference is
+		// passed as a retained id by its owner.
+		if collectErr := s.artifactStore.Collect(s.artifactKey); collectErr != nil {
+			s.logger.Warn(E.Cause(collectErr, "collect rule-set artifacts"))
+		}
 	}
 	return nil
 }
