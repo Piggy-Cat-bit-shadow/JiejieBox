@@ -1,6 +1,6 @@
 package group
 
-// P1.1 鈥?one publication decision covers the evidence write, the round's result and the failover
+// P1.1 — one publication decision covers the evidence write, the round's result and the failover
 // observation.
 //
 // The reviewed failures were all the same shape in different places: an answer measured for one
