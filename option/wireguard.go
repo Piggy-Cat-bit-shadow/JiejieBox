@@ -20,6 +20,10 @@ type WireGuardEndpointOptions struct {
 	UDPNATMax    uint32                           `json:"udp_nat_max,omitempty"`
 	Workers      int                              `json:"workers,omitempty"`
 	OnDemand     bool                             `json:"on_demand,omitempty"`
+	// AmneziaWG 3.x obfuscation parameters, embedded so the fields sit at the endpoint root
+	// (awg-quick layout). Effective only with the with_awg build tag; without it a non-empty
+	// value is an explicit error instead of being silently sent as plain WireGuard.
+	AmneziaWGOptions
 	DialerOptions
 }
 

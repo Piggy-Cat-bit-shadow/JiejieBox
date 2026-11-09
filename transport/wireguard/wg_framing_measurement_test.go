@@ -562,7 +562,7 @@ func (b *capturingBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error 
 		// Only transport-data messages are recorded. The handshake's own messages (initiation 148,
 		// response 92, cookie reply 64) travel through the same Send and are larger than a keepalive,
 		// so recording them would make the first measurement read a handshake instead of a payload.
-		if len(payload) > 0 && payload[0] == wgDevice.MessageTransportType {
+		if len(payload) > 0 && payload[0] == byte(wgDevice.MessageTransportType) {
 			recorded := make([]byte, len(payload))
 			copy(recorded, payload)
 			select {

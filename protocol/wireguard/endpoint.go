@@ -108,6 +108,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		UDPMapping:      tun.NATMapping(options.UDPMapping),
 		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
 		UDPNATMax:       options.UDPNATMax,
+		AmneziaWG:       options.AmneziaWGOptions,
 		InterfaceFinder: networkManager.InterfaceFinder(),
 		EgressPoolOptions: tun.UDPEgressPoolOptions{
 			Logger:           logger,

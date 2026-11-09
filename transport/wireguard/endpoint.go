@@ -75,6 +75,14 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	if options.ListenPort != 0 {
 		ipcConf += "\nlisten_port=" + F.ToString(options.ListenPort)
 	}
+	// AmneziaWG device-global obfuscation lines (jc=/h1=/i1=...). awgIpcLines is tag-gated:
+	// with with_awg it formats the parameters, and without it a non-empty AWG configuration is
+	// an explicit error instead of being silently sent as plain WireGuard.
+	awgLines, err := awgIpcLines(options.AmneziaWG)
+	if err != nil {
+		return nil, err
+	}
+	ipcConf += awgLines
 	var peers []peerConfig
 	for peerIndex, rawPeer := range options.Peers {
 		peer := peerConfig{

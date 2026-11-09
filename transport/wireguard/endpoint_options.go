@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
@@ -22,6 +23,10 @@ type EndpointOptions struct {
 	UDPMapping   tun.NATMapping
 	UDPFiltering tun.NATFiltering
 	UDPNATMax    uint32
+	// AmneziaWG carries the endpoint-root obfuscation parameters here so the device config can
+	// append them; the zero value means no obfuscation, which is what a plain WireGuard
+	// configuration produces. Consumed only under the with_awg build tag (see device_awg.go).
+	AmneziaWG option.AmneziaWGOptions
 
 	InterfaceFinder   control.InterfaceFinder
 	EgressPoolOptions tun.UDPEgressPoolOptions

@@ -364,6 +364,11 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // working, between a stop landing on a starting stack and a reported data race (a nil-engine panic on
 // the unpinned revision), and between an IPv6-only stack and a TCP path that can never self-heal.
 // See docs/fork/lx-stability-audit-phase1.md (040) and FORK.md in the fork.
+// AmneziaWG 3.1: the AWG graft plus this repository's packet-injection API, published as a
+// fork (tag v0.8.0-awg.1). The fork keeps the upstream module path, so the import sites and the
+// source lock stay one truth; AWG01-AWG04 record what was grafted and how it was verified.
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.8.0-awg.2
+
 replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261105013414-8f65451175c0
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
