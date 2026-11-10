@@ -141,3 +141,43 @@ func TestASelectionThatLostItsBoxIsAborted(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "reloaded")
 }
+
+// TestTwoSelectionsInTheSameBoxProduceTwoConsistentSnapshots is the review's b/revision-2 case.
+//
+// The handler used to read the revision, select, read the member, and read the revision AGAIN -
+// four safe reads that together span two commits. When a second selection lands in between, the
+// first answer names the member it selected but the revision the SECOND one produced, so a client
+// that stores (member, revision) has a pair that never existed.
+func TestTwoSelectionsInTheSameBoxProduceTwoConsistentSnapshots(t *testing.T) {
+	service := selectorService(t, selectorOutboundConfig)
+	var second *SelectOutboundResponse
+	armed := true
+	service.beforeSelectionInstanceCheck = func() {
+		if !armed {
+			return
+		}
+		armed = false
+		response, err := service.SelectOutbound(context.Background(), &SelectOutboundRequest{
+			GroupTag:    "sel",
+			OutboundTag: "a",
+			RequestId:   2,
+		})
+		require.NoError(t, err)
+		second = response
+	}
+	t.Cleanup(func() { service.beforeSelectionInstanceCheck = nil })
+
+	first, err := service.SelectOutbound(context.Background(), &SelectOutboundRequest{
+		GroupTag:    "sel",
+		OutboundTag: "b",
+		RequestId:   1,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, second, "the seam must have interleaved a second selection")
+
+	require.Equal(t, "b", first.AppliedOutboundTag)
+	require.EqualValues(t, 1, first.AppliedRevision,
+		"the first answer must describe the revision its own selection produced (b was the first change)")
+	require.Equal(t, "a", second.AppliedOutboundTag)
+	require.EqualValues(t, 2, second.AppliedRevision)
+}

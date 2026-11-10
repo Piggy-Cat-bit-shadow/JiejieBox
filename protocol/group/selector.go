@@ -394,9 +394,15 @@ func (s *Selector) onProviderUpdated(tag string) error {
 	publishErr := publishProviderMembership(s.outbound, s.Tag(), tags, func() {
 		s.stateAccess.Lock()
 		previous := s.selected.Swap(selected)
+		if previous != selected {
+			// A provider republication that moves the selection is a state change like any other:
+			// the revision must advance, or a caller that reads it cannot tell that the member moved
+			// underneath it.
+			changed = true
+			s.selectionRevision.Add(1)
+		}
 		s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
 		s.stateAccess.Unlock()
-		changed = previous != selected
 	})
 	if publishErr != nil {
 		s.providerAccess.Unlock()
@@ -582,35 +588,75 @@ func (s *Selector) Revision() uint64 {
 	return s.selectionRevision.Load()
 }
 
-func (s *Selector) SelectOutbound(tag string) bool {
+// SelectionSnapshot is one consistent answer to "select this member".
+//
+// AppliedTag is the member the group holds AFTER the call, read under the same hold that applied
+// it. PreviousRevision is the revision the decision was taken against (what a caller's
+// expectedRevision is compared with), and Revision is the state the group is in afterwards. A
+// caller that stored (AppliedTag, Revision) from this value has a pair that existed together.
+type SelectionSnapshot struct {
+	AppliedTag       string
+	PreviousRevision uint64
+	Revision         uint64
+}
+
+// SelectOutboundSnapshot applies a selection and reports the resulting state atomically.
+//
+// The four facts - the revision before, the selection, the member it produced, the revision after -
+// used to be collected by the CALLER in four separate reads. Each read was safe on its own, but the
+// combination spanned two commits: a second selection landing between them produced (member=b,
+// revision=2) for an operation that only ever produced revision 1. They are now one transition under
+// the selector's existing write ownership (providerAccess, the same lock a provider republication
+// takes), so a caller can never observe a pair that did not exist.
+func (s *Selector) SelectOutboundSnapshot(tag string) (SelectionSnapshot, bool) {
+	if s == nil {
+		return SelectionSnapshot{}, false
+	}
 	s.providerAccess.Lock()
 	s.stateAccess.RLock()
 	detour, loaded := s.outbounds[tag]
 	s.stateAccess.RUnlock()
 	if !loaded {
 		s.providerAccess.Unlock()
-		return false
+		return SelectionSnapshot{}, false
 	}
-	if s.selected.Swap(detour) == detour {
-		s.providerAccess.Unlock()
-		return true
-	}
-	s.selectionRevision.Add(1)
-	if s.Tag() != "" {
-		cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
-		if cacheFile != nil {
-			err := cacheFile.StoreSelected(s.Tag(), tag)
-			if err != nil {
-				s.logger.Error("store selected: ", err)
+	before := s.selectionRevision.Load()
+	changed := s.selected.Swap(detour) != detour
+	if changed {
+		s.selectionRevision.Add(1)
+		if s.Tag() != "" {
+			cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
+			if cacheFile != nil {
+				err := cacheFile.StoreSelected(s.Tag(), tag)
+				if err != nil {
+					s.logger.Error("store selected: ", err)
+				}
 			}
 		}
 	}
-	s.providerAccess.Unlock()
-	s.interruptGroup.Interrupt(s.interruptExternalConnections)
-	if s.history != nil {
-		s.history.NotifyUpdated()
+	snapshot := SelectionSnapshot{
+		PreviousRevision: before,
+		Revision:         s.selectionRevision.Load(),
 	}
-	return true
+	if selected := s.selected.Load(); selected != nil {
+		snapshot.AppliedTag = selected.Tag()
+	}
+	s.providerAccess.Unlock()
+	// The interrupt and the history notification stay OUTSIDE the lock, as before: they call into
+	// other owners, and holding providerAccess across them would widen the critical section beyond
+	// the state transition this method exists to make atomic.
+	if changed {
+		s.interruptGroup.Interrupt(s.interruptExternalConnections)
+		if s.history != nil {
+			s.history.NotifyUpdated()
+		}
+	}
+	return snapshot, true
+}
+
+func (s *Selector) SelectOutbound(tag string) bool {
+	_, ok := s.SelectOutboundSnapshot(tag)
+	return ok
 }
 
 // currentMember returns the committed member, or an error naming the group when nothing has been

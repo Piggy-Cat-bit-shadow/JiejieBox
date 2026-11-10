@@ -1182,17 +1182,12 @@ func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutb
 		return nil, status.Error(codes.InvalidArgument, "outbound is not a selector: "+request.GroupTag)
 	}
 	// The revision BEFORE the selection is what the caller's view has to match: it describes the
-	// state the decision was taken against.
-	before := selector.Revision()
-	if !selector.SelectOutbound(request.OutboundTag) {
+	// state the decision was taken against. The selection, the member it produced and the revision
+	// it left behind are ONE transition - see SelectOutboundSnapshot - so a second selection
+	// landing between them cannot make this answer describe a state that never existed.
+	snapshot, selected := selector.SelectOutboundSnapshot(request.OutboundTag)
+	if !selected {
 		return nil, status.Error(codes.NotFound, "outbound not found in selector: "+request.OutboundTag)
-	}
-	// The response reports what the group now holds, read from the group - not the tag from the
-	// request. A selector that refused to move, or moved somewhere else, is visible here instead of
-	// being inferred from a nil error.
-	appliedTag := ""
-	if selected := selector.Selected(N.NetworkTCP); selected != nil {
-		appliedTag = selected.Tag()
 	}
 	// A selection that landed on a Box that has since been replaced (or closed) must not be
 	// reported as applied: the caller would store a confirmation for state that no longer exists.
@@ -1209,9 +1204,9 @@ func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutb
 	}
 	return &SelectOutboundResponse{
 		RequestId:          request.RequestId,
-		AppliedRevision:    selector.Revision(),
-		AppliedOutboundTag: appliedTag,
-		Stale:              request.ExpectedRevision != 0 && request.ExpectedRevision != before,
+		AppliedRevision:    snapshot.Revision,
+		AppliedOutboundTag: snapshot.AppliedTag,
+		Stale:              request.ExpectedRevision != 0 && request.ExpectedRevision != snapshot.PreviousRevision,
 	}, nil
 }
 
