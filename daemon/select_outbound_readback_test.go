@@ -15,6 +15,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/sagernet/sing-box/protocol/group"
 	"github.com/stretchr/testify/require"
 )
 
@@ -180,4 +181,16 @@ func TestTwoSelectionsInTheSameBoxProduceTwoConsistentSnapshots(t *testing.T) {
 		"the first answer must describe the revision its own selection produced (b was the first change)")
 	require.Equal(t, "a", second.AppliedOutboundTag)
 	require.EqualValues(t, 2, second.AppliedRevision)
+
+	// And the group itself: the CURRENT state must match the second answer. The first answer
+	// describes a transition that really happened, not the state the group is in now - if the two
+	// disagreed, a client would store a pair the group never held.
+	instance := service.instance
+	require.NotNil(t, instance)
+	outboundGroup, loaded := instance.outboundManager.Outbound("sel")
+	require.True(t, loaded)
+	selector, isSelector := outboundGroup.(*group.Selector)
+	require.True(t, isSelector)
+	require.Equal(t, "a", selector.Selected("tcp").Tag())
+	require.Equal(t, second.AppliedRevision, selector.Revision())
 }

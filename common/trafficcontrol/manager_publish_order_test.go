@@ -11,6 +11,7 @@ package trafficcontrol
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing/common/observable"
 
@@ -126,4 +127,71 @@ func TestConcurrentJoinsAndLeavesKeepTheEmissionOrder(t *testing.T) {
 		}
 		require.EqualValues(t, total, previous, "the numbers are exactly 1..N with nothing missing")
 	}
+}
+
+// TestAFastSubscriberIsNotDampedByASlowOne is the fan-out half of "a slow consumer cannot couple
+// back to the data path": two listeners of the same manager, one drained, one left full. The fast
+// one must keep receiving contiguous numbers while the slow one drops - and the drop must not make
+// the fast one's stream shorter or gappy.
+func TestAFastSubscriberIsNotDampedByASlowOne(t *testing.T) {
+	manager := NewManager()
+	manager.eventObserver = observable.NewObserver(manager.eventSubscriber, 64)
+	t.Cleanup(func() { manager.eventObserver.Close() })
+	fast, _, err := manager.eventObserver.Subscribe()
+	require.NoError(t, err)
+	slow, _, err := manager.eventObserver.Subscribe()
+	require.NoError(t, err)
+
+	const firstBatch = 64 // fills both listener buffers
+	for index := 0; index < firstBatch; index++ {
+		manager.publish(ConnectionEvent{})
+	}
+	require.Eventually(t, func() bool { return len(fast) == firstBatch && len(slow) == firstBatch },
+		5*time.Second, time.Millisecond, "both listeners must have their buffers full")
+
+	// Drain the fast one; the slow one stays full, so the next publications are dropped for it.
+	var fastSequences []uint64
+	for index := 0; index < firstBatch; index++ {
+		fastSequences = append(fastSequences, (<-fast).Sequence)
+	}
+	const secondBatch = 10
+	for index := 0; index < secondBatch; index++ {
+		manager.publish(ConnectionEvent{})
+	}
+	require.Eventually(t, func() bool { return len(fast) == secondBatch }, 5*time.Second, time.Millisecond)
+	for index := 0; index < secondBatch; index++ {
+		fastSequences = append(fastSequences, (<-fast).Sequence)
+	}
+	require.Len(t, fastSequences, firstBatch+secondBatch)
+	for index, sequence := range fastSequences {
+		require.EqualValues(t, index+1, sequence,
+			"the drained listener must see a contiguous stream (position %d was %d)", index+1, sequence)
+	}
+
+	// The slow listener still holds exactly the first batch, with the dropped numbers spent.
+	for index := 0; index < firstBatch; index++ {
+		require.EqualValues(t, index+1, (<-slow).Sequence)
+	}
+	manager.publish(ConnectionEvent{})
+	require.Eventually(t, func() bool { return len(slow) == 1 }, 5*time.Second, time.Millisecond)
+	require.EqualValues(t, firstBatch+secondBatch+1, (<-slow).Sequence,
+		"the slow listener's next event names everything it lost")
+}
+
+// TestClosingTheBusEndsTheSubscription is the stop path: closing the observer must release every
+// subscriber (the daemon blocks on that done channel) and refuse new ones.
+func TestClosingTheBusEndsTheSubscription(t *testing.T) {
+	manager := NewManager()
+	manager.eventObserver = observable.NewObserver(manager.eventSubscriber, 4)
+	_, done, err := manager.eventObserver.Subscribe()
+	require.NoError(t, err)
+
+	require.NoError(t, manager.eventObserver.Close())
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("closing the bus must signal every subscriber's done channel")
+	}
+	_, _, err = manager.eventObserver.Subscribe()
+	require.Error(t, err, "a closed bus must refuse new subscriptions")
 }
