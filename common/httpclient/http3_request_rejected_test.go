@@ -327,3 +327,56 @@ func TestColdRejectedReplayablePostWithoutKeyFallsBack(t *testing.T) {
 	}
 	require.False(t, transport.h3Broken(requestAuthority(request)))
 }
+
+// TestWarmBodylessRejectIsReportedWithoutAnUnsafeRetry documents the bodyless
+// compatibility limit the review found: for a nil body (or http.NoBody) quic-go's
+// OnlyCached request can be reused for its internal retry regardless of GetBody,
+// so the rejection is lost and the flow ends on the "cache disappeared after
+// dispatch" guard. That guard is deliberate: the evidence is gone, and a cold
+// retry (or an H2 fallback) would be a guess. No unsafe duplicate is sent, no
+// verdict is armed, and the warm GET path is unaffected. Making this case fall
+// back needs dependency-level evidence, so it is recorded as a compatibility
+// todo rather than worked around here.
+func TestWarmBodylessRejectIsReportedWithoutAnUnsafeRetry(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body io.Reader
+		nil  bool
+	}{
+		{name: "nil body", nil: true},
+		{name: "http.NoBody", body: http.NoBody},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			address, streams := startWarmRejectingH3Peer(t)
+			h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+			transport := newRetrySafetyTransport(h2Transport, dialRetrySafetyH3(address), time.Hour)
+			t.Cleanup(func() { _ = transport.h3Transport.Close() })
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			warm, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+address+"/warm", nil)
+			require.NoError(t, err)
+			warmResponse, err := transport.RoundTrip(warm)
+			require.NoError(t, err)
+			require.Equal(t, "HTTP/3.0", warmResponse.Proto)
+			require.NoError(t, warmResponse.Body.Close())
+
+			var request *http.Request
+			if testCase.nil {
+				request, err = http.NewRequestWithContext(ctx, http.MethodPost, "https://"+address+"/empty", nil)
+			} else {
+				request, err = http.NewRequestWithContext(ctx, http.MethodPost, "https://"+address+"/empty", testCase.body)
+			}
+			require.NoError(t, err)
+			response, err := transport.RoundTrip(request)
+			if response != nil {
+				_ = response.Body.Close()
+			}
+			require.ErrorContains(t, err, "cache entry disappeared after the request was dispatched",
+				"the lost evidence must stop the retry instead of guessing")
+			require.Zero(t, h2Server.executed(), "no unsafe cross-version retry")
+			require.EqualValues(t, 2, streams.Load(), "the warm GET and the rejected bodyless POST only")
+			require.False(t, transport.h3Broken(requestAuthority(request)), "the rejection is not a verdict")
+		})
+	}
+}
