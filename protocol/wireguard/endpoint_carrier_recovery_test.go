@@ -142,7 +142,18 @@ func TestABusinessByteCrossesARealWireGuardPair(t *testing.T) {
 
 // runWireGuardCarrier is the shared body: a real pair, a real handshake, a business byte. The AWG
 // test reuses it with obfuscation enabled on both ends.
-func runWireGuardCarrier(t *testing.T, awg option.AmneziaWGOptions) {
+// wireGuardPair is the real two-endpoint fixture both tests share: the production endpoints, a real
+// handshake over loopback UDP, and the server-side router that carries the decrypted flow.
+type wireGuardPair struct {
+	client      *Endpoint
+	server      *Endpoint
+	router      *wgCarrierRouter
+	destination M.Socksaddr
+}
+
+// startWireGuardPair builds the pair and waits until the tunnel can dial. It is the same shape the
+// single-path acceptance used; splitting it out lets the same-peer test act on a live session.
+func startWireGuardPair(t *testing.T, awg option.AmneziaWGOptions) *wireGuardPair {
 	t.Helper()
 	serverKey, err := wgtypes.GeneratePrivateKey()
 	require.NoError(t, err)
@@ -180,36 +191,97 @@ func runWireGuardCarrier(t *testing.T, awg option.AmneziaWGOptions) {
 	})
 	require.NotNil(t, clientEndpoint)
 
-	destination := M.SocksaddrFrom(netip.AddrFrom4([4]byte{10, 66, 0, 1}), echoPort)
-	dialed := func() net.Conn {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		conn, dialErr := clientEndpoint.DialContext(ctx, N.NetworkTCP, destination)
-		require.NoError(t, dialErr, "the WireGuard endpoint could not dial through the tunnel")
-		return conn
+	pair := &wireGuardPair{
+		client:      clientEndpoint,
+		server:      serverEndpoint,
+		router:      router,
+		destination: M.SocksaddrFrom(netip.AddrFrom4([4]byte{10, 66, 0, 1}), echoPort),
 	}
-	var conn net.Conn
+	var probe net.Conn
 	require.Eventually(t, func() bool {
-		candidate, dialErr := func() (net.Conn, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			return clientEndpoint.DialContext(ctx, N.NetworkTCP, destination)
-		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		candidate, dialErr := clientEndpoint.DialContext(ctx, N.NetworkTCP, pair.destination)
 		if dialErr != nil {
 			return false
 		}
-		conn = candidate
+		probe = candidate
 		return true
 	}, 20*time.Second, 100*time.Millisecond, "the WireGuard handshake never completed")
-	require.NotNil(t, conn)
+	if probe != nil {
+		_ = probe.Close()
+	}
+	return pair
+}
+
+// exchangeThroughTunnel writes a payload through the pair and requires the echo.
+func (p *wireGuardPair) exchangeThroughTunnel(t *testing.T, conn net.Conn, payload string) {
+	t.Helper()
 	_ = conn.SetDeadline(time.Now().Add(20 * time.Second))
-	_, err = conn.Write([]byte("through-the-tunnel"))
+	_, err := conn.Write([]byte(payload))
 	require.NoError(t, err)
-	reply := make([]byte, len("through-the-tunnel"))
+	reply := make([]byte, len(payload))
 	_, err = io.ReadFull(conn, reply)
 	require.NoError(t, err, "no reply crossed the WireGuard tunnel")
-	require.Equal(t, "through-the-tunnel", string(reply))
+	require.Equal(t, payload, string(reply))
+}
+
+// dial opens one flow through the tunnel.
+func (p *wireGuardPair) dial(t *testing.T) net.Conn {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, err := p.client.DialContext(ctx, N.NetworkTCP, p.destination)
+	require.NoError(t, err, "the WireGuard endpoint could not dial through the tunnel")
+	return conn
+}
+
+// runWireGuardCarrier is the shared body of the single-path acceptance: a real pair, a real
+// handshake, a business byte. The AWG test reuses it with obfuscation enabled on both ends.
+func runWireGuardCarrier(t *testing.T, awg option.AmneziaWGOptions) {
+	t.Helper()
+	pair := startWireGuardPair(t, awg)
+	conn := pair.dial(t)
+	pair.exchangeThroughTunnel(t, conn, "through-the-tunnel")
 	_ = conn.Close()
-	require.GreaterOrEqual(t, router.flows.Load(), int32(1), "the flow never reached the server endpoint's router")
-	_ = dialed
+	require.GreaterOrEqual(t, pair.router.flows.Load(), int32(1), "the flow never reached the server endpoint's router")
+}
+
+// TestASamePeerSessionSurvivesAnOuterBindRefresh is the same-peer outer-path part that can be
+// measured on this host without two physical interfaces.
+//
+// The peer keys and the inner addresses do not change: what changes is the endpoint's outer socket.
+// `InterfaceUpdated` schedules exactly the call made here synchronously (`Endpoint.BindUpdate` ->
+// the device's bind update), and the transport's rebind tests already pin the lease, the late/duplicate
+// rebind decisions and the old socket accounting. What they cannot show is a real session carrying
+// bytes across the refresh, which is what this test adds: an established flow keeps echoing, a second
+// refresh during traffic keeps it alive, and a flow opened afterwards works.
+//
+// The two-physical-path variant (and the same-peer roaming on a device) still needs the device: this
+// host has one outer path and the fixture is loopback.
+func TestASamePeerSessionSurvivesAnOuterBindRefresh(t *testing.T) {
+	pair := startWireGuardPair(t, option.AmneziaWGOptions{})
+	conn := pair.dial(t)
+	pair.exchangeThroughTunnel(t, conn, "before-the-refresh")
+
+	// The production network-change action on the endpoint, synchronous so the assertions below are
+	// ordered after the refresh rather than racing it.
+	require.NoError(t, pair.client.endpoint.BindUpdate())
+
+	// The WG session is keyed, not socket-bound: the established flow must keep carrying bytes.
+	pair.exchangeThroughTunnel(t, conn, "after-the-refresh")
+
+	// A second refresh while the flow is live, so a duplicate/late rebind cannot strand it.
+	require.NoError(t, pair.client.endpoint.BindUpdate())
+	pair.exchangeThroughTunnel(t, conn, "after-the-second-refresh")
+
+	// And a flow opened after the refresh works through the same peer and inner addresses.
+	second := pair.dial(t)
+	pair.exchangeThroughTunnel(t, second, "new-flow-after-the-refresh")
+	_ = second.Close()
+	_ = conn.Close()
+
+	require.GreaterOrEqual(t, pair.router.flows.Load(), int32(2),
+		"the flow opened after the refresh never reached the server endpoint's router")
+	require.NotNil(t, pair.server)
 }
