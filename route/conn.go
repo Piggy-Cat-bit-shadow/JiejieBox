@@ -218,12 +218,16 @@ func (m *ConnectionManager) CloseAll() {
 		element = nextElement
 	}
 	m.access.Unlock()
-	for _, closer := range closers {
-		common.Close(closer)
+	if len(closers) > 0 {
+		m.beginSynchronousCloses(len(closers))
+		for _, closer := range closers {
+			common.Close(closer)
+		}
+		m.endSynchronousCloses(len(closers))
 	}
 	// The condemned set is owned by this manager but not tracked, so "close all" must take it
-	// too. This is the synchronous promise: the caller is not told the manager is empty while
-	// an object it owns has not finished closing.
+	// too. takeCondemnedLocked accounts the batch as synchronous closes, so the final Close
+	// cannot return while this caller is still inside one of them.
 	m.disposal.mu.Lock()
 	m.initDisposalLocked()
 	condemned := m.takeCondemnedLocked()
@@ -232,7 +236,8 @@ func (m *ConnectionManager) CloseAll() {
 	for _, closer := range condemned {
 		common.Close(closer)
 	}
-	m.waitForDisposals()
+	m.endSynchronousCloses(len(condemned))
+	m.waitForTrackedCloses()
 }
 
 // SetUploadRate installs the managed upload shaping rate from the configuration.
@@ -329,20 +334,25 @@ func (m *ConnectionManager) Close() error {
 	return nil
 }
 
-func (m *ConnectionManager) TrackConn(conn net.Conn) net.Conn {
+func (m *ConnectionManager) newTrackedConn(conn net.Conn) *trackedConn {
 	tracked := &trackedConn{
 		Conn:        conn,
 		socketOwner: socketOwner{original: conn},
 		manager:     m,
 	}
 	m.initConnState(&tracked.managedConnState)
+	return tracked
+}
+
+func (m *ConnectionManager) TrackConn(conn net.Conn) net.Conn {
+	tracked := m.newTrackedConn(conn)
 	m.access.Lock()
 	tracked.element = m.connections.PushBack(tracked)
 	m.access.Unlock()
 	return tracked
 }
 
-func (m *ConnectionManager) TrackPacketConn(conn net.PacketConn) net.PacketConn {
+func (m *ConnectionManager) newTrackedPacketConn(conn net.PacketConn) *trackedPacketConn {
 	tracked := &trackedPacketConn{
 		NetPacketConn: bufio.NewPacketConn(conn),
 		socketOwner:   socketOwner{original: conn},
@@ -351,6 +361,11 @@ func (m *ConnectionManager) TrackPacketConn(conn net.PacketConn) net.PacketConn 
 	m.initConnState(&tracked.managedConnState)
 	// Datagram flows are class A at a transition: see managedConnState.packet.
 	tracked.managedConnState.packet = true
+	return tracked
+}
+
+func (m *ConnectionManager) TrackPacketConn(conn net.PacketConn) net.PacketConn {
+	tracked := m.newTrackedPacketConn(conn)
 	m.access.Lock()
 	tracked.element = m.connections.PushBack(tracked)
 	m.access.Unlock()
