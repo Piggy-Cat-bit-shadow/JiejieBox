@@ -2,7 +2,7 @@
     "clients":  [
                     {
                         "path":  "clients/apple",
-                        "pinned":  "5fb083e5ebf18350e594451d1be668904c9fde1e"
+                        "pinned":  "7fce7117b33a38ef4c73c81db67c49f0be7a7dad"
                     },
                     {
                         "path":  "clients/android",
