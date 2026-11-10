@@ -1,6 +1,6 @@
 # 01｜仓库盘点、安全冻结与集成基线建立
 
-- 执行时间：2026-11-11 00:00–00:55（Asia/Shanghai），审计快照时刻 `git ls-remote` 于 2026-11-10T23:47Z 前后采集。
+- 执行时间：2026-11-11 00:00–00:35（Asia/Shanghai）；远端快照由 `git ls-remote` 于 2026-11-10 23:47（UTC+8）前后采集。
 - 本阶段性质：只读审计 + 隔离工作区建立。没有 stash / reset / clean / checkout 覆盖任何用户工作区，没有推送任何远端引用。
 - 结论先行：
   1. 远端状态与旧审计快照一致但**不是照抄**：`testing` 仍为 `4152caf0e58f`，`candidate/w07-2026-11-10` 仍为 `0b1b6a3b2f0d`，远端 15 条分支（旧快照称"约 15 条"）。
@@ -8,8 +8,8 @@
   3. 13 个仓库均在隔离路径建立 `integration/0.1.45` worktree，起始 commit 全部等于主仓库树中记录的 pin。
   4. 112 个本地 clone/worktree 中 7 个非干净，全部**原样保留**并做了独立备份（见 §4）。
   5. 发现旧快照未记录的本地未推送工作：主仓库 6 条本地分支（`candidate-r6`、`next/config`、`next/protocols`、`review/task09-dual-stack`、`trial/task08-h3-h2-merge`、`wip/p0ab-stale-base`）；Desktop `next/client-consumption`（4 提交）；Apple 子模块 `hotfix/ios-command-socket`（1 提交）；cronet-go `feat/per-dial-quic`（2 提交，含 1.8 GB 原生库）。
-  6. **旧快照的一处误判已纠正**：`backup/02-ecfffe7d0`（本地别名 `next/routing-dns`）不是"大型旧基线备份"。其 tip 时间 2026-11-10 21:42，晚于候选 tip 前 23 分钟，44 个提交与所有 topic 分支 **0 个 patch 等价**，是一条**仍在进行的并行工作线**，不得按"旧备份"处理。
-  7. **pin 与声明不一致（需第 05/06 阶段处理）**：Apple `clients/apple` 的拼 pin `7fce7117b33a` 位于 `next/client-consumption`，**不在 `main` 上**（`main`=`97b35d1ce242`，是 pin 的祖先），与 `release/dependencies.json` 声明的 `branch: main` 不符。
+  6. **旧快照的一处误判已纠正**：`backup/02-ecfffe7d0`（本地别名 `next/routing-dns`）不是"大型旧基线备份"。其 tip 时间为 2026-11-10 21:42，比候选 tip（22:05）早 23 分钟，44 个提交与所有 topic 分支 **0 个 patch 等价**，是一条**仍在进行的并行工作线**，不得按"旧备份"处理。
+  7. **pin 与声明不一致（需第 05/06 阶段处理）**：Apple `clients/apple` 的 pin `7fce7117b33a` 位于 `next/client-consumption`，**不在 `main` 上**（`main`=`97b35d1ce242`，是 pin 的祖先），与 `release/dependencies.json` 声明的 `branch: main` 不符。
   8. `wireguard-go` 出现在 `go.mod`/`source-lock.json`，但 `release/dependencies.json` 的 `go_modules` 未声明它（旧快照已提到，本次复核确认仍存在）——第 06 阶段必须补齐或移除。
 
 ---
