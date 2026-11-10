@@ -206,8 +206,13 @@ func (r *Router) DiagnoseRoute(ctx context.Context, request RouteDiagnoseRequest
 		case *R.RuleActionReject:
 			// The decision refuses the request. This is a RESULT, not a failed diagnostic: the
 			// listener must see no connection, and the report must say which rule refused it.
+			//
+			// The detail comes from the side-effect-free form: `Error` feeds the data plane's drop
+			// counter and flood limiter, and for `method: reply` it returns a NIL error (the inbound
+			// layer writes the reply), which the diagnostic used to dereference - a panic on its own
+			// goroutine that took the whole process down.
 			result.Rejected = true
-			result.RejectDetail = action.Error(ctx).Error()
+			result.RejectDetail = action.RejectionDetail(network)
 			result.ActionType = selectedRule.Action().Type()
 			return result, nil
 		case *R.RuleActionHijackDNS:

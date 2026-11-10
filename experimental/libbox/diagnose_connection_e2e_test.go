@@ -221,6 +221,99 @@ func TestTheActiveDiagnosticRejectsAnIPv6Literal(t *testing.T) {
 	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
 }
 
+// TestTheActiveDiagnosticRefusesARejectReplyInsteadOfCrashing is the reviewed crash: a TCP REJECT
+// with `method: reply` makes the production reject action return a NIL error (the reply is written by
+// the inbound layer, not by an error value), and the diagnostic called `.Error()` on it. The panic
+// happened on the diagnostic's own goroutine and took the process down.
+func TestTheActiveDiagnosticRefusesARejectReplyInsteadOfCrashing(t *testing.T) {
+	listener := newCountingListener(t)
+	server := startDiagnoseTestCommandServer(t, routeConfig(
+		`{"ip_cidr":["127.0.0.0/8"],"action":"reject","method":"reply"}`))
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://127.0.0.1:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageOK, stages[connectionTestStageRules].Status)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "ip_cidr")
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
+	require.Contains(t, stages[connectionTestStageDial].Detail, "reply")
+	require.Contains(t, stages[connectionTestStageDial].Detail, "not supported for TCP connections",
+		"the report reuses the production semantics for a TCP flow")
+	time.Sleep(100 * time.Millisecond)
+	require.Zero(t, listener.count.Load(), "a rejected request must not reach the listener")
+}
+
+// TestTheActiveDiagnosticRejectsWithEachMethod covers the other reject methods on both address
+// families: every one refuses without dialling, and the report names the method.
+func TestTheActiveDiagnosticRejectsWithEachMethod(t *testing.T) {
+	testCases := []struct {
+		id       string
+		rule     string
+		target   func(port uint16) string
+		contains string
+	}{
+		{
+			id:       "ipv4-default-method",
+			rule:     `{"ip_cidr":["127.0.0.0/8"],"action":"reject"}`,
+			target:   func(port uint16) string { return fmt.Sprintf("http://127.0.0.1:%d/path", port) },
+			contains: "reject",
+		},
+		{
+			id:       "ipv4-drop-method",
+			rule:     `{"ip_cidr":["127.0.0.0/8"],"action":"reject","method":"drop"}`,
+			target:   func(port uint16) string { return fmt.Sprintf("http://127.0.0.1:%d/path", port) },
+			contains: "drop",
+		},
+		{
+			id:       "ipv4-reply-method",
+			rule:     `{"ip_cidr":["127.0.0.0/8"],"action":"reject","method":"reply"}`,
+			target:   func(port uint16) string { return fmt.Sprintf("http://127.0.0.1:%d/path", port) },
+			contains: "not supported for TCP connections",
+		},
+		{
+			id:       "ipv6-reply-method",
+			rule:     `{"ip_cidr":["::1/128"],"action":"reject","method":"reply"}`,
+			target:   func(port uint16) string { return "http://[::1]:9/path" },
+			contains: "not supported for TCP connections",
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.id, func(t *testing.T) {
+			listener := newCountingListener(t)
+			server := startDiagnoseTestCommandServer(t, routeConfig(testCase.rule))
+			defer server.Close()
+
+			report := runDiagnoseTest(t, server, "", "tcp", testCase.target(listener.port()))
+
+			require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+			stages := stagesByID(report)
+			require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDial].Status)
+			require.Contains(t, stages[connectionTestStageDial].Detail, testCase.contains)
+			time.Sleep(100 * time.Millisecond)
+			require.Zero(t, listener.count.Load())
+		})
+	}
+}
+
+// TestTheActiveDiagnosticKeepsTheRootContractWithARejectRule: a named root still dials the fixed
+// root by contract, while the rules stage reports what the route decision would do.
+func TestTheActiveDiagnosticKeepsTheRootContractWithARejectRule(t *testing.T) {
+	listener := newCountingListener(t)
+	server := startDiagnoseTestCommandServer(t, routeConfig(
+		`{"ip_cidr":["127.0.0.0/8"],"action":"reject"}`))
+
+	report := runDiagnoseTest(t, server, "direct", "tcp", fmt.Sprintf("http://127.0.0.1:%d/path", listener.port()))
+
+	require.Equal(t, "root", report.Routing)
+	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
+	stages := stagesByID(report)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "reject")
+	require.Contains(t, stages[connectionTestStageDial].Detail, "connected via direct")
+	require.Eventually(t, func() bool { return listener.count.Load() == 1 }, 5*time.Second, time.Millisecond,
+		"root mode dials the target as written, by contract")
+}
+
 // TestTheActiveDiagnosticUsesTheResolveActionsResolver is reviewed failure 2: a route `resolve`
 // action names its own DNS server, and the diagnostic must dial the address THAT server returned.
 func TestTheActiveDiagnosticUsesTheResolveActionsResolver(t *testing.T) {

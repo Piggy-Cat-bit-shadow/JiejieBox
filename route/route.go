@@ -159,7 +159,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 		case *R.RuleActionReject:
 			buf.ReleaseMulti(buffers)
 			if action.Method == C.RuleActionRejectMethodReply {
-				return E.New("reject method `reply` is not supported for TCP connections")
+				return E.New(action.RejectionDetail(N.NetworkTCP))
 			}
 			return action.Error(ctx)
 		case *R.RuleActionHijackDNS:
@@ -448,7 +448,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 		case *R.RuleActionReject:
 			N.ReleaseMultiPacketBuffer(packetBuffers)
 			if action.Method == C.RuleActionRejectMethodReply {
-				return E.New("reject method `reply` is not supported for UDP connections")
+				return E.New(action.RejectionDetail(N.NetworkUDP))
 			}
 			return action.Error(ctx)
 		case *R.RuleActionHijackDNS:

@@ -45,15 +45,25 @@ func (p *boxConnectionTestPath) Outbound() adapter.OutboundManager {
 }
 
 // PreviewRouteRule explains which route rule decides a request for this host, if this build can.
+//
+// The destination is parsed, not assumed to be a name: a literal target used to be handed to the
+// rule matcher as an FQDN, so an `ip_cidr` rule never matched and the report said "no rule matched"
+// for a request production rejects. `Domain` carries only a real sniffed/asked name; a literal has
+// none.
 func (p *boxConnectionTestPath) PreviewRouteRule(network string, domain string, port uint16) (connectionTestRulePreview, bool) {
 	routeRouter, isRouteRouter := p.box.Router().(*route.Router)
 	if !isRouteRouter || routeRouter == nil {
 		return connectionTestRulePreview{}, false
 	}
+	destination := M.ParseSocksaddrHostPort(domain, port)
+	previewDomain := ""
+	if destination.IsDomain() {
+		previewDomain = destination.Fqdn
+	}
 	result := routeRouter.PreviewRoute(context.Background(), route.RoutePreviewRequest{
 		Network:     network,
-		Destination: M.Socksaddr{Fqdn: domain, Port: port},
-		Domain:      domain,
+		Destination: destination,
+		Domain:      previewDomain,
 		UserId:      -1,
 	})
 	return connectionTestRulePreview{
