@@ -1,6 +1,7 @@
 package route
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -356,11 +357,8 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 	}
 	// The removal and the ownership transfer are one step: shutdown takes m.access through
 	// CloseAll, so it cannot observe an object between the tracked set and the disposer.
-	waitForRoom := m.stageDisposals(closers)
+	m.stageDisposals(closers)
 	m.access.Unlock()
-	if waitForRoom {
-		m.waitForDisposalRoom()
-	}
 	if policy.drain {
 		m.transitions.recordTransition(retained, len(closers), seen)
 		// Open the reconnect governor's window. The connections that were just invalidated are about
@@ -398,11 +396,8 @@ func (m *ConnectionManager) reclaimAll() int {
 	if m.disposalStageHook != nil {
 		m.disposalStageHook()
 	}
-	waitForRoom := m.stageDisposals(closers)
+	m.stageDisposals(closers)
 	m.access.Unlock()
-	if waitForRoom {
-		m.waitForDisposalRoom()
-	}
 	return len(closers)
 }
 
@@ -429,15 +424,115 @@ type disposalState struct {
 	queue []managedConn
 	// pending counts every commissioned connection that has not been physically closed yet,
 	// including the one the worker is inside right now. Shutdown waits for it to reach zero.
-	pending  int
-	worker   bool
-	shutdown bool
+	pending int
+	// condemned holds retired connections that do not fit in the queue's budget. They are
+	// still owned by the manager (CloseAll and Close see them), but they are not tracked and
+	// not admissible; the worker promotes them as physical closes free room. This is what
+	// keeps the queue bounded without making the network-change body wait.
+	condemned []managedConn
+	// roomSignal is the cancelable form of cond for admission: WaitForConnectionRoom selects
+	// on it AND the caller's context, which a sync.Cond cannot do. It is closed and replaced
+	// on every ledger change (broadcast).
+	roomSignal chan struct{}
+	worker     bool
+	shutdown   bool
+}
+
+// connectionRoomWaiter is the optional capability the dialer asks before it tracks a new
+// connection.
+//
+// It is optional rather than part of adapter.ConnectionManager so that every other
+// implementation keeps the previous behaviour: no budget, no admission gate.
+type connectionRoomWaiter interface {
+	WaitForConnectionRoom(ctx context.Context) error
 }
 
 func (m *ConnectionManager) initDisposalLocked() {
 	m.disposal.once.Do(func() {
 		m.disposal.cond = sync.NewCond(&m.disposal.mu)
+		m.disposal.roomSignal = make(chan struct{})
 	})
+}
+
+// signalRoomLocked wakes every admission waiter. Caller holds d.mu.
+func (m *ConnectionManager) signalRoomLocked() {
+	if m.disposal.roomSignal == nil {
+		return
+	}
+	close(m.disposal.roomSignal)
+	m.disposal.roomSignal = make(chan struct{})
+}
+
+// disposalBacklogLocked is the total owned-but-not-closed set: the queue (and the close in
+// flight) plus the condemned. Caller holds d.mu.
+func (m *ConnectionManager) disposalBacklogLocked() int {
+	return m.disposal.pending + len(m.disposal.condemned)
+}
+
+// WaitForConnectionRoom is the saturation admission point. The dialer calls it before it
+// tracks a freshly dialled connection: while the disposal backlog is at or over the budget,
+// a new connection would only add another object to a set the manager cannot close, so the
+// dial waits - and can be cancelled by its context - until a physical close frees room.
+//
+// Shutdown releases every waiter: Close's own contract is the stronger one.
+func (m *ConnectionManager) WaitForConnectionRoom(ctx context.Context) error {
+	d := &m.disposal
+	d.mu.Lock()
+	m.initDisposalLocked()
+	for !d.shutdown && m.disposalBacklogLocked() >= m.disposalBudget() {
+		signal := d.roomSignal
+		d.mu.Unlock()
+		select {
+		case <-signal:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		d.mu.Lock()
+	}
+	d.mu.Unlock()
+	return nil
+}
+
+// promoteCondemnedLocked moves condemned objects into the queue up to the budget. Caller
+// holds d.mu. Promotion stops during shutdown: CloseAll takes the condemned set itself, so
+// shutdown still closes everything synchronously.
+func (m *ConnectionManager) promoteCondemnedLocked() {
+	d := &m.disposal
+	if d.shutdown {
+		return
+	}
+	room := m.disposalBudget() - d.pending
+	promoted := false
+	for room > 0 && len(d.condemned) > 0 {
+		d.queue = append(d.queue, d.condemned[0])
+		d.condemned[0] = nil
+		d.condemned = d.condemned[1:]
+		d.pending++
+		room--
+		promoted = true
+	}
+	if len(d.condemned) == 0 {
+		d.condemned = nil
+	}
+	if promoted {
+		m.signalRoomLocked()
+	}
+}
+
+// condemnedDisposals reports the deferred set: owned, not tracked, not yet queued.
+func (m *ConnectionManager) condemnedDisposals() int {
+	d := &m.disposal
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.condemned)
+}
+
+// takeCondemnedLocked removes and returns the whole condemned set for a synchronous close.
+// Caller holds d.mu.
+func (m *ConnectionManager) takeCondemnedLocked() []managedConn {
+	condemned := m.disposal.condemned
+	m.disposal.condemned = nil
+	return condemned
 }
 
 func (m *ConnectionManager) disposalBudget() int {
@@ -449,28 +544,36 @@ func (m *ConnectionManager) disposalBudget() int {
 
 // stageDisposals takes ownership of closers. The caller holds m.access, which is what makes
 // the transfer atomic with shutdown: CloseAll takes the same lock, so once shutdown can
-// proceed, every object that already left the tracked set is in pending.
+// proceed, every object that already left the tracked set is owned by the disposal ledger.
 //
-// It returns whether the caller must wait for room (outside the lock). The wait is the
-// saturation behaviour: the reclaim call, not the disposer, carries the backpressure, so the
-// backlog has a hard bound in connections.
-func (m *ConnectionManager) stageDisposals(closers []managedConn) (waitForRoom bool) {
+// Only as many objects as the budget has room for enter the queue. The rest become condemned:
+// still owned, still on the books, but not queued and not admissible. The call never waits,
+// which is what keeps the DNS pin and the generation commit off the close path.
+func (m *ConnectionManager) stageDisposals(closers []managedConn) {
 	if len(closers) == 0 {
-		return false
+		return
 	}
 	d := &m.disposal
 	d.mu.Lock()
 	m.initDisposalLocked()
-	d.pending += len(closers)
-	d.queue = append(d.queue, closers...)
+	room := m.disposalBudget() - d.pending
+	if room > len(closers) {
+		room = len(closers)
+	}
+	if room > 0 {
+		d.queue = append(d.queue, closers[:room]...)
+		d.pending += room
+	}
+	if room < len(closers) {
+		d.condemned = append(d.condemned, closers[room:]...)
+	}
 	if !d.worker {
 		d.worker = true
 		go m.disposalWorker()
 	}
+	m.signalRoomLocked()
 	d.cond.Broadcast()
-	waitForRoom = !d.shutdown && d.pending > m.disposalBudget()
 	d.mu.Unlock()
-	return waitForRoom
 }
 
 // disposalWorker is the single owner of the physical close. It drains the queue even after
@@ -498,22 +601,11 @@ func (m *ConnectionManager) disposalWorker() {
 		common.Close(closer)
 		d.mu.Lock()
 		d.pending--
+		m.promoteCondemnedLocked()
+		m.signalRoomLocked()
 		d.cond.Broadcast()
 		d.mu.Unlock()
 	}
-}
-
-// waitForDisposalRoom is the saturation backpressure point: a reclaim that would push the
-// backlog over budget waits here (outside m.access) until the worker catches up. It returns
-// immediately once shutdown began, because Close's own wait is the stronger contract.
-func (m *ConnectionManager) waitForDisposalRoom() {
-	d := &m.disposal
-	d.mu.Lock()
-	m.initDisposalLocked()
-	for d.pending > m.disposalBudget() && !d.shutdown {
-		d.cond.Wait()
-	}
-	d.mu.Unlock()
 }
 
 // waitForDisposals is shutdown's completion contract: it returns only when every commissioned
@@ -613,11 +705,8 @@ func (m *ConnectionManager) sweepStaleConnections() bool {
 	if m.disposalStageHook != nil {
 		m.disposalStageHook()
 	}
-	waitForRoom := m.stageDisposals(closers)
+	m.stageDisposals(closers)
 	m.access.Unlock()
-	if waitForRoom {
-		m.waitForDisposalRoom()
-	}
 	if len(closers) > 0 {
 		m.transitions.recordSweep(len(closers))
 		// Progress. Stay at the base interval while connections are still being found, because the

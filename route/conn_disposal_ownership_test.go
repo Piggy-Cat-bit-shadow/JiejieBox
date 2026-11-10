@@ -14,6 +14,7 @@ package route
 // so the number of sockets inside Close is one no matter how many generations were reclaimed.
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -163,10 +164,12 @@ func TestConsecutiveReclaimsKeepOnePhysicalCloseInFlight(t *testing.T) {
 	}
 }
 
-// TestDisposalBacklogWaitsForRoomAndRecovers is the saturation behaviour: with a budget of two, a
-// reclaim that removed six sockets must wait for the worker to catch up, and must return once it
-// has. The objects are owned and counted the whole time, never dropped and never duplicated.
-func TestDisposalBacklogWaitsForRoomAndRecovers(t *testing.T) {
+// TestTheDisposalBacklogStopsAdmissionAndRecovers is the saturation contract: with a budget of two,
+// a reclaim that retired six sockets returns at once (the network-change body must not wait), queues
+// two and condemns four; new connections are refused at admission while the backlog is over budget,
+// and are admitted again once the worker has drained the wave. Every object stays on the ledger the
+// whole time and closes exactly once.
+func TestTheDisposalBacklogStopsAdmissionAndRecovers(t *testing.T) {
 	manager := NewConnectionManager(log.NewNOPFactory().Logger())
 	manager.disposalBudgetOverride = 2
 	t.Cleanup(func() { _ = manager.Close() })
@@ -183,28 +186,27 @@ func TestDisposalBacklogWaitsForRoomAndRecovers(t *testing.T) {
 		defer close(reclaimDone)
 		manager.Reclaim(ReclaimNetworkTransition)
 	}()
-
-	require.Eventually(t, func() bool { return enteredCloses(conns) >= 1 },
-		2*time.Second, 5*time.Millisecond, "the first physical Close never started")
-	require.Greater(t, manager.pendingDisposals(), 2,
-		"the backlog must be visible while it exceeds the budget")
 	select {
 	case <-reclaimDone:
-		t.Fatal("the reclaim returned while six sockets were pending and the budget was two: " +
-			"the backlog is not bounded")
-	case <-time.After(150 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		t.Fatal("the reclaim waited for room: the generation boundary must not queue behind a Close")
 	}
+	require.Equal(t, 2, manager.pendingDisposals(), "the queue holds exactly the budget")
+	require.Equal(t, 4, manager.condemnedDisposals(), "the rest is condemned but still owned")
+
+	// Admission refuses new work while the backlog is over budget, and the refusal is the caller's
+	// context, not an unbounded wait.
+	admissionCtx, cancelAdmission := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err := manager.WaitForConnectionRoom(admissionCtx)
+	cancelAdmission()
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 
 	for _, conn := range conns {
 		conn.releaseClose()
 	}
-	select {
-	case <-reclaimDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the reclaim never recovered after the sockets were released")
-	}
-	require.Eventually(t, func() bool { return manager.pendingDisposals() == 0 },
-		5*time.Second, 5*time.Millisecond, "the ledger must be empty once the worker drained")
+	require.Eventually(t, func() bool {
+		return manager.pendingDisposals() == 0 && manager.condemnedDisposals() == 0
+	}, 5*time.Second, 5*time.Millisecond, "the ledger must be empty once the worker drained")
 	for index, conn := range conns {
 		require.EqualValues(t, 1, conn.closes.Load(), "socket %d must close exactly once", index)
 	}
