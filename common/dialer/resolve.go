@@ -398,8 +398,10 @@ func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, de
 			batch := make([]dualStackCandidate, 0, len(result.Addresses))
 			for _, address := range result.Addresses {
 				batch = append(batch, dualStackCandidate{
-					address: unmapAddress(address),
-					family:  classifyAddress(address),
+					address:          unmapAddress(address),
+					family:           classifyAddress(address),
+					sourceGeneration: result.SourceGeneration,
+					sourceKnown:      result.HasSourceGeneration,
 				})
 			}
 
@@ -872,9 +874,14 @@ func (d *resolveDialer) raceCandidatesExcluding(ctx context.Context, network str
 // askers now agree by construction rather than by three copies staying in step.
 func (d *resolveDialer) newScheduler(admission admissionPolicy) *candidateScheduler {
 	if owner, found := findFamilyHealthOwner(d.dialer); found {
-		return owner.newDualStackScheduler(d.fallbackDelay, admission)
+		scheduler := owner.newDualStackScheduler(d.fallbackDelay, admission)
+		// The DNS provenance reader is handed over here rather than built into the owner: health is
+		// a per-dialer fact, while "which DNS environment is current" belongs to the router this
+		// wrapper holds.
+		scheduler.dnsGeneration = d.dnsGenerationReader()
+		return scheduler
 	}
-	return &candidateScheduler{fallbackDelay: d.fallbackDelay}
+	return &candidateScheduler{fallbackDelay: d.fallbackDelay, dnsGeneration: d.dnsGenerationReader()}
 }
 
 // familyHealthOwner is implemented by dialers that own long-lived family health.

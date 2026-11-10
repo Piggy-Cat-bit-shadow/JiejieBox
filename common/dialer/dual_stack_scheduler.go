@@ -96,6 +96,13 @@ type candidateScheduler struct {
 	// restricts nothing, which is what a scheduler built without a capability (every test that does
 	// not opt in, and any manager that cannot report one) gets.
 	localFamily localFamilyPolicy
+	// dnsGeneration, when set, reports the DNS environment generation currently in force, so a
+	// candidate resolved under an environment the flow has already left is ordered behind a current
+	// one. nil means the comparison is unavailable, which orders nothing.
+	//
+	// It is a reader rather than a captured value because the launch decision happens after the
+	// answer: the environment can move between the query and the attempt.
+	dnsGeneration func() (uint64, bool)
 }
 
 // dial runs the race and returns the winning connection.
@@ -363,6 +370,19 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	// just ran, then anything still queued. The first two terms are what make the stream behave
 	// like an interleaved plan; the last one covers a producer that offers an unclassifiable
 	// address, which is attempted rather than silently dropped so its failure is reported.
+	//
+	// # Why a superseded candidate is ordered behind a current one
+	//
+	// A DNS answer may legitimately be delivered after the DNS environment changed - that delivery
+	// contract is deliberate, because the answer was true when it was asked. What must not happen is
+	// that answer taking the launch slot from one that describes the environment the socket will be
+	// created in: a split-horizon name whose A record moved would otherwise send the new connection
+	// to the address the previous environment selected.
+	//
+	// The demotion is an ORDERING rule and never a refusal. When both heads are superseded - or when
+	// provenance is unknown, which is every implementation that predates the field - the normal
+	// alternation applies and the candidate is still launched. A DNS flap must cost a launch slot,
+	// never a connection.
 	nextFamily := func() (addressFamily, bool) {
 		if pendingCount == 0 {
 			return familyInvalid, false
@@ -372,10 +392,23 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			if lastStartedFamily == familyIPv6 {
 				other = familyIPv4
 			}
-			if len(pendingByFamily[other]) > 0 {
+			otherPending := len(pendingByFamily[other]) > 0
+			samePending := len(pendingByFamily[lastStartedFamily]) > 0
+			if otherPending && samePending {
+				otherStale := s.candidateSuperseded(pendingByFamily[other][0])
+				sameStale := s.candidateSuperseded(pendingByFamily[lastStartedFamily][0])
+				// The alternation is the tie-break: it only loses to "this one is current".
+				if otherStale && !sameStale {
+					return lastStartedFamily, true
+				}
+				if !otherStale && sameStale {
+					return other, true
+				}
+			}
+			if otherPending {
 				return other, true
 			}
-			if len(pendingByFamily[lastStartedFamily]) > 0 {
+			if samePending {
 				return lastStartedFamily, true
 			}
 		}
@@ -721,6 +754,35 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			}
 		}
 	}
+}
+
+// candidateSuperseded reports whether a candidate's answer was requested under a DNS environment
+// that is no longer in force.
+//
+// # Polarity: unknown and unreportable are CURRENT
+//
+// A candidate whose producer predates the provenance fields reports nothing, and a chain whose
+// router cannot report "now" leaves the comparison unavailable. Both must keep their previous
+// behaviour, which is to be dialled in arrival order - so both answer false. This is the same
+// fail-open direction the local capability policy documents, and it is the only safe one here: a
+// rule that treated unknown as superseded would demote every third-party DNS implementation's
+// answer behind... nothing, and the flow would still dial it, but the ordering signal would be a
+// fabrication.
+//
+// # Why it is computed at launch, not at admission
+//
+// The environment can move between the query and the attempt, and the launch is where the ordering
+// decision is made. Reading the current generation here is one call per launch - only when the queue
+// actually holds two families with pending candidates - so it never touches the common path.
+func (s *candidateScheduler) candidateSuperseded(candidate dualStackCandidate) bool {
+	if !candidate.sourceKnown || s.dnsGeneration == nil {
+		return false
+	}
+	current, available := s.dnsGeneration()
+	if !available {
+		return false
+	}
+	return current != candidate.sourceGeneration
 }
 
 func (s *candidateScheduler) fallbackDelayOrDefault() time.Duration {

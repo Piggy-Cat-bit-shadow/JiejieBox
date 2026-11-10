@@ -1454,6 +1454,20 @@ func (r *Router) dnsGeneration() uint64 {
 	return r.networkGeneration.Load() + r.observeDNSEnvironment()
 }
 
+// DNSGeneration reports the DNS environment generation currently in force.
+//
+// It exists so the connection layer can tell an answer requested under one environment from the
+// environment it is about to dial in. The value is the router's own aggregate (network generation
+// plus its DNS environment fingerprint counter) and is deliberately NOT the connection-manager's
+// reset epoch: a DNS-only change must not tear down established connections, which is why the two
+// are separate counters in the first place.
+//
+// It reads through the same accessor the router uses internally, so the consumer and the producer
+// cannot disagree about which value "now" is.
+func (r *Router) DNSGeneration() uint64 {
+	return r.dnsGeneration()
+}
+
 // dnsGenerationLocked is dnsGeneration for a caller that already holds dnsEnvironmentAccess.
 //
 // The lock is NOT reentrant, so the two-phase commit in commitReverseMappingAnswers - the one place
