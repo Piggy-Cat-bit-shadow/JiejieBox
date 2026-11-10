@@ -151,3 +151,38 @@ func TestPublishHTTP2ConnRejectsThePreviousNetwork(t *testing.T) {
 	require.Empty(t, client.http2Conns)
 	require.True(t, conn.closed.Load(), "the discarded connection must be closed, not leaked")
 }
+
+func TestAuditH2DialCannotPublishAfterClose(t *testing.T) {
+	dialer := newBlockingTLSDialer()
+	client := &Client{tlsDialer: dialer, http2Transport: &http2.Transport{}}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := client.acquireHTTP2(context.Background())
+		done <- err
+	}()
+	<-dialer.entered
+	require.NoError(t, client.Close())
+	close(dialer.release)
+	err := <-done
+	defer client.Close()
+	require.ErrorIs(t, err, net.ErrClosed)
+	require.Empty(t, client.http2Conns)
+}
+
+func TestAuditNewNetworkH2DoesNotWaitForRetiredDial(t *testing.T) {
+	dialer := newBlockingTLSDialer()
+	client := &Client{tlsDialer: dialer, http2Transport: &http2.Transport{}}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := client.acquireHTTP2(context.Background())
+		done <- err
+	}()
+	<-dialer.entered
+	client.ResetConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _, err := client.acquireHTTP2(ctx)
+	close(dialer.release)
+	require.ErrorIs(t, <-done, errHTTP2DialSuperseded)
+	require.NotErrorIs(t, err, context.DeadlineExceeded, "new network dial consumed its entire deadline at the old network gate")
+}

@@ -210,3 +210,42 @@ func TestCapabilityObservationBelongsToItsNetwork(t *testing.T) {
 	client.ResetConnections()
 	require.True(t, client.http3Available(), "a transition forgets the capability")
 }
+
+func TestAuditOrdinaryH3ConnectDoesNotNeedExtendedSettings(t *testing.T) {
+	server := startNoExtendedConnectH3Server(t)
+	tcp := &recordingDialer{err: errors.New("unexpected TCP fallback")}
+	client := newNoExtendedConnectClient(t, server.address, tcp)
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, err := client.DialContext(ctx, "tcp", M.ParseSocksaddr("example.org:443"))
+	require.Error(t, err) // this peer captures headers but intentionally sends no response
+	require.Positive(t, server.requestBytes.Load(), "ordinary CONNECT should reach the H3 peer despite missing Extended CONNECT settings")
+}
+
+func TestAuditResetDuringInFlightH3Dial(t *testing.T) {
+	server := startNoExtendedConnectH3Server(t)
+	client := newNoExtendedConnectClient(t, server.address, &recordingDialer{})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	dialDone := make(chan struct{})
+	impl := client.http3.(*http3ClientImpl)
+	impl.connDialer = func(ctx context.Context, _ M.Socksaddr, _ HTTP3CandidateConnector) (net.Conn, *quic.Conn, error) {
+		close(entered)
+		<-release
+		return nil, nil, errors.New("released")
+	}
+	go func() {
+		defer close(dialDone)
+		_, _ = client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.org:443"))
+	}()
+	<-entered
+	resetDone := make(chan struct{})
+	go func() { client.ResetConnections(); close(resetDone) }()
+	defer func() { close(release); <-dialDone; <-resetDone; _ = client.Close() }()
+	select {
+	case <-resetDone:
+	case <-time.After(150 * time.Millisecond):
+		t.Error("ResetConnections remains blocked behind the old H3 dial")
+	}
+}

@@ -17,47 +17,63 @@ import (
 
 var errHTTP2DialSuperseded = E.New("the network changed while the HTTP/2 connection was being dialled")
 
-// http2DialGate is the single flight that serialises HTTP/2 dials.
+// http2DialGate is the per-generation single flight that serialises HTTP/2 dials.
 //
 // It is a channel rather than a sync.Mutex because the wait must honour the WAITER's context: a
 // tunnel setup with a 3 s window must not spend it queued behind somebody else's 15 s handshake.
 // A mutex cannot be abandoned, so the setup would overrun its own window and the caller would be
 // gone long before it returned.
+//
+// The generation is part of the gate so a NEW network never waits at a retired one: the old dial
+// belongs to the network being left and is going to be discarded anyway.
 type http2DialGate struct {
-	done chan struct{}
+	generation uint64
+	done       chan struct{}
 }
 
-// acquireHTTP2DialSlot takes the dial slot or gives up with the caller's context.
-func (c *Client) acquireHTTP2DialSlot(ctx context.Context) (func(), error) {
+// acquireHTTP2DialSlot takes the dial slot for this generation. The bool reports that the pool
+// still carries a dial for a RETIRED generation and this one has none of its own - the caller must
+// not spend its budget on that handshake.
+func (c *Client) acquireHTTP2DialSlot(ctx context.Context, generation uint64) (func(), bool, error) {
 	for {
 		c.http2GateAccess.Lock()
-		if c.http2DialGate == nil {
-			gate := &http2DialGate{done: make(chan struct{})}
-			c.http2DialGate = gate
+		gate := c.http2DialGate
+		if gate == nil {
+			newGate := &http2DialGate{generation: generation, done: make(chan struct{})}
+			c.http2DialGate = newGate
 			c.http2GateAccess.Unlock()
 			return func() {
 				c.http2GateAccess.Lock()
-				c.http2DialGate = nil
-				close(gate.done)
+				if c.http2DialGate == newGate {
+					c.http2DialGate = nil
+				}
+				close(newGate.done)
 				c.http2GateAccess.Unlock()
-			}, nil
+			}, false, nil
 		}
-		waiting := c.http2DialGate.done
+		if gate.generation != generation {
+			c.http2GateAccess.Unlock()
+			return nil, true, nil
+		}
+		waiting := gate.done
 		c.http2GateAccess.Unlock()
 		select {
 		case <-waiting:
 			// The dial finished; go around and try to take the slot, or use its connection.
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 	}
 }
 
 func (c *Client) acquireHTTP2(ctx context.Context) (*http2ClientConn, net.Conn, error) {
+	if c.closed.Load() {
+		return nil, nil, net.ErrClosed
+	}
 	if clientConn, conn, reserved := c.reserveHTTP2Conn(); reserved {
 		return clientConn, conn, nil
 	}
-	// One dial at a time - but NOT while holding the pool lock.
+	// One dial at a time - but NOT while holding the pool lock, and not across generations.
 	//
 	// # Why the dial must not own the pool lock
 	//
@@ -66,38 +82,68 @@ func (c *Client) acquireHTTP2(ctx context.Context) (*http2ClientConn, net.Conn, 
 	// belonged to the network being left - up to the TLS timeout - before it could start tearing
 	// the old network down. The dial is serialised by its own gate instead, and its result is
 	// only published if the network it was made on is still the current one.
-	releaseSlot, err := c.acquireHTTP2DialSlot(ctx)
+	generation := c.networkEpoch.Load()
+	releaseSlot, retired, err := c.acquireHTTP2DialSlot(ctx, generation)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer releaseSlot()
+	if retired {
+		// A setup that began on the network being left fails once and its retry dials on the new
+		// network immediately; waiting here would spend its budget on an abandoned handshake.
+		return nil, nil, errHTTP2DialSuperseded
+	}
 	// Another setup may have finished a dial while this one waited for the slot.
 	if clientConn, conn, reserved := c.reserveHTTP2Conn(); reserved {
+		releaseSlot()
 		return clientConn, conn, nil
 	}
-	networkEpoch := c.networkEpoch.Load()
+	if c.closed.Load() {
+		releaseSlot()
+		return nil, nil, net.ErrClosed
+	}
 	conn, err := c.tlsDialer.DialTLSContext(ctx, c.server)
 	if err != nil {
+		releaseSlot()
+		if c.closed.Load() {
+			return nil, nil, net.ErrClosed
+		}
 		return nil, nil, err
 	}
-	if !c.isCurrentNetwork(networkEpoch) {
+	if c.closed.Load() {
+		// Close() returned while this dial was running: the connection must not be used or
+		// pooled, and the caller must learn the client is gone.
+		releaseSlot()
+		conn.Close()
+		return nil, nil, net.ErrClosed
+	}
+	if !c.isCurrentNetwork(generation) {
 		// This connection belongs to the network being left. Do not put it in the new pool and do
 		// not spend a round trip on it: the setup fails and the next attempt dials on the network
 		// that is current by then.
+		releaseSlot()
 		conn.Close()
 		return nil, nil, errHTTP2DialSuperseded
 	}
 	if conn.ConnectionState().NegotiatedProtocol != http2.NextProtoTLS {
-		c.observeHTTP2Unsupported(networkEpoch)
+		c.observeHTTP2Unsupported(generation)
+		releaseSlot()
 		return nil, conn, nil
 	}
 	clientConn, err := newHTTP2ClientConn(c.http2Transport, conn)
 	if err != nil {
+		releaseSlot()
 		conn.Close()
 		return nil, nil, E.Cause(err, "create HTTP/2 connection")
 	}
 	clientConn.reserveNewRequest()
-	if !c.publishHTTP2Conn(networkEpoch, clientConn, conn) {
+	published := c.publishHTTP2Conn(generation, clientConn, conn)
+	releaseSlot()
+	if !published {
+		// Close() and a network change both land here; the caller needs to know which, because a
+		// closed client is not retried and a retired generation is.
+		if c.closed.Load() {
+			return nil, nil, net.ErrClosed
+		}
 		return nil, nil, errHTTP2DialSuperseded
 	}
 	return clientConn, nil, nil
@@ -123,15 +169,21 @@ func (c *Client) isCurrentNetwork(networkEpoch uint64) bool {
 	return c.networkEpoch.Load() == networkEpoch
 }
 
-// publishHTTP2Conn installs a freshly dialled connection unless the network it was dialled on is
-// no longer current.
+// publishHTTP2Conn installs a freshly dialled connection unless the client is closed or the network
+// it was dialled on is no longer current.
 //
-// The check and the append are one transaction against ResetConnections: it takes the same
-// capability lock around its epoch bump and its pool clear, so either this connection is cleared
-// by that reset or this connection never enters the pool.
+// The check and the append are one transaction against ResetConnections and Close: ResetConnections
+// takes the same capability lock around its epoch bump and its pool clear, so either this
+// connection is cleared by that reset or this connection never enters the pool.
 func (c *Client) publishHTTP2Conn(networkEpoch uint64, clientConn *http2ClientConn, conn net.Conn) bool {
 	c.capabilityAccess.Lock()
 	defer c.capabilityAccess.Unlock()
+	if c.closed.Load() {
+		// A dial that finished after Close must not resurrect the pool, and the caller must not
+		// receive a connection the client has already promised to tear down.
+		conn.Close()
+		return false
+	}
 	if c.networkEpoch.Load() != networkEpoch {
 		conn.Close()
 		return false
