@@ -75,6 +75,17 @@ func (s *barrierStream) Send(events *ConnectionEvents) error {
 	return nil
 }
 
+// accounting returns the number of events delivered and the largest loss announced.
+func (s *barrierStream) accounting() (delivered int, reportedLoss uint64) {
+	for _, batch := range s.snapshot() {
+		delivered += len(batch.Events)
+		if batch.Dropped > reportedLoss {
+			reportedLoss = batch.Dropped
+		}
+	}
+	return
+}
+
 func (s *barrierStream) snapshot() []*ConnectionEvents {
 	s.access.Lock()
 	defer s.access.Unlock()
@@ -208,14 +219,14 @@ func TestASilentTailLossIsAnnouncedAndRepairedByTheSnapshot(t *testing.T) {
 		return false
 	}, 5*time.Second, time.Millisecond, "the loss must be announced without any further source event")
 
-	delivered := 0
-	var reportedLoss uint64
-	for _, batch := range slowStream.snapshot() {
-		delivered += len(batch.Events)
-		if batch.Dropped > reportedLoss {
-			reportedLoss = batch.Dropped
-		}
-	}
+	// The ticker may announce the loss BEFORE the queued prefix is drained (that is the silent-tail
+	// path working), so wait for the accounting to close rather than sampling once.
+	require.Eventually(t, func() bool {
+		delivered, reportedLoss := slowStream.accounting()
+		return delivered+int(reportedLoss) == connections*2
+	}, 5*time.Second, time.Millisecond,
+		"the queued prefix and the announced loss must add up to what was published")
+	delivered, reportedLoss := slowStream.accounting()
 	t.Logf("delivered=%d lost=%d published=%d", delivered, reportedLoss, connections*2)
 	require.NotZero(t, delivered, "the queued prefix must still be delivered")
 	require.NotZero(t, reportedLoss, "the reviewed case must actually lose events")
