@@ -81,8 +81,20 @@ func TestABudgetCutsARealProviderDownloadAndClosesTheConnection(t *testing.T) {
 		"the refresh must end on the caller's budget, not on the provider's own default (%v)", elapsed)
 	require.Contains(t, summary.Value, `"status":"cancelled"`,
 		"a budget that expired before anything was published is a cancellation, not a failure: %s", summary.Value)
-	require.True(t, peerSawCancellation.Load(),
-		"the request's own context must be cancelled, which is what closes the connection")
+	// The peer observes the cancellation when its own read loop notices the closed connection, which
+	// is a scheduling round after the client aborted the request - so this is an eventual fact about
+	// the transport, not an instantaneous one. What must be immediate is the daemon's answer above.
+	//
+	// It is asserted only when the second request actually reached the peer: with a 120 ms budget on a
+	// loaded machine the budget can expire between the reservation and the send, and then there is no
+	// connection to close. The cancellation is still reported (that is what the summary asserts), but
+	// "the peer saw the abort" has nothing to be true of.
+	if requests.Load() > 1 {
+		require.Eventually(t, func() bool {
+			return peerSawCancellation.Load()
+		}, 5*time.Second, 10*time.Millisecond,
+			"the request's own context must be cancelled, which is what closes the connection")
+	}
 	require.Contains(t, summary.Value, `"tag":"p1"`)
 	require.False(t, strings.Contains(summary.Value, `"status":"published"`),
 		"nothing was published by this attempt, so nothing may be reported as published")
