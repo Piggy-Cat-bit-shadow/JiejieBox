@@ -1454,6 +1454,31 @@ func (r *Router) dnsGeneration() uint64 {
 	return r.networkGeneration.Load() + r.observeDNSEnvironment()
 }
 
+// DNSGeneration reports the DNS environment generation currently in force.
+//
+// It exists so the connection layer can tell an answer requested under one environment from the
+// environment it is about to dial in. The value is the router's own aggregate (network generation
+// plus its DNS environment fingerprint counter) and is deliberately NOT the connection-manager's
+// reset epoch: a DNS-only change must not tear down established connections, which is why the two
+// are separate counters in the first place.
+//
+// # Why this reads the counters instead of observing
+//
+// dnsGeneration - the accessor a QUERY uses - calls observeDNSEnvironment, which takes the router's
+// DNS-environment lock and recomputes the fingerprint of every transport's Environment(). That is
+// the right cost once per query: observing at issue is what makes a resolver change visible at the
+// answer that is about to be stamped.
+//
+// It is the wrong cost on the connection path. This reporter is read by the candidate scheduler on
+// every launch decision of every connection, so a reporter that observed would put a process-wide
+// DNS lock and an all-transport scan in the middle of the dial hot path, shared with every
+// concurrent DNS query. The counters are already the published truth, and every query has already
+// observed the environment before it stamped its answer, so a consumer that reads them sees the same
+// value the answer carries and never triggers network observation from a dial.
+func (r *Router) DNSGeneration() uint64 {
+	return r.networkGeneration.Load() + r.dnsEnvironmentGeneration.Load()
+}
+
 // dnsGenerationLocked is dnsGeneration for a caller that already holds dnsEnvironmentAccess.
 //
 // The lock is NOT reentrant, so the two-phase commit in commitReverseMappingAnswers - the one place

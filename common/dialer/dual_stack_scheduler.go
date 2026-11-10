@@ -96,6 +96,13 @@ type candidateScheduler struct {
 	// restricts nothing, which is what a scheduler built without a capability (every test that does
 	// not opt in, and any manager that cannot report one) gets.
 	localFamily localFamilyPolicy
+	// dnsGeneration, when set, reports the DNS environment generation currently in force, so a
+	// candidate resolved under an environment the flow has already left is ordered behind a current
+	// one. nil means the comparison is unavailable, which orders nothing.
+	//
+	// It is a reader rather than a captured value because the launch decision happens after the
+	// answer: the environment can move between the query and the attempt.
+	dnsGeneration func() (uint64, bool)
 }
 
 // dial runs the race and returns the winning connection.
@@ -135,12 +142,13 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 //
 // # Why the scheduler needs to know about admission at all
 //
-// A late candidate never passes through planCandidates: it is appended to the launch queue straight from the
-// resolver's stream. The local-family filter below covers the machine's capability, and nothing covered the
-// operator's policy - so the strict family strategy was enforced on a late candidate only by whichever
-// producer happened to filter it first. Every current producer does (`mergeRecovered` plans the recovered
-// list with the effective strategy before it is fed), which makes the invariant CONVENTIONAL: a fourth
-// producer added later would silently be able to walk the forbidden family into the race.
+// A late candidate never passes through planCandidates: it is appended to its family's launch queue
+// straight from the resolver's stream. The local-family filter below covers the machine's capability,
+// and nothing covered the operator's policy - so the strict family strategy was enforced on a late
+// candidate only by whichever producer happened to filter it first. Every current producer does
+// (`mergeRecovered` plans the recovered list with the effective strategy before it is fed), which makes
+// the invariant CONVENTIONAL: a fourth producer added later would silently be able to walk the forbidden
+// family into the race.
 //
 // This makes it STRUCTURAL. `admit` is captured once by the caller, so the policy the guard applies is the
 // same policy the plan was built under - a strategy read per candidate could observe a different one
@@ -154,10 +162,10 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	// refused locally".
 	//
 	// The filter runs here rather than in the planner because a late candidate never passes through
-	// the planner at all: it is appended to the launch queue straight from the resolver's stream, so
-	// a filter installed in planCandidates alone would be bypassed by whichever family answered
-	// second - which is the case that matters, because the slow answer is the one that arrives after
-	// the race has begun.
+	// the planner at all: it is appended to its family's launch queue straight from the resolver's
+	// stream, so a filter installed in planCandidates alone would be bypassed by whichever family
+	// answered second - which is the case that matters, because the slow answer is the one that
+	// arrives after the race has begun.
 	launchPlan, refused := s.filterLocalFamily(plan)
 	plan = launchPlan
 	candidates := plan.candidates
@@ -226,8 +234,20 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	// outstanding when it won.
 	var attempts []*pendingAttempt
 
+	// lastStartedFamily drives the launch alternation, and startedFamilies records which families
+	// this race has actually attempted. Both are written by startAttempt and read by the launch
+	// selection, which run only on this goroutine.
+	lastStartedFamily := familyInvalid
+	var startedFamilies [3]bool
+
 	startAttempt := func(candidate dualStackCandidate) {
 		started++
+		// The alternation and the health fast-start both read these, and both are updated here so
+		// that "started" means exactly one thing: an attempt was handed to the executor.
+		lastStartedFamily = candidate.family
+		if candidate.family != familyInvalid {
+			startedFamilies[candidate.family] = true
+		}
 		workerGroup.Add(1)
 		record := &pendingAttempt{
 			address:   candidate.address,
@@ -307,10 +327,133 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 		closeLosers()
 	}()
 
-	// Launch state is a growable queue rather than a fixed slice, so a candidate arriving
-	// while the race is in progress can be appended without disturbing anything already
-	// launched. Already-started candidates are never re-ordered or restarted.
-	launch := append([]dualStackCandidate(nil), candidates...)
+	// Launch state is one FIFO per address family rather than a single flat queue.
+	//
+	// # Why per family rather than a flat queue
+	//
+	// A static plan is INTERLEAVED before it ever reaches this scheduler:
+	//
+	//	prefer IPv6:  v6#1  v4#1  v6#2  v4#2  v6#3
+	//
+	// which is what makes the first candidate of each family start early. A candidate that arrives
+	// through the late stream never passes through the planner, so the flat queue appended it at
+	// the tail. A family that answered first with eight addresses therefore queued all eight ahead
+	// of the other family, and a healthy other-family address arriving a moment later was appended
+	// behind them and waited out seven fallback intervals before its first attempt. At the default
+	// 300ms delay that is roughly 2.4s from the first dial to the healthy family's first attempt -
+	// measured in the regression added with this change.
+	//
+	// Taking the next candidate from the OTHER family than the one just launched reproduces, for
+	// any arrival order, exactly the order planCandidates would have produced for the same
+	// addresses. Within a family the arrival order is preserved, so the resolver's own ordering
+	// (priority, weight, authoritative intent) stays authoritative - the same rule the planner
+	// documents. Already-started candidates are never re-ordered or restarted: only the
+	// not-yet-started segment is affected.
+	var pendingByFamily [3][]dualStackCandidate
+	for _, candidate := range candidates {
+		pendingByFamily[candidate.family] = append(pendingByFamily[candidate.family], candidate)
+	}
+	pendingCount := len(candidates)
+
+	// takePreferred takes the first candidate of this family that is NOT superseded, or the head when
+	// every candidate in the family is.
+	//
+	// Within one family the queue can hold two batches - the previous DNS environment's answer and
+	// the current one - because the destination family did not change between them. Taking the head
+	// unconditionally launched the stale batch first even when a current candidate was already
+	// queued behind it. A current candidate leads its family; the superseded ones keep their relative
+	// order behind it and are still launched when nothing current remains.
+	takePreferred := func(family addressFamily) (dualStackCandidate, bool) {
+		queue := pendingByFamily[family]
+		if len(queue) == 0 {
+			return dualStackCandidate{}, false
+		}
+		index := 0
+		if s.dnsGeneration != nil {
+			for candidateIndex, candidate := range queue {
+				if !s.candidateSuperseded(candidate) {
+					index = candidateIndex
+					break
+				}
+			}
+		}
+		candidate := queue[index]
+		pendingByFamily[family] = append(queue[:index], queue[index+1:]...)
+		pendingCount--
+		return candidate, true
+	}
+
+	// familyHasCurrent reports whether this family still holds a candidate from the current DNS
+	// environment. It is asked of the WHOLE queue rather than the head: a family can have a
+	// superseded head with a current candidate behind it, and comparing only heads made such a
+	// family look stale and lose the slot to another family's superseded candidate.
+	familyHasCurrent := func(family addressFamily) bool {
+		for _, candidate := range pendingByFamily[family] {
+			if !s.candidateSuperseded(candidate) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// nextFamily chooses which family launches next: the other family first, then the family that
+	// just ran, then anything still queued. The first two terms are what make the stream behave
+	// like an interleaved plan; the last one covers a producer that offers an unclassifiable
+	// address, which is attempted rather than silently dropped so its failure is reported.
+	//
+	// # Why a superseded candidate is ordered behind a current one
+	//
+	// A DNS answer may legitimately be delivered after the DNS environment changed - that delivery
+	// contract is deliberate, because the answer was true when it was asked. What must not happen is
+	// that answer taking the launch slot from one that describes the environment the socket will be
+	// created in: a split-horizon name whose A record moved would otherwise send the new connection
+	// to the address the previous environment selected.
+	//
+	// The demotion is an ORDERING rule and never a refusal. When neither family has a current
+	// candidate - or when provenance is unknown, which is every implementation that predates the
+	// field - the normal alternation applies and the candidate is still launched. A DNS flap must
+	// cost a launch slot, never a connection.
+	nextFamily := func() (addressFamily, bool) {
+		if pendingCount == 0 {
+			return familyInvalid, false
+		}
+		if lastStartedFamily == familyIPv4 || lastStartedFamily == familyIPv6 {
+			other := familyIPv6
+			if lastStartedFamily == familyIPv6 {
+				other = familyIPv4
+			}
+			otherPending := len(pendingByFamily[other]) > 0
+			samePending := len(pendingByFamily[lastStartedFamily]) > 0
+			if otherPending && samePending {
+				// The alternation is the tie-break: it only loses to "that family still has a
+				// current candidate and this one does not".
+				if familyHasCurrent(lastStartedFamily) && !familyHasCurrent(other) {
+					return lastStartedFamily, true
+				}
+			}
+			if otherPending {
+				return other, true
+			}
+			if samePending {
+				return lastStartedFamily, true
+			}
+		}
+		for _, family := range [...]addressFamily{familyIPv4, familyIPv6, familyInvalid} {
+			if len(pendingByFamily[family]) > 0 {
+				return family, true
+			}
+		}
+		return familyInvalid, false
+	}
+
+	selectNext := func() (dualStackCandidate, bool) {
+		family, ok := nextFamily()
+		if !ok {
+			return dualStackCandidate{}, false
+		}
+		return takePreferred(family)
+	}
+
 	// seen deduplicates across the initial set and every late arrival, including the original
 	// literal candidate when one was supplied.
 	seen := make(map[netip.Addr]struct{}, len(candidates)+2)
@@ -318,16 +461,25 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 		seen[candidate.address] = struct{}{}
 	}
 
-	// Decide the launch order. With recent family failure recorded, the first candidate of
-	// each family starts together so a broken family costs no delay at all.
-	nextIndex := 0
-	if len(launch) > 0 {
-		startAttempt(launch[0])
-		nextIndex = 1
-		if len(launch) > 1 && s.health != nil {
-			if s.health.fallbackImmediately(s.networkGeneration, launch[0].family, launch[1].family) {
-				startAttempt(launch[1])
-				nextIndex = 2
+	// Start the head of the plan exactly as planned. The plan is already in the order this
+	// scheduler would choose, so this is also the reference ordering the alternation above
+	// reproduces for candidates that arrive later.
+	if len(candidates) > 0 {
+		if head, taken := takePreferred(candidates[0].family); taken {
+			startAttempt(head)
+			// With recent family failure recorded, the other family's first candidate starts
+			// together with it so a broken family costs no delay at all.
+			//
+			// The decision is made here for the planned head, and at arrival time for the stream
+			// (see healthUrgesFirstStart). Reading it only from the plan's first two entries - the
+			// previous behaviour - meant the streaming entry point, whose plan is EMPTY and whose
+			// candidates all arrive late, could never consult the verdict at all: the second
+			// connection paid the full fallback delay even after the first had measured the
+			// family as stalled.
+			if next, haveNext := nextFamily(); haveNext && s.healthUrgesFirstStart(&startedFamilies, next) {
+				if candidate, taken := takePreferred(next); taken {
+					startAttempt(candidate)
+				}
 			}
 		}
 	}
@@ -368,13 +520,13 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	defer stopTimer()
 
 	armTimerIfPending := func() {
-		if nextIndex < len(launch) {
+		if pendingCount > 0 {
 			resetTimer()
 		} else {
 			stopTimer()
 		}
 	}
-	if len(launch) > 0 {
+	if started > 0 {
 		armTimerIfPending()
 	}
 
@@ -406,7 +558,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 					}
 					return nil, netip.Addr{}, E.New("no dial candidates")
 				}
-				if nextIndex >= len(launch) && started == len(failures) {
+				if pendingCount == 0 && started == len(failures) {
 					if len(failures) == 0 {
 						return nil, netip.Addr{}, E.Cause(lastErr, "dial failed")
 					}
@@ -475,13 +627,13 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 				continue
 			}
 
-			// A late candidate joins the queue. If nothing is currently pending it starts at
-			// once, so a family that answers after the race began is not made to wait for a
+			// A late candidate joins its family's queue. If nothing is currently pending it starts
+			// at once, so a family that answers after the race began is not made to wait for a
 			// fallback interval that was scheduled before it existed.
 			//
-			// "Nothing pending" is the whole condition, and it is why nextIndex is advanced to
-			// len(launch) here: the candidate that starts has consumed its slot, so the NEXT
-			// arrival sees something pending and waits for the timer instead of starting too.
+			// "Nothing pending" is the whole condition: the candidate that starts has consumed its
+			// slot, so the NEXT arrival sees something pending and waits for the timer instead of
+			// starting too.
 			//
 			// Starting every arrival immediately is what let a preferred family lose the race to
 			// the family it was preferred over. The feeder emits the preferred family first, but
@@ -489,38 +641,48 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			// dial order became whichever goroutine reached the dialer first - so the preference
 			// held by the feeder was discarded here. The cadence is what makes the stream order
 			// authoritative.
-			launch = append(launch, candidate)
+			pendingByFamily[candidate.family] = append(pendingByFamily[candidate.family], candidate)
+			pendingCount++
 
-			// Start at once when nothing is queued ahead of this candidate AND no cadence is
+			// Start at once when nothing was queued before this candidate AND no cadence is
 			// currently armed.
 			//
 			// The second half is what keeps a burst ordered. Without it the test below is true
-			// for every arrival in a burst - after the first start nextIndex equals len(launch),
-			// and the queue then grows by one per arrival - so each arrival started immediately
-			// on its own goroutine and the dial order became a goroutine race. A pending timer IS
-			// the cadence, so while one is armed the arrival queues instead.
-			if nextIndex >= len(launch)-1 && timerChan == nil {
-				// Nothing was pending, so this candidate starts at once rather than waiting out
-				// a fallback interval that was scheduled before it existed.
-				startAttempt(candidate)
-				nextIndex = len(launch)
-
-				// The cadence STILL applies to whatever follows in this burst.
-				//
-				// Each late candidate was started the instant it arrived, so two candidates
-				// arriving back to back both started immediately - each on its own goroutine -
-				// and the dial ORDER became whichever goroutine reached the dialer first. That
-				// discarded the ordering the feeder had just established: it holds the
-				// non-preferred family and emits the preferred one first, precisely so the
-				// preferred family leads.
-				//
-				// Arming the timer here (rather than only when the queue is non-empty) makes the
-				// arrival order authoritative: the first candidate of a burst starts now, the next
-				// waits for the interval, exactly as if both had been known at the start.
-				//
-				// This does not defer a genuinely late arrival: by the time the timer fires the
-				// queue is drained, so the next arrival finds it fired and starts immediately.
-				resetTimer()
+			// for every arrival in a burst - after the first start nothing is pending, and the
+			// queue then grows by one per arrival - so each arrival started immediately on its
+			// own goroutine and the dial order became a goroutine race. A pending timer IS the
+			// cadence, so while one is armed the arrival queues instead.
+			startNow := pendingCount == 1 && timerChan == nil
+			// The health fast-start, evaluated at ARRIVAL time.
+			//
+			// This is the streaming half of the nudge the plan head applies above. It starts the
+			// HEAD of the arriving candidate's family, not the arrival itself: if that family
+			// already has queued candidates, launching the newest one first would invert the
+			// within-family order the alternation exists to preserve.
+			if !startNow {
+				startNow = s.healthUrgesFirstStart(&startedFamilies, candidate.family)
+			}
+			if startNow {
+				if next, taken := takePreferred(candidate.family); taken {
+					startAttempt(next)
+					// The cadence STILL applies to whatever follows in this burst.
+					//
+					// Each late candidate started the instant it arrived, so two candidates
+					// arriving back to back both started immediately - each on its own goroutine -
+					// and the dial ORDER became whichever goroutine reached the dialer first. That
+					// discarded the ordering the feeder had just established: it holds the
+					// non-preferred family and emits the preferred one first, precisely so the
+					// preferred family leads.
+					//
+					// Arming the timer here (rather than only when the queue is non-empty) makes
+					// the arrival order authoritative: the first candidate of a burst starts now,
+					// the next waits for the interval, exactly as if both had been known at the
+					// start.
+					//
+					// This does not defer a genuinely late arrival: by the time the timer fires the
+					// queue is drained, so the next arrival finds it fired and starts immediately.
+					resetTimer()
+				}
 				continue
 			}
 
@@ -588,17 +750,16 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 
 			// A fast failure frees its slot immediately: waiting out the delay would only
 			// postpone an answer already known to be no.
-			if nextIndex < len(launch) {
-				startAttempt(launch[nextIndex])
-				nextIndex++
-				if nextIndex < len(launch) {
+			if candidate, taken := selectNext(); taken {
+				startAttempt(candidate)
+				if pendingCount > 0 {
 					resetTimer()
 				} else {
 					stopTimer()
 				}
 				continue
 			}
-			if started == len(failures) && nextIndex >= len(launch) && resolutionFinished {
+			if started == len(failures) && pendingCount == 0 && resolutionFinished {
 				// Everything that will ever be attempted has failed.
 				if len(failures) == 0 {
 					return nil, netip.Addr{}, E.Cause(lastErr, "dial failed")
@@ -607,10 +768,9 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			}
 
 		case <-timerChan:
-			if nextIndex < len(launch) {
-				startAttempt(launch[nextIndex])
-				nextIndex++
-				if nextIndex < len(launch) {
+			if candidate, taken := selectNext(); taken {
+				startAttempt(candidate)
+				if pendingCount > 0 {
 					resetTimer()
 				} else {
 					stopTimer()
@@ -622,11 +782,79 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	}
 }
 
+// candidateSuperseded reports whether a candidate's answer was requested under a DNS environment
+// that is no longer in force.
+//
+// # Polarity: unknown and unreportable are CURRENT
+//
+// A candidate whose producer predates the provenance fields reports nothing, and a chain whose
+// router cannot report "now" leaves the comparison unavailable. Both must keep their previous
+// behaviour, which is to be dialled in arrival order - so both answer false. This is the same
+// fail-open direction the local capability policy documents, and it is the only safe one here: a
+// rule that treated unknown as superseded would demote every third-party DNS implementation's
+// answer behind... nothing, and the flow would still dial it, but the ordering signal would be a
+// fabrication.
+//
+// # Why it is computed at launch, not at admission
+//
+// The environment can move between the query and the attempt, and the launch is where the ordering
+// decision is made. Reading the current generation here is one call per launch - only when the queue
+// actually holds two families with pending candidates - so it never touches the common path.
+func (s *candidateScheduler) candidateSuperseded(candidate dualStackCandidate) bool {
+	if !candidate.sourceKnown || s.dnsGeneration == nil {
+		return false
+	}
+	current, available := s.dnsGeneration()
+	if !available {
+		return false
+	}
+	return current != candidate.sourceGeneration
+}
+
 func (s *candidateScheduler) fallbackDelayOrDefault() time.Duration {
 	if s.fallbackDelay > 0 {
 		return s.fallbackDelay
 	}
 	return N.DefaultFallbackDelay
+}
+
+// healthUrgesFirstStart reports whether this family's FIRST candidate in the current race should
+// start immediately instead of waiting out the fallback cadence.
+//
+// # The condition
+//
+// The family must not have been attempted yet in this race, and another family that HAS started
+// must be the one the health record remembers as recently failed. That is the streaming form of the
+// static plan's nudge: "the suspect family leads, so start its alternative now rather than making
+// it wait out an interval whose whole purpose was to delay exactly this comparison".
+//
+// # Why only the first candidate of each family
+//
+// The static nudge makes the two families' FIRST candidates start together and leaves every other
+// candidate on the normal schedule. Applying it per arrival instead would start every address of a
+// burst at once as soon as a verdict exists, which is the burst the cadence exists to prevent - so
+// the condition is deliberately one-shot per family, not a property of the verdict.
+//
+// # Which direction, and why only one
+//
+// The question asked of the record is "is the family that is ALREADY RUNNING the failed one". That
+// is the case where waiting costs the healthy family a fallback interval for no information. The
+// mirror - the failed family arriving after the healthy one already started - is not accelerated,
+// because starting a family already known to be bad earlier buys nothing and the static path does
+// not do it either.
+func (s *candidateScheduler) healthUrgesFirstStart(started *[3]bool, family addressFamily) bool {
+	if s.health == nil || family == familyInvalid || started[family] {
+		return false
+	}
+	for _, running := range [...]addressFamily{familyIPv4, familyIPv6} {
+		if running == family || !started[running] {
+			continue
+		}
+		if s.health.fallbackImmediately(s.networkGeneration, running, family) {
+			return true
+		}
+	}
+	return false
 }
 
 // localFamilyRefusal is a refusal the local machine issued, carrying BOTH the family and the address

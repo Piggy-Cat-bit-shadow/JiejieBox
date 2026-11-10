@@ -17,10 +17,10 @@ import (
 //
 // dialLiteralWithRecovery has two arms once recovery has produced candidates:
 //
-//   - resolve.go:641 - the original reported before the head-start timer, so the
-//     recovered candidates are dialled on their own (dialRecoveredOrReport);
-//   - resolve.go:648 - the head-start timer fired first, so the recovered candidates
-//     race the still-pending original (raceWithPendingOriginal).
+//   - the original reported before the head-start timer, so the recovered families are raced on
+//     their own while the recovery stream is still open (dialRecoveredFromStream);
+//   - the head-start timer fired first, so the recovered candidates race the still-pending
+//     original (raceWithPendingOriginal).
 //
 // TestLiteralBothFailReturnsPromptly only reliably reaches the first arm: its original
 // dial takes the same 5ms as its recovered dial and its head start is 10ms, so the
