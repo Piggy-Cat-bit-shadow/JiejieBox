@@ -458,9 +458,11 @@ func (c *http3ClientImpl) openStream(ctx context.Context, request *http.Request)
 			return nil, nil, E.Cause(err, "HTTP/3 CONNECT")
 		}
 		if ctx.Err() != nil {
-			// Preserve the markers that say what the attempt proved: "nothing was written" is
-			// retryable on another version, and "the header may have been written" is not.
-			if errors.Is(err, errHTTP3ResponsePending) || errors.Is(err, errHTTP3PreSend) {
+			// Preserve the markers that say what the attempt proved: "nothing was written" and "the
+			// peer explicitly did not process it" are retryable on another version, "the header may
+			// have been written" is not, and an ANSWERED request keeps its answer. Rewriting any of
+			// these to the caller's expiry would erase what the peer told us.
+			if errors.Is(err, errHTTP3ResponsePending) || errors.Is(err, errHTTP3PreSend) || errors.Is(err, errHTTP3RequestRejected) {
 				return nil, nil, err
 			}
 			return nil, nil, ctx.Err()
