@@ -181,3 +181,66 @@
 2. 第 03/04 阶段可以直接用两个真实 pseudo-version（`v0.0.0-20261110141903-57e9d17fa852`、`v0.61.1-0.20261110165647-ca9992bc795e`），预览构建不再需要本地 replace。
 3. `awg-base`/`awg-graft`、cronet 的 `feat/per-dial-quic` 保持原样，交给第 06 阶段按证明流程处理。
 4. 平台构建（Apple/Android/Desktop/Dashboard）仍 BLOCKED（缺 Xcode/JDK 17/Node），本阶段未执行、未标 PASS。
+---
+
+## Stage 03 — 内核网络生命周期、连接管理与资源治理
+
+- 执行日期：2026-11-11（Asia/Shanghai）
+- 阶段报告：`03_NETWORK_RESOURCE_INTEGRATION.md`；状态/所有权：`03_STATE_AND_OWNERSHIP.md`
+- 阶段目标：把 `next/network` 的网络生命周期与 `closeout/resources`（含 `next/resources`）的资源治理作为一个系统集成；依赖使用阶段 02 的 sing-tun/quic-go 集成 SHA，正式 pin 留第 06 阶段。
+
+### 基线
+
+| 项 | 值 |
+|---|---|
+| 阶段依赖基线 | `ea5651f2b5ba92e2544dc9546a9890dbee3b5115`（go.mod/test 切到阶段 02 SHA） |
+| `next/network` | `b9bc2bc25981e4f4606eaa5298ded56fde8d312d`（36 独有） |
+| `closeout/resources` | `aafc4c11f022a32de82e065ad03450183b716d97`（21 独有） |
+| `next/resources` | `b00dfe1f0e08`，closeout 的祖先 |
+| 结果 | 42 个提交高于依赖基线，45 文件 +7980/−111 |
+
+### 本阶段动作
+
+1. `go.mod` / `test/go.mod` 的 sing-tun、quic-go replace 提升到阶段 02 集成 SHA（预览 pin，source-lock 未手改）。
+2. `next/network`：36 个独有提交中 34 个原样 cherry-pick（0 冲突）；`dad5fc31bc6` 为纯 pin 丢弃；`ce4ae88a5e0` 只取 TrustTunnel 测试 hunk（pin 由阶段 02 覆盖）。
+3. `closeout/resources`：取 6 个内容提交（xhttp shaped A/B、resourceguard relay A/B、e2e UDP detour + 窄 MTU）；10 个 sing-tun pin 递增提交与 6 个 merge 提交证明为纯 pin/聚合，不移植。
+4. `backup/02-ecfffe7d0`：逐项审查，独有内容（route diagnose API、process-cache reset epoch、客户端流控）不在本阶段范围，记录给第 05/06 阶段。
+5. `pending/device-axis-reload-window-tests`：移植 `common/runtimecoord` 测试（4/4 PASS）；两个 libbox 测试在其自身 base 即红，拒绝移植。
+6. 输出状态机、所有权表、加锁顺序与不变量清单（`03_STATE_AND_OWNERSHIP.md`）。
+
+### 关键判断
+
+- 网络分支与候选的两处"更新内容"（`resourceguard.GrowthBudget`、xhttp `sharedUplinkBudget`）被保留：逐文件比对 43 个分支文件，39 个一致，4 个差异全部是"我们更新"（go.mod/go.sum + 这两个文件），没有旧实现覆盖新实现。
+- 网络切换不再把旧 generation 的物理关闭放进过渡体：drain → DNS 固定 → 提交 → 并发监听器（统一 deadline）→ 单一 disposer 按连接预算关闭。
+- 准入票据与 shutdown 原子；控制平面 DNS 有独立 4 槽预留；backlog 满时新拨号背压可取消。
+
+### 验证
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `go build -tags <Windows profile> ./...` / `go build ./...` | 0 / 0 | 通过 |
+| `go test ./route`（全量） | 0 | 700 个测试函数通过（447.9 s） |
+| 网络相关 24 包（route/rule、dialer、adapter、dns、daemon、transport） | 0 | 全部 ok（75.8 s） |
+| `-race` 28 个新生命周期测试 | 0 | 28/28 PASS |
+| `-race` v2rayquic/v2rayxhttp/dialer/resourceguard | 0 | 4 包 ok |
+| 12 个协议包（carrier recovery 等） | 0 | 全部 ok（naive 需 pin 的 libcronet.dll 在 PATH） |
+| e2e `TestTunUDPDetourChain` | 0 | 3 个子测试 PASS（含窄 MTU） |
+| daemon selector | 0 | 6/6 PASS |
+| runtimecoord（pending 移植） | 0 | 全部 PASS |
+| 广域回归 `./common/... ./config/... ./provider/... ./option/... ./constant/...` | 1 | 32 包 ok；`common/tls`、`common/tlsspoof`、`common/windivert` 失败 |
+
+失败归因：`tlsspoof`/`windivert` 是 WinDivert 驱动的 SCM 权限拒绝（BLOCKED_BY_ENVIRONMENT）；`common/tls` 的 Windows TLS1.3 客户端失败在阶段依赖基线 `ea5651f2b5b` 上**同样复现**，属既有问题，非本阶段引入。
+
+未执行：Linux-only `route/disposal_fd_linux_test.go`、真实 TUN 设备/管理员测试、全量 `go test ./...`、全树 `-race`、平台构建（均记录为 BLOCKED/NOT RUN）。
+
+### 提交
+
+- 主仓库：本阶段 42 个提交（1 个依赖基线 + 34 个 network cherry-pick + 1 个 TrustTunnel hunk + 6 个资源测试 + 1 个 pending runtimecoord + 文档提交），见 `git log --oneline`。
+- 依赖仓库：无新增提交（阶段 02 已完成）。
+
+### 遗留 / 下一阶段注意
+
+1. `go.mod` 的两个 replace 是预览 pin，`release/source-lock.json` 仍是 0.1.44 快照；第 06 阶段必须用 release-freeze 生成，不得手改。
+2. Linux 真实 FD/E2E 与管理员权限测试未跑，第 06 阶段需在 Linux/有权限环境补跑。
+3. backup 的 route diagnose、process-cache reset epoch、客户端流控未集成；若 0.1.45 需要，需单独立项。
+4. 第 04 阶段把 H3/H2 回退并入后，要复核监听器 deadline 预算；不要用旧分支文件覆盖 `route/conn.go`、`transport/v2rayxhttp/client.go` 中候选已有的 GrowthBudget / sharedUplinkBudget。
