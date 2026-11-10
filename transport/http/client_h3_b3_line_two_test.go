@@ -104,7 +104,8 @@ func TestPublishedSessionWithHeld200IsNotDuplicatedOnRetry(t *testing.T) {
 	require.EqualValues(t, 1, server.published.Load(), "the peer published one tunnel session")
 	require.EqualValues(t, 1, server.streams.Load())
 	require.EqualValues(t, 1, server.active.Load())
-	require.Less(t, elapsed, 2*time.Second)
+	require.Less(t, elapsed, 2*http3TunnelEstablishTimeout,
+		"the setup must be bounded by our own window; measured %s", elapsed)
 	require.Zero(t, tcp.calls, "the same call must not open a second tunnel")
 	require.NotZero(t, client.http3TunnelAmbiguousUntil.Load(),
 		"the ambiguity window must route the retry to the HTTP/2 path")
