@@ -143,6 +143,61 @@ func (o EvidenceOwnership) authorizesLocked(storage *HistoryStorage, tag string,
 	return true
 }
 
+// EvidenceStillOwned reports whether a published result still describes the current state.
+//
+// It is the CONVERGENCE half of the publication contract: a result can be authorized when its probe
+// writes and invalidated afterwards (the node is dropped while another member's probe is still in
+// flight). A caller that is about to report or act on a result it published earlier re-checks the
+// same provenance through this call, so a round cannot converge with a member the drop removed.
+func (s *HistoryStorage) EvidenceStillOwned(tag string, scope MeasurementScope, ownership EvidenceOwnership) bool {
+	if s == nil {
+		return false
+	}
+	s.access.RLock()
+	if s.closed {
+		s.access.RUnlock()
+		return false
+	}
+	owned := ownership.authorizesLocked(s, tag, scope)
+	s.access.RUnlock()
+	return owned
+}
+
+// CommitAgainstEvidence runs commit under the storage lock, and only while (tag, scope) still owns
+// its health evidence: the record must exist, and when ownership is given the tag/scope stamps and
+// the network reset generation must be unchanged.
+//
+// # Why the check and the commit share the lock
+//
+// The selection commit is the last consumer of a round's evidence. Checking validity and then
+// changing the selection in a separate step leaves exactly the window a drop needs to land in
+// between - the reviewed failure was a selection moving to a member whose evidence had just been
+// removed. The caller's commit therefore runs INSIDE this storage's critical section.
+//
+// The callback must not call back into this storage (it runs while the write lock is held) and must
+// be short: it exists to publish a decision the caller already computed.
+func (s *HistoryStorage) CommitAgainstEvidence(tag string, scope MeasurementScope, ownership *EvidenceOwnership, commit func()) bool {
+	if s == nil || commit == nil {
+		return false
+	}
+	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return false
+	}
+	if _, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded {
+		s.access.Unlock()
+		return false
+	}
+	if ownership != nil && !ownership.authorizesLocked(s, tag, scope) {
+		s.access.Unlock()
+		return false
+	}
+	commit()
+	s.access.Unlock()
+	return true
+}
+
 func NewHistoryStorage() *HistoryStorage {
 	return &HistoryStorage{
 		displayHistory: make(map[string]displayRecord),

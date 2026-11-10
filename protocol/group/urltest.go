@@ -929,9 +929,15 @@ type URLTestGroup struct {
 	interruptExternalConnections bool
 	access                       sync.Mutex
 	updateAccess                 sync.Mutex
-	ticker                       *time.Ticker
-	close                        chan struct{}
-	started                      bool
+	// selectionCommit serialises the two paths that DECIDE a selection from evidence: the
+	// evidence-based update and the failover policy's commit. It is taken before updateAccess (and
+	// before any history lock), so the two paths cannot interleave and cannot invert locks: the
+	// failover commit holds it while it validates the evidence under the history's own lock and
+	// publishes the decision.
+	selectionCommit sync.Mutex
+	ticker          *time.Ticker
+	close           chan struct{}
+	started         bool
 	// closed is the terminal state. It is set by Close under access and checked by Touch, so a
 	// Touch can never start background work on a closed group.
 	closed     bool
@@ -1467,8 +1473,9 @@ func (g *URLTestGroup) runHealthRound(ctx context.Context, force bool) (result m
 		g.failover.AdoptStable(g.currentSelectedTag())
 	}
 	probeMembers := g.healthProbeMembers(members, force)
-	result, publications := urlTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, probeMembers, g.link, g.expected, g.interval, force, TestHistoryHealth)
-	g.commitFailoverSelection(g.observeFailoverRound(members, probeMembers, result, publications))
+	result, publications, evidence := urlTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, probeMembers, g.link, g.expected, g.interval, force, TestHistoryHealth)
+	selection, selectionEvidence := g.observeFailoverRound(members, probeMembers, result, publications, evidence)
+	g.commitFailoverSelection(selection, selectionEvidence)
 	g.performUpdateCheck()
 	return result, nil
 }
@@ -1509,15 +1516,19 @@ func (g *URLTestGroup) healthProbeMembers(members []adapter.Outbound, force bool
 }
 
 // observeFailoverRound feeds the round's observations to the policy and returns the member it says
-// should carry traffic now (empty when the selection did not change).
+// should carry traffic now (empty when the selection did not change), together with the provenance
+// of the observation that justified it.
 //
 // The observations come from the round's PUBLICATION verdicts, not from "is it in the result map":
 // a member that was not published was not measured for this state, and treating that absence as a
 // failure is how a refused publication (a drop, a network change) became a reason to widen the probe
 // set and eventually to move traffic.
-func (g *URLTestGroup) observeFailoverRound(members []adapter.Outbound, probeMembers []adapter.Outbound, result map[string]uint16, publications map[string]roundPublication) string {
+//
+// A success carries the provenance recorded with it: the commit re-checks it because a drop can land
+// between this decision and the selection store.
+func (g *URLTestGroup) observeFailoverRound(members []adapter.Outbound, probeMembers []adapter.Outbound, result map[string]uint16, publications map[string]roundPublication, evidence map[string]roundEvidence) (string, *roundEvidence) {
 	if g.failover == nil || g.failover.Disabled() {
-		return ""
+		return "", nil
 	}
 	tags := make([]string, len(members))
 	for index, member := range members {
@@ -1538,9 +1549,12 @@ func (g *URLTestGroup) observeFailoverRound(members []adapter.Outbound, probeMem
 	}
 	decision := g.failover.Decide(tags, observations)
 	if decision.Changed && decision.Selected != "" {
-		return decision.Selected
+		if recorded, hasEvidence := evidence[decision.Selected]; hasEvidence {
+			return decision.Selected, &recorded
+		}
+		return decision.Selected, nil
 	}
-	return ""
+	return "", nil
 }
 
 // currentSelectedTag is the member traffic currently uses, which seeds the policy's stable slot.
@@ -1561,7 +1575,19 @@ func (g *URLTestGroup) currentSelectedTag() string {
 // commitFailoverSelection publishes the policy's choice through the SAME selection state every
 // other path uses, so readers see it and existing connections are interrupted only when the member
 // actually changed.
-func (g *URLTestGroup) commitFailoverSelection(tag string) {
+//
+// # The evidence gate and the commit are one step
+//
+// The decision was computed from a round's observations, and a drop can land between that decision
+// and this call. The commit therefore runs INSIDE the history's own lock
+// (`CommitAgainstEvidence`), which refuses it when the member's evidence is gone or its provenance
+// (tag/scope stamps, network generation) has moved. The check and the store cannot be separated by
+// a drop, which is exactly how the reviewed failure moved traffic to a member whose evidence had
+// just been removed.
+//
+// The probe's OBJECT identity is checked the same way: a same-tag replacement means the observation
+// describes an object the group no longer uses, so the commit is refused.
+func (g *URLTestGroup) commitFailoverSelection(tag string, evidence *roundEvidence) {
 	if tag == "" || g.outbound == nil {
 		return
 	}
@@ -1569,6 +1595,18 @@ func (g *URLTestGroup) commitFailoverSelection(tag string) {
 	if !loaded || outbound == nil {
 		return
 	}
+	var ownership *urltest.EvidenceOwnership
+	if evidence != nil {
+		if evidence.nodeIdentity != nodeIdentity(outbound) {
+			g.logger.Debug("failover commit refused: ", tag, " was replaced after its probe")
+			return
+		}
+		ownership = &evidence.ownership
+	}
+	// Serialise with the evidence-based selection update: both decide a selection, and the failover
+	// commit holds the storage lock while it publishes, so the two must not interleave.
+	g.selectionCommit.Lock()
+	defer g.selectionCommit.Unlock()
 	g.updateAccess.Lock()
 	previous := g.selected.Load()
 	next := &selectedState{}
@@ -1595,8 +1633,14 @@ func (g *URLTestGroup) commitFailoverSelection(tag string) {
 		next.udp = outbound
 		selected = true
 	}
-	g.selected.Store(next)
+	committed := g.history.CommitAgainstEvidence(tag, g.scope, ownership, func() {
+		g.selected.Store(next)
+	})
 	g.updateAccess.Unlock()
+	if !committed {
+		g.logger.Debug("failover commit refused: ", tag, " no longer owns its evidence")
+		return
+	}
 	if updated && g.interruptGroup != nil {
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
 	}
@@ -1743,6 +1787,18 @@ type urlTestBatch struct {
 	// from being read as a success (or, after gating the result, as a failure) by the failover
 	// policy.
 	publications map[string]roundPublication
+	// evidence is the provenance of every published success: the ownership the write used and the
+	// LIVE OBJECT that was probed. Convergence and the selection commit both re-check it, so a
+	// result that was legal when written but invalidated afterwards cannot be reported, observed by
+	// the failover policy, or committed as a selection.
+	evidence map[string]roundEvidence
+}
+
+// roundEvidence is one published result's provenance: what the write was authorized under, and the
+// object that was measured.
+type roundEvidence struct {
+	ownership    urltest.EvidenceOwnership
+	nodeIdentity string
 }
 
 // roundPublication is one member's publication verdict for one round.
@@ -1809,7 +1865,7 @@ func URLTestOutboundsWithMode(ctx context.Context, outboundManager adapter.Outbo
 // refused (superseded by a drop, or measured on a network generation that has since moved) is NOT in
 // the map, so a caller cannot read a refused result as a success.
 func URLTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, expected urltest.ExpectedStatus, interval time.Duration, force bool, mode TestHistoryMode) map[string]uint16 {
-	result, _ := urlTestOutboundsWithTarget(ctx, outboundManager, history, logger, outbounds, link, expected, interval, force, mode)
+	result, _, _ := urlTestOutboundsWithTarget(ctx, outboundManager, history, logger, outbounds, link, expected, interval, force, mode)
 	return result
 }
 
@@ -1818,7 +1874,7 @@ func URLTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 // The group's failover policy needs the verdicts, not the result map: a member that was not
 // published was not measured (or its measurement does not describe the current state), and inferring
 // "failed" from its absence is exactly how a refused publication used to move the selection.
-func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, expected urltest.ExpectedStatus, interval time.Duration, force bool, mode TestHistoryMode) (map[string]uint16, map[string]roundPublication) {
+func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, expected urltest.ExpectedStatus, interval time.Duration, force bool, mode TestHistoryMode) (map[string]uint16, map[string]roundPublication, map[string]roundEvidence) {
 	// The round owns a child context, so an abort can stop the members it already started.
 	//
 	// # Why the join is deferred rather than inlined
@@ -1852,7 +1908,7 @@ func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 	target, targetErr := urltest.ParseMeasurementTarget(link)
 	if targetErr != nil {
 		logger.Error("invalid URL test target: ", targetErr)
-		return map[string]uint16{}, map[string]roundPublication{}
+		return map[string]uint16{}, map[string]roundPublication{}, map[string]roundEvidence{}
 	}
 	scope := urltest.MeasurementScope{
 		URL:      target.ScopeURL,
@@ -1874,6 +1930,7 @@ func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 		checked:        make(map[string]bool),
 		result:         make(map[string]uint16),
 		publications:   make(map[string]roundPublication),
+		evidence:       make(map[string]roundEvidence),
 		mode:           mode,
 		expected:       expected,
 		networkCounter: networkCounter,
@@ -1886,6 +1943,11 @@ func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 	// results first would race the members that produce them - a nested group's result is assembled
 	// from what its members recorded.
 	b.Wait()
+
+	// CONVERGENCE: every probe has finished, so the round is about to report its results and then
+	// act on them. A result whose evidence was invalidated after its legal write (the member was
+	// dropped while another probe was still in flight) must not survive this point.
+	testBatch.revalidatePublished()
 
 	for _, outboundGroup := range testBatch.groups {
 		// A nested group reports the delay of whichever leaf it currently selects.
@@ -1908,9 +1970,16 @@ func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 		if delay, measured := testBatch.result[realLeaf]; measured {
 			testBatch.result[outboundGroup.Tag()] = delay
 			testBatch.publications[outboundGroup.Tag()] = testBatch.publications[realLeaf]
+			// The group's entry stands for the leaf that answered, so it carries that leaf's
+			// evidence ownership - but the OBJECT the round reports is the group itself, so its
+			// identity is what a later replacement check compares.
+			if evidence, recorded := testBatch.evidence[realLeaf]; recorded {
+				evidence.nodeIdentity = nodeIdentity(outboundGroup)
+				testBatch.evidence[outboundGroup.Tag()] = evidence
+			}
 		}
 	}
-	return testBatch.result, testBatch.publications
+	return testBatch.result, testBatch.publications, testBatch.evidence
 }
 
 // measure runs one member's probe, converting a panic into an error.
@@ -1948,6 +2017,58 @@ func (b *urlTestBatch) publish(tag string, publication roundPublication, delay u
 		b.result[tag] = delay
 	}
 	b.access.Unlock()
+}
+
+// recordEvidence stores one published result's provenance.
+func (b *urlTestBatch) recordEvidence(tag string, evidence roundEvidence) {
+	b.access.Lock()
+	b.evidence[tag] = evidence
+	b.access.Unlock()
+}
+
+// revalidatePublished drops every published result whose evidence no longer holds.
+//
+// It is the CONVERGENCE boundary: the writes were authorized when they happened, but another
+// member's probe can outlive a drop of this member (retirement, path invalidation, a network reset).
+// Such a result is removed from the round's result map and its publication verdict becomes "not
+// published", so the failover policy sees no observation at all - the reviewed failure consumed the
+// stale success as "the member answered".
+func (b *urlTestBatch) revalidatePublished() {
+	b.access.Lock()
+	defer b.access.Unlock()
+	for tag, publication := range b.publications {
+		if publication != roundPublishedSuccess {
+			continue
+		}
+		evidence, recorded := b.evidence[tag]
+		if !recorded {
+			// A display-only batch records no evidence map entries; nothing to revalidate against.
+			continue
+		}
+		invalid := false
+		if b.history != nil && !b.history.EvidenceStillOwned(tag, b.scope, evidence.ownership) {
+			invalid = true
+		}
+		// The OBJECT must still be the one that was measured: a provider republication replaces the
+		// member under the same tag, and the retired object's result answers a question about a
+		// socket the new one may not share.
+		//
+		// "Not found" is NOT treated as replaced: a batch driven directly by a caller whose manager
+		// does not list the member (the component tests, a partial registry) cannot verify the
+		// identity, and inventing a replacement there would drop every result of that batch. A
+		// retirement is detected by the evidence drop the provider performs.
+		if b.outbound != nil {
+			if current, loaded := b.outbound.Outbound(tag); loaded && current != nil && nodeIdentity(current) != evidence.nodeIdentity {
+				invalid = true
+			}
+		}
+		if invalid {
+			delete(b.result, tag)
+			b.publications[tag] = roundNotPublished
+			delete(b.evidence, tag)
+			b.logger.Debug("outbound ", tag, " result dropped: its evidence was invalidated after the write")
+		}
+	}
 }
 
 // evidenceOwnership is the authority this measurement's result carries.
@@ -2203,15 +2324,19 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 					// reported as this round's measurement, because every consumer of the map -
 					// the Clash API, a nested group, the failover policy - reads it as a success.
 					published := true
+					ownership := b.evidenceOwnership(measurement)
 					if b.history != nil {
 						if b.mode == TestHistoryHealth {
-							published = b.history.StoreHealthHistoryOwned(tag, measurement.Scope, health, b.evidenceOwnership(measurement))
+							published = b.history.StoreHealthHistoryOwned(tag, measurement.Scope, health, ownership)
 						} else {
-							published = b.history.StoreDisplayHistoryOwned(tag, measurement.Scope, health, b.evidenceOwnership(measurement))
+							published = b.history.StoreDisplayHistoryOwned(tag, measurement.Scope, health, ownership)
 						}
 					}
 					if published {
 						b.publish(tag, roundPublishedSuccess, measurement.Delay)
+						// The provenance travels with the result: convergence re-checks it, and the
+						// selection commit requires it, because a drop can land after this write.
+						b.recordEvidence(tag, roundEvidence{ownership: ownership, nodeIdentity: nodeIdentity(detour)})
 						b.logger.Debug("outbound ", tag, " result published: ", measurement.Delay, "ms")
 					} else {
 						// Not a failure: the probe succeeded, but the state it measured is not the
@@ -2544,6 +2669,10 @@ func (g *URLTestGroup) clearSelected(network string, failed adapter.Outbound) {
 }
 
 func (g *URLTestGroup) performUpdateCheck() {
+	// The same serialisation the failover commit takes: both paths decide a selection from evidence,
+	// and this one reads the evidence (which takes the history locks) while it builds the state.
+	g.selectionCommit.Lock()
+	defer g.selectionCommit.Unlock()
 	g.updateAccess.Lock()
 	defer g.updateAccess.Unlock()
 	var (
