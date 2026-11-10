@@ -216,6 +216,9 @@ func TestASilentTailLossIsAnnouncedAndRepairedByTheSnapshot(t *testing.T) {
 			reportedLoss = batch.Dropped
 		}
 	}
+	t.Logf("delivered=%d lost=%d published=%d", delivered, reportedLoss, connections*2)
+	require.NotZero(t, delivered, "the queued prefix must still be delivered")
+	require.NotZero(t, reportedLoss, "the reviewed case must actually lose events")
 	require.EqualValues(t, connections*2, delivered+int(reportedLoss),
 		"delivered events plus the announced loss must equal what was published")
 
