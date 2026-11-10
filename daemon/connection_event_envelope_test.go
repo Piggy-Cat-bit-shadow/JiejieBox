@@ -10,6 +10,7 @@ package daemon
 // measure a loss instead of assuming completeness.
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/sagernet/sing-box/common/trafficcontrol"
@@ -66,6 +67,88 @@ func TestTheEnvelopeIgnoresOutOfOrderSequences(t *testing.T) {
 
 	require.EqualValues(t, 0, envelope.dropped)
 	require.EqualValues(t, 10, envelope.lastEventSequence)
+}
+
+// TestTheStreamBindingReadsTheInstanceAndIdentityTogether pins the single read boundary: a stream
+// must never pair one instance's manager with another instance's identity. The test swaps the pair
+// while readers capture it and checks every captured pair against the two valid combinations.
+func TestTheStreamBindingReadsTheInstanceAndIdentityTogether(t *testing.T) {
+	service := &StartedService{}
+	first := &Instance{}
+	second := &Instance{}
+	const (
+		firstID  = "instance-first"
+		secondID = "instance-second"
+	)
+	// Write the pair exactly the way production does: both fields under serviceAccess.
+	setPair := func(instance *Instance, identity string) {
+		service.serviceAccess.Lock()
+		service.instance = instance
+		service.instanceID = identity
+		service.serviceAccess.Unlock()
+	}
+
+	setPair(first, firstID)
+	firstBinding, firstReadID, err := service.connectionStreamBinding()
+	require.NoError(t, err)
+	require.Same(t, first, firstBinding)
+	require.Equal(t, firstID, firstReadID)
+
+	setPair(second, secondID)
+	secondBinding, secondReadID, err := service.connectionStreamBinding()
+	require.NoError(t, err)
+	require.Same(t, second, secondBinding)
+	require.Equal(t, secondID, secondReadID)
+
+	stop := make(chan struct{})
+	var readers sync.WaitGroup
+	for worker := 0; worker < 4; worker++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				boxService, instanceID, bindingErr := service.connectionStreamBinding()
+				if bindingErr != nil {
+					continue
+				}
+				switch boxService {
+				case first:
+					if instanceID != firstID {
+						t.Errorf("stream binding paired the first instance with %q", instanceID)
+						return
+					}
+				case second:
+					if instanceID != secondID {
+						t.Errorf("stream binding paired the second instance with %q", instanceID)
+						return
+					}
+				default:
+					t.Errorf("stream binding returned an unknown instance")
+					return
+				}
+			}
+		}()
+	}
+	for swap := 0; swap < 200; swap++ {
+		if swap%2 == 0 {
+			setPair(first, firstID)
+		} else {
+			setPair(second, secondID)
+		}
+	}
+	close(stop)
+	readers.Wait()
+
+	service.serviceAccess.Lock()
+	service.setInstanceLocked(nil)
+	service.serviceAccess.Unlock()
+	_, _, err = service.connectionStreamBinding()
+	require.Error(t, err, "the STOPPING nil window is reported, not snapshotted")
 }
 
 // TestTheInstanceIdentityChangesWithTheInstance pins the service-side half: a new instance gets a

@@ -111,6 +111,23 @@ func (s *StartedService) setInstanceLocked(instance *Instance) {
 	s.instanceID = uuid.Must(uuid.NewV4()).String()
 }
 
+// connectionStreamBinding returns the running instance and its identity from ONE read.
+//
+// They are written together under serviceAccess (setInstanceLocked), so a reload can never be
+// observed halfway: a stream either belongs to the old instance with the old identity, or to the new
+// one. The nil window during STOPPING is the same boundary and is reported as "not running" rather
+// than producing a snapshot from a manager that is being torn down.
+func (s *StartedService) connectionStreamBinding() (*Instance, string, error) {
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	instanceID := s.instanceID
+	s.serviceAccess.RUnlock()
+	if boxService == nil || instanceID == "" {
+		return nil, "", status.Error(codes.FailedPrecondition, "service is not running")
+	}
+	return boxService, instanceID, nil
+}
+
 // currentInstanceID returns the identity of the running instance, or "" when none is running.
 func (s *StartedService) currentInstanceID() string {
 	s.serviceAccess.RLock()
@@ -1051,9 +1068,16 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	if err != nil {
 		return err
 	}
-	s.serviceAccess.RLock()
-	boxService := s.instance
-	s.serviceAccess.RUnlock()
+	// The instance AND its identity are read at ONE lock boundary.
+	//
+	// Reading the manager first and the identity later let a reload land in between: the stream then
+	// published a snapshot built from the OLD manager stamped with the NEW identity, and a consumer
+	// that trusts the identity would apply that stale table as the current instance's state. Both
+	// values are written together under serviceAccess, so they are read together.
+	boxService, instanceID, err := s.connectionStreamBinding()
+	if err != nil {
+		return err
+	}
 
 	trafficManager := boxService.trafficManager
 	if trafficManager == nil {
@@ -1070,7 +1094,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	initialEvents := s.buildInitialConnectionState(trafficManager, connectionSnapshots)
 	// The stream's identity and gap accounting belong to this subscription: a reload replaces the
 	// instance for later streams, and a gap is only visible against the source sequence.
-	envelope := &connectionEventEnvelope{instanceID: s.currentInstanceID()}
+	envelope := &connectionEventEnvelope{instanceID: instanceID}
 	err = server.Send(envelope.wrap(initialEvents, true))
 	if err != nil {
 		return err

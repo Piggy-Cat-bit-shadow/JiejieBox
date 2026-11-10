@@ -56,6 +56,16 @@ type Manager struct {
 	eventObserver   *observable.Observer[ConnectionEvent]
 	// eventSequence stamps every emitted event; see ConnectionEvent.Sequence.
 	eventSequence atomic.Uint64
+	// eventPublish serialises "assign the sequence, publish the event".
+	//
+	// The increment and the channel send used to be two separate steps, so two goroutines could
+	// allocate 1 and 2 and then publish 2 before 1. The subscriber then saw a descending sequence,
+	// and the daemon's gap accounting read that as a real loss - a false `dropped` makes the client
+	// discard a complete snapshot and resynchronise on a busy second. Holding this mutex across both
+	// steps makes the delivered order the assigned order. The send itself stays non-blocking: the
+	// observable bus drops on a full subscriber instead of blocking the data plane, and a dropped
+	// event is exactly what a LATER sequence gap reveals.
+	eventPublish sync.Mutex
 }
 
 func NewManager() *Manager {
@@ -92,8 +102,7 @@ func (m *Manager) UnSubscribeEvents(subscription observable.Subscription[Connect
 func (m *Manager) join(tracker Tracker) {
 	metadata := tracker.Metadata()
 	m.connections.Store(metadata.ID, tracker)
-	m.eventSubscriber.Emit(ConnectionEvent{
-		Sequence: m.eventSequence.Add(1),
+	m.publishEvent(ConnectionEvent{
 		Type:     ConnectionEventNew,
 		ID:       metadata.ID,
 		Metadata: metadata,
@@ -125,13 +134,22 @@ func (m *Manager) leave(tracker Tracker) {
 	}
 	m.closedConnections.PushBack(metadataCopy)
 	m.closedConnectionsAccess.Unlock()
-	m.eventSubscriber.Emit(ConnectionEvent{
-		Sequence: m.eventSequence.Add(1),
+	m.publishEvent(ConnectionEvent{
 		Type:     ConnectionEventClosed,
 		ID:       metadata.ID,
 		Metadata: &metadataCopy,
 		ClosedAt: closedAt,
 	})
+}
+
+// publishEvent assigns the sequence and publishes the event as one step.
+//
+// See Manager.eventPublish: the order of the assigned sequences is the order the subscriber receives.
+func (m *Manager) publishEvent(event ConnectionEvent) {
+	m.eventPublish.Lock()
+	event.Sequence = m.eventSequence.Add(1)
+	m.eventSubscriber.Emit(event)
+	m.eventPublish.Unlock()
 }
 
 func (m *Manager) Total() (uplinkTotal int64, downlinkTotal int64) {
