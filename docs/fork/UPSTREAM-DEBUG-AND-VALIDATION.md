@@ -157,7 +157,7 @@ go test -count=1 ./internal/congestion
 go test -count=1 ./...
 ```
 
-Full suite passes. Restoring the pre-merge CUBIC ordering makes
+Full suite passes on both sagernet and the consumed integration/0.1.45 line. Restoring the pre-merge CUBIC ordering makes
 `TestCubicACKOnlyDoesNotConsumePacer` fail on its first assertion.
 
 ### utls
