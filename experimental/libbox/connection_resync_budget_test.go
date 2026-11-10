@@ -137,14 +137,26 @@ func TestAResubscribeFailureIsReportedOnce(t *testing.T) {
 	require.EqualValues(t, 1, handler.disconnected.Load(), "not retried in a loop")
 }
 
-// countingHandler applies batches and counts disconnects.
+// countingHandler applies batches, records them and counts disconnects.
 type countingHandler struct {
 	connections  *Connections
 	disconnected atomic.Int32
+
+	access  sync.Mutex
+	batches []*ConnectionEvents
 }
 
 func (h *countingHandler) WriteConnectionEvents(events *ConnectionEvents) {
+	h.access.Lock()
+	h.batches = append(h.batches, events)
+	h.access.Unlock()
 	h.connections.ApplyEvents(events)
+}
+
+func (h *countingHandler) snapshot() []*ConnectionEvents {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return append([]*ConnectionEvents(nil), h.batches...)
 }
 func (h *countingHandler) Connected()                        {}
 func (h *countingHandler) Disconnected(string)               { h.disconnected.Add(1) }
