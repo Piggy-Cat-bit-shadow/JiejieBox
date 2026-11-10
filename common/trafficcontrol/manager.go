@@ -2,6 +2,7 @@ package trafficcontrol
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -21,6 +22,16 @@ const (
 )
 
 type ConnectionEvent struct {
+	// Sequence is assigned at emission and increases by one per event.
+	//
+	// # Why the source counts, not the consumer
+	//
+	// The observable bus drops silently when a subscriber's buffer is full (`Subscriber.Emit` has
+	// a default branch), so a consumer cannot see how many events it missed - it only sees that the
+	// next one arrived. A per-event sequence lets the consumer measure the gap exactly, which is
+	// what the platform's `dropped` counter needs; counting at the consumer without a sequence
+	// would report zero forever.
+	Sequence uint64
 	Type     ConnectionEventType
 	ID       uuid.UUID
 	Metadata *TrackerMetadata
@@ -43,6 +54,8 @@ type Manager struct {
 
 	eventSubscriber *observable.Subscriber[ConnectionEvent]
 	eventObserver   *observable.Observer[ConnectionEvent]
+	// eventSequence stamps every emitted event; see ConnectionEvent.Sequence.
+	eventSequence atomic.Uint64
 }
 
 func NewManager() *Manager {
@@ -80,6 +93,7 @@ func (m *Manager) join(tracker Tracker) {
 	metadata := tracker.Metadata()
 	m.connections.Store(metadata.ID, tracker)
 	m.eventSubscriber.Emit(ConnectionEvent{
+		Sequence: m.eventSequence.Add(1),
 		Type:     ConnectionEventNew,
 		ID:       metadata.ID,
 		Metadata: metadata,
@@ -112,6 +126,7 @@ func (m *Manager) leave(tracker Tracker) {
 	m.closedConnections.PushBack(metadataCopy)
 	m.closedConnectionsAccess.Unlock()
 	m.eventSubscriber.Emit(ConnectionEvent{
+		Sequence: m.eventSequence.Add(1),
 		Type:     ConnectionEventClosed,
 		ID:       metadata.ID,
 		Metadata: &metadataCopy,
