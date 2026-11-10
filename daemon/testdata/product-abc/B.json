@@ -1,0 +1,11 @@
+{
+  "log": {"level": "error"},
+  "inbounds": [{"type": "http", "tag": "proxy", "listen": "127.0.0.1", "listen_port": 18080}],
+  "outbounds": [{"type": "selector", "tag": "selected", "providers": ["nodes"], "default": "nodes/node"}],
+  "providers": [{"type": "inline", "tag": "nodes", "outbounds": [{"type": "http", "tag": "node", "server": "127.0.0.1", "server_port": 18082}]}],
+  "route": {
+    "rule_set": [{"type": "inline", "tag": "gate", "rules": [{"port": [18092]}]}],
+    "rules": [{"rule_set": "gate", "action": "reject"}],
+    "final": "selected"
+  }
+}
