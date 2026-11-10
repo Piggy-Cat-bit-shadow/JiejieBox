@@ -119,6 +119,12 @@ func (c *Client) OpenTunnelWithInfo(ctx context.Context, protocol string, path s
 // verify-evidence/mieru/2026-10-19-early-facts/MIERU-MASQUE-CHANGE-LEDGER.md.
 var http3TunnelEstablishTimeout = 3 * time.Second
 
+// http3TunnelAmbiguousWindow is how long the next CONNECT-IP setup avoids HTTP/3 after one whose
+// request header may already have been written produced no response. It is deliberately short: it
+// exists so a server that is merely slower than the window produces one failed attempt and then a
+// working HTTP/2 tunnel, not so a transient delay is remembered as a property of the server.
+var http3TunnelAmbiguousWindow = 30 * time.Second
+
 // openTunnel returns the transport each successful branch used, so the caller never has to
 // infer it from which connection objects happen to exist.
 func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Conn, DatagramStream, TunnelTransport, error) {
@@ -129,7 +135,7 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 	// is still the current network; see observeHTTP2ExtendedConnectUnsupported.
 	networkEpoch := c.networkEpoch.Load()
 	var http3AttemptErr error
-	if c.http3Available() {
+	if c.http3Available() && time.Now().UnixNano() >= c.http3TunnelAmbiguousUntil.Load() {
 		// Stamped before the attempt for the same reason as in DialContext: the verdict must be
 		// decided by the newest attempt STARTED, not by whichever one reports last.
 		http3Attempt := c.beginHTTP3Attempt()
@@ -194,7 +200,9 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 			// The request header was written and no response arrived. The peer may have accepted
 			// the tunnel already, so opening a second one over HTTP/2 would be an unsafe duplicate
 			// - the review measured the old code doing exactly that, with the H3 address still
-			// allocated when the H2 tunnel came up. Report the stage instead.
+			// allocated when the H2 tunnel came up. Report the stage instead, and make the NEXT
+			// setup take the HTTP/2 path so a slow server still becomes usable on the retry.
+			c.http3TunnelAmbiguousUntil.Store(time.Now().Add(http3TunnelAmbiguousWindow).UnixNano())
 			return nil, nil, TunnelTransportUnknown, E.Cause(err,
 				"the HTTP/3 CONNECT header was sent and no response arrived; refusing to open a second tunnel over HTTP/2")
 		case errors.Is(err, ErrHTTP3Unavailable):
