@@ -46,6 +46,8 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,7 +55,10 @@ import (
 	"github.com/sagernet/sing-box/log"
 	routepkg "github.com/sagernet/sing-box/route"
 	singtun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/logger"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 
 	"github.com/stretchr/testify/require"
 )
@@ -73,8 +78,101 @@ const (
 type realTunFixture struct {
 	device  singtun.Tun
 	stack   singtun.Stack
-	handler *releaseProbeHandler
+	handler *realTunHandler
 	target  *drainProbeTarget
+}
+
+// realTunHandler is the release probe plus the UDP half. The shared probe closes packet
+// connections (its other callers assert TCP only), so the UDP path is added here, where a real
+// device now delivers datagrams: every tunnel flow is forwarded to one loopback UDP echo and the
+// reply is written back on the same flow.
+//
+// The write destination is the one ReadPacket returned, NOT the flow's client source: the UDP NAT
+// conn's writer builds the reply with the remote as source and its template's client address as
+// destination, and its allowPeer filter is keyed on that remote. Passing the client source makes
+// the reply disappear without an error - measured before this comment existed.
+type realTunHandler struct {
+	*releaseProbeHandler
+	udpTarget *net.UDPAddr
+	packets   atomic.Int32
+}
+
+func (h *realTunHandler) NewPacketConnectionEx(_ context.Context, conn N.PacketConn, source M.Socksaddr, _ M.Socksaddr, onClose N.CloseHandlerFunc) {
+	h.packets.Add(1)
+	go func() {
+		defer conn.Close()
+		if onClose != nil {
+			defer onClose(nil)
+		}
+		peer, err := net.DialUDP("udp", nil, h.udpTarget)
+		if err != nil {
+			return
+		}
+		defer peer.Close()
+		var remote M.Socksaddr
+		var remoteAccess sync.Mutex
+		go func() {
+			for {
+				buffer := buf.NewSize(2048)
+				destination, readErr := conn.ReadPacket(buffer)
+				if readErr != nil {
+					buffer.Release()
+					return
+				}
+				remoteAccess.Lock()
+				remote = destination
+				remoteAccess.Unlock()
+				_, _ = peer.Write(buffer.Bytes())
+				buffer.Release()
+			}
+		}()
+		reply := make([]byte, 2048)
+		for {
+			_ = peer.SetReadDeadline(time.Now().Add(30 * time.Second))
+			read, readErr := peer.Read(reply)
+			if read > 0 {
+				remoteAccess.Lock()
+				destination := remote
+				remoteAccess.Unlock()
+				if !destination.IsValid() {
+					continue
+				}
+				headroom := N.CalculateFrontHeadroom(conn)
+				if headroom < 48 {
+					headroom = 48
+				}
+				response := buf.NewSize(headroom + read)
+				response.Resize(headroom, 0)
+				_, _ = response.Write(reply[:read])
+				// WritePacket takes ownership of the buffer.
+				if writeErr := conn.WritePacket(response, destination); writeErr != nil {
+					response.Release()
+					return
+				}
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+}
+
+func startUDPEcho(t *testing.T) *net.UDPAddr {
+	t.Helper()
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		buffer := make([]byte, 2048)
+		for {
+			read, source, readErr := conn.ReadFromUDP(buffer)
+			if readErr != nil {
+				return
+			}
+			_, _ = conn.WriteToUDP(buffer[:read], source)
+		}
+	}()
+	return conn.LocalAddr().(*net.UDPAddr)
 }
 
 func requireRealTunDevice(t *testing.T) {
@@ -94,8 +192,11 @@ func newRealTunFixture(t *testing.T) *realTunFixture {
 
 	traffic := trafficcontrol.NewManager()
 	connectionManager := routepkg.NewConnectionManager(log.NewNOPFactory().Logger())
-	handler := &releaseProbeHandler{traffic: traffic, conns: connectionManager}
-	handler.dialer = releaseProbeDialer{target: target.address()}
+	handler := &realTunHandler{
+		releaseProbeHandler: &releaseProbeHandler{traffic: traffic, conns: connectionManager},
+		udpTarget:           startUDPEcho(t),
+	}
+	handler.releaseProbeHandler.dialer = releaseProbeDialer{target: target.address()}
 
 	options := singtun.Options{
 		Name:         realTunDeviceName,
@@ -228,4 +329,44 @@ func TestRealTunDeviceReleasesAFlowWhosePeerIsGone(t *testing.T) {
 	echoRealTun(t, revived, "new-flow-after-the-release")
 	require.Eventually(t, func() bool { return fixture.handler.traffic.ConnectionsLen() == 1 },
 		5*time.Second, 5*time.Millisecond)
+}
+
+// TestRealTunDeviceCarriesUDPAcrossAReset is the UDP half of the matrix row: real datagrams through
+// the kernel device, across a reset, with a new flow afterwards.
+func TestRealTunDeviceCarriesUDPAcrossAReset(t *testing.T) {
+	fixture := newRealTunFixture(t)
+	target := fixture.handler.udpTarget
+	destination := &net.UDPAddr{IP: net.ParseIP(realTunDestination), Port: target.Port}
+
+	echo := func(conn *net.UDPConn, payload string) {
+		t.Helper()
+		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+		_, err := conn.Write([]byte(payload))
+		require.NoError(t, err)
+		reply := make([]byte, len(payload))
+		_, err = io.ReadFull(conn, reply)
+		require.NoError(t, err, "no UDP datagram crossed the real TUN device")
+		require.Equal(t, payload, string(reply))
+	}
+
+	first, err := net.DialUDP("udp", nil, destination)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	echo(first, "udp-before-the-reset")
+	require.Eventually(t, func() bool { return fixture.handler.packets.Load() >= 1 },
+		5*time.Second, 5*time.Millisecond, "the UDP flow never reached the handler")
+
+	fixture.stack.ResetNetwork()
+	time.Sleep(20 * time.Millisecond)
+
+	// The same 4-tuple may keep its mapping across the reset; either way the bytes must still flow.
+	echo(first, "udp-after-the-reset")
+
+	// A new source port is a new flow, and it must work after the reset too.
+	second, err := net.DialUDP("udp", nil, destination)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	echo(second, "udp-new-flow")
+	require.Eventually(t, func() bool { return fixture.handler.packets.Load() >= 2 },
+		5*time.Second, 5*time.Millisecond, "the UDP flow created after the reset never reached the handler")
 }
