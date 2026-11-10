@@ -209,7 +209,7 @@ require (
 // fix(bufio): a Pipe2 setup failure must fall back, not claim the stream, and the branch
 // also carries the Linux runtime proof for unix.Splice() that runs in this fork's
 // linux-splice-proof workflow.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261027185736-1729220c46c4
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261110222322-4abfaed41727
 
 // Adds async read/write buffer pinning (correctness: the native side retains the pointer
 // until its completion callback) and the EarlyCopyBufferGrowth capability the upload copy
@@ -372,7 +372,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // them the Android/Mobile libbox build does not compile.
 replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109042158-a765d957fd81
 
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261110141903-57e9d17fa852
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261110222329-99abf3c27666
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //

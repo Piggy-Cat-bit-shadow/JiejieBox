@@ -144,7 +144,7 @@ func (d *systemDevice) readLoop(tunInterface tun.Tun, mtu int) {
 			if d.readErrorIsFatal(err) {
 				return
 			}
-			readRetry.Wait(err)
+			readRetry.Wait()
 			continue
 		}
 		readRetry.Reset()
@@ -208,7 +208,7 @@ func (d *systemDevice) readLoopLinux(tunInterface tun.LinuxTUN, batchSize int, m
 			if d.readErrorIsFatal(readErr) {
 				return
 			}
-			readRetry.Wait(readErr)
+			readRetry.Wait()
 			continue
 		}
 		readRetry.Reset()
@@ -244,7 +244,7 @@ func (d *systemDevice) readLoopDarwin(tunInterface tun.DarwinTUN) {
 			if d.readErrorIsFatal(readErr) {
 				return
 			}
-			readRetry.Wait(readErr)
+			readRetry.Wait()
 			continue
 		}
 		readRetry.Reset()

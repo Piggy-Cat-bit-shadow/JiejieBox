@@ -79,6 +79,12 @@ func readErrorIsRecoverable(err error) bool {
 	if err == nil {
 		return false
 	}
+	// sing-tun no longer counts ErrTooManySegments as recoverable (its Linux batch reader splits
+	// the frame internally), but this read loop still receives it from platforms whose TUN returns
+	// it; keep the kernel contract explicit.
+	if errors.Is(err, tun.ErrTooManySegments) {
+		return true
+	}
 	if tun.IsRecoverableReadError(err) {
 		return true
 	}
