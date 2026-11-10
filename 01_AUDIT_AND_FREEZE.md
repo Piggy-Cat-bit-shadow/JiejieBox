@@ -436,6 +436,6 @@ pin bca854425f4d
 | 没有覆盖或丢失用户工作 | ✅ §4，7 个非干净工作区原样保留并备份 |
 | 输出 `01_AUDIT_AND_FREEZE.md` 与 `INTEGRATION-LOG.md` | ✅ 本文件 + `INTEGRATION-LOG.md` |
 
-阶段 01 最终 commit：见 `INTEGRATION-LOG.md` 的 Stage 01 记录（本文件与该记录同属一个提交）。
+阶段 01 内容提交：`c30c63e8eadd02f2b4ad2e57c6e268fab6b3c866`（本报告与 `INTEGRATION-LOG.md` 的首次提交）；本行由紧随其后的回填提交补充。
 
 **本阶段到此停止，不开始依赖合并。**
