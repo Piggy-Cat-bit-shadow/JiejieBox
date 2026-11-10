@@ -317,3 +317,51 @@
   证据：`stage04/linux/15-netns-device-real.log`。
 - **goroutine 计数测试修复** `a2e24231eaf`（仅测试）：共享 `settleGoroutines` 等 8 次连续相同采样（200 ms 稳定窗，5 s 上限），断言不变。Linux 隔离 5/5 PASS、根包全量 PASS；Windows 3/3 PASS。
 - **最终全量**：Linux **113 包 ok**（仅 `common/netns` WSL 环境项）；Windows **106 包 ok**（仅 `common/tls` 既有、`tlsspoof`/`windivert` 权限）。
+---
+
+## Stage 05 — NE/Libbox 运行时与客户端集成
+
+- 执行日期：2026-11-11（Asia/Shanghai）
+- 阶段报告：`05_CLIENT_RUNTIME_INTEGRATION.md`；接口契约：`05_CLIENT_RUNTIME_CONTRACT.md`
+- 施工基线：`7192a10cc9c`（阶段 04 收尾）
+
+### 内核 NE/Libbox
+
+| 项 | 结果 |
+|---|---|
+| 源分支 | `fix/task10-apple-ne-runtime-final` @ `a3340d1a759d`（8 独有，23 文件，+1957/−83） |
+| 集成 | **8/8 cherry-pick，0 冲突**；21/23 文件与分支 tip 一致 |
+| 2 个差异文件 | `daemon/started_service.go`、`experimental/libbox/command_client.go`：本树带更新的 `SelectOutboundResponse` 与连接流 instance/sequence；源分支的 apply 报告/取消守卫/overrides 改动已全部落地，属“本树更新”而非丢失 |
+| ABI | libbox 仅新增 `CommandServer.ApplyServiceChangeReport`；daemon 新增 `ApplyServiceChange`/`ApplyProviderDomainContext`；无删除/签名变化；proto 未变 |
+| 构建 | `go build ./...` 与 `-tags <win>` 均 0 |
+| 定向测试 | daemon / provider/remote / provider/local / libbox / boxdd 全部 ok（36.0 s） |
+| race | `-race daemon provider/remote libbox` 全部 ok（162 s） |
+| Windows 全量 | 106 包 ok；仅 `common/tls`（既有）、`tlsspoof`/`windivert`（权限） |
+| Linux 全量 | 见 `05_CLIENT_RUNTIME_INTEGRATION.md` §7.1 |
+
+### Dashboard / Desktop（已真正构建+测试）
+
+- 便携 Node **v22.23.4** + pnpm **11.13.0**（`_int0145/tools/`，不进仓库）；`@bufbuild/buf` 生成 protobuf；dashboard 的 `vendor/iterm2-color-schemes` 子模块初始化。
+- **Dashboard**：`integration/0.1.45` 由 `fc1dbb4` fast-forward 到 **`62f1582`**；在 Desktop 布局中 **98/98 tests PASS**、`pnpm build` PASS。
+- **Desktop**：`integration/0.1.45` 由 `aa63764` fast-forward 到 **`28dc4a9`**（4 提交），dashboard gitlink `62f1582`；`pnpm install/generate/typecheck/test/build` 全 0，**59/59 tests PASS**。
+- 内核 `clients/desktop` gitlink：`aa63764` → **`28dc4a9`**（提交 `1fe0d9a6432`）。
+- 备注：Dashboard 独立仓库跑测试会因 `@shared/*` 别名（指向 `../src/shared`）失败，验收必须在 Desktop 布局内进行。
+
+### Apple（BLOCKED，未合并）
+
+- `main=97b35d1`、`next/client-consumption=7e2f5c4`（+15）、`fix/task10-apple-ne-runtime-final=b2596b5`（+25）；next-only 5 / NE-only 15。
+- Trial merge：**3 个冲突文件**（`Profile+Update.swift`、`RemoteRefreshApplier.swift`、`RemoteProviderRefreshTests.swift`），34 个自动合并。
+- 本机无 macOS/Xcode：不合并、不构建；pin 保持 `7fce711`；分析见 `audit-evidence/stage05/03-apple-analysis.txt`。
+
+### Android / satelite-one
+
+- Android：pin `c783710` = `origin/main`，无改动。
+- satelite-one：`main=c9a0735`、`next/subscription-refresh=9cdf782`（+16）；有本地 `integration/0.1.45` worktree 但仍在 main。缺 JDK17 + Android SDK（本机 Java 1.8，无 ANDROID_HOME），**BLOCKED**，未合并/未构建。
+
+### 遗留
+
+1. Apple 语义融合需要 macOS + Xcode；trial merge 的 3 个冲突文件是入口。
+2. Desktop `engines.node=26.7.0`，本阶段用 Node 22 验证通过；正式 CI 用声明版本（或修 engines）。
+3. `pnpm generate` 产物不入库，CI/打包必须先 generate。
+4. `release/dependencies.json` 的客户端 intent 仍是 `branch: main`；第 06 阶段 freeze 以 gitlink 为准或先合并到 main，不能按 intent 解析出旧 tip。
+5. `source-lock.json` 仍是 0.1.44 快照；第 06 阶段统一生成。
