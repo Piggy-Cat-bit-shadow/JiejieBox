@@ -2,10 +2,13 @@ package route
 
 import (
 	"context"
+	"io"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -402,6 +405,149 @@ func (m *ConnectionManager) reclaimAll() int {
 	return len(closers)
 }
 
+// AcquireConnection reserves one admission slot, atomically with the manager's lifecycle.
+//
+// It is the replacement for the two-step "wait, then track": the ticket is the caller's proof that
+// it may hand over a socket, and Close waits until every outstanding ticket has settled. A dial that
+// was authorized before shutdown but finishes after it is rejected: the socket is put in the
+// pending ledger (so the final Close still waits for the physical close) and the dial returns
+// net.ErrClosed.
+func (m *ConnectionManager) AcquireConnection(ctx context.Context) (adapter.ConnectionTicket, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	priority := adapter.IsControlPlaneAdmission(ctx)
+	d := &m.disposal
+	d.mu.Lock()
+	m.initDisposalLocked()
+	for {
+		if d.shutdown || m.closed.Load() {
+			d.mu.Unlock()
+			return nil, net.ErrClosed
+		}
+		if priority {
+			if d.priorityAdmitted < controlPlaneAdmissionReservation {
+				d.priorityAdmitted++
+				d.admitted++
+				m.signalRoomLocked()
+				d.cond.Broadcast()
+				d.mu.Unlock()
+				return &admissionTicket{manager: m, priority: true}, nil
+			}
+		} else if m.disposalBacklogLocked() < m.disposalBudget() {
+			d.admitted++
+			m.signalRoomLocked()
+			d.cond.Broadcast()
+			d.mu.Unlock()
+			return &admissionTicket{manager: m}, nil
+		}
+		signal := d.roomSignal
+		d.mu.Unlock()
+		select {
+		case <-signal:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		d.mu.Lock()
+	}
+}
+
+type admissionTicket struct {
+	manager  *ConnectionManager
+	priority bool
+	settled  bool
+}
+
+func (t *admissionTicket) Release() {
+	if t == nil || t.settled {
+		return
+	}
+	t.settled = true
+	t.manager.settleAdmission(t.priority)
+}
+
+// settleAdmissionLocked returns the slot. Caller holds d.mu.
+func (m *ConnectionManager) settleAdmissionLocked(priority bool) {
+	d := &m.disposal
+	if d.admitted > 0 {
+		d.admitted--
+	}
+	if priority && d.priorityAdmitted > 0 {
+		d.priorityAdmitted--
+	}
+	m.signalRoomLocked()
+	d.cond.Broadcast()
+}
+
+func (m *ConnectionManager) settleAdmission(priority bool) {
+	d := &m.disposal
+	d.mu.Lock()
+	m.settleAdmissionLocked(priority)
+	d.mu.Unlock()
+}
+
+// rejectAdmissionLocked puts a socket the manager will not track into the pending ledger, then
+// releases the ticket. Caller holds m.access; this takes d.mu (the same order as stageDisposals).
+func (m *ConnectionManager) rejectAdmissionLocked(ticket *admissionTicket, closer io.Closer) {
+	d := &m.disposal
+	d.mu.Lock()
+	ticket.settled = true
+	d.pending++
+	d.queue = append(d.queue, &shutdownSocket{closer: closer})
+	if !d.worker {
+		d.worker = true
+		go m.disposalWorker()
+	}
+	m.settleAdmissionLocked(ticket.priority)
+	d.mu.Unlock()
+}
+
+func (t *admissionTicket) TrackConn(conn net.Conn) (net.Conn, error) {
+	if t == nil || t.settled {
+		return nil, net.ErrClosed
+	}
+	manager := t.manager
+	tracked := manager.newTrackedConn(conn)
+	manager.access.Lock()
+	if manager.closed.Load() {
+		manager.rejectAdmissionLocked(t, conn)
+		manager.access.Unlock()
+		return nil, net.ErrClosed
+	}
+	tracked.element = manager.connections.PushBack(tracked)
+	manager.access.Unlock()
+	manager.settleAdmission(t.priority)
+	return tracked, nil
+}
+
+func (t *admissionTicket) TrackPacketConn(conn net.PacketConn) (net.PacketConn, error) {
+	if t == nil || t.settled {
+		return nil, net.ErrClosed
+	}
+	manager := t.manager
+	tracked := manager.newTrackedPacketConn(conn)
+	manager.access.Lock()
+	if manager.closed.Load() {
+		manager.rejectAdmissionLocked(t, conn)
+		manager.access.Unlock()
+		return nil, net.ErrClosed
+	}
+	tracked.element = manager.connections.PushBack(tracked)
+	manager.access.Unlock()
+	manager.settleAdmission(t.priority)
+	return tracked, nil
+}
+
+// shutdownSocket is a socket the manager rejected after shutdown. It has no tracked element; it only
+// needs to be owned by the disposal ledger so the final Close waits for its physical close.
+type shutdownSocket struct {
+	closer io.Closer
+}
+
+func (c *shutdownSocket) Close() error { return c.closer.Close() }
+
+func (c *shutdownSocket) reclaimState() *managedConnState { return &managedConnState{} }
+
 // disposalConcurrency is the number of physical closes one manager may run at once.
 // It is one, deliberately: the sockets being closed are already unreachable by the new
 // generation, so parallelism buys nothing, while one worker makes the bound a constant
@@ -426,6 +572,15 @@ type disposalState struct {
 	// pending counts every commissioned connection that has not been physically closed yet,
 	// including the one the worker is inside right now. Shutdown waits for it to reach zero.
 	pending int
+	// admitted counts authorization tickets that have not been consumed yet: a dial is in
+	// progress and owns a socket that the manager has not seen. Shutdown waits for them too.
+	admitted int
+	// priorityAdmitted is the subset of admitted that came from the control-plane pool.
+	priorityAdmitted int
+	// syncing counts objects a synchronous caller (CloseAll) is inside Close on right now.
+	// They left the tracked/condemned ledger, so without this account the final Close could
+	// return while a synchronous closer still holds a socket.
+	syncing int
 	// condemned holds retired connections that do not fit in the queue's budget. They are
 	// still owned by the manager (CloseAll and Close see them), but they are not tracked and
 	// not admissible; the worker promotes them as physical closes free room. This is what
@@ -439,8 +594,14 @@ type disposalState struct {
 	shutdown   bool
 }
 
-// connectionRoomWaiter is the optional capability the dialer asks before it tracks a new
-// connection.
+// controlPlaneAdmissionReservation is the number of concurrent cold control-plane dials (DNS)
+// that may proceed while the normal admission budget is exhausted. It is small on purpose:
+// the resolver needs to reach its server, not to become a second data path.
+const controlPlaneAdmissionReservation = 4
+
+// connectionRoomWaiter is the legacy wait-only capability. The dialer prefers
+// adapter.ConnectionAdmission, which is atomic with tracking; this stays for managers and
+// tests that only need the pressure signal.
 //
 // It is optional rather than part of adapter.ConnectionManager so that every other
 // implementation keeps the previous behaviour: no budget, no admission gate.
@@ -467,7 +628,8 @@ func (m *ConnectionManager) signalRoomLocked() {
 // disposalBacklogLocked is the total owned-but-not-closed set: the queue (and the close in
 // flight) plus the condemned. Caller holds d.mu.
 func (m *ConnectionManager) disposalBacklogLocked() int {
-	return m.disposal.pending + len(m.disposal.condemned)
+	d := &m.disposal
+	return d.pending + len(d.condemned) + d.syncing + d.admitted
 }
 
 // WaitForConnectionRoom is the saturation admission point. The dialer calls it before it
@@ -526,6 +688,30 @@ func (m *ConnectionManager) promoteCondemnedLocked() {
 	}
 }
 
+// synchronousCloses reports objects a CloseAll caller is closing inline right now.
+func (m *ConnectionManager) synchronousCloses() int {
+	d := &m.disposal
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.syncing
+}
+
+// admittedConnections reports outstanding admission tickets (authorized dials not yet tracked).
+func (m *ConnectionManager) admittedConnections() int {
+	d := &m.disposal
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.admitted
+}
+
+// priorityAdmittedConnections reports the control-plane subset of admittedConnections.
+func (m *ConnectionManager) priorityAdmittedConnections() int {
+	d := &m.disposal
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.priorityAdmitted
+}
+
 // condemnedDisposals reports the deferred set: owned, not tracked, not yet queued.
 func (m *ConnectionManager) condemnedDisposals() int {
 	d := &m.disposal
@@ -539,6 +725,8 @@ func (m *ConnectionManager) condemnedDisposals() int {
 func (m *ConnectionManager) takeCondemnedLocked() []managedConn {
 	condemned := m.disposal.condemned
 	m.disposal.condemned = nil
+	// The caller is about to close these inline; count them so the final Close can see them.
+	m.disposal.syncing += len(condemned)
 	return condemned
 }
 
@@ -630,13 +818,52 @@ func (m *ConnectionManager) disposalWorker() {
 	}
 }
 
+// beginSynchronousCloses accounts for objects a synchronous caller is closing inline.
+func (m *ConnectionManager) beginSynchronousCloses(count int) {
+	if count == 0 {
+		return
+	}
+	d := &m.disposal
+	d.mu.Lock()
+	m.initDisposalLocked()
+	d.syncing += count
+	m.signalRoomLocked()
+	d.cond.Broadcast()
+	d.mu.Unlock()
+}
+
+// endSynchronousCloses releases the synchronous account as the closes complete.
+func (m *ConnectionManager) endSynchronousCloses(count int) {
+	if count == 0 {
+		return
+	}
+	d := &m.disposal
+	d.mu.Lock()
+	d.syncing -= count
+	m.signalRoomLocked()
+	d.cond.Broadcast()
+	d.mu.Unlock()
+}
+
+// waitForTrackedCloses is CloseAll's wait: the queue and synchronous closes, but not dials
+// that only hold a ticket (the caller did not ask CloseAll to cancel those).
+func (m *ConnectionManager) waitForTrackedCloses() {
+	d := &m.disposal
+	d.mu.Lock()
+	m.initDisposalLocked()
+	for d.pending > 0 || d.syncing > 0 {
+		d.cond.Wait()
+	}
+	d.mu.Unlock()
+}
+
 // waitForDisposals is shutdown's completion contract: it returns only when every commissioned
-// connection has been physically closed.
+// connection has been physically closed and every authorized dial has settled.
 func (m *ConnectionManager) waitForDisposals() {
 	d := &m.disposal
 	d.mu.Lock()
 	m.initDisposalLocked()
-	for d.pending > 0 {
+	for d.pending > 0 || d.syncing > 0 || d.admitted > 0 {
 		d.cond.Wait()
 	}
 	d.mu.Unlock()

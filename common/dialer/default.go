@@ -769,6 +769,50 @@ func (d *DefaultDialer) stillCurrentEpoch(epochCurrent func() bool, conn net.Con
 	return nil, errNetworkChanged
 }
 
+// admitAndTrackConn is the atomic admission: acquire the slot, then hand the socket to the
+// manager that authorized it. A manager that implements adapter.ConnectionAdmission owns both
+// steps, so shutdown cannot land between them; managers that do not keep the legacy
+// wait-then-track behaviour.
+func (d *DefaultDialer) admitAndTrackConn(ctx context.Context, conn net.Conn) (net.Conn, error) {
+	if admission, isAdmission := d.connectionManager.(adapter.ConnectionAdmission); isAdmission {
+		ticket, err := admission.AcquireConnection(ctx)
+		if err != nil {
+			common.Close(conn)
+			return nil, E.Cause(err, "acquire connection admission")
+		}
+		tracked, trackErr := ticket.TrackConn(conn)
+		if trackErr != nil {
+			return nil, E.Cause(trackErr, "track connection")
+		}
+		return tracked, nil
+	}
+	if err := d.waitForConnectionRoom(ctx); err != nil {
+		common.Close(conn)
+		return nil, E.Cause(err, "wait for connection room")
+	}
+	return d.connectionManager.TrackConn(conn), nil
+}
+
+func (d *DefaultDialer) admitAndTrackPacketConn(ctx context.Context, conn net.PacketConn) (net.PacketConn, error) {
+	if admission, isAdmission := d.connectionManager.(adapter.ConnectionAdmission); isAdmission {
+		ticket, err := admission.AcquireConnection(ctx)
+		if err != nil {
+			common.Close(conn)
+			return nil, E.Cause(err, "acquire connection admission")
+		}
+		tracked, trackErr := ticket.TrackPacketConn(conn)
+		if trackErr != nil {
+			return nil, E.Cause(trackErr, "track packet connection")
+		}
+		return tracked, nil
+	}
+	if err := d.waitForConnectionRoom(ctx); err != nil {
+		common.Close(conn)
+		return nil, E.Cause(err, "wait for connection room")
+	}
+	return d.connectionManager.TrackPacketConn(conn), nil
+}
+
 // waitForConnectionRoom asks a resource-governing connection manager whether a new connection
 // may be admitted. It is an optional capability: managers without a disposal budget keep the
 // previous behaviour. The wait honours the dial context, so a saturated manager surfaces as a
@@ -797,11 +841,11 @@ func (d *DefaultDialer) trackConn(ctx context.Context, destination M.Socksaddr, 
 		conn = &udpConn{Conn: conn, rawConn: rawConn}
 	}
 	if d.connectionManager != nil {
-		if roomErr := d.waitForConnectionRoom(ctx); roomErr != nil {
-			common.Close(conn)
-			return nil, E.Cause(roomErr, "wait for connection room")
+		tracked, admissionErr := d.admitAndTrackConn(ctx, conn)
+		if admissionErr != nil {
+			return nil, admissionErr
 		}
-		conn = d.connectionManager.TrackConn(conn)
+		conn = tracked
 	}
 	if d.powerManager != nil {
 		recorder := d.powerManager.Recorder()
@@ -851,11 +895,11 @@ func (d *DefaultDialer) trackPacketConn(ctx context.Context, destination M.Socks
 		return conn, err
 	}
 	if d.connectionManager != nil {
-		if roomErr := d.waitForConnectionRoom(ctx); roomErr != nil {
-			common.Close(conn)
-			return nil, E.Cause(roomErr, "wait for connection room")
+		tracked, admissionErr := d.admitAndTrackPacketConn(ctx, conn)
+		if admissionErr != nil {
+			return nil, admissionErr
 		}
-		conn = d.connectionManager.TrackPacketConn(conn)
+		conn = tracked
 	}
 	if d.powerManager != nil {
 		recorder := d.powerManager.Recorder()
