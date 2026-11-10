@@ -235,6 +235,10 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 		case errors.Is(err, errHTTP3DialSuperseded):
 			// The dial belonged to the network being left. This setup continues on the new
 			// network's TCP path below; nothing is remembered about the peer.
+		case errors.Is(err, errHTTP3RequestRejected):
+			// The peer explicitly did not process the request (RFC 9114 H3_REQUEST_REJECTED), so a retry
+			// on another version cannot duplicate an effect. It is not a transport verdict.
+			c.noteHTTP3AmbiguousOutcome(http3Attempt)
 		case errors.Is(err, errHTTP3PreSend):
 			// Nothing was written: the peer cannot have processed a CONNECT. The fallback is safe
 			// for this setup, and our own window expiring says nothing about the transport.
