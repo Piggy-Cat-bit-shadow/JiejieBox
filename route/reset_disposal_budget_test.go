@@ -193,11 +193,26 @@ func TestConsecutiveOverBudgetTransitionsKeepSettling(t *testing.T) {
 		"the second batch must be condemned while the first is still closing")
 	require.Equal(t, 2*total, connectionManager.pendingDisposals()+connectionManager.condemnedDisposals(),
 		"both batches must be on the ledger")
+
+	// A third generation (A -> B -> C), still while the first Close is stuck.
+	third := make([]*blockedPacketClose, 0, total)
+	for index := 0; index < total; index++ {
+		conn := newBlockedPacketClose(t)
+		third = append(third, conn)
+		connectionManager.TrackPacketConn(conn)
+	}
+	requireGenerationSettledWhileBlocked(t, harness, router, connectionManager, third, target, nil, harness.manager.ResetNetwork)
+	require.Equal(t, 3*total, connectionManager.pendingDisposals()+connectionManager.condemnedDisposals(),
+		"all three batches must be on the ledger")
+	require.LessOrEqual(t, connectionManager.pendingDisposals(), connectionManager.disposalBudget(),
+		"the queue must stay at the budget across three generations")
+
 	releaseAllBlocked(first)
 	releaseAllBlocked(second)
+	releaseAllBlocked(third)
 	require.Eventually(t, func() bool {
 		return connectionManager.pendingDisposals() == 0 && connectionManager.condemnedDisposals() == 0
-	}, 15*time.Second, 5*time.Millisecond, "the ledger never emptied after releasing both batches")
+	}, 20*time.Second, 5*time.Millisecond, "the ledger never emptied after releasing all three batches")
 	// And the budget admits new work again once the wave has drained.
 	recoveryFirstByte := requireFirstByte(t, newGenerationDialer(t, harness.manager, connectionManager), target)
 	t.Logf("DISPOSAL-BUDGET consecutive recovery first-byte=%s", recoveryFirstByte.Round(time.Microsecond))
@@ -206,6 +221,9 @@ func TestConsecutiveOverBudgetTransitionsKeepSettling(t *testing.T) {
 	}
 	for index, conn := range second {
 		require.EqualValues(t, 1, conn.closes.Load(), "second batch socket %d must close exactly once", index)
+	}
+	for index, conn := range third {
+		require.EqualValues(t, 1, conn.closes.Load(), "third batch socket %d must close exactly once", index)
 	}
 }
 
