@@ -46,6 +46,7 @@ type dnsHistoryBindingQueryResult struct {
 		Entries  int    `json:"entries"`
 		Bytes    int    `json:"bytes"`
 		Rejected uint64 `json:"rejected"`
+		Expired  uint64 `json:"expired"`
 		Cleared  uint64 `json:"cleared"`
 	} `json:"stats"`
 	Truncated    bool   `json:"truncated"`
