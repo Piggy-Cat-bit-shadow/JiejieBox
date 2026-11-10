@@ -1,3 +1,7 @@
+> **Historical record (2026-10-24).** The upstream history has since been rewritten and the
+> `behind=0` observation no longer holds. For the current audit see
+> [`UPSTREAM-SYNC-2026-11-11-AUDIT.md`](UPSTREAM-SYNC-2026-11-11-AUDIT.md); this file is kept for
+> the historical phase-06 conclusions and is not the current source of truth.
 # Upstream integration status
 
 - generated: 2026-10-24T20:00:00+08:00 (phase 06/06)

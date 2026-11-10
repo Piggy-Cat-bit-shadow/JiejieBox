@@ -1,0 +1,332 @@
+{
+  "schema": 1,
+  "generated_at": "2026-11-11T06:05:00+08:00",
+  "phase": "upstream-sync-01-audit",
+  "canonical": {
+    "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+    "working_branch": "integration/0.1.45-final",
+    "working_head": "e7e9706a456a117b8e25bab84c44b4eafde19fb3",
+    "default_branch": "testing",
+    "default_head": "4152caf0e58f0cca9ce8044416c7c0b8d9960428",
+    "upstream": "SagerNet/sing-box:testing",
+    "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
+    "upstream_rewritten": true,
+    "old_audit_upstream": "a6952ccf6907c18e18917fcb763a433e8e36937b",
+    "old_audit_note": "a6952cc is no longer an ancestor of upstream/testing; its code conclusions remain historical only",
+    "fork_ahead": 3363,
+    "fork_behind": 85,
+    "working_ahead": 3705,
+    "working_behind": 85
+  },
+  "repos": [
+    {
+      "name": "sing-box",
+      "fork_ref": "origin/testing",
+      "fork_sha": "4152caf0e58f0cca9ce8044416c7c0b8d9960428",
+      "upstream_ref": "upstream/testing",
+      "upstream_sha": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+      "ahead": 3363,
+      "behind": 85,
+      "subject_matched": 44,
+      "unmatched": 41,
+      "class": "ADAPT_OR_REDESIGN"
+    },
+    {
+      "name": "sing",
+      "fork_ref": "origin/dev",
+      "fork_sha": "1729220c46c4cf750726b1057514a8d52a1f5e3b",
+      "upstream_ref": "upstream/dev",
+      "upstream_sha": "27b73774b240c645099704ba533d2615727c3410",
+      "ahead": 64,
+      "behind": 27,
+      "subject_matched": 9,
+      "unmatched": 18,
+      "class": "ADAPT_OR_REDESIGN"
+    },
+    {
+      "name": "sing-tun",
+      "fork_ref": "origin/dev",
+      "fork_sha": "57e9d17fa852eafbc6849ae508c8b772e9fa1a66",
+      "upstream_ref": "upstream/dev",
+      "upstream_sha": "79ed0653fdc66eef261d4147a04db9e16b9e6c50",
+      "ahead": 182,
+      "behind": 42,
+      "subject_matched": 31,
+      "unmatched": 11,
+      "class": "ADAPT_OR_REDESIGN"
+    },
+    {
+      "name": "sing-quic",
+      "fork_ref": "origin/main",
+      "fork_sha": "1ef2597cc1298146fcdddfeaa0384999f890d0c3",
+      "upstream_ref": "upstream/main",
+      "upstream_sha": "5253224b67cf495b6faba0899a6e3155ee93ebb0",
+      "ahead": 7,
+      "behind": 4,
+      "subject_matched": 0,
+      "unmatched": 4,
+      "class": "ADAPT_OR_REDESIGN"
+    },
+    {
+      "name": "quic-go",
+      "fork_ref": "origin/sagernet",
+      "fork_sha": "2daa76f5bd52dcb8d2d2a25f65f280905c48f18e",
+      "upstream_ref": "upstream/dev",
+      "upstream_sha": "2e73222e969f886968e02d993e6903007e969002",
+      "ahead": 18,
+      "behind": 1,
+      "subject_matched": 0,
+      "unmatched": 1,
+      "class": "ADAPT_OR_REDESIGN",
+      "consumed_ref": "integration/0.1.45",
+      "consumed_sha": "ca9992bc795e8699db2b22ad6459216e6f13649d",
+      "consumed_ahead": 29,
+      "consumed_behind": 1
+    },
+    {
+      "name": "utls",
+      "fork_ref": "origin/main",
+      "fork_sha": "b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc",
+      "upstream_ref": "upstream/v1.9.0-mod-meta",
+      "upstream_sha": "89a07ad380e263f7c3b406a3f7beb2a70dea263c",
+      "ahead": 68,
+      "behind": 1,
+      "subject_matched": 0,
+      "unmatched": 1,
+      "class": "ADAPT_OR_REDESIGN"
+    },
+    {
+      "name": "cronet-go",
+      "fork_ref": "origin/main",
+      "fork_sha": "4c96192d73f67c48a91cba3bce358a3c91692444",
+      "upstream_ref": "upstream/main",
+      "upstream_sha": "73349ff2a5870631807ce5f69944f55e2f52e1b1",
+      "ahead": 29,
+      "behind": 0,
+      "subject_matched": null,
+      "unmatched": 0,
+      "class": "ALREADY_ANCESTOR"
+    },
+    {
+      "name": "wireguard-go",
+      "fork_ref": "fork/awg3-inject",
+      "fork_sha": "a765d957fd814e5c0ee579936a0780e73d66e533",
+      "upstream_ref": "origin/main",
+      "upstream_sha": "e4d85ef2ed387cc07233b5324d4a40f3df94566e",
+      "ahead": 22,
+      "behind": 0,
+      "subject_matched": null,
+      "unmatched": 0,
+      "class": "ALREADY_ANCESTOR"
+    },
+    {
+      "name": "apple",
+      "fork_ref": "origin/main",
+      "fork_sha": "97b35d1ce24207ac373f3b2235f16c8831939daf",
+      "upstream_ref": "upstream/dev",
+      "upstream_sha": "768b3de2baf2461dd06405cba1b2ca4e39da5ea4",
+      "ahead": 220,
+      "behind": 0,
+      "subject_matched": null,
+      "unmatched": 0,
+      "class": "ALREADY_ANCESTOR",
+      "note": "pin 7fce711 remains unbuilt (no Xcode)"
+    },
+    {
+      "name": "android",
+      "fork_ref": "origin/main",
+      "fork_sha": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
+      "upstream_ref": "upstream/dev",
+      "upstream_sha": "ab4fad3944bb49436fe38c088ec82acfd6e0f97c",
+      "ahead": 14,
+      "behind": 5,
+      "subject_matched": 4,
+      "unmatched": 1,
+      "class": "ADAPT_OR_REDESIGN"
+    },
+    {
+      "name": "desktop",
+      "fork_ref": "origin/main",
+      "fork_sha": "aa63764a61c312562a348e174522d1dc1c86d954",
+      "upstream_ref": "upstream/main",
+      "upstream_sha": "8aab8eab022366e1032e952d499c9252b833e6c3",
+      "ahead": 42,
+      "behind": 0,
+      "subject_matched": null,
+      "unmatched": 0,
+      "class": "ALREADY_ANCESTOR"
+    },
+    {
+      "name": "dashboard",
+      "fork_ref": "origin/main",
+      "fork_sha": "fc1dbb4a48bb06358d549de05eb90df17ab7110d",
+      "upstream_ref": "upstream/main",
+      "upstream_sha": "3e4bf08e5bf5b9417cf9c36e5a2d5abcb21bdd34",
+      "ahead": 9,
+      "behind": 95,
+      "subject_matched": 0,
+      "unmatched": 95,
+      "class": "BLOCKED_WITH_REASON",
+      "merge_base": null,
+      "note": "no common ancestor; needs strategy decision"
+    },
+    {
+      "name": "satelite-one",
+      "fork_ref": "origin/main",
+      "fork_sha": "c9a07350e4c7a4d60a918488478893de5a49b6ac",
+      "upstream_ref": null,
+      "upstream_sha": null,
+      "class": "OUT_OF_SCOPE_INDEPENDENT_PRODUCT"
+    }
+  ],
+  "statistics": {
+    "upstream_only_total": 260,
+    "subject_matched_candidates": 88,
+    "unmatched_unknown": 172,
+    "confirmed_patch_equivalent": 0,
+    "blocked": 1,
+    "categories": {
+      "ALREADY_ANCESTOR": 4,
+      "PATCH_EQUIVALENT_CONFIRMED": 0,
+      "BEHAVIOR_ALREADY_PRESENT_CANDIDATE": 88,
+      "MERGE_AS_IS": 0,
+      "ADAPT_OR_REDESIGN": 77,
+      "OBSOLETE_OR_NOT_APPLICABLE": 0,
+      "REJECTED_WITH_EVIDENCE": 0,
+      "BLOCKED_WITH_REASON": 1,
+      "UNKNOWN": 172,
+      "OUT_OF_SCOPE": 1
+    }
+  },
+  "high_risk": [
+    {
+      "repo": "sing",
+      "sha": "dcc5d99d7554c46e3caf7e889c7f1beb4aadbdb1",
+      "subject": "bufio: Fix race between Read and Close in cached connections",
+      "why": "explicit stage-02 candidate; CachedConn ownership"
+    },
+    {
+      "repo": "sing",
+      "sha": "90f8f35053",
+      "subject": "network: Cancel winning attempt context in parallel dial",
+      "why": "cancellation ownership"
+    },
+    {
+      "repo": "sing-tun",
+      "sha": "79ed0653fd",
+      "subject": "Fix go stack resetting connections on tun write ENOBUFS",
+      "why": "queue/backpressure vs fork budgets"
+    },
+    {
+      "repo": "sing-tun",
+      "sha": "d42b35f3ed",
+      "subject": "Fix redirected connections hanging after auto-redirect close",
+      "why": "close ownership"
+    },
+    {
+      "repo": "sing-tun",
+      "sha": "cb941cc824",
+      "subject": "Fix GSO frames with more segments than a TUN read batch",
+      "why": "TUN batch/packet ownership"
+    },
+    {
+      "repo": "sing-quic",
+      "sha": "5253224b67",
+      "subject": "Fix ACK-only packets consuming pacing budget",
+      "why": "pacing/congestion"
+    },
+    {
+      "repo": "sing-quic",
+      "sha": "a5639ae373",
+      "subject": "hysteria2: Fix salamander runt packet reads",
+      "why": "obfs framing"
+    },
+    {
+      "repo": "quic-go",
+      "sha": "2e73222e96",
+      "subject": "Fix ACK-only packets consuming pacing budget",
+      "why": "consumed via sing-quic; keep fork fixes"
+    },
+    {
+      "repo": "utls",
+      "sha": "89a07ad380",
+      "subject": "Fix UQUICConn preset transport parameters",
+      "why": "QUIC TLS capability"
+    },
+    {
+      "repo": "main",
+      "sha": "0c343d88b37",
+      "subject": "Apply backpressure to masque inbound packets",
+      "why": "MASQUE + fork admission"
+    },
+    {
+      "repo": "main",
+      "sha": "075fc22f279",
+      "subject": "Rework forward NAT with UDP mapping and fragment support",
+      "why": "NAT semantics"
+    },
+    {
+      "repo": "main",
+      "sha": "2b974d18107",
+      "subject": "Stagger connection attempts in parallel dial",
+      "why": "dual-stack scheduler overlap"
+    },
+    {
+      "repo": "main",
+      "sha": "b8026930e26",
+      "subject": "Add full certificate SHA-256 pinning for TLS",
+      "why": "client contract"
+    },
+    {
+      "repo": "main",
+      "sha": "92934796cd9",
+      "subject": "Fix HTTP/2 extended CONNECT with Go 1.27",
+      "why": "H2/MASQUE transport"
+    },
+    {
+      "repo": "main",
+      "sha": "3a8c595beec",
+      "subject": "Fix AnyTLS splitting UDP packets into multiple frames",
+      "why": "protocol framing"
+    },
+    {
+      "repo": "main",
+      "sha": "b6dc339ebf6",
+      "subject": "Fix FakeIP storage consistency with buffered cache file writes",
+      "why": "FakeIP/cache consistency"
+    },
+    {
+      "repo": "dashboard",
+      "sha": "3e4bf08e5b",
+      "subject": "upstream main (95 commits, no merge base)",
+      "why": "strategy decision required"
+    }
+  ],
+  "next_stage": {
+    "order": [
+      "02 sing+sing-tun",
+      "03 quic-go+sing-quic+utls+wireguard-go",
+      "04 cronet-go+naive+xhttp+mieru+clients",
+      "05 main kernel + zero-behind + cleanup"
+    ],
+    "entry_points": {
+      "sing": "go test ./...; -race",
+      "sing-tun": "go test ./...; admin TUN tests",
+      "quic-go": "go test ./...",
+      "utls": "go test ./...",
+      "kernel": "go build ./...; go test -vet=off -tags <profile> ./...; release-freeze.py verify",
+      "dashboard": "pnpm test / pnpm build (Node 26.7.0)",
+      "desktop": "pnpm test / pnpm build",
+      "android": "./gradlew :app:testDebugUnitTest :app:assembleDebug",
+      "apple": "xcodebuild (BLOCKED on this host)"
+    }
+  },
+  "evidence": {
+    "dir": "_int0145/audit-evidence/upstream",
+    "ahead_behind": "ahead-behind.tsv",
+    "behind_logs": "behind-<repo>.txt",
+    "subject_match": "match-<repo>.txt",
+    "fetch_logs": "0*-*.log"
+  }
+}
