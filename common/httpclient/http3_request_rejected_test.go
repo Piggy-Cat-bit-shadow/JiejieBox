@@ -285,3 +285,45 @@ func TestWarmRejectedOnceOnlyPostFailsWithoutReuse(t *testing.T) {
 	require.False(t, transport.h3Broken(requestAuthority(request)),
 		"an explicit rejection must not arm the H3 verdict")
 }
+
+// TestColdRejectedReplayablePostWithoutKeyFallsBack: the same explicit rejection on a COLD pool
+// with a replayable body and no Idempotency-Key. The dependency retries internally once with a
+// rebuilt body and then this layer dispatches cross-version with another rebuild; the original is
+// closed exactly once and never read after close.
+func TestColdRejectedReplayablePostWithoutKeyFallsBack(t *testing.T) {
+	address, streams := startRequestRejectingHTTP3Server(t)
+	h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+	transport := newRetrySafetyTransport(h2Transport, dialRetrySafetyH3(address), time.Hour)
+	t.Cleanup(func() { _ = transport.h3Transport.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	original := &warmTrackedBody{reader: strings.NewReader("payload")}
+	var copies []*warmTrackedBody
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+address+"/reject", original)
+	require.NoError(t, err)
+	request.GetBody = func() (io.ReadCloser, error) {
+		copy := &warmTrackedBody{reader: strings.NewReader("payload")}
+		copies = append(copies, copy)
+		return copy, nil
+	}
+	response, err := transport.RoundTrip(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, "HTTP/2.0", response.Proto)
+	require.Equal(t, 1, h2Server.executed())
+	require.Equal(t, []string{"payload"}, h2Server.receivedBodies())
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(body))
+
+	require.EqualValues(t, 2, streams.Load(),
+		"the dependency's internal retry and this layer's attempt; no third H3 dispatch")
+	require.Equal(t, int32(1), original.closes.Load())
+	require.Zero(t, original.readsAfterClose.Load())
+	require.Len(t, copies, 2)
+	for _, copy := range copies {
+		require.Equal(t, int32(1), copy.closes.Load())
+	}
+	require.False(t, transport.h3Broken(requestAuthority(request)))
+}
