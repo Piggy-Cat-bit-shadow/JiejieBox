@@ -51,9 +51,11 @@ func TestAReadRacingAClearSeesOneWholeWorld(t *testing.T) {
 	require.Contains(t, []int{0, 3}, count,
 		"a reader must see the whole window or the empty window, never a partial one (saw %d)", count)
 	require.Equal(t, 3, cleared, "the clear removes exactly what was there")
-	// Cross-check the world the reader saw against the window's own accounting.
-	require.Equal(t, count, history.Stats().Entries,
-		"after both operations the window holds exactly the records the reader kept")
+	// The clear always runs last in EFFECT: whichever order the two operations take, the window
+	// ends empty. The reader's count is the only thing that differs, and it is either the whole
+	// window or nothing.
+	require.Zero(t, history.Stats().Entries,
+		"after a clear the window is empty regardless of whether the reader ran before or after it")
 }
 
 func TestASecondReaderCannotSeeAHalfWrittenRecord(t *testing.T) {
