@@ -254,3 +254,57 @@
 3. backup 的 route diagnose、process-cache reset epoch、客户端流控未集成；若 0.1.45 需要，需单独立项。
 4. 第 04 阶段把 H3/H2 回退并入后，要复核监听器 deadline 预算；不要用旧分支文件覆盖 `route/conn.go`、`transport/v2rayxhttp/client.go` 中候选已有的 GrowthBudget / sharedUplinkBudget。
 5. 根包 `github.com/sagernet/sing-box` 的测试已列入常规矩阵；它曾在按包 sweep 之外，导致 `dns/transport_dialer.go` 的 wrapper 回归漏检。后续阶段每次改 `common/dialer`、`dns`、`route` 接口都要跑根包。
+---
+
+## Stage 04 — 双栈 DNS、拨号恢复与 H3/H2 回退集成
+
+- 执行日期：2026-11-11（Asia/Shanghai）
+- 阶段报告：`04_DUALSTACK_H3H2_INTEGRATION.md`
+- 阶段目标：先集成双栈 DNS/拨号恢复，再集成 H3/H2 回退，最后联合回归；依赖沿用阶段 02 的 sing-tun/quic-go 集成 SHA。
+
+### 基线
+
+| 项 | 值 |
+|---|---|
+| 施工基线 | `e8a473447c31487656e8ecd3119ce26e8a23e7b2`（阶段 03 收尾） |
+| `fix/task09-repair` | `31a3e9acea1b`（31 独有：27 非 merge + 4 merge） |
+| `task08/h3-h2-fallback-2026-11-10` | `684ebf516767`（39 独有：35 内容 + 4 pin） |
+| 结果 | 62 个内容提交，75 文件（47 新增 / 28 修改），+11317/−550 |
+
+### 本阶段动作
+
+1. task09：27 个非 merge 提交全部 cherry-pick（0 冲突）；4 个 merge 跳过。随后把分支触及的 40 个文件与 `fix/task09-repair` tip 逐个比对，**40/40 相同**。
+2. task08：35 个内容提交全部 cherry-pick（0 冲突）；4 个 quic-go pin/source-lock 提交跳过（阶段 02 的 `ca9992bc` 已含其代码）。分支 40 个文件中 35 个一致，5 个是 pin 文件（本树更新）。
+3. 配置恢复测试去重：`integration/next-round`、`docs/task09-knowledge-0.1.45` 与本树的 `daemon/config_recovery_*` 及 `daemon/testdata/product-abc/**` 为同一批 blob，只保留一份；两分支文档差异归第 06 阶段。
+4. 联合回归 + race + Windows/Linux 全量；两个疑似回归经重复测量证明是既有测试脆弱性（见报告 §7.5）。
+
+### 验证
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| 构建（Windows profile / 无 tag） | 0 / 0 | 通过 |
+| 双栈相关 15 包（Windows） | 0 | 全部 ok |
+| H3/H2 相关 6 包（Windows） | 0 | 全部 ok（transport/http 74.7 s） |
+| 联合回归 9 包（根包+daemon+dialer+dns+httpclient+transport/http+naive+masque） | 0 | 全部 ok |
+| `-race` dialer/dns/httpclient/naive + transport/http 子集 | 0 / 0 | 通过 |
+| 根包全量（Windows） | 0 | 通过 |
+| Linux 定向（双栈/H3-H2/race） | 0 | 通过 |
+| Linux 全量（干净、无并发负载） | 1 | 112 包 ok；`common/netns`（WSL 环境）与 2 个既有 flaky goroutine 测试失败 |
+| Linux 全量（skip 两个 flaky） | 1 | **113 包 ok**；仅 `common/netns TestUnshareNamespace`（WSL 环境） |
+| Windows 全量（干净） | 1 | **106 包 ok**；仅 `common/tls`（既有）、`tlsspoof`/`windivert`（权限） |
+
+未执行：真实 netns 设备验收（缺 `T09_*` 全局 IPv6 环境，测试按设计 SKIP）；平台构建（Apple/Android/Desktop/Dashboard）保持 BLOCKED。
+
+### 关键判断
+
+- **不整支 merge**：两条来源分支基线分别落后 42/52 个提交；逐个 cherry-pick 保留提交语义，且文件级比对证明没有遗漏 merge 解决内容。
+- **pin 提交按内容跳过**：task08 的 4 个 pin/source-lock 提交指向 `4b11a7be`，阶段 02 的 quic-go `ca9992bc` 已包含；不重复改动 pin。
+- **配置恢复只留一份**：三方 blob 相同，避免同名测试堆叠。
+- **疑似回归不误判**：goroutine 计数测试在基线隔离运行 5/5 失败，且 `NumGoroutine` 高于 `runtime.Stack` 实际列表，属测试脆弱性；e2e 超时是并发负载导致（空闲 5/5 通过）。未为"变绿"改产品代码或弱化断言。
+
+### 遗留 / 下一阶段注意
+
+1. 真实 netns 设备验收仍未执行（需全局 IPv6 + netns 权限），第 06 阶段在目标 runner 补跑。
+2. 根包两个 goroutine 计数测试是既有 flake（隔离必败、依赖进程基线）；验收时应单独统计或由维护者修复测试，不得据此声称产品泄漏。
+3. `source-lock.json` 仍是 0.1.44 快照，第 06 阶段统一生成；依赖 pin 维持阶段 02 值。
+4. 第 05 阶段不要替换 `common/httpclient`/`transport/http` 的 H3 verdict 分类、body 释放路径与 H2 gate；客户端集成应复用这些语义。
