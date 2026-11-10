@@ -867,7 +867,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				if isStale {
 					cacheSource = QuerySourceCacheStale
 				}
-				return nil, response, exchangeDone, cacheSource, waitedForShared, nil
+				return operation, response, exchangeDone, cacheSource, waitedForShared, nil
 			}
 			// The exact cache missed. Before any upstream work, check whether this NAME
 			// is already known not to exist: RFC 2308 makes NXDOMAIN a statement about
@@ -877,14 +877,14 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			if negative, hit := c.loadNXDomain(cacheKey, question, message.Id); hit {
 				logCachedResponse(c.logger, ctx, negative, int(computeTimeToLive(negative)))
 				operation.release()
-				return nil, negative, exchangeDone, QuerySourceCacheNXDomain, waitedForShared, nil
+				return operation, negative, exchangeDone, QuerySourceCacheNXDomain, waitedForShared, nil
 			}
 			if !loaded {
 				break
 			}
 			if !allowWait {
 				operation.release()
-				return nil, nil, exchangeWait, QuerySourceBlocked, false, nil
+				return operation, nil, exchangeWait, QuerySourceBlocked, false, nil
 			}
 			select {
 			case <-cond:
@@ -1083,6 +1083,14 @@ func (c *Client) exchangeWithSource(ctx context.Context, transport adapter.DNSTr
 	operation, earlyResponse, status, source, shared, err := c.beginExchange(ctx, transport, message, options, responseChecker, true)
 	if status != exchangeReady {
 		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err)
+		// An early response is still produced by THIS operation when one exists: a cache hit or a
+		// cached NXDOMAIN found under the operation's key, which was built from the environment the
+		// operation captured. Reporting that generation keeps a shared waiter's hit stamped like a
+		// direct hit instead of degrading it to unknown; a response synthesized before any operation
+		// had an environment (a blocked transition, a malformed question) still reports unknown.
+		if operation != nil && operation.hasGenerationGuard {
+			return earlyResponse, operation.generation, true, err
+		}
 		return earlyResponse, 0, false, err
 	}
 	defer operation.release()
