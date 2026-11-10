@@ -174,11 +174,22 @@ func TestTheBindingPaginatesThroughTruncatedResponses(t *testing.T) {
 	for index := 0; index < 5; index++ {
 		lookupBlockedName(t, server, fmt.Sprintf("history.test"))
 	}
-	var initial dnsHistoryBindingQueryResult
+	// The bus delivers to the history asynchronously, so the window is only stable once the count
+	// stops growing; a snapshot taken mid-delivery would under-count the records this test then
+	// expects to page through.
+	lastEntries := -1
+	stableSince := time.Now()
 	require.Eventually(t, func() bool {
-		initial, _ = queryBinding(t, server, `{"maxBytes":65536}`)
-		return initial.Stats.Entries >= 1
-	}, 5*time.Second, time.Millisecond)
+		result, _ := queryBinding(t, server, `{"maxBytes":65536}`)
+		if result.Stats.Entries != lastEntries {
+			lastEntries = result.Stats.Entries
+			stableSince = time.Now()
+			return false
+		}
+		return lastEntries > 0 && time.Since(stableSince) > 200*time.Millisecond
+	}, 10*time.Second, 10*time.Millisecond, "the history window must stabilize before pagination")
+	initial, _ := queryBinding(t, server, `{"maxBytes":65536}`)
+	require.Positive(t, initial.Stats.Entries)
 
 	cursor := uint64(0)
 	seen := make(map[uint64]bool)
