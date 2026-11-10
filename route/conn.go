@@ -77,12 +77,14 @@ type ConnectionManager struct {
 	// time up to drainSweepMaxInterval. See scheduleDrainSweepLocked.
 	sweepBackoff int
 	closed       atomic.Bool
-	// disposeAccess guards disposing and the Add/Wait pairing of disposeGroup. It is the
-	// boundary between "a network change hands the close to a disposer" and "the lifecycle is
-	// shutting down and the close is synchronous again". See disposeConnections.
-	disposeAccess sync.Mutex
-	disposing     bool
-	disposeGroup  sync.WaitGroup
+	// disposal owns the physical close of every connection that has already left the tracked
+	// set. One worker per manager; pending counts objects not yet physically closed, so
+	// shutdown waits on a number rather than on a goroutine set. See stageDisposals.
+	disposal               disposalState
+	disposalBudgetOverride int
+	// disposalStageHook, when set (tests only), runs after the tracked objects were removed and
+	// before their disposal was registered. It makes the hand-off window deterministic.
+	disposalStageHook func()
 	// reclaimLog, when set, reports each reclaim pass. Diagnostics only; nil in production.
 	reclaimLog func(reason ReclaimReason, closed int, generation uint64)
 	// drainIdleGraceOverride and drainSweepIntervalOverride exist so a test can exercise the drain
@@ -241,6 +243,10 @@ func (m *ConnectionManager) CloseAll() {
 	for _, closer := range closers {
 		common.Close(closer)
 	}
+	// "Close all" is a synchronous promise: a socket a transition already handed to the disposer is
+	// owned by this manager until its physical Close returns, so the caller must not be told the
+	// manager is empty while one of those is still inside Close.
+	m.waitForDisposals()
 }
 
 // SetUploadRate installs the managed upload shaping rate from the configuration.
@@ -279,19 +285,21 @@ func (m *ConnectionManager) Close() error {
 	// stop the timer, and only then tear the connections down. A timer that fired after this
 	// returned would be reclaiming connections on behalf of a manager whose lifecycle has ended.
 	m.closed.Store(true)
-	// No new disposal task may start once shutdown begins (the group's Add/Wait pairing would be
-	// racy); tasks that already started are waited on below. This is what keeps "everything the
-	// manager owned is closed when Close returns" true even though a network change no longer
-	// waits for the same closes.
-	m.disposeAccess.Lock()
-	m.disposing = true
-	m.disposeAccess.Unlock()
+	// Shutdown and the hand-off use one protocol. A reclaim stages its batch while holding
+	// m.access, and CloseAll below takes the same lock, so any batch that left the tracked set
+	// before shutdown is in the pending count before the wait below can observe zero. A batch
+	// staged after shutdown is counted too; the worker still drains it, and the wait covers it.
+	m.disposal.mu.Lock()
+	m.initDisposalLocked()
+	m.disposal.shutdown = true
+	m.disposal.cond.Broadcast()
+	m.disposal.mu.Unlock()
 	m.dialSetups.close()
 	m.stopDrainSweep()
 	m.CloseAll()
-	// A network change may have handed the closes of already-removed connections to a disposer.
-	// Shutdown still completes them before returning; only the reset body stopped waiting.
-	m.disposeGroup.Wait()
+	// CloseAll has closed everything still tracked and waited for anything already handed off.
+	// This second wait is belt and braces for a batch staged while CloseAll was running.
+	m.waitForDisposals()
 	// Releasing the scheduler here is what unblocks a copy goroutine parked in the gate. Closing
 	// the connections above does not: a flow waiting for a permit is not inside a write, so it
 	// never observes the closed socket.

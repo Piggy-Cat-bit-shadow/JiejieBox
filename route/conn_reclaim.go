@@ -1,6 +1,7 @@
 package route
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -264,6 +265,13 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 		m.scheduler.ReleaseAll()
 	}
 	if policy.closeAll {
+		if reason == ReclaimShutdown {
+			// Teardown is the one close-all promise that stays synchronous end to end: the
+			// caller asked for the sockets to be gone, not commissioned.
+			count := m.Count()
+			m.CloseAll()
+			return count
+		}
 		return m.reclaimAll()
 	}
 
@@ -343,9 +351,16 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 		}
 		element = nextElement
 	}
+	if m.disposalStageHook != nil {
+		m.disposalStageHook()
+	}
+	// The removal and the ownership transfer are one step: shutdown takes m.access through
+	// CloseAll, so it cannot observe an object between the tracked set and the disposer.
+	waitForRoom := m.stageDisposals(closers)
 	m.access.Unlock()
-
-	m.disposeConnections(closers)
+	if waitForRoom {
+		m.waitForDisposalRoom()
+	}
 	if policy.drain {
 		m.transitions.recordTransition(retained, len(closers), seen)
 		// Open the reconnect governor's window. The connections that were just invalidated are about
@@ -380,46 +395,146 @@ func (m *ConnectionManager) reclaimAll() int {
 		m.connections.Remove(element)
 		element = nextElement
 	}
+	if m.disposalStageHook != nil {
+		m.disposalStageHook()
+	}
+	waitForRoom := m.stageDisposals(closers)
 	m.access.Unlock()
-	m.disposeConnections(closers)
+	if waitForRoom {
+		m.waitForDisposalRoom()
+	}
 	return len(closers)
 }
 
-// disposeConnections closes reclaimed connections on a disposer owned by this manager.
+// disposalConcurrency is the number of physical closes one manager may run at once.
+// It is one, deliberately: the sockets being closed are already unreachable by the new
+// generation, so parallelism buys nothing, while one worker makes the bound a constant
+// that does not grow with the number of transitions.
+const disposalConcurrency = 1
+
+// disposalBacklogBudget is how many connections may be waiting for their physical close
+// before a reclaim must wait for room. It is backpressure, not a drop policy: the objects
+// are already owned by the disposer, and the caller waits instead of the backlog growing
+// with every change. A budget in connections (not in batches) also bounds a single
+// close-all reclaim of thousands of sockets.
+const disposalBacklogBudget = 64
+
+// disposalState is the ownership ledger for physical closes.
+type disposalState struct {
+	once sync.Once
+	mu   sync.Mutex
+	// cond signals both the worker (work arrived, shutdown) and budget/shutdown waiters.
+	cond *sync.Cond
+	// queue holds the exact connections whose close has been commissioned but not started.
+	queue []managedConn
+	// pending counts every commissioned connection that has not been physically closed yet,
+	// including the one the worker is inside right now. Shutdown waits for it to reach zero.
+	pending  int
+	worker   bool
+	shutdown bool
+}
+
+func (m *ConnectionManager) initDisposalLocked() {
+	m.disposal.once.Do(func() {
+		m.disposal.cond = sync.NewCond(&m.disposal.mu)
+	})
+}
+
+func (m *ConnectionManager) disposalBudget() int {
+	if m.disposalBudgetOverride > 0 {
+		return m.disposalBudgetOverride
+	}
+	return disposalBacklogBudget
+}
+
+// stageDisposals takes ownership of closers. The caller holds m.access, which is what makes
+// the transfer atomic with shutdown: CloseAll takes the same lock, so once shutdown can
+// proceed, every object that already left the tracked set is in pending.
 //
-// # Why the physical close is not part of the reclaim pass
-//
-// The reclaim runs inside the network-change body, and the generation boundary - DNS pin, commit,
-// the new generation's first dial - must not queue behind the kernel. A UDP socket's Close can
-// take as long as the kernel makes it take; by the time it is scheduled here the connection has
-// already left the tracked set and its generation can no longer admit work, so nothing about the
-// new generation needs that Close to return. One task per reclaim is also what bounds the work:
-// the list is exact, every object is closed once, and a later transition cannot put an
-// already-removed connection back.
-//
-// Shutdown is the exception: once Close has begun no task may start (the group's Add/Wait pairing
-// would be racy), so the disposer closes inline and Close still returns only after every physical
-// close finished.
-func (m *ConnectionManager) disposeConnections(closers []managedConn) {
+// It returns whether the caller must wait for room (outside the lock). The wait is the
+// saturation behaviour: the reclaim call, not the disposer, carries the backpressure, so the
+// backlog has a hard bound in connections.
+func (m *ConnectionManager) stageDisposals(closers []managedConn) (waitForRoom bool) {
 	if len(closers) == 0 {
-		return
+		return false
 	}
-	m.disposeAccess.Lock()
-	if m.disposing || m.closed.Load() {
-		m.disposeAccess.Unlock()
-		for _, closer := range closers {
-			common.Close(closer)
-		}
-		return
+	d := &m.disposal
+	d.mu.Lock()
+	m.initDisposalLocked()
+	d.pending += len(closers)
+	d.queue = append(d.queue, closers...)
+	if !d.worker {
+		d.worker = true
+		go m.disposalWorker()
 	}
-	m.disposeGroup.Add(1)
-	m.disposeAccess.Unlock()
-	go func() {
-		defer m.disposeGroup.Done()
-		for _, closer := range closers {
-			common.Close(closer)
+	d.cond.Broadcast()
+	waitForRoom = !d.shutdown && d.pending > m.disposalBudget()
+	d.mu.Unlock()
+	return waitForRoom
+}
+
+// disposalWorker is the single owner of the physical close. It drains the queue even after
+// shutdown began, until the queue is empty; shutdown's wait is on pending, which the worker
+// decrements after each close returns.
+func (m *ConnectionManager) disposalWorker() {
+	d := &m.disposal
+	for {
+		d.mu.Lock()
+		for len(d.queue) == 0 && !d.shutdown {
+			d.cond.Wait()
 		}
-	}()
+		if len(d.queue) == 0 {
+			d.worker = false
+			d.mu.Unlock()
+			return
+		}
+		closer := d.queue[0]
+		d.queue[0] = nil
+		d.queue = d.queue[1:]
+		if len(d.queue) == 0 {
+			d.queue = nil
+		}
+		d.mu.Unlock()
+		common.Close(closer)
+		d.mu.Lock()
+		d.pending--
+		d.cond.Broadcast()
+		d.mu.Unlock()
+	}
+}
+
+// waitForDisposalRoom is the saturation backpressure point: a reclaim that would push the
+// backlog over budget waits here (outside m.access) until the worker catches up. It returns
+// immediately once shutdown began, because Close's own wait is the stronger contract.
+func (m *ConnectionManager) waitForDisposalRoom() {
+	d := &m.disposal
+	d.mu.Lock()
+	m.initDisposalLocked()
+	for d.pending > m.disposalBudget() && !d.shutdown {
+		d.cond.Wait()
+	}
+	d.mu.Unlock()
+}
+
+// waitForDisposals is shutdown's completion contract: it returns only when every commissioned
+// connection has been physically closed.
+func (m *ConnectionManager) waitForDisposals() {
+	d := &m.disposal
+	d.mu.Lock()
+	m.initDisposalLocked()
+	for d.pending > 0 {
+		d.cond.Wait()
+	}
+	d.mu.Unlock()
+}
+
+// pendingDisposals reports the ownership ledger. Tests use it to tell "removed from the
+// tracked set" from "physically closed".
+func (m *ConnectionManager) pendingDisposals() int {
+	d := &m.disposal
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.pending
 }
 
 // beginDrainSweep keeps reclaiming connections the transition left behind until none are left.
@@ -495,9 +610,13 @@ func (m *ConnectionManager) sweepStaleConnections() bool {
 		}
 		element = nextElement
 	}
+	if m.disposalStageHook != nil {
+		m.disposalStageHook()
+	}
+	waitForRoom := m.stageDisposals(closers)
 	m.access.Unlock()
-	for _, closer := range closers {
-		common.Close(closer)
+	if waitForRoom {
+		m.waitForDisposalRoom()
 	}
 	if len(closers) > 0 {
 		m.transitions.recordSweep(len(closers))
