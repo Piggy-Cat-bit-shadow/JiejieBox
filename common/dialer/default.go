@@ -769,6 +769,20 @@ func (d *DefaultDialer) stillCurrentEpoch(epochCurrent func() bool, conn net.Con
 	return nil, errNetworkChanged
 }
 
+// waitForConnectionRoom asks a resource-governing connection manager whether a new connection
+// may be admitted. It is an optional capability: managers without a disposal budget keep the
+// previous behaviour. The wait honours the dial context, so a saturated manager surfaces as a
+// normal dial error (context deadline) rather than a stuck dial.
+func (d *DefaultDialer) waitForConnectionRoom(ctx context.Context) error {
+	waiter, isWaiter := d.connectionManager.(interface {
+		WaitForConnectionRoom(context.Context) error
+	})
+	if !isWaiter {
+		return nil
+	}
+	return waiter.WaitForConnectionRoom(ctx)
+}
+
 func (d *DefaultDialer) trackConn(ctx context.Context, destination M.Socksaddr, conn net.Conn, err error) (net.Conn, error) {
 	if err != nil {
 		return conn, err
@@ -783,6 +797,10 @@ func (d *DefaultDialer) trackConn(ctx context.Context, destination M.Socksaddr, 
 		conn = &udpConn{Conn: conn, rawConn: rawConn}
 	}
 	if d.connectionManager != nil {
+		if roomErr := d.waitForConnectionRoom(ctx); roomErr != nil {
+			common.Close(conn)
+			return nil, E.Cause(roomErr, "wait for connection room")
+		}
 		conn = d.connectionManager.TrackConn(conn)
 	}
 	if d.powerManager != nil {
@@ -833,6 +851,10 @@ func (d *DefaultDialer) trackPacketConn(ctx context.Context, destination M.Socks
 		return conn, err
 	}
 	if d.connectionManager != nil {
+		if roomErr := d.waitForConnectionRoom(ctx); roomErr != nil {
+			common.Close(conn)
+			return nil, E.Cause(roomErr, "wait for connection room")
+		}
 		conn = d.connectionManager.TrackPacketConn(conn)
 	}
 	if d.powerManager != nil {

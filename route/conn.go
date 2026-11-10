@@ -243,9 +243,17 @@ func (m *ConnectionManager) CloseAll() {
 	for _, closer := range closers {
 		common.Close(closer)
 	}
-	// "Close all" is a synchronous promise: a socket a transition already handed to the disposer is
-	// owned by this manager until its physical Close returns, so the caller must not be told the
-	// manager is empty while one of those is still inside Close.
+	// The condemned set is owned by this manager but not tracked, so "close all" must take it
+	// too. This is the synchronous promise: the caller is not told the manager is empty while
+	// an object it owns has not finished closing.
+	m.disposal.mu.Lock()
+	m.initDisposalLocked()
+	condemned := m.takeCondemnedLocked()
+	m.signalRoomLocked()
+	m.disposal.mu.Unlock()
+	for _, closer := range condemned {
+		common.Close(closer)
+	}
 	m.waitForDisposals()
 }
 
