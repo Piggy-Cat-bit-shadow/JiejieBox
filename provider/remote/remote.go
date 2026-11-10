@@ -452,7 +452,7 @@ func (s *ProviderRemote) UpdateWithReport() (*ApplyReport, error) {
 	return s.UpdateWithReportContext(s.ctx)
 }
 
-// UpdateWithReportContext is the same refresh with the CALLER's context.
+// UpdateWithReportContext is the same refresh with the CALLER's cancellation and deadline.
 //
 // # Why the caller's context has to reach the fetch
 //
@@ -463,37 +463,27 @@ func (s *ProviderRemote) UpdateWithReport() (*ApplyReport, error) {
 // request ran to the provider's own `fetch_timeout` (30s by default), once per provider, inside a
 // call whose caller had asked for seconds.
 //
-// The fetch itself already applies the context to the request (`req.WithContext`), so passing the
-// caller's context through is the whole fix.
+// # Why the caller's context does not REPLACE the provider's
 //
-// # Why a refused attempt returns NO report
+// It contributes cancellation and a deadline; the fetch still descends from the provider's own
+// context, where the Box's build gate and the provider's lifecycle live. Substituting the caller's
+// tree would silently disable both: a quota-refused Box would still send the HTTP request, and
+// `Close` could no longer cancel an in-flight download.
 //
-// `fetch` records a report for every attempt it starts, so `LastApplyReport` after a fetch is
-// normally this attempt's. It is not when the attempt never started: a provider its own timer is
-// already refreshing, one that is not started, or one the build gate deferred returns before the
-// report exists, and `LastApplyReport` then still holds the PREVIOUS attempt - which may well say
-// "committed". Handing that to a caller together with this attempt's error is how a publish from
-// minutes ago gets reported as the result of a refresh that never happened. The revision counter is
-// the evidence that the stored report belongs to this call, so it is checked rather than assumed.
+// # Why the report is this attempt's own
+//
+// A provider's timer and a manual refresh can complete in either order. Comparing revision counters
+// before and after, and then reading `LastApplyReport`, is not ownership: the counter only says that
+// SOME attempt finished, so a refused attempt can pick up a timer's publish. The report is returned
+// from the fetch that produced it instead, and a refused attempt (which never created one) returns
+// nil.
 func (s *ProviderRemote) UpdateWithReportContext(ctx context.Context) (*ApplyReport, error) {
 	if s.ticker != nil {
 		s.ticker.Reset(s.updateInterval)
 	}
-	if ctx == nil {
-		ctx = s.ctx
-	}
-	previousRequested := s.lastRequestedRevision()
-	err := s.fetch(ctx, false)
-	report := s.LastApplyReport()
-	if err != nil {
-		if report == nil || report.RequestedRevision <= previousRequested {
-			return nil, err
-		}
-		// The attempt ran and recorded its own report; both facts belong to the caller, because a
-		// document that was published before the cancellation is still published.
-		return report, err
-	}
-	return report, nil
+	fetchContext, cancel := s.fetchContext(ctx)
+	defer cancel()
+	return s.fetchReport(fetchContext, false)
 }
 
 func (s *ProviderRemote) UpdatedAt() time.Time {
@@ -552,31 +542,75 @@ func (s *ProviderRemote) updateOnce() {
 	}
 }
 
+// fetchContext binds the provider's build gate and lifecycle to the caller's cancellation and deadline.
+//
+// # Why the caller's context is the BASE, and what has to be carried over
+//
+// The caller owns when to stop waiting: a request cancellation, a client disconnect, a deadline.
+// Deriving from it is what makes `ctx.Err()` see a cancellation SYNCHRONOUSLY - which matters at the
+// publish boundary, where the difference between "the caller left" and "the caller left a moment ago
+// and the goroutine has not run yet" is the difference between publishing and not.
+//
+// Two things then have to be carried over from the provider's own context:
+//
+//   - the Box's build gate. It is a value in the provider's tree, and without it a manual refresh
+//     would send the HTTP request that a quota-exhausted Box must defer.
+//   - the provider's lifecycle. `Close` cancels the provider's context; `AfterFunc` turns that into a
+//     cancellation of this fetch, so an in-flight download ends when the provider does, even when
+//     the caller has no deadline of its own.
+func (s *ProviderRemote) fetchContext(caller context.Context) (context.Context, context.CancelFunc) {
+	if caller == nil {
+		caller = s.ctx
+	}
+	ctx, cancel := context.WithCancel(caller)
+	if gate := buildgate.FromContext(s.ctx); gate != nil && buildgate.FromContext(ctx) == nil {
+		ctx = buildgate.ContextWithGate(ctx, gate)
+	}
+	stopLifecycle := context.AfterFunc(s.ctx, cancel)
+	return ctx, func() {
+		stopLifecycle()
+		cancel()
+	}
+}
+
+// fetch downloads and applies one provider document.
+//
+// It returns the report THIS attempt recorded, or nil when the attempt never started (not started,
+// already updating, cancelled before the request, or refused by the build gate). The report is a
+// return value rather than a later read of `LastApplyReport` because a provider's own timer and a
+// manual refresh can complete in either order: reading the global value afterwards is how one
+// attempt ends up reporting another attempt's publish.
 func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
+	_, err := s.fetchReport(ctx, isStart)
+	return err
+}
+
+func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyReport, error) {
 	if s.httpClient == nil {
 		// StartContext installs the client. A fetch before that (a manual Update from an embedder,
 		// or a start that failed before the transport was resolved) has nothing to send through,
 		// and must say so instead of dereferencing nil.
-		return E.New("provider is not started")
+		return nil, E.New("provider is not started")
 	}
 	if s.updating.Swap(true) {
-		return E.New("provider is updating")
+		return nil, E.New("provider is updating")
 	}
 	defer s.updating.Store(false)
 	s.fetchAccess.Lock()
 	defer s.fetchAccess.Unlock()
 	if err := s.ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	// The build reservation is taken AFTER this provider's own fetch lock, so a provider that
 	// is already mid-fetch cannot consume a reservation it will not use, and two DIFFERENT
 	// providers contend on the shared gate. A refusal is a retryable deferral: the version
 	// currently serving traffic is untouched, which is the whole point of charging the build
-	// rather than the download.
+	// rather than the download. A refusal happens before the report exists, so it is reported as
+	// "no attempt" rather than as an attempt that did nothing.
 	buildRelease, buildErr := buildgate.AcquireFromContext(ctx)
 	if buildErr != nil {
 		s.logger.Debug("outbound provider ", s.Tag(), " build deferred: ", buildErr)
-		return buildErr
+		return nil, buildErr
 	}
 	buildStarted := time.Now()
 	defer func() {
@@ -598,7 +632,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	s.logger.Debug("updating outbound provider ", s.Tag(), " from URL: ", s.logURL)
 	req, err := http.NewRequest(http.MethodGet, s.url, nil)
 	if err != nil {
-		return E.New("create provider request: ", s.redact(err.Error()))
+		return report, E.New("create provider request: ", s.redact(err.Error()))
 	}
 	if s.lastEtag != "" {
 		req.Header.Set("If-None-Match", s.lastEtag)
@@ -611,7 +645,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	if err != nil {
 		// The transport error embeds the request URL, query string and all. It is redacted here
 		// rather than at every log site, so a token cannot leak through a wrapped error.
-		return E.New("download provider document: ", s.redact(err.Error()))
+		return report, E.New("download provider document: ", s.redact(err.Error()))
 	}
 	defer resp.Body.Close()
 	infoStr := resp.Header.Get("subscription-userinfo")
@@ -649,21 +683,28 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 			})
 			if err := s.saveCacheFile(hasInfo, info, content); err != nil {
 				report.AncillaryError = s.redact(err.Error())
-				return E.Cause(err, "save outbound provider cache file")
+				return report, E.Cause(err, "save outbound provider cache file")
 			}
 		}
 		report.Status = ApplyStatusUnchanged
 		s.logger.Info("update outbound provider ", s.Tag(), ": not modified")
-		return nil
+		return report, nil
 	default:
-		return E.New("unexpected status: ", resp.Status)
+		return report, E.New("unexpected status: ", resp.Status)
 	}
 	contentRaw, err := io.ReadAll(io.LimitReader(resp.Body, s.maxDocumentSize+1))
 	if err != nil {
-		return E.New("read provider document: ", s.redact(err.Error()))
+		return report, E.New("read provider document: ", s.redact(err.Error()))
 	}
 	if int64(len(contentRaw)) > s.maxDocumentSize {
-		return E.New("provider document is larger than the ", s.maxDocumentSize, " byte limit")
+		return report, E.New("provider document is larger than the ", s.maxDocumentSize, " byte limit")
+	}
+	// The caller may have left while the body was being read - and a cancellation that arrives at
+	// the end of the read is the moment before the only irreversible side effect of this function.
+	// Publishing here would commit a document for a request whose answer has nowhere to go, and the
+	// report would say `committed` for an update nobody asked for any more.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return report, E.Cause(ctxErr, "read provider document")
 	}
 	report.Downloaded = true
 	content, _ := parser.DecodeBase64URLSafe(string(contentRaw))
@@ -695,10 +736,10 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 		report.Status = ApplyStatusCommitted
 	}
 	if nodeErr != nil {
-		return nodeErr
+		return report, nodeErr
 	}
 	if groupErr != nil {
-		return groupErr
+		return report, groupErr
 	}
 	// The nodes are published; snapshot the exact document a recovery would pin.
 	s.snapshotPublishedNodes()
@@ -715,7 +756,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 		if s.path != "" {
 			if err = s.saveCacheFile(hasInfo, info, content); err != nil {
 				report.AncillaryError = s.redact(err.Error())
-				return E.Cause(err, "save outbound provider cache file")
+				return report, E.Cause(err, "save outbound provider cache file")
 			}
 		} else if hasInfo {
 			content = append([]byte(infoStr+"\n"), content...)
@@ -746,7 +787,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 		s.logger.Warn("outbound provider cache was not saved; the next refresh will download the document again")
 	}
 	s.logger.Info("updated outbound provider ", s.Tag())
-	return nil
+	return report, nil
 }
 
 func (s *ProviderRemote) loadCacheFile() (bool, error) {

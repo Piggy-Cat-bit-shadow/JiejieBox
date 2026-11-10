@@ -118,23 +118,14 @@ func (s *ProviderRemote) recordApply(report *ApplyReport) {
 }
 
 // LastApplyReport returns the most recent attempt, or nil before the first one.
+//
+// It is history, not a receipt: an embedder reporting on a call it just made uses the report that
+// call returned (`UpdateWithReportContext`), because this value may already belong to another
+// attempt - a provider's own timer completes on its own schedule.
 func (s *ProviderRemote) LastApplyReport() *ApplyReport {
 	s.reportAccess.Lock()
 	defer s.reportAccess.Unlock()
 	return cloneReport(s.lastReport)
-}
-
-// lastRequestedRevision is the revision counter of the most recent attempt, or 0 before the first.
-//
-// It identifies the report `LastApplyReport` would return, which is how a caller tells a report THIS
-// call recorded from one an earlier call left behind - see UpdateWithReportContext.
-func (s *ProviderRemote) lastRequestedRevision() uint64 {
-	s.reportAccess.Lock()
-	defer s.reportAccess.Unlock()
-	if s.lastReport == nil {
-		return 0
-	}
-	return s.lastReport.RequestedRevision
 }
 
 // errorText renders an error for a diagnostic, or the empty string.
