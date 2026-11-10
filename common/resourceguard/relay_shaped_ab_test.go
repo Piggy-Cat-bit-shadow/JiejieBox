@@ -234,6 +234,11 @@ func runRelayABStream(addr string, budget *GrowthBudget) relayABObservation {
 	}
 	defer conn.Close()
 	threshold, permit := budget.Admit(trafficclass.ClassBulk, false)
+	if os.Getenv("RELAY_AB_INVERT") != "" {
+		// Deliberate inversion: the assertion must catch a growth decision that does not
+		// match the budget's permit (used by the Debug pass to prove the checks execute).
+		threshold = 0
+	}
 	observation := relayABObservation{threshold: threshold, granted: permit != nil}
 	if permit != nil {
 		defer permit.Release()
