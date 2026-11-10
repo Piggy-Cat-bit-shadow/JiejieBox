@@ -5787,6 +5787,26 @@
       },
       "additionalProperties": false
     },
+    "FailoverPolicyOptions": {
+      "type": "object",
+      "properties": {
+        "widen_after": {
+          "type": "integer"
+        },
+        "settle_after": {
+          "type": "integer"
+        },
+        "recover_after": {
+          "type": "integer"
+        },
+        "tolerance": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "additionalProperties": false
+    },
     "HTTPClient": {
       "type": "object",
       "properties": {
@@ -16593,6 +16613,9 @@
             },
             "expected_status": {
               "type": "string"
+            },
+            "failover": {
+              "$ref": "#/$defs/FailoverPolicyOptions"
             },
             "interval": {
               "$ref": "#/$defs/Duration"

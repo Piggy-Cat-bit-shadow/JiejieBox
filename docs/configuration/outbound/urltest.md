@@ -90,6 +90,35 @@ The test tolerance in milliseconds. `50` will be used if empty.
 
 The idle timeout. `30m` will be used if empty.
 
+#### failover
+
+Optional. Turns on the stable/failover probing policy for this group.
+
+Absent, the group keeps its historical behaviour: every member is probed every round. Naming the
+block opts in, even with no fields, and then every non-positive threshold takes its conservative
+default.
+
+```json
+"failover": {
+  "widen_after": 2,
+  "settle_after": 3,
+  "recover_after": 2,
+  "tolerance": 50
+}
+```
+
+- `widen_after` — consecutive rounds the stable member may fail (or be missing) before the group
+  widens the probe set again. While it is healthy, a periodic round probes only that member.
+- `settle_after` — consecutive rounds a challenger must beat the stable member by more than
+  `tolerance` before it replaces it.
+- `recover_after` — consecutive healthy rounds the stable member needs, while the set is widened,
+  before the group narrows back to it.
+- `tolerance` — the delay margin in milliseconds that counts as a degradation.
+
+The policy filters the group's own rounds; it does not add a second scheduler. Selection, history
+and measurement identity are unchanged, so a configuration without the block behaves exactly as
+before.
+
 #### interrupt_exist_connections
 
 Interrupt existing connections when the selected outbound has changed.
