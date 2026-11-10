@@ -718,6 +718,7 @@ func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClie
 // only an accepted batch advances the state.
 func (c *CommandClient) consumeConnectionsStream(stream daemon.StartedService_SubscribeConnectionsClient, subscription uint64, stillCurrent func() bool, resynced bool) bool {
 	state := connectionBatchState{subscription: subscription}
+	var assembly *connectionSnapshotAssembly
 	for {
 		events, err := stream.Recv()
 		if err != nil {
@@ -732,11 +733,34 @@ func (c *CommandClient) consumeConnectionsStream(stream daemon.StartedService_Su
 		if !stillCurrent() {
 			return false
 		}
+		libboxEvents := connectionEventsFromGRPC(events)
+		if libboxEvents == nil {
+			libboxEvents = &ConnectionEvents{}
+		}
+		if libboxEvents.snapshotParts > 1 {
+			if libboxEvents.snapshotPart == 1 {
+				var ok bool
+				assembly, ok = startSnapshot(libboxEvents, subscription)
+				if !ok {
+					return true
+				}
+			} else if !assembly.add(libboxEvents, subscription) {
+				return true
+			}
+			if !assembly.complete() {
+				continue
+			}
+			libboxEvents = assembly.finish()
+			assembly = nil
+		} else if assembly != nil {
+			// A non-fragment arrived in the middle of a group: the stream cannot be ordered.
+			return true
+		}
 		// Every subscription starts from a baseline, whatever the peer sent. The server's first
 		// message IS the snapshot; forcing Reset covers an older daemon that never set it and a
 		// reconnect where the platform still holds rows from the stream that just died.
 		baselinePending := !state.hasBaseline
-		libboxEvents, _ := connectionEventsForDelivery(events, baselinePending, subscription)
+		libboxEvents = connectionEventsForDeliveryFrom(libboxEvents, baselinePending, subscription)
 		switch classifyConnectionBatch(&state, libboxEvents) {
 		case batchStale:
 			continue
@@ -757,7 +781,12 @@ func (c *CommandClient) consumeConnectionsStream(stream daemon.StartedService_Su
 // stream: the batch a consumer receives first must ALWAYS be a reset, because the consumer's duty is
 // to discard whatever it held before this subscription.
 func connectionEventsForDelivery(events *daemon.ConnectionEvents, baselinePending bool, subscriptions ...uint64) (*ConnectionEvents, bool) {
-	libboxEvents := connectionEventsFromGRPC(events)
+	return connectionEventsForDeliveryFrom(connectionEventsFromGRPC(events), baselinePending, subscriptions...), false
+}
+
+// connectionEventsForDeliveryFrom applies the first-batch baseline rule to an already converted batch
+// (the assembled snapshot is one such batch).
+func connectionEventsForDeliveryFrom(libboxEvents *ConnectionEvents, baselinePending bool, subscriptions ...uint64) *ConnectionEvents {
 	if libboxEvents == nil {
 		libboxEvents = &ConnectionEvents{}
 	}
@@ -766,9 +795,8 @@ func connectionEventsForDelivery(events *daemon.ConnectionEvents, baselinePendin
 	}
 	if baselinePending {
 		libboxEvents.Reset = true
-		return libboxEvents, false
 	}
-	return libboxEvents, false
+	return libboxEvents
 }
 
 func (c *CommandClient) handleOutboundsStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {

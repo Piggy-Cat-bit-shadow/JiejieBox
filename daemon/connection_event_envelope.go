@@ -58,17 +58,29 @@ func shouldSendConnectionBatch(eventCount int, currentLoss uint64, reportedLoss 
 	return eventCount > 0 || currentLoss > reportedLoss
 }
 
-// wrap builds the batch to send.
-
-// Dropped is the subscription's exact loss count when one is available, and the gap count otherwise.
-// The two are the same number once an event reveals the gap; taking the larger of them avoids
-// double-counting while letting the counter speak during silence, when no gap exists yet.
-func (e *connectionEventEnvelope) wrap(events []*ConnectionEvent, reset bool) *ConnectionEvents {
+// wrap builds the batch to send and returns the drop count that batch carries.
+//
+// A BASELINE (reset) carries zero. The snapshot only proves what its captured view covers: drops that
+// happen while that view is being built are not in it, so adopting the counter there told the consumer
+// "136 lost events are already accounted for" when they were not, and the next batch carried the same
+// 136 - no rise, no recovery, silence. The per-subscription counter stays live; the first later batch,
+// or the idle tick, reports the rise and the existing recovery path runs.
+//
+// The returned value is the ONLY number the sender may record as notified. Reading the counter again
+// after Send would mark drops that landed while the Send was blocked as delivered, although nobody
+// has seen them yet.
+func (e *connectionEventEnvelope) wrap(events []*ConnectionEvent, reset bool) (*ConnectionEvents, uint64) {
 	e.sequence++
-	dropped := e.dropped
-	if e.loss != nil {
-		if counter := e.loss(); counter > dropped {
-			dropped = counter
+	var dropped uint64
+	if !reset {
+		// Dropped is the exact loss count when one is available, and the gap count otherwise. They
+		// are the same number once an event reveals the gap; the larger avoids double counting while
+		// letting the counter speak during silence.
+		dropped = e.dropped
+		if e.loss != nil {
+			if counter := e.loss(); counter > dropped {
+				dropped = counter
+			}
 		}
 	}
 	return &ConnectionEvents{
@@ -77,5 +89,21 @@ func (e *connectionEventEnvelope) wrap(events []*ConnectionEvent, reset bool) *C
 		InstanceId: e.instanceID,
 		Sequence:   e.sequence,
 		Dropped:    dropped,
+	}, dropped
+}
+
+// wrapSnapshot builds one fragment of a split snapshot. Every fragment carries zero: the group is a
+// single baseline, and the per-subscription counter is announced after the group completes (a drop
+// during the split is outside the captured view too).
+func (e *connectionEventEnvelope) wrapSnapshot(events []*ConnectionEvent, part uint32, parts uint32, reset bool) *ConnectionEvents {
+	e.sequence++
+	return &ConnectionEvents{
+		Events:        events,
+		Reset_:        reset,
+		InstanceId:    e.instanceID,
+		Sequence:      e.sequence,
+		Dropped:       0,
+		SnapshotPart:  part,
+		SnapshotParts: parts,
 	}
 }

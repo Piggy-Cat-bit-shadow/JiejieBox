@@ -1097,14 +1097,22 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	// The stream's identity and loss accounting belong to this subscription: a reload replaces the
 	// instance for later streams, and a loss is only meaningful against the source sequence.
 	envelope := &connectionEventEnvelope{instanceID: instanceID, loss: dropped}
-	send := func(events []*ConnectionEvent, reset bool) error {
-		return server.Send(envelope.wrap(events, reset))
+	// send returns the drop count THE ENVELOPE CARRIED. That, and only that, may be recorded as
+	// notified: a drop that lands while Send blocks is not in the message anyone received.
+	send := func(events []*ConnectionEvent, reset bool) (uint64, error) {
+		batch, batchDropped := envelope.wrap(events, reset)
+		return batchDropped, server.Send(batch)
 	}
-	err = send(initialEvents, true)
+	sendBatch := func(batch *ConnectionEvents) error {
+		return server.Send(batch)
+	}
+	sentDropped, err := sendConnectionSnapshot(envelope, initialEvents, sendBatch)
 	if err != nil {
 		return err
 	}
-	lastReportedLoss := uint64(0)
+	// A baseline carries zero, so any drop the snapshot could not prove stays on the counter and is
+	// announced by the next batch or the ticker.
+	lastReportedLoss := sentDropped
 
 	interval := time.Duration(request.Interval)
 	if interval <= 0 {
@@ -1141,11 +1149,12 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 				}
 			}
 			if len(pendingEvents) > 0 {
-				err = send(pendingEvents, false)
+				var sent uint64
+				sent, err = send(pendingEvents, false)
 				if err != nil {
 					return err
 				}
-				lastReportedLoss = dropped()
+				lastReportedLoss = sent
 			}
 
 		case <-ticker.C:
@@ -1158,11 +1167,12 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			// consumer sees `dropped` grow, refuses the increment and takes a fresh snapshot. Sending
 			// it needs no business traffic and no unbounded refresh - one small message per tick while
 			// the loss is new, and nothing at all when the queue is merely slow but complete.
-			err = send(protoEvents, false)
+			var sent uint64
+			sent, err = send(protoEvents, false)
 			if err != nil {
 				return err
 			}
-			lastReportedLoss = currentLoss
+			lastReportedLoss = sent
 		}
 	}
 }

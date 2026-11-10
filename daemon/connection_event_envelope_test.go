@@ -34,9 +34,9 @@ func TestTheEnvelopeCountsGapsInTheSourceSequence(t *testing.T) {
 func TestTheEnvelopeStartsItsBatchSequenceAtOne(t *testing.T) {
 	envelope := &connectionEventEnvelope{instanceID: "instance-1"}
 
-	first := envelope.wrap(nil, true)
-	second := envelope.wrap([]*ConnectionEvent{{Id: "x"}}, false)
-	third := envelope.wrap(nil, false)
+	first, firstDropped := envelope.wrap(nil, true)
+	second, _ := envelope.wrap([]*ConnectionEvent{{Id: "x"}}, false)
+	third, _ := envelope.wrap(nil, false)
 
 	require.EqualValues(t, 1, first.Sequence)
 	require.EqualValues(t, 2, second.Sequence)
@@ -45,6 +45,7 @@ func TestTheEnvelopeStartsItsBatchSequenceAtOne(t *testing.T) {
 	require.True(t, first.Reset_)
 	require.False(t, second.Reset_)
 	require.EqualValues(t, 0, first.Dropped)
+	require.EqualValues(t, 0, firstDropped)
 }
 
 func TestTheEnvelopeCarriesTheCumulativeDroppedCount(t *testing.T) {
@@ -52,9 +53,28 @@ func TestTheEnvelopeCarriesTheCumulativeDroppedCount(t *testing.T) {
 	envelope.observe(trafficcontrol.ConnectionEvent{Sequence: 1})
 	envelope.observe(trafficcontrol.ConnectionEvent{Sequence: 4})
 
-	batch := envelope.wrap(nil, false)
+	batch, batchDropped := envelope.wrap(nil, false)
 	require.EqualValues(t, 2, batch.Dropped)
+	require.EqualValues(t, 2, batchDropped)
 	require.Equal(t, "instance-1", batch.InstanceId)
+}
+
+// TestAResetDoesNotAdoptADropCountItCannotProve is the reviewed snapshot-build failure: 136 events
+// were lost while the snapshot's view was being serialized. The baseline must NOT claim them (the
+// snapshot does not contain them), and the next batch must report them so the consumer resyncs.
+func TestAResetDoesNotAdoptADropCountItCannotProve(t *testing.T) {
+	counter := uint64(136)
+	envelope := &connectionEventEnvelope{instanceID: "instance-1", loss: func() uint64 { return counter }}
+
+	baseline, baselineDropped := envelope.wrap(nil, true)
+	require.Zero(t, baselineDropped, "a baseline only attests to what its captured view covers")
+	require.Zero(t, baseline.Dropped)
+	require.True(t, baseline.Reset_)
+
+	next, nextDropped := envelope.wrap(nil, false)
+	require.EqualValues(t, 136, nextDropped)
+	require.EqualValues(t, 136, next.Dropped)
+	require.False(t, next.Reset_)
 }
 
 // TestTheEnvelopeIgnoresOutOfOrderSequences keeps the counter from underflowing: a sequence that

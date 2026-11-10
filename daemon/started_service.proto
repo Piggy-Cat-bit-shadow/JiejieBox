@@ -237,6 +237,19 @@ message ConnectionEvents {
   // dropped is the number of events lost since the subscription started (gap accounting across
   // every delivered batch), so a client can tell "no events" from "events were lost".
   uint64 dropped = 5;
+  // snapshotPart and snapshotParts describe a snapshot split across several messages because one
+  // Reset can exceed the default gRPC receive limit: 1,000 closed records with ~5 KiB rule
+  // descriptions is ~5.4 MiB, above the 4 MiB default. The contract:
+  //
+  //   - 0/0: a single-message snapshot or an ordinary increment (also what older daemons send);
+  //   - part 1..parts: part 1 carries reset=true and starts the group; the last part completes it.
+  //
+  // A consumer must apply the snapshot only after the last part; an interrupted group is not a
+  // baseline and must not be treated as successful recovery. The fields are additive: an older
+  // reader sees part 1 as a Reset and the rest as increments, which converges to the same rows but
+  // without atomic completion, so a mixed-version pair cannot claim the interrupted-group guarantee.
+  uint32 snapshotPart = 6;
+  uint32 snapshotParts = 7;
 }
 
 message Connection {

@@ -1591,7 +1591,20 @@ type ConnectionEvents struct {
 	Sequence uint64 `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	// dropped is the number of events lost since the subscription started (gap accounting across
 	// every delivered batch), so a client can tell "no events" from "events were lost".
-	Dropped       uint64 `protobuf:"varint,5,opt,name=dropped,proto3" json:"dropped,omitempty"`
+	Dropped uint64 `protobuf:"varint,5,opt,name=dropped,proto3" json:"dropped,omitempty"`
+	// snapshotPart and snapshotParts describe a snapshot split across several messages because one
+	// Reset can exceed the default gRPC receive limit: 1,000 closed records with ~5 KiB rule
+	// descriptions is ~5.4 MiB, above the 4 MiB default. The contract:
+	//
+	//   - 0/0: a single-message snapshot or an ordinary increment (also what older daemons send);
+	//   - part 1..parts: part 1 carries reset=true and starts the group; the last part completes it.
+	//
+	// A consumer must apply the snapshot only after the last part; an interrupted group is not a
+	// baseline and must not be treated as successful recovery. The fields are additive: an older
+	// reader sees part 1 as a Reset and the rest as increments, which converges to the same rows but
+	// without atomic completion, so a mixed-version pair cannot claim the interrupted-group guarantee.
+	SnapshotPart  uint32 `protobuf:"varint,6,opt,name=snapshotPart,proto3" json:"snapshotPart,omitempty"`
+	SnapshotParts uint32 `protobuf:"varint,7,opt,name=snapshotParts,proto3" json:"snapshotParts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1657,6 +1670,20 @@ func (x *ConnectionEvents) GetSequence() uint64 {
 func (x *ConnectionEvents) GetDropped() uint64 {
 	if x != nil {
 		return x.Dropped
+	}
+	return 0
+}
+
+func (x *ConnectionEvents) GetSnapshotPart() uint32 {
+	if x != nil {
+		return x.SnapshotPart
+	}
+	return 0
+}
+
+func (x *ConnectionEvents) GetSnapshotParts() uint32 {
+	if x != nil {
+		return x.SnapshotParts
 	}
 	return 0
 }
@@ -8161,7 +8188,7 @@ const file_started_service_proto_rawDesc = "" +
 	"connection\x12 \n" +
 	"\vuplinkDelta\x18\x04 \x01(\x03R\vuplinkDelta\x12$\n" +
 	"\rdownlinkDelta\x18\x05 \x01(\x03R\rdownlinkDelta\x12\x1a\n" +
-	"\bclosedAt\x18\x06 \x01(\x03R\bclosedAt\"\xaf\x01\n" +
+	"\bclosedAt\x18\x06 \x01(\x03R\bclosedAt\"\xf9\x01\n" +
 	"\x10ConnectionEvents\x12/\n" +
 	"\x06events\x18\x01 \x03(\v2\x17.daemon.ConnectionEventR\x06events\x12\x14\n" +
 	"\x05reset\x18\x02 \x01(\bR\x05reset\x12\x1e\n" +
@@ -8169,7 +8196,9 @@ const file_started_service_proto_rawDesc = "" +
 	"instanceId\x18\x03 \x01(\tR\n" +
 	"instanceId\x12\x1a\n" +
 	"\bsequence\x18\x04 \x01(\x04R\bsequence\x12\x18\n" +
-	"\adropped\x18\x05 \x01(\x04R\adropped\"\x95\x05\n" +
+	"\adropped\x18\x05 \x01(\x04R\adropped\x12\"\n" +
+	"\fsnapshotPart\x18\x06 \x01(\rR\fsnapshotPart\x12$\n" +
+	"\rsnapshotParts\x18\a \x01(\rR\rsnapshotParts\"\x95\x05\n" +
 	"\n" +
 	"Connection\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +

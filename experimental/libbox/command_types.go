@@ -115,7 +115,11 @@ type ConnectionEvents struct {
 	// exposed as int64 accessors below; see Sequence and Dropped for the conversion contract.
 	sequence uint64
 	dropped  uint64
-	events   []*ConnectionEvent
+	// snapshotPart/snapshotParts are the wire's fragmentation fields for a snapshot larger than one
+	// gRPC message. Private: only the stream client consumes them, and they never bind to a platform.
+	snapshotPart  uint32
+	snapshotParts uint32
+	events        []*ConnectionEvent
 	// subscription is the identity of the stream that produced this batch. It is set by the
 	// command client, never by the platform: the consumer uses it to ignore a batch that belongs to
 	// a subscription a newer one has already superseded (the reviewed failure: a paused old batch
@@ -610,10 +614,12 @@ func connectionEventsFromGRPC(events *daemon.ConnectionEvents) *ConnectionEvents
 		return nil
 	}
 	libboxEvents := &ConnectionEvents{
-		Reset:      events.Reset_,
-		InstanceId: events.InstanceId,
-		sequence:   events.Sequence,
-		dropped:    events.Dropped,
+		Reset:         events.Reset_,
+		InstanceId:    events.InstanceId,
+		sequence:      events.Sequence,
+		dropped:       events.Dropped,
+		snapshotPart:  events.SnapshotPart,
+		snapshotParts: events.SnapshotParts,
 	}
 	for _, event := range events.Events {
 		if libboxEvent := connectionEventFromGRPC(event); libboxEvent != nil {
