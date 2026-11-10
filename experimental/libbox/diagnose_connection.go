@@ -680,7 +680,7 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 		report.Outcome = connectionTestOutcomeFailed
 	case result.DialError == nil:
 		dialStage.Status = connectionTestStageOK
-		dialStage.Detail = "connected via " + result.DialedOutbound + " to " + result.DialedDestination + " (route decision)"
+		dialStage.Detail = diagnoseSuccessDetail(result)
 		if result.Conn != nil {
 			_ = result.Conn.Close()
 		}
@@ -691,6 +691,37 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 		report.Outcome = connectionTestOutcomeFailed
 	}
 	appendAll()
+}
+
+// diagnoseSuccessDetail renders the dial stage from what the connection actually did.
+//
+// The endpoint named is the one that answered, not the candidate list the decision started with: a
+// diagnostic that reports a dead candidate as "connected" is the reviewed inaccuracy. When the
+// endpoint cannot be observed - a proxy's target, or a member a failover group chose - the detail
+// says so and reports the peer separately; the pre-selected leaf is only named as such.
+func diagnoseSuccessDetail(result route.RouteDiagnoseResult) string {
+	var detail string
+	switch {
+	case result.DialedOutboundKnown && result.DialedOutbound != "":
+		detail = "connected via " + result.DialedOutbound
+	case result.DialedOutbound != "":
+		detail = "connected via the group that owns the dial (pre-selected " + result.DialedOutbound + ")"
+	default:
+		detail = "connected"
+	}
+	if result.DialedEndpoint != "" {
+		detail += " to " + result.DialedEndpoint
+	} else if result.DialedDestination != "" {
+		detail += " toward " + result.DialedDestination
+	}
+	detail += " (route decision)"
+	if result.DialedEndpoint == "" && result.DialedEndpointUnknown != "" {
+		detail += "; " + result.DialedEndpointUnknown
+	}
+	if result.DialedPeer != "" && result.DialedPeer != result.DialedEndpoint {
+		detail += "; peer " + result.DialedPeer
+	}
+	return detail
 }
 
 // decisionDetail renders one decided request.

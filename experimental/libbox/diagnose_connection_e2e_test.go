@@ -8,15 +8,91 @@ package libbox
 // controlled failure and a recovery, so the report's claim is the connection that actually happened.
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+// newCountingListenerOn binds the counting listener to a specific loopback address, so a test can
+// prove WHICH candidate answered (127.0.0.2 and 127.0.0.1 are different loopback addresses).
+func newCountingListenerOn(t *testing.T, address string) *countingListener {
+	t.Helper()
+	listener, err := net.Listen("tcp", net.JoinHostPort(address, "0"))
+	require.NoError(t, err)
+	counting := &countingListener{listener: listener}
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			counting.count.Add(1)
+			_ = conn.Close()
+		}
+	}()
+	t.Cleanup(func() { listener.Close() })
+	return counting
+}
+
+// startConnectProxyRewriter is a minimal HTTP CONNECT proxy: it answers the tunnel and forwards it
+// to 127.0.0.1:<targetPort> whatever host the client asked for, so a test can route a DOMAIN
+// through a proxy to a local listener without any name resolution.
+func startConnectProxyRewriter(t *testing.T, targetPort uint16) (string, *atomic.Int32) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	connections := &atomic.Int32{}
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			connections.Add(1)
+			go func(conn net.Conn) {
+				defer conn.Close()
+				reader := bufio.NewReader(conn)
+				if _, readErr := http.ReadRequest(reader); readErr != nil {
+					return
+				}
+				target, dialErr := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(targetPort))))
+				if dialErr != nil {
+					return
+				}
+				defer target.Close()
+				_, _ = conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+				done := make(chan struct{})
+				go func() {
+					_, _ = io.Copy(target, reader)
+					close(done)
+				}()
+				_, _ = io.Copy(conn, target)
+				<-done
+			}(conn)
+		}
+	}()
+	t.Cleanup(func() { listener.Close() })
+	return listener.Addr().String(), connections
+}
+
+// hostPortOf splits a host:port address for a config or an assertion.
+func hostPortOf(t *testing.T, address string) (string, uint16) {
+	t.Helper()
+	host, portText, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	port, err := strconv.ParseUint(portText, 10, 16)
+	require.NoError(t, err)
+	return host, uint16(port)
+}
 
 // countingListener accepts TCP connections and counts them.
 type countingListener struct {
@@ -389,8 +465,113 @@ func TestTheActiveDiagnosticFallsBackWithinOneConfig(t *testing.T) {
 
 	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
 	stages := stagesByID(report)
+	require.Contains(t, stages[connectionTestStageResolve].Detail, "127.0.0.2",
+		"the resolve stage keeps the candidate list")
 	require.Contains(t, stages[connectionTestStageResolve].Detail, "127.0.0.1")
-	require.Contains(t, stages[connectionTestStageDial].Detail, "127.0.0.1")
+	require.Contains(t, stages[connectionTestStageDial].Detail, "to 127.0.0.1:",
+		"the dial stage names the endpoint that answered")
+	require.NotContains(t, stages[connectionTestStageDial].Detail, "127.0.0.2",
+		"a dead candidate must not be reported as part of the successful endpoint")
 	require.Eventually(t, func() bool { return listener.count.Load() == 1 }, 5*time.Second, time.Millisecond,
 		"the second candidate is the one that answers, inside the same diagnostic execution")
+}
+
+// TestTheActiveDiagnosticReportsTheFirstCandidateWhenItAnswers is the other ordering: the first
+// candidate is the live one, and the report names it (not the list).
+func TestTheActiveDiagnosticReportsTheFirstCandidateWhenItAnswers(t *testing.T) {
+	listener := newCountingListenerOn(t, "127.0.0.2")
+	server := startDiagnoseTestCommandServer(t, diagnoseConfig(
+		`[{"type":"hosts","tag":"local","predefined":{"localhost":["127.0.0.1"]}},`+
+			`{"type":"hosts","tag":"forced","predefined":{"first.test":["127.0.0.2","127.0.0.1"]}}]`,
+		`{"domain":["first.test"],"action":"resolve","server":"forced","strategy":"ipv4_only"}`))
+	defer server.Close()
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://first.test:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
+	stages := stagesByID(report)
+	require.Contains(t, stages[connectionTestStageDial].Detail, "to 127.0.0.2:")
+	require.NotContains(t, stages[connectionTestStageDial].Detail, "127.0.0.1")
+	require.Eventually(t, func() bool { return listener.count.Load() == 1 }, 5*time.Second, time.Millisecond)
+}
+
+// TestTheActiveDiagnosticReportsAllCandidatesFailed keeps the failure honest: no endpoint is named,
+// the candidates stay in the resolve stage, and the dial stage carries the real error.
+func TestTheActiveDiagnosticReportsAllCandidatesFailed(t *testing.T) {
+	// A port nothing listens on: reserve one and close it.
+	closed := newCountingListener(t)
+	port := closed.port()
+	closed.listener.Close()
+	time.Sleep(10 * time.Millisecond)
+
+	server := startDiagnoseTestCommandServer(t, diagnoseConfig(
+		`[{"type":"hosts","tag":"local","predefined":{"localhost":["127.0.0.1"]}},`+
+			`{"type":"hosts","tag":"forced","predefined":{"dead.test":["127.0.0.2","127.0.0.1"]}}]`,
+		`{"domain":["dead.test"],"action":"resolve","server":"forced","strategy":"ipv4_only"}`))
+	defer server.Close()
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://dead.test:%d/path", port))
+
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageFailed, stages[connectionTestStageDial].Status)
+	require.Contains(t, stages[connectionTestStageResolve].Detail, "127.0.0.2")
+	require.Contains(t, stages[connectionTestStageResolve].Detail, "127.0.0.1")
+	require.NotContains(t, stages[connectionTestStageDial].Detail, "connected",
+		"a failed dial must not claim a connection")
+}
+
+// TestTheActiveDiagnosticSeparatesTheTargetFromAProxysPeer: an http outbound reaches the target
+// THROUGH a local CONNECT proxy. The peer is the proxy; the target endpoint is not observable, and
+// the report must say so instead of naming the target as connected.
+func TestTheActiveDiagnosticSeparatesTheTargetFromAProxysPeer(t *testing.T) {
+	listener := newCountingListener(t)
+	proxyAddress, proxyCount := startConnectProxyRewriter(t, listener.port())
+	host, port := hostPortOf(t, proxyAddress)
+
+	config := fmt.Sprintf(`{"log":{"level":"error"},
+		"outbounds":[
+			{"type":"direct","tag":"direct"},
+			{"type":"http","tag":"proxy","server":%q,"server_port":%d}
+		],
+		"route":{"final":"proxy"}}`, host, port)
+	server := startDiagnoseTestCommandServer(t, config)
+	defer server.Close()
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://remote.test:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
+	stages := stagesByID(report)
+	detail := stages[connectionTestStageDial].Detail
+	require.Contains(t, detail, "toward remote.test:", "the target is named as the goal")
+	require.Contains(t, detail, "not observable", "the proxy's actual target is not on this connection")
+	require.Contains(t, detail, "peer 127.0.0.1:", "the transport peer is reported")
+	require.NotContains(t, detail, "to 127.0.0.1:", "the endpoint is not claimed")
+	require.Eventually(t, func() bool { return proxyCount.Load() >= 1 && listener.count.Load() >= 1 },
+		5*time.Second, time.Millisecond, "the target is reached through the proxy")
+}
+
+// TestTheActiveDiagnosticMarksAGroupOwnedDialAsUnattributable: a failover-capable group owns the
+// dial and re-resolves a member, so the pre-selected leaf is not necessarily the member that
+// answered.
+func TestTheActiveDiagnosticMarksAGroupOwnedDialAsUnattributable(t *testing.T) {
+	listener := newCountingListener(t)
+	config := fmt.Sprintf(`{"log":{"level":"error"},
+		"outbounds":[
+			{"type":"direct","tag":"direct"},
+			{"type":"loadbalance","tag":"lb","outbounds":["direct"],"failover":true}
+		],
+		"route":{"final":"lb"}}`)
+	server := startDiagnoseTestCommandServer(t, config)
+	defer server.Close()
+
+	report := runDiagnoseTest(t, server, "", "tcp", fmt.Sprintf("http://127.0.0.1:%d/path", listener.port()))
+
+	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
+	detail := stagesByID(report)[connectionTestStageDial].Detail
+	require.Contains(t, detail, "group that owns the dial")
+	require.Contains(t, detail, "pre-selected direct")
+	require.Contains(t, detail, "not observable")
+	require.Contains(t, detail, "peer 127.0.0.1:")
+	require.Eventually(t, func() bool { return listener.count.Load() == 1 }, 5*time.Second, time.Millisecond)
 }

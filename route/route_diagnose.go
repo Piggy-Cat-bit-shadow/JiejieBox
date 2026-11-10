@@ -109,10 +109,26 @@ type RouteDiagnoseResult struct {
 	// RejectDetail is the decision's own refusal.
 	RejectDetail string
 
-	// DialedDestination is the destination handed to the dial, rendered for a report.
+	// DialedDestination is the destination handed to the dial, rendered for a report. It is the
+	// CANDIDATE form when the decision produced several addresses - the actual endpoint is
+	// DialedEndpoint.
 	DialedDestination string
-	// DialedOutbound is the LEAF that actually dialled (a group expands to its member).
+	// DialedPeer is the transport peer of the established connection, when it could be read. For a
+	// proxy this is the proxy, not the target.
+	DialedPeer string
+	// DialedEndpoint is the address the connection actually reached, when that is observable: the
+	// peer of a direct dial. A proxy outbound reaches the target through a transport hop whose
+	// destination cannot be read from this connection, and a group that owns the dial may have
+	// chosen another member - both leave this empty and set DialedEndpointUnknown.
+	DialedEndpoint string
+	// DialedEndpointUnknown explains why DialedEndpoint is empty.
+	DialedEndpointUnknown string
+	// DialedOutbound is the LEAF that was selected for the dial.
 	DialedOutbound string
+	// DialedOutboundKnown reports whether DialedOutbound names the object that actually dialled.
+	// A failover-capable group owns the dial and re-resolves a member per attempt, so the
+	// pre-selected leaf is not necessarily the member that answered.
+	DialedOutboundKnown bool
 	// Dialed reports that a dial was attempted.
 	Dialed bool
 	// DialError is the dial's outcome; Conn is the established connection on success and belongs to
@@ -256,6 +272,7 @@ func (r *Router) DiagnoseRoute(ctx context.Context, request RouteDiagnoseRequest
 	}
 	defer releaseOutbound()
 	result.DialedOutbound = leaf.Tag()
+	result.DialedOutboundKnown = dialOwner == nil
 
 	dialStart := time.Now()
 	result.Dialed = true
@@ -273,7 +290,46 @@ func (r *Router) DiagnoseRoute(ctx context.Context, request RouteDiagnoseRequest
 		result.Conn, result.DialError = dialler.DialContext(ctx, network, dialDestination)
 	}
 	result.DialMs = time.Since(dialStart).Milliseconds()
+	diagnoseDialAttribution(&result, leaf)
 	return result, nil
+}
+
+// diagnoseDialAttribution records the endpoint the connection actually reached, and says so
+// explicitly when that is not observable.
+//
+// # Why the peer is not the target
+//
+// A direct outbound dials the target itself, so the established connection's peer IS the endpoint
+// the diagnostic reached - the reviewed failure reported the CANDIDATE LIST instead, which named an
+// address that never answered. A proxy outbound reaches the target THROUGH a transport hop: the
+// peer is the proxy, and which server the proxy then contacted is not on this connection. A
+// failover-capable group owns the dial and re-resolves a member per attempt, so even the leaf the
+// chain named is not necessarily the member that answered.
+//
+// The report therefore states what it knows and names what it does not: peer, endpoint, and the
+// reason an endpoint is unknown. It never presents a candidate as the answer.
+func diagnoseDialAttribution(result *RouteDiagnoseResult, leaf adapter.Outbound) {
+	if result.DialError != nil || result.Conn == nil {
+		result.DialedEndpointUnknown = "no connection was established"
+		return
+	}
+	if peer := result.Conn.RemoteAddr(); peer != nil {
+		result.DialedPeer = peer.String()
+	}
+	if !result.DialedOutboundKnown {
+		result.DialedEndpointUnknown = "a failover-capable group owns this dial and re-resolves the member, so the endpoint attribution is not observable here"
+		return
+	}
+	if result.DialedPeer == "" {
+		result.DialedEndpointUnknown = "the established connection has no observable remote address"
+		return
+	}
+	if leaf != nil && leaf.Type() == C.TypeDirect {
+		// A direct outbound dials the target itself: the peer is the endpoint.
+		result.DialedEndpoint = result.DialedPeer
+		return
+	}
+	result.DialedEndpointUnknown = "the outbound reaches the target through a transport hop; the target endpoint is not observable here"
 }
 
 // diagnoseWalk mirrors matchRule's decision points on a private metadata copy.
