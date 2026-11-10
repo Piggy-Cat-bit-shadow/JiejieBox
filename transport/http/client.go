@@ -660,6 +660,8 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 		} else if errors.Is(err, errHTTP3DialSuperseded) {
 			// The dial belongs to the network being left. This call continues on the new
 			// network's TCP path; nothing is remembered about the peer.
+		} else if errors.Is(err, errHTTP3RequestRejected) {
+			// The peer explicitly did not process the CONNECT: a TCP attempt cannot duplicate it.
 		} else if errors.Is(err, errHTTP3PreSend) {
 			// Nothing was written, so the CONNECT cannot have reached the peer: a TCP attempt is
 			// safe. Our own window expiring is not a transport verdict either.
@@ -875,6 +877,10 @@ var (
 	// errHTTP3PreSend marks an HTTP/3 CONNECT that ended before its request header was written.
 	// The peer cannot have processed anything, so another version may be tried.
 	errHTTP3PreSend = E.New("HTTP/3 CONNECT ended before the request header was sent")
+	// errHTTP3RequestRejected marks a CONNECT the peer EXPLICITLY did not process (RFC 9114
+	// H3_REQUEST_REJECTED). Unlike a silent handshake or a lost response, this is proof that a
+	// retry on another version cannot duplicate anything.
+	errHTTP3RequestRejected = E.New("the peer explicitly did not process the HTTP/3 CONNECT")
 )
 
 // peerRespondedError marks an error that IS an answer from the proxy: the CONNECT was received

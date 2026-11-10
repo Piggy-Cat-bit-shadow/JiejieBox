@@ -359,6 +359,12 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 			// A definitive capability answer: it outranks our own window expiring.
 			return nil, nil, cause
 		}
+		if isHTTP3RequestRejected(cause) {
+			// RFC 9114 H3_REQUEST_REJECTED: the peer says it did not process the request, so a retry on
+			// another version cannot duplicate an effect. That is the one refusal that is provably safe to
+			// fall back from, and it is not a verdict about the transport either.
+			return nil, nil, E.Cause(errHTTP3RequestRejected, cause)
+		}
 		if peerResponded(cause) {
 			// The peer ANSWERED. The setup context expiring afterwards cannot change an answer that
 			// was already decoded, and rewriting it to "response pending" is what made the caller
@@ -434,4 +440,20 @@ func (c *Client) RoundTripExistingHTTP3(ctx context.Context, request *http.Reque
 		return nil, err
 	}
 	return roundTripper.RoundTripExistingHTTP3(ctx, request)
+}
+
+// isHTTP3RequestRejected reports whether the peer explicitly refused to process the request.
+//
+// RFC 9114 H3_REQUEST_REJECTED means "this request was not processed and may be retried". quic-go
+// surfaces a stream reset as a *quic.StreamError whose code is the H3 error code, and the
+// response-read path wraps it, so the check is on the error chain.
+func isHTTP3RequestRejected(err error) bool {
+	if errors.Is(err, errHTTP3RequestRejected) {
+		return true
+	}
+	var streamErr *quic.StreamError
+	if errors.As(err, &streamErr) {
+		return uint64(streamErr.ErrorCode) == uint64(http3.ErrCodeRequestRejected)
+	}
+	return false
 }
