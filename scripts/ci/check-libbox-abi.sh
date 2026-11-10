@@ -296,7 +296,15 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 # ran this same layer-4 scan against that checkout and succeeded, and the iOS app target compiled
 # (unsigned IPA step success). macOS was skipped in that dispatch (build_macos=false); the macOS
 # product is built separately and its result is recorded with the candidate, not assumed here.
-VERIFIED_APPLE_SHA="7fce7117b33a38ef4c73c81db67c49f0be7a7dad"
+# Moved to 40e59c7 on 2026-11-10 (window 06 round 7): 7fce7117 was the integration line that first
+# compiled the app target against this core; 40e59c7 is the later client commit that carries the
+# explicit-self / argument-label compile fixes the iOS job found at bc8a245, plus the configuration
+# status rows that need the config RPCs present in this branch. Re-probed at the exact tree:
+#
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <sing-box-for-apple @ 40e59c767085a1cee033177813f8b40e2bde06e7>
+#   {"scanned": 433, "violations": [], "interface_methods": 3, "error": ""}
+VERIFIED_APPLE_SHA="40e59c767085a1cee033177813f8b40e2bde06e7"
 
 client_root=""
 skip_client=0
