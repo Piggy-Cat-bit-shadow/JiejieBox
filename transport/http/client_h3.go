@@ -67,6 +67,12 @@ type http3ClientImpl struct {
 	generation atomic.Uint64
 	// lifecycleLogger is a copy of the owning Client's. nil is allowed and means "do not
 	// trace", which is what every construction site that does not set it gets.
+	//
+	// loggerAccess publishes it: traceLifecycle may run while access is held (publishConn), so the
+	// logger cannot be read under the pool lock, and SetLifecycleLogger can be called while a
+	// request is tracing. The mutex is separate from access so logging never extends the critical
+	// section that protects the connection.
+	loggerAccess    sync.Mutex
 	lifecycleLogger logger.ContextLogger
 }
 
@@ -149,10 +155,10 @@ func (c *http3ClientImpl) cachedConn(ctx context.Context) (*http3.ClientConn, bo
 	// never one" and "there was one and it is dead" -- the distinction the 1.84s/30s investigation
 	// could not make from the logs it had.
 	if c.conn != nil {
-		c.traceLifecycle(ctx, "http3 cached connection rejected", c.generation.Load(), 0,
+		c.traceLifecycle(ctx, "http3 cached connection rejected", c.generation.Load(), 0, c.conn,
 			"cached_error", c.conn.Context().Err())
 	} else {
-		c.traceLifecycle(ctx, "http3 connection cache empty", c.generation.Load(), 0)
+		c.traceLifecycle(ctx, "http3 connection cache empty", c.generation.Load(), 0, nil)
 	}
 	if c.rawConn != nil {
 		c.rawConn.Close()
@@ -171,31 +177,28 @@ func (c *http3ClientImpl) cachedConn(ctx context.Context) (*http3.ClientConn, bo
 // is only installed if the generation it was made on is still current; a late dial closes its
 // connection instead of resurrecting the old network.
 //
-// # Why a retired gate is not waited for
+// # Why a retired gate does not hold the new generation
 //
-// The generation this call belongs to has already moved on when it meets a gate from an older one.
-// Waiting would spend the caller's budget on a handshake that is being abandoned, so the call
-// reports "superseded" and its caller can continue on the new network (the tunnel path falls back
-// to HTTP/2, which dials on the new generation).
+// A dial from a retired generation is being abandoned anyway. The new generation takes the slot
+// over and dials immediately, because waiting would spend the caller's budget on a handshake that
+// belongs to the network being left - and on a transition that is exactly when the user is waiting
+// for the first packet. The retired dial's release only clears the slot when it is still its own
+// (see acquireDialSlot), and its result is discarded by publishConn's generation check.
 func (c *http3ClientImpl) acquire(ctx context.Context) (*http3.ClientConn, error) {
 	for {
 		if clientConn, live := c.cachedConn(ctx); live {
-			c.traceLifecycle(ctx, "http3 connection accepted from cache", c.generation.Load(), 0)
+			c.traceLifecycle(ctx, "http3 connection accepted from cache", c.generation.Load(), 0, clientConn)
 			return clientConn, nil
 		}
 		generation := c.generation.Load()
-		releaseSlot, superseded, err := c.acquireDialSlot(ctx, generation)
+		releaseSlot, err := c.acquireDialSlot(ctx, generation)
 		if err != nil {
 			return nil, err
-		}
-		if superseded {
-			c.traceLifecycle(ctx, "http3 dial superseded by a network change", c.generation.Load(), generation)
-			return nil, errHTTP3DialSuperseded
 		}
 		// Another setup may have published while this one waited for the slot.
 		if clientConn, live := c.cachedConn(ctx); live {
 			releaseSlot()
-			c.traceLifecycle(ctx, "http3 connection accepted from cache", c.generation.Load(), 0)
+			c.traceLifecycle(ctx, "http3 connection accepted from cache", c.generation.Load(), 0, clientConn)
 			return clientConn, nil
 		}
 		if c.generation.Load() != generation {
@@ -211,7 +214,7 @@ func (c *http3ClientImpl) acquire(ctx context.Context) (*http3.ClientConn, error
 		clientConn, published := c.publishConn(ctx, generation, rawConn, quicConn)
 		releaseSlot()
 		if !published {
-			c.traceLifecycle(ctx, "http3 dial finished on a retired generation", c.generation.Load(), generation)
+			c.traceLifecycle(ctx, "http3 dial finished on a retired generation", c.generation.Load(), generation, nil)
 			return nil, errHTTP3DialSuperseded
 		}
 		return clientConn, nil
@@ -243,7 +246,7 @@ func (c *http3ClientImpl) dialConn(ctx context.Context, generation uint64) (net.
 		rawConn, quicConn, err = c.candidateConnector()(ctx, c.server.Addr)
 	}
 	if err != nil {
-		c.traceLifecycle(ctx, "http3 dial failed", c.generation.Load(), 0, "error", err)
+		c.traceLifecycle(ctx, "http3 dial failed", c.generation.Load(), 0, nil, "error", err)
 		if c.generation.Load() != generation {
 			return nil, nil, errHTTP3DialSuperseded
 		}
@@ -273,7 +276,7 @@ func (c *http3ClientImpl) publishConn(ctx context.Context, generation uint64, ra
 	c.conn = c.transport.NewClientConn(quicConn)
 	c.rawConn = rawConn
 	generation = c.generation.Add(1)
-	c.traceLifecycle(ctx, "http3 dial succeeded", generation, previousGeneration)
+	c.traceLifecycle(ctx, "http3 dial succeeded", generation, previousGeneration, c.conn)
 	return c.conn, true
 }
 
@@ -283,35 +286,51 @@ type http3DialGate struct {
 	done       chan struct{}
 }
 
-// acquireDialSlot takes the dial slot for this generation, or reports that the generation was
-// retired while this call was waiting for it.
-func (c *http3ClientImpl) acquireDialSlot(ctx context.Context, generation uint64) (func(), bool, error) {
+// acquireDialSlot takes the dial slot for this generation.
+//
+// A slot left behind by an OLDER generation never blocks this call: the older dial is being
+// abandoned, so this generation replaces the slot and dials now. A slot from a NEWER generation
+// means this call is the stale one and it reports superseded (its caller retries or falls back).
+// Each release only clears the slot while it is still its own, so the retired dial cannot clear
+// the new generation's slot when it finally returns.
+func (c *http3ClientImpl) acquireDialSlot(ctx context.Context, generation uint64) (func(), error) {
+	newSlot := func() func() {
+		gate := &http3DialGate{generation: generation, done: make(chan struct{})}
+		c.dialGate = gate
+		return func() {
+			c.dialGateAccess.Lock()
+			if c.dialGate == gate {
+				c.dialGate = nil
+			}
+			close(gate.done)
+			c.dialGateAccess.Unlock()
+		}
+	}
 	for {
 		c.dialGateAccess.Lock()
 		gate := c.dialGate
 		if gate == nil {
-			gate = &http3DialGate{generation: generation, done: make(chan struct{})}
-			c.dialGate = gate
+			release := newSlot()
 			c.dialGateAccess.Unlock()
-			return func() {
-				c.dialGateAccess.Lock()
-				if c.dialGate == gate {
-					c.dialGate = nil
-				}
-				close(gate.done)
-				c.dialGateAccess.Unlock()
-			}, false, nil
+			return release, nil
 		}
 		if gate.generation != generation {
+			if gate.generation > generation {
+				c.dialGateAccess.Unlock()
+				return nil, errHTTP3DialSuperseded
+			}
+			// The pool still carries a dial for a retired generation. Take the slot over: the
+			// retired dial's release is a no-op for this slot and its result will be discarded.
+			release := newSlot()
 			c.dialGateAccess.Unlock()
-			return nil, true, nil
+			return release, nil
 		}
 		waiting := gate.done
 		c.dialGateAccess.Unlock()
 		select {
 		case <-waiting:
 		case <-ctx.Done():
-			return nil, false, ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 }
@@ -328,8 +347,20 @@ func (c *http3ClientImpl) acquireDialSlot(ctx context.Context, generation uint64
 //   - No new logging framework: this uses the logger the client was already given.
 //   - It NEVER changes control flow. It is a pure observer, so it cannot affect connection
 //     lifetime.
-func (c *http3ClientImpl) traceLifecycle(ctx context.Context, message string, generation uint64, previousGeneration uint64, keyValues ...any) {
-	if c.lifecycleLogger == nil {
+//
+// traceLifecycle emits a connection-lifecycle event at TRACE level.
+//
+// conn is an explicit snapshot supplied by the caller: the connection whose liveness this event
+// describes, or nil when the event is not about one. Reading the c.conn FIELD here was a data race
+// against ResetConnection (which nils it under the pool lock) because this function is called both
+// under that lock (publishConn) and outside it (acquire's fast path), and a logger must not extend
+// the critical section that protects the connection. The logger itself is published under
+// loggerAccess for the same reason.
+func (c *http3ClientImpl) traceLifecycle(ctx context.Context, message string, generation uint64, previousGeneration uint64, conn *http3.ClientConn, keyValues ...any) {
+	c.loggerAccess.Lock()
+	lifecycleLogger := c.lifecycleLogger
+	c.loggerAccess.Unlock()
+	if lifecycleLogger == nil {
 		return
 	}
 	fields := make([]any, 0, len(keyValues)+6)
@@ -337,15 +368,16 @@ func (c *http3ClientImpl) traceLifecycle(ctx context.Context, message string, ge
 	if previousGeneration != 0 {
 		fields = append(fields, "previous_generation", previousGeneration)
 	}
-	// The connection's own view of its liveness, which is what the cache keys on.
-	if c.conn != nil {
-		fields = append(fields, "conn_context_error", c.conn.Context().Err())
+	// The connection's own view of its liveness, which is what the cache keys on. The object is
+	// immutable enough to query without the pool lock; the FIELD was the racy part.
+	if conn != nil {
+		fields = append(fields, "conn_context_error", conn.Context().Err())
 	}
 	fields = append(fields, keyValues...)
 	// The logger takes variadic key/value args, so the slice is spread. Passing it as a single
 	// argument would log one opaque slice and lose every field -- which is the bug this
 	// observability exists to prevent, in miniature.
-	c.lifecycleLogger.TraceContext(ctx, append([]any{message}, fields...)...)
+	lifecycleLogger.TraceContext(ctx, append([]any{message}, fields...)...)
 }
 
 // http3LifecycleTracer lives in client_h3_tracer.go, WITHOUT a build constraint: the untagged
@@ -353,8 +385,8 @@ func (c *http3ClientImpl) traceLifecycle(ctx context.Context, message string, ge
 
 // SetLifecycleLogger installs the logger used for TRACE-level connection-lifecycle events.
 func (c *http3ClientImpl) SetLifecycleLogger(lifecycleLogger logger.ContextLogger) {
-	c.access.Lock()
-	defer c.access.Unlock()
+	c.loggerAccess.Lock()
+	defer c.loggerAccess.Unlock()
 	c.lifecycleLogger = lifecycleLogger
 }
 

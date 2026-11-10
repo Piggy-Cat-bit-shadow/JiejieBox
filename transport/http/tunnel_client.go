@@ -125,6 +125,45 @@ var http3TunnelEstablishTimeout = 3 * time.Second
 // working HTTP/2 tunnel, not so a transient delay is remembered as a property of the server.
 var http3TunnelAmbiguousWindow = 30 * time.Second
 
+// http3TunnelAmbiguous reports whether HTTP/3 CONNECT-IP should be skipped for this setup.
+func (c *Client) http3TunnelAmbiguous(now time.Time) bool {
+	until := c.http3TunnelAmbiguousUntil.Load()
+	return until != 0 && now.UnixNano() < until
+}
+
+// noteHTTP3TunnelAmbiguous records a possibly-sent CONNECT-IP outcome.
+//
+// The epoch check, the ordering check and the store are one critical section, so a pending result
+// that started on the network being left cannot reopen the window on the network just entered. A
+// result older than the last recorded one is ignored: a newer success already disproved it.
+func (c *Client) noteHTTP3TunnelAmbiguous(networkEpoch uint64, attempt uint64) {
+	c.capabilityAccess.Lock()
+	defer c.capabilityAccess.Unlock()
+	if c.networkEpoch.Load() != networkEpoch {
+		return
+	}
+	if attempt <= c.http3TunnelAmbiguityAttempt {
+		return
+	}
+	c.http3TunnelAmbiguityAttempt = attempt
+	c.http3TunnelAmbiguousUntil.Store(time.Now().Add(http3TunnelAmbiguousWindow).UnixNano())
+}
+
+// clearHTTP3TunnelAmbiguous records a successful CONNECT-IP setup, which disproves an older
+// ambiguity. It is the same ordering rule as the H3 verdict: the newest attempt that STARTED wins.
+func (c *Client) clearHTTP3TunnelAmbiguous(networkEpoch uint64, attempt uint64) {
+	c.capabilityAccess.Lock()
+	defer c.capabilityAccess.Unlock()
+	if c.networkEpoch.Load() != networkEpoch {
+		return
+	}
+	if attempt <= c.http3TunnelAmbiguityAttempt {
+		return
+	}
+	c.http3TunnelAmbiguityAttempt = attempt
+	c.http3TunnelAmbiguousUntil.Store(0)
+}
+
 // openTunnel returns the transport each successful branch used, so the caller never has to
 // infer it from which connection objects happen to exist.
 func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Conn, DatagramStream, TunnelTransport, error) {
@@ -135,7 +174,7 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 	// is still the current network; see observeHTTP2ExtendedConnectUnsupported.
 	networkEpoch := c.networkEpoch.Load()
 	var http3AttemptErr error
-	if c.http3Available() && time.Now().UnixNano() >= c.http3TunnelAmbiguousUntil.Load() {
+	if c.http3Available() && !c.http3TunnelAmbiguous(time.Now()) {
 		// Stamped before the attempt for the same reason as in DialContext: the verdict must be
 		// decided by the newest attempt STARTED, not by whichever one reports last.
 		http3Attempt := c.beginHTTP3Attempt()
@@ -150,6 +189,10 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 		cancelProbe()
 		if err == nil {
 			c.clearHTTP3Broken(http3Attempt)
+			// A success disproves an older ambiguity. It is recorded with the same attempt id the
+			// failure path uses, so a pending result that started EARLIER cannot re-open the window
+			// after this success.
+			c.clearHTTP3TunnelAmbiguous(networkEpoch, http3Attempt)
 			return nil, stream, TunnelTransportHTTP3, nil
 		}
 		// The CALLER gave up, or the core is closing. Same rule as the stream path: this is a
@@ -201,8 +244,10 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 			// the tunnel already, so opening a second one over HTTP/2 would be an unsafe duplicate
 			// - the review measured the old code doing exactly that, with the H3 address still
 			// allocated when the H2 tunnel came up. Report the stage instead, and make the NEXT
-			// setup take the HTTP/2 path so a slow server still becomes usable on the retry.
-			c.http3TunnelAmbiguousUntil.Store(time.Now().Add(http3TunnelAmbiguousWindow).UnixNano())
+			// setup take the HTTP/2 path so a slow server still becomes usable on the retry. The
+			// store is epoch- and attempt-guarded: a result from the network being left (or one
+			// older than a success) cannot reopen the window.
+			c.noteHTTP3TunnelAmbiguous(networkEpoch, http3Attempt)
 			return nil, nil, TunnelTransportUnknown, E.Cause(err,
 				"the HTTP/3 CONNECT header was sent and no response arrived; refusing to open a second tunnel over HTTP/2")
 		case errors.Is(err, ErrHTTP3Unavailable):

@@ -249,3 +249,33 @@ func TestAuditResetDuringInFlightH3Dial(t *testing.T) {
 		t.Error("ResetConnections remains blocked behind the old H3 dial")
 	}
 }
+
+// TestH3LifecycleLogDoesNotRaceWithReset pins the log/reset fix: the trace path used to read the
+// cached connection FIELD outside the pool lock while ResetConnection nilled it under it. The
+// detector is the assertion here, so the test runs the two paths concurrently; on Windows the
+// detector is unavailable and the test still exercises the same interleavings.
+func TestH3LifecycleLogDoesNotRaceWithReset(t *testing.T) {
+	server := startNoExtendedConnectH3Server(t)
+	client := newNoExtendedConnectClient(t, server.address, &recordingDialer{})
+	impl := client.http3.(*http3ClientImpl)
+	impl.SetLifecycleLogger(logger.NOP())
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := impl.acquire(ctx)
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 60; i++ {
+			client.ResetConnections()
+			_, _ = impl.acquire(ctx)
+		}
+	}()
+	for i := 0; i < 400; i++ {
+		_, _ = impl.acquire(ctx)
+	}
+	<-done
+}
