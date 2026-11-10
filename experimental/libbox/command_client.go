@@ -3,6 +3,7 @@ package libbox
 import (
 	"context"
 	std_json "encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -661,6 +662,22 @@ func (c *CommandClient) SetClashMode(newMode string) error {
 //
 // This is the CLI/socket path (PP02's binding); the in-process platform path is
 // CommandServer.RefreshProviders.
+//
+// # Two things the answer must be able to say without an error
+//
+// A gomobile call that returns an error loses its result in the generated bridge (the Swift method
+// throws and the box is dropped), so an error is the wrong place for a fact the caller has to act
+// on. Two such facts live here:
+//
+//   - the running kernel predates this RPC. That is a CAPABILITY answer, not a failed refresh, and
+//     it is returned as `{"supported":false,...}` so a client can tell "this kernel cannot refresh
+//     providers" from "the refresh failed". It is detected from gRPC's Unimplemented status on the
+//     Go side, where the code exists: the Go error travelling through gomobile carries no gRPC code
+//     (the app's old `NSError.code == 12` test never matched), and no client-side code mapping is
+//     stable across the bridge.
+//   - the whole call ran out of time. It is reported as an error because there is no partial
+//     document to hand back, but the batch ceiling below is what makes that bound real: without it
+//     the call waited for every provider's own timeout, in sequence, with no upper limit.
 func (c *CommandClient) RefreshRemoteProviders(tags string, timeoutMilliseconds int64) (*StringBox, error) {
 	selection := make([]string, 0)
 	for _, tag := range strings.Split(tags, ",") {
@@ -670,13 +687,31 @@ func (c *CommandClient) RefreshRemoteProviders(tags string, timeoutMilliseconds 
 		}
 		selection = append(selection, tag)
 	}
-	result, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.RemoteProviderRefreshResponse, error) {
-		return client.RefreshRemoteProviders(ctx, &daemon.RefreshRemoteProvidersRequest{
-			Tags:      selection,
-			TimeoutMs: timeoutMilliseconds,
-		})
+	providerTimeout := time.Duration(timeoutMilliseconds) * time.Millisecond
+	if providerTimeout <= 0 {
+		providerTimeout = defaultProviderRefreshTimeout
+	}
+	batchDeadline := refreshBatchDeadline(providerTimeout)
+	client, ctx, err := c.getClientForCall()
+	if err != nil {
+		return nil, err
+	}
+	if c.standalone {
+		defer c.closeConnection()
+	}
+	callContext, cancel := context.WithTimeout(ctx, batchDeadline)
+	defer cancel()
+	result, err := client.RefreshRemoteProviders(callContext, &daemon.RefreshRemoteProvidersRequest{
+		Tags:      selection,
+		TimeoutMs: timeoutMilliseconds,
 	})
 	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			return wrapString(encodeUnsupportedProviderRefresh("the running kernel predates RefreshRemoteProviders")), nil
+		}
+		if errors.Is(callContext.Err(), context.DeadlineExceeded) {
+			return nil, E.Cause(callContext.Err(), "refresh remote providers (batch ceiling %s)", batchDeadline)
+		}
 		return nil, E.Cause(err, "refresh remote providers")
 	}
 	encoded, err := std_json.Marshal(result)

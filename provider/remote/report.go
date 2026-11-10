@@ -124,6 +124,19 @@ func (s *ProviderRemote) LastApplyReport() *ApplyReport {
 	return cloneReport(s.lastReport)
 }
 
+// lastRequestedRevision is the revision counter of the most recent attempt, or 0 before the first.
+//
+// It identifies the report `LastApplyReport` would return, which is how a caller tells a report THIS
+// call recorded from one an earlier call left behind - see UpdateWithReportContext.
+func (s *ProviderRemote) lastRequestedRevision() uint64 {
+	s.reportAccess.Lock()
+	defer s.reportAccess.Unlock()
+	if s.lastReport == nil {
+		return 0
+	}
+	return s.lastReport.RequestedRevision
+}
+
 // errorText renders an error for a diagnostic, or the empty string.
 func errorText(err error) string {
 	if err == nil {
