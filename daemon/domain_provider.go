@@ -144,6 +144,16 @@ func providerRefreshDelivered(report *ProviderDomainReport) bool {
 // The running revision is the caller's statement of which configuration is in force; a plan
 // computed against another revision is refused before any provider is touched.
 func (s *StartedService) ApplyProviderDomain(plan ProviderDomainPlan, runningRevision string, timeout time.Duration) (*ProviderDomainReport, error) {
+	return s.ApplyProviderDomainContext(context.Background(), plan, runningRevision, timeout)
+}
+
+// ApplyProviderDomainContext is the same commit under the CALLER's context.
+//
+// The live fast path used to run with `context.Background()`, so nothing could cancel it: the
+// caller's own deadline did not reach the fetches, and the entry's batch ceiling was the only
+// upper bound. A caller that has a request to answer (a gRPC handler, a platform reload with a
+// timeout) passes its context here and gets the cancellation it asked for.
+func (s *StartedService) ApplyProviderDomainContext(ctx context.Context, plan ProviderDomainPlan, runningRevision string, timeout time.Duration) (*ProviderDomainReport, error) {
 	if plan.CurrentRevision != "" && runningRevision != "" && plan.CurrentRevision != runningRevision {
 		return &ProviderDomainReport{
 			Domain:   plan.Domain,
@@ -155,7 +165,10 @@ func (s *StartedService) ApplyProviderDomain(plan ProviderDomainPlan, runningRev
 	if !plan.Supported {
 		return &ProviderDomainReport{Domain: plan.Domain, Status: DomainStatusUnsupported, Reason: plan.UnsupportedReason}, nil
 	}
-	summary, err := s.RefreshProviders(context.Background(), plan.Tags, timeout)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	summary, err := s.RefreshProviders(ctx, plan.Tags, timeout)
 	if err != nil {
 		return &ProviderDomainReport{Domain: plan.Domain, Status: DomainStatusFailed, Reason: err.Error(), Revision: plan.TargetRevision}, nil
 	}

@@ -449,11 +449,51 @@ func (s *ProviderRemote) Update() error {
 // Update() keeps its error-only contract for existing callers; the report is additional and
 // describes the same attempt.
 func (s *ProviderRemote) UpdateWithReport() (*ApplyReport, error) {
+	return s.UpdateWithReportContext(s.ctx)
+}
+
+// UpdateWithReportContext is the same refresh with the CALLER's context.
+//
+// # Why the caller's context has to reach the fetch
+//
+// `UpdateWithReport` fetched with the provider's own lifecycle context, so a caller's deadline was
+// decorative: the daemon created a bounded context for the provider, checked it between retries,
+// and then started an HTTP request that only the provider's shutdown could cancel. On a slow or
+// black-holed subscription endpoint the caller's bound therefore did not bound anything - the
+// request ran to the provider's own `fetch_timeout` (30s by default), once per provider, inside a
+// call whose caller had asked for seconds.
+//
+// The fetch itself already applies the context to the request (`req.WithContext`), so passing the
+// caller's context through is the whole fix.
+//
+// # Why a refused attempt returns NO report
+//
+// `fetch` records a report for every attempt it starts, so `LastApplyReport` after a fetch is
+// normally this attempt's. It is not when the attempt never started: a provider its own timer is
+// already refreshing, one that is not started, or one the build gate deferred returns before the
+// report exists, and `LastApplyReport` then still holds the PREVIOUS attempt - which may well say
+// "committed". Handing that to a caller together with this attempt's error is how a publish from
+// minutes ago gets reported as the result of a refresh that never happened. The revision counter is
+// the evidence that the stored report belongs to this call, so it is checked rather than assumed.
+func (s *ProviderRemote) UpdateWithReportContext(ctx context.Context) (*ApplyReport, error) {
 	if s.ticker != nil {
 		s.ticker.Reset(s.updateInterval)
 	}
-	err := s.fetch(s.ctx, false)
-	return s.LastApplyReport(), err
+	if ctx == nil {
+		ctx = s.ctx
+	}
+	previousRequested := s.lastRequestedRevision()
+	err := s.fetch(ctx, false)
+	report := s.LastApplyReport()
+	if err != nil {
+		if report == nil || report.RequestedRevision <= previousRequested {
+			return nil, err
+		}
+		// The attempt ran and recorded its own report; both facts belong to the caller, because a
+		// document that was published before the cancellation is still published.
+		return report, err
+	}
+	return report, nil
 }
 
 func (s *ProviderRemote) UpdatedAt() time.Time {

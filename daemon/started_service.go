@@ -459,7 +459,7 @@ func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent 
 		// The document is the running one and every input outside it is a remote provider. A
 		// caller reloading it wants the provider documents re-read; doing that in place keeps the
 		// Box, its connections and every published provider that did not change.
-		providerReport, providerErr := s.ApplyProviderDomain(plan.Provider, plan.CurrentRevision, providerLiveRefreshTimeout)
+		providerReport, providerErr := s.ApplyProviderDomainContext(ctx, plan.Provider, plan.CurrentRevision, providerLiveRefreshTimeout)
 		switch {
 		case providerErr != nil:
 			liveFallbackReason = "provider refresh failed: " + providerErr.Error()
