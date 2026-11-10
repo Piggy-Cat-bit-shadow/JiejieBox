@@ -151,6 +151,8 @@ func TestALossWhileTheInitialSnapshotIsBuiltIsRecovered(t *testing.T) {
 	}
 	require.Equal(t, 1, repaired, "exactly one recovery snapshot")
 	require.Len(t, closedRowIDs(t, connections), 101)
+	activeIDs, _ := rowsByState(connections, ConnectionStateActive)
+	require.Empty(t, activeIDs, "every connection was closed: no row may stay active")
 }
 
 // TestALossWhileTheRecoverySnapshotIsBuiltIsRecovered covers the SUBSCRIBE-AFTER-LOSS path: the first
@@ -221,6 +223,8 @@ func TestALossWhileTheRecoverySnapshotIsBuiltIsRecovered(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, repaired, 2, "the repair snapshot itself must be repaired")
 	require.Len(t, closedRowIDs(t, connections), 151)
+	activeIDs, _ := rowsByState(connections, ConnectionStateActive)
+	require.Empty(t, activeIDs, "every connection was closed: no row may stay active")
 }
 
 // descriptionRule exposes a production NewDomainRegexItem description: ~5 KiB per record, the size

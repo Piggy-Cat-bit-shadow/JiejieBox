@@ -254,3 +254,82 @@ func TestADropAfterSendIsAnnouncedByTheNextBatch(t *testing.T) {
 		t.Fatal("the subscription did not stop")
 	}
 }
+
+// TestTheFragmentBudgetBoundary pins the byte contract at its edge: a batch just under the budget is
+// one message; the next record pushes it over and starts a second; a single record over the budget is
+// alone in its chunk (never dropped).
+func TestTheFragmentBudgetBoundary(t *testing.T) {
+	event := func(rule string) *ConnectionEvent {
+		return &ConnectionEvent{
+			Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
+			Id:         "id",
+			Connection: &Connection{Rule: strings.Repeat(rule, 1)},
+		}
+	}
+	payload := strings.Repeat("r", 8000)
+	var events []*ConnectionEvent
+	for proto.Size(&ConnectionEvents{Events: events}) <= snapshotFragmentBudget {
+		events = append(events, event(payload))
+	}
+	over := events
+	under := events[:len(events)-1]
+	require.LessOrEqual(t, proto.Size(&ConnectionEvents{Events: under}), snapshotFragmentBudget)
+	require.Greater(t, proto.Size(&ConnectionEvents{Events: over}), snapshotFragmentBudget)
+	require.Len(t, chunkConnectionEvents(under), 1)
+	require.Len(t, chunkConnectionEvents(over), 2)
+
+	single := event(strings.Repeat("s", snapshotFragmentBudget+1024))
+	chunks := chunkConnectionEvents([]*ConnectionEvent{single})
+	require.Len(t, chunks, 1, "an over-budget single record is sent alone, not dropped")
+	require.Greater(t, proto.Size(&ConnectionEvents{Events: chunks[0]}), snapshotFragmentBudget)
+}
+
+// TestAnActiveConnectionCrossesTheFragmentBudgetWithClosedRecords checks the mixed view: an active
+// connection and enough closed records to exceed the budget. Every ID and state must arrive, and the
+// active record must not be mistaken for a closed one.
+func TestAnActiveConnectionCrossesTheFragmentBudgetWithClosedRecords(t *testing.T) {
+	manager := trafficcontrol.NewManager()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	service := newSilentTailService(t, manager, ctx)
+	outbound := testOutbound{}
+	rule := &snapshotDescriptionRule{description: strings.Repeat("r", 5000)}
+	metadata := adapter.InboundContext{OutboundChain: []adapter.Outbound{outbound}}
+
+	left, right := net.Pipe()
+	active := manager.RoutedConnection(context.Background(), left, metadata, rule, outbound)
+	t.Cleanup(func() {
+		_ = active.Close()
+		_ = right.Close()
+	})
+	const records = 250
+	for index := 0; index < records; index++ {
+		trackAndCloseSnapshotConnection(t, manager, outbound, metadata, rule)
+	}
+
+	batches := runSnapshotStream(t, service, manager, records+1)
+	require.Greater(t, len(batches), 1, "the mixed view is over one budget")
+	total := 0
+	ids := make(map[string]struct{}, records+1)
+	activeSeen := 0
+	closedSeen := 0
+	for index, batch := range batches {
+		require.LessOrEqual(t, proto.Size(batch), snapshotFragmentBudget+4096)
+		require.EqualValues(t, index+1, batch.SnapshotPart)
+		require.EqualValues(t, len(batches), batch.SnapshotParts)
+		for _, event := range batch.Events {
+			total++
+			ids[event.Id] = struct{}{}
+			require.NotNil(t, event.Connection)
+			if event.Connection.ClosedAt == 0 {
+				activeSeen++
+			} else {
+				closedSeen++
+			}
+		}
+	}
+	require.Equal(t, records+1, total)
+	require.Len(t, ids, records+1)
+	require.Equal(t, 1, activeSeen)
+	require.Equal(t, records, closedSeen)
+}
