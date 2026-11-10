@@ -7,7 +7,6 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/compatible"
-	"github.com/sagernet/sing/common/cleanup"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/common/x/list"
 
@@ -52,8 +51,7 @@ type Manager struct {
 	closedUploadTotal       int64
 	closedDownloadTotal     int64
 
-	eventSubscriber *observable.Subscriber[ConnectionEvent]
-	eventObserver   *observable.Observer[ConnectionEvent]
+	events *eventFanout
 	// eventSequence stamps every emitted event; see ConnectionEvent.Sequence.
 	eventSequence atomic.Uint64
 	// eventPublish serialises "assign the sequence, publish the event".
@@ -70,7 +68,7 @@ type Manager struct {
 
 func NewManager() *Manager {
 	return &Manager{
-		eventSubscriber: observable.NewSubscriber[ConnectionEvent](256),
+		events: newEventFanout(),
 	}
 }
 
@@ -80,11 +78,16 @@ func (m *Manager) Name() string {
 
 func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage == adapter.StartStateInitialize {
-		m.eventObserver = observable.NewObserver(m.eventSubscriber, 64)
-		scope.Add(m.eventObserver.Close)
-		cleaner := cleanup.Add(m.Clear)
+		scope.Add(m.events.close)
+		// Register Clear DIRECTLY on the scope.
+		//
+		// cleanup.Add is finalizer-backed: the cleanup object can be collected before the scope
+		// closes, and its finalizer then runs Clear at an arbitrary GC point. In the full-chain test
+		// that wiped half the closed-connection window while a consumer was recovering, so the
+		// recovery snapshot looked empty. The scope runs its cleanups once, in registration order,
+		// which is the lifetime this belongs to.
 		scope.Add(func() error {
-			cleaner.Close()
+			m.Clear()
 			return nil
 		})
 	}
@@ -92,11 +95,28 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (m *Manager) SubscribeEvents() (observable.Subscription[ConnectionEvent], <-chan struct{}, error) {
-	return m.eventObserver.Subscribe()
+	listener, err := m.events.subscribe()
+	if err != nil {
+		return nil, nil, err
+	}
+	return observable.Subscription[ConnectionEvent](listener.channel), listener.done, nil
+}
+
+// SubscribeEventsWithLoss is SubscribeEvents plus the subscription's exact drop counter.
+//
+// The counter is what makes a SILENT tail loss recoverable: a subscriber that fell behind learns how
+// many events it never received even when no later event arrives to reveal a sequence gap. Events that
+// are merely queued (not dropped) do not move it.
+func (m *Manager) SubscribeEventsWithLoss() (observable.Subscription[ConnectionEvent], <-chan struct{}, func() uint64, error) {
+	listener, err := m.events.subscribe()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return observable.Subscription[ConnectionEvent](listener.channel), listener.done, listener.Dropped, nil
 }
 
 func (m *Manager) UnSubscribeEvents(subscription observable.Subscription[ConnectionEvent]) {
-	m.eventObserver.UnSubscribe(subscription)
+	m.events.unsubscribe(subscription)
 }
 
 func (m *Manager) join(tracker Tracker) {
@@ -148,7 +168,7 @@ func (m *Manager) leave(tracker Tracker) {
 func (m *Manager) publishEvent(event ConnectionEvent) {
 	m.eventPublish.Lock()
 	event.Sequence = m.eventSequence.Add(1)
-	m.eventSubscriber.Emit(event)
+	m.events.publish(event)
 	m.eventPublish.Unlock()
 }
 

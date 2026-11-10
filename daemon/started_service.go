@@ -1084,7 +1084,9 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 		return status.Error(codes.Unimplemented, "connection tracking not available")
 	}
 
-	subscription, done, err := trafficManager.SubscribeEvents()
+	// The subscription's exact loss counter is what makes SILENT tail loss recoverable: the queue can
+	// drop while no source event follows to reveal a gap, and the counter is still the truth.
+	subscription, done, dropped, err := trafficManager.SubscribeEventsWithLoss()
 	if err != nil {
 		return err
 	}
@@ -1092,13 +1094,17 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 
 	connectionSnapshots := make(map[uuid.UUID]connectionSnapshot)
 	initialEvents := s.buildInitialConnectionState(trafficManager, connectionSnapshots)
-	// The stream's identity and gap accounting belong to this subscription: a reload replaces the
-	// instance for later streams, and a gap is only visible against the source sequence.
-	envelope := &connectionEventEnvelope{instanceID: instanceID}
-	err = server.Send(envelope.wrap(initialEvents, true))
+	// The stream's identity and loss accounting belong to this subscription: a reload replaces the
+	// instance for later streams, and a loss is only meaningful against the source sequence.
+	envelope := &connectionEventEnvelope{instanceID: instanceID, loss: dropped}
+	send := func(events []*ConnectionEvent, reset bool) error {
+		return server.Send(envelope.wrap(events, reset))
+	}
+	err = send(initialEvents, true)
 	if err != nil {
 		return err
 	}
+	lastReportedLoss := uint64(0)
 
 	interval := time.Duration(request.Interval)
 	if interval <= 0 {
@@ -1135,21 +1141,28 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 				}
 			}
 			if len(pendingEvents) > 0 {
-				err = server.Send(envelope.wrap(pendingEvents, false))
+				err = send(pendingEvents, false)
 				if err != nil {
 					return err
 				}
+				lastReportedLoss = dropped()
 			}
 
 		case <-ticker.C:
 			protoEvents := s.buildTrafficUpdates(trafficManager, connectionSnapshots)
-			if len(protoEvents) == 0 {
+			currentLoss := dropped()
+			if !shouldSendConnectionBatch(len(protoEvents), currentLoss, lastReportedLoss) {
 				continue
 			}
-			err = server.Send(envelope.wrap(protoEvents, false))
+			// A batch with no events but a RAISED drop count is the silent-tail recovery signal: the
+			// consumer sees `dropped` grow, refuses the increment and takes a fresh snapshot. Sending
+			// it needs no business traffic and no unbounded refresh - one small message per tick while
+			// the loss is new, and nothing at all when the queue is merely slow but complete.
+			err = send(protoEvents, false)
 			if err != nil {
 				return err
 			}
+			lastReportedLoss = currentLoss
 		}
 	}
 }

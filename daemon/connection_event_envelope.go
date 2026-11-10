@@ -20,6 +20,10 @@ import (
 
 type connectionEventEnvelope struct {
 	instanceID string
+	// loss returns this subscription's exact drop count. It is what makes a SILENT tail loss
+	// recoverable: the daemon can publish "you lost N events" on a tick even when no source event
+	// follows to reveal a sequence gap. A queued event does not move it.
+	loss func() uint64
 
 	// sequence counts the batches this subscription has sent; it starts at 1.
 	sequence uint64
@@ -47,14 +51,31 @@ func (e *connectionEventEnvelope) observe(event trafficcontrol.ConnectionEvent) 
 	}
 }
 
+// shouldSendConnectionBatch reports whether the subscription has something to send: events to
+// deliver, or a loss that has not been announced yet. It is the ticker's condition, extracted so the
+// silent-tail contract can be tested without a stream.
+func shouldSendConnectionBatch(eventCount int, currentLoss uint64, reportedLoss uint64) bool {
+	return eventCount > 0 || currentLoss > reportedLoss
+}
+
 // wrap builds the batch to send.
+
+// Dropped is the subscription's exact loss count when one is available, and the gap count otherwise.
+// The two are the same number once an event reveals the gap; taking the larger of them avoids
+// double-counting while letting the counter speak during silence, when no gap exists yet.
 func (e *connectionEventEnvelope) wrap(events []*ConnectionEvent, reset bool) *ConnectionEvents {
 	e.sequence++
+	dropped := e.dropped
+	if e.loss != nil {
+		if counter := e.loss(); counter > dropped {
+			dropped = counter
+		}
+	}
 	return &ConnectionEvents{
 		Events:     events,
 		Reset_:     reset,
 		InstanceId: e.instanceID,
 		Sequence:   e.sequence,
-		Dropped:    e.dropped,
+		Dropped:    dropped,
 	}
 }

@@ -21,7 +21,8 @@ import (
 
 func TestConnectionEventsCarryIncreasingSequences(t *testing.T) {
 	manager := NewManager()
-	subscription, _ := manager.eventSubscriber.Subscription()
+	subscription, _, err := manager.SubscribeEvents()
+	require.NoError(t, err)
 
 	tracker := &sequenceTestTracker{metadata: &TrackerMetadata{ID: uuid.Must(uuid.NewV4())}}
 	manager.join(tracker)
@@ -38,7 +39,8 @@ func TestConnectionEventsCarryIncreasingSequences(t *testing.T) {
 
 func TestAFreshManagerStartsAtSequenceOne(t *testing.T) {
 	manager := NewManager()
-	subscription, _ := manager.eventSubscriber.Subscription()
+	subscription, _, err := manager.SubscribeEvents()
+	require.NoError(t, err)
 	manager.join(&sequenceTestTracker{metadata: &TrackerMetadata{ID: uuid.Must(uuid.NewV4())}})
 	require.EqualValues(t, 1, (<-subscription).Sequence)
 }

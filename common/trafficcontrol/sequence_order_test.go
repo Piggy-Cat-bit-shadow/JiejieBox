@@ -1,6 +1,7 @@
 package trafficcontrol
 
-// The source sequence must describe DELIVERY order, not allocation order.
+// The source sequence must describe DELIVERY order, and a drop must be counted exactly once, for the
+// subscription that lost it.
 //
 // # The defect these tests pin
 //
@@ -11,9 +12,12 @@ package trafficcontrol
 // no counter - it makes the client throw away a complete snapshot and resynchronise on every busy
 // second.
 //
-// The fix is one critical section around "assign the sequence, publish the event". The queue stays
-// non-blocking (Emit drops when full); the sequence simply stops being able to overtake the event it
-// belongs to.
+// # And the drop that is real
+//
+// The fanout never blocks the data plane: a full listener queue drops. Unlike the previous
+// observable.Observer path, THE DROP IS COUNTED PER SUBSCRIPTION, which is what allows the daemon to
+// publish a loss signal while the source is silent. These tests separate the two situations the
+// recovery contract depends on: queued-but-not-yet-read (no drop) and actually dropped (counted).
 
 import (
 	"sync"
@@ -24,18 +28,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// concurrentTracker is a tracker whose identity is only used for the event stream.
 func concurrentTracker() *sequenceTestTracker {
 	return &sequenceTestTracker{metadata: &TrackerMetadata{ID: uuid.Must(uuid.NewV4())}}
 }
 
-// TestConcurrentEventsKeepSourceOrder is the reviewed failure: 128 goroutines each produce a NEW and
-// a CLOSED event, the queue holds exactly 256, and every event is delivered.
+// TestConcurrentEventsKeepSourceOrder is the reviewed ordering failure: concurrent producers must
+// deliver sequences in the order they were assigned.
 func TestConcurrentEventsKeepSourceOrder(t *testing.T) {
 	manager := NewManager()
-	subscription, _ := manager.eventSubscriber.Subscription()
+	subscription, _, err := manager.SubscribeEvents()
+	require.NoError(t, err)
 
-	const pairs = 128
+	// The listener queue holds eventListenerBuffer; produce exactly that many events so every one is
+	// delivered and the ordering assertion covers the whole queue.
+	pairs := eventListenerBuffer / 2
 	var workers sync.WaitGroup
 	for index := 0; index < pairs; index++ {
 		workers.Add(1)
@@ -64,59 +70,91 @@ func TestConcurrentEventsKeepSourceOrder(t *testing.T) {
 	}
 }
 
-// TestARealOverflowCountsAsAGapOnTheNextEvent is the honest drop contract. The queue holds 256; 300
-// events are produced without a reader, so the tail is dropped. The 256 received events are the
-// PREFIX and their sequences are contiguous - no false gap. The loss becomes visible only when a
-// later event arrives, and then the gap must be exactly the number lost.
-func TestARealOverflowCountsAsAGapOnTheNextEvent(t *testing.T) {
+// TestQueuedEventsAreNotCountedAsDropped separates "slow" from "lost": a listener that has not read
+// yet has its events in its queue, and the counter must stay zero.
+func TestQueuedEventsAreNotCountedAsDropped(t *testing.T) {
 	manager := NewManager()
-	subscription, _ := manager.eventSubscriber.Subscription()
+	subscription, _, dropped, err := manager.SubscribeEventsWithLoss()
+	require.NoError(t, err)
+
+	for index := 0; index < eventListenerBuffer; index++ {
+		manager.join(concurrentTracker())
+	}
+	require.Zero(t, dropped(), "queued events are not lost events")
+	for index := 0; index < eventListenerBuffer; index++ {
+		<-subscription
+	}
+	require.Zero(t, dropped())
+}
+
+// TestARealOverflowIsCountedImmediately is the silent-tail contract at the source: a full queue drops,
+// the counter knows at once (no later event is needed to reveal it), and the buffered prefix is
+// contiguous.
+func TestARealOverflowIsCountedImmediately(t *testing.T) {
+	manager := NewManager()
+	subscription, _, dropped, err := manager.SubscribeEventsWithLoss()
+	require.NoError(t, err)
 
 	const produced = 300
-	trackers := make([]*sequenceTestTracker, produced)
 	for index := 0; index < produced; index++ {
-		trackers[index] = concurrentTracker()
-		manager.join(trackers[index])
+		manager.join(concurrentTracker())
 	}
+	require.EqualValues(t, produced-eventListenerBuffer, dropped(),
+		"the counter must report the drop immediately; silence must not hide it")
 
-	received := make([]uint64, 0, 256)
-	for len(received) < 256 {
+	received := make([]uint64, 0, eventListenerBuffer)
+	for len(received) < eventListenerBuffer {
 		select {
 		case event := <-subscription:
 			received = append(received, event.Sequence)
 		default:
-			t.Fatalf("only %d of the buffered 256 events were delivered", len(received))
+			t.Fatalf("only %d of the buffered events were delivered", len(received))
 		}
 	}
 	for index, sequence := range received {
 		require.EqualValues(t, index+1, sequence,
 			"the buffered prefix must be contiguous: the drop happens at the tail, not in the middle")
 	}
+}
 
-	// No further event: the tail loss is NOT observable from the delivered prefix. That is the
-	// contract - the counter never invents a loss, and a silent tail stays silent until the next
-	// source event (or a reconnect's snapshot) surfaces it.
-	require.EqualValues(t, produced, manager.eventSequence.Load())
+// TestOneSlowSubscriberDoesNotAffectAnother makes the attribution explicit and deterministic: the
+// fast subscriber is kept drained while the slow one is never read, so the slow queue overflows and
+// the fast queue never does. The fast reader is not racing the producer for a limited budget - each
+// publish is preceded by exactly one drain - which is what makes the assertion stable under load.
+func TestOneSlowSubscriberDoesNotAffectAnother(t *testing.T) {
+	manager := NewManager()
+	fast, _, fastDropped, err := manager.SubscribeEventsWithLoss()
+	require.NoError(t, err)
+	_, _, slowDropped, err := manager.SubscribeEventsWithLoss()
+	require.NoError(t, err)
 
-	// The next source event reveals the gap: sequences 257..300 were dropped.
-	last := concurrentTracker()
-	manager.join(last)
-	var gapEvent ConnectionEvent
-	select {
-	case gapEvent = <-subscription:
-	default:
-		t.Fatalf("the revealing event was not delivered")
+	// Fill BOTH queues without reading: exactly the buffer size, so nothing is dropped yet.
+	for index := 0; index < eventListenerBuffer; index++ {
+		manager.join(concurrentTracker())
 	}
-	require.EqualValues(t, produced+1, gapEvent.Sequence)
-	require.EqualValues(t, produced-256, gapEvent.Sequence-received[len(received)-1]-1,
-		"the gap must be exactly the number of events the queue dropped")
+	require.Zero(t, fastDropped())
+	require.Zero(t, slowDropped())
+
+	// Now make room in the fast queue before every publish; the slow queue stays full and drops.
+	const extra = 36
+	for index := 0; index < extra; index++ {
+		<-fast
+		manager.join(concurrentTracker())
+	}
+	for index := 0; index < extra; index++ {
+		<-fast
+	}
+
+	require.Zero(t, fastDropped(), "a drained subscriber reports no loss")
+	require.EqualValues(t, extra, slowDropped(), "the slow subscriber's loss is its own")
 }
 
 // TestTheSequenceIsNeverZero keeps the "no sequence yet" sentinel unambiguous: zero means "an event
 // from a producer that does not stamp sequences", so a stamped event must start at 1.
 func TestTheSequenceIsNeverZero(t *testing.T) {
 	manager := NewManager()
-	subscription, _ := manager.eventSubscriber.Subscription()
+	subscription, _, err := manager.SubscribeEvents()
+	require.NoError(t, err)
 	manager.join(concurrentTracker())
 	require.EqualValues(t, 1, (<-subscription).Sequence)
 }
