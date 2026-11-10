@@ -247,7 +247,12 @@ func reclaimPolicyFor(reason ReclaimReason) reclaimPolicy {
 	}
 }
 
-// Reclaim applies the policy for reason and reports how many connections it closed.
+// Reclaim applies the policy for reason and reports how many connections it reclaimed.
+//
+// "Reclaimed" means their admission is over: the dial gate has advanced, a draining pass has
+// bumped the stale generation, and every returned connection has left the tracked set. Their
+// PHYSICAL close runs on a disposer owned by this pass (see disposeConnections), because a
+// socket's Close can block and the generation boundary must not queue behind the kernel.
 //
 // Note what a transition does NOT do: it does not close a connection whose activity has been
 // observed recently, and it does not close one whose activity cannot be observed at all. It closes
@@ -259,9 +264,7 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 		m.scheduler.ReleaseAll()
 	}
 	if policy.closeAll {
-		count := m.Count()
-		m.CloseAll()
-		return count
+		return m.reclaimAll()
 	}
 
 	now := time.Now()
@@ -342,9 +345,7 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 	}
 	m.access.Unlock()
 
-	for _, closer := range closers {
-		common.Close(closer)
-	}
+	m.disposeConnections(closers)
 	if policy.drain {
 		m.transitions.recordTransition(retained, len(closers), seen)
 		// Open the reconnect governor's window. The connections that were just invalidated are about
@@ -360,6 +361,65 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 		}
 	}
 	return len(closers)
+}
+
+// reclaimAll is the close-all policy's admission half followed by a disposer instead of inline
+// closes: cancel in-flight dials, release shaped flows, and remove every tracked connection under
+// the lock. A dead-path reclaim runs inside the network-change body, so the same rule as a drain
+// applies - the new generation must be able to start before the old sockets finish closing.
+func (m *ConnectionManager) reclaimAll() int {
+	m.dialSetups.advance()
+	if m.scheduler != nil {
+		m.scheduler.ReleaseAll()
+	}
+	m.access.Lock()
+	closers := make([]managedConn, 0, m.connections.Len())
+	for element := m.connections.Front(); element != nil; {
+		nextElement := element.Next()
+		closers = append(closers, element.Value)
+		m.connections.Remove(element)
+		element = nextElement
+	}
+	m.access.Unlock()
+	m.disposeConnections(closers)
+	return len(closers)
+}
+
+// disposeConnections closes reclaimed connections on a disposer owned by this manager.
+//
+// # Why the physical close is not part of the reclaim pass
+//
+// The reclaim runs inside the network-change body, and the generation boundary - DNS pin, commit,
+// the new generation's first dial - must not queue behind the kernel. A UDP socket's Close can
+// take as long as the kernel makes it take; by the time it is scheduled here the connection has
+// already left the tracked set and its generation can no longer admit work, so nothing about the
+// new generation needs that Close to return. One task per reclaim is also what bounds the work:
+// the list is exact, every object is closed once, and a later transition cannot put an
+// already-removed connection back.
+//
+// Shutdown is the exception: once Close has begun no task may start (the group's Add/Wait pairing
+// would be racy), so the disposer closes inline and Close still returns only after every physical
+// close finished.
+func (m *ConnectionManager) disposeConnections(closers []managedConn) {
+	if len(closers) == 0 {
+		return
+	}
+	m.disposeAccess.Lock()
+	if m.disposing || m.closed.Load() {
+		m.disposeAccess.Unlock()
+		for _, closer := range closers {
+			common.Close(closer)
+		}
+		return
+	}
+	m.disposeGroup.Add(1)
+	m.disposeAccess.Unlock()
+	go func() {
+		defer m.disposeGroup.Done()
+		for _, closer := range closers {
+			common.Close(closer)
+		}
+	}()
 }
 
 // beginDrainSweep keeps reclaiming connections the transition left behind until none are left.
