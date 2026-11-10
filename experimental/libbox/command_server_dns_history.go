@@ -69,10 +69,37 @@ type commandServerDNSHistoryStats struct {
 }
 
 // commandServerDNSHistoryQueryResult is the JSON body returned by DNSHistoryQuery.
+//
+// Truncated and NextSequence are part of the pagination contract: when the response could not carry
+// every selected record, `truncated` is true and `nextSequence` is the last sequence that WAS
+// carried - passing it back as `since` continues the scan. A response that stopped without either
+// would leave the caller unable to tell "nothing more" from "more than fits".
 type commandServerDNSHistoryQueryResult struct {
-	Records []commandServerDNSHistoryRecord `json:"records"`
-	Stats   commandServerDNSHistoryStats    `json:"stats"`
+	Records      []commandServerDNSHistoryRecord `json:"records"`
+	Stats        commandServerDNSHistoryStats    `json:"stats"`
+	Truncated    bool                            `json:"truncated,omitempty"`
+	NextSequence uint64                          `json:"nextSequence,omitempty"`
 }
+
+// The encoded-response bounds.
+//
+// # Why retention accounting cannot size the output
+//
+// The ring charges RETAINED bytes; the binding hands the platform one JSON string, and escaping,
+// field names, the envelope and the stats all add to it. A read sized by the retained estimate was
+// therefore always under-sized: two records charged 154 bytes encoded to 80,485 bytes.
+//
+// maxDNSHistoryBindingBytes is the hard ceiling of one response; the caller's `maxBytes` is applied
+// INSIDE it (clamped to [min, max]). Per-field budgets bound one record even when it must be carried
+// alone: the first record is always returned so the cursor advances, with its long text fields cut
+// rune-safely and marked truncated.
+const (
+	maxDNSHistoryBindingBytes = 64 << 10
+	minDNSHistoryBindingBytes = 1 << 10
+	maxDNSHistoryFieldBytes   = 4 << 10
+	maxDNSHistoryAnswersBytes = 4 << 10
+	maxDNSHistoryAnswers      = 8
+)
 
 type commandServerDNSHistoryStatsResult struct {
 	Stats commandServerDNSHistoryStats `json:"stats"`
@@ -199,32 +226,153 @@ func (s *CommandServer) DNSHistoryQuery(queryJSON string) (*StringBox, error) {
 	if err != nil {
 		return nil, err
 	}
+	history := routeRouter.DNSHistory()
+	if history == nil {
+		return nil, dns.ErrHistoryNotEnabled
+	}
 	result := commandServerDNSHistoryQueryResult{
 		Records: make([]commandServerDNSHistoryRecord, 0, len(records)),
-		Stats:   dnsHistoryStatsFields(routeRouter.DNSHistory().Stats(), 0),
+		Stats:   dnsHistoryStatsFields(history.Stats(), 0),
 	}
-	for _, record := range records {
-		event := record.Event
-		presented := commandServerDNSHistoryRecord{
-			Sequence:   record.Sequence,
-			TimeMs:     event.Time.UnixMilli(),
-			Transport:  event.TransportTag,
-			Name:       event.Name,
-			QType:      event.QType,
-			Source:     string(event.Source),
-			RCode:      event.RCode,
-			DurationMs: event.DurationMs,
-			Shared:     event.Shared,
-			Final:      event.Final,
-			Rule:       event.Rule,
-			Err:        event.Err,
+	budget := dnsHistoryBindingBudget(query.MaxBytes)
+	truncated := false
+	for index, record := range records {
+		presented, fieldCut := presentDNSHistoryRecord(record)
+		// The size is measured on the ENCODED form, because that is what crosses the binding:
+		// JSON escaping and the field names are part of the response the platform receives.
+		candidate := commandServerDNSHistoryQueryResult{
+			Records:      append(append([]commandServerDNSHistoryRecord(nil), result.Records...), presented),
+			Stats:        result.Stats,
+			Truncated:    truncated || fieldCut || index < len(records)-1,
+			NextSequence: record.Sequence,
 		}
-		if len(event.Answers) > 0 {
-			presented.Answers = append([]string(nil), event.Answers...)
+		encoded, encodeErr := stdjson.Marshal(candidate)
+		if encodeErr != nil {
+			return nil, E.Cause(encodeErr, "encode dns history query")
 		}
-		result.Records = append(result.Records, presented)
+		if len(encoded) > budget {
+			if index == 0 {
+				// The first record is always carried so the caller's cursor advances; its fields are
+				// already bounded, so the response stays under the server ceiling.
+				truncated = true
+				result.Records = candidate.Records
+				result.NextSequence = record.Sequence
+			} else {
+				truncated = true
+			}
+			break
+		}
+		result.Records = candidate.Records
+		result.NextSequence = record.Sequence
+		if fieldCut {
+			truncated = true
+		}
 	}
+	result.Truncated = truncated
 	return wrapString(marshalBindingJSON(result)), nil
+}
+
+// dnsHistoryBindingBudget applies the caller's requested output budget inside the server's limits.
+//
+// The caller controls it, the server owns the floor and the ceiling: a request below the floor would
+// make a single record unreadable (no pagination progress), and one above the ceiling would let a
+// response exceed what the binding is prepared to hand the platform.
+func dnsHistoryBindingBudget(requested int32) int {
+	budget := int(requested)
+	if budget <= 0 {
+		return maxDNSHistoryBindingBytes
+	}
+	if budget < minDNSHistoryBindingBytes {
+		return minDNSHistoryBindingBytes
+	}
+	if budget > maxDNSHistoryBindingBytes {
+		return maxDNSHistoryBindingBytes
+	}
+	return budget
+}
+
+// presentDNSHistoryRecord converts one record and bounds every variable field by its ENCODED size.
+func presentDNSHistoryRecord(record dns.HistoryRecord) (commandServerDNSHistoryRecord, bool) {
+	event := record.Event
+	truncated := false
+	name, cut := truncateJSONField(event.Name, maxDNSHistoryFieldBytes)
+	truncated = truncated || cut
+	transport, cut := truncateJSONField(event.TransportTag, maxDNSHistoryFieldBytes)
+	truncated = truncated || cut
+	ruleText, cut := truncateJSONField(event.Rule, maxDNSHistoryFieldBytes)
+	truncated = truncated || cut
+	errText, cut := truncateJSONField(event.Err, maxDNSHistoryFieldBytes)
+	truncated = truncated || cut
+	presented := commandServerDNSHistoryRecord{
+		Sequence:   record.Sequence,
+		TimeMs:     event.Time.UnixMilli(),
+		Transport:  transport,
+		Name:       name,
+		QType:      event.QType,
+		Source:     string(event.Source),
+		RCode:      event.RCode,
+		DurationMs: event.DurationMs,
+		Shared:     event.Shared,
+		Final:      event.Final,
+		Rule:       ruleText,
+		Err:        errText,
+	}
+	if len(event.Answers) > 0 {
+		answers := event.Answers
+		if len(answers) > maxDNSHistoryAnswers {
+			answers = answers[:maxDNSHistoryAnswers]
+			truncated = true
+		}
+		budget := maxDNSHistoryAnswersBytes
+		for _, answer := range answers {
+			bounded, cut := truncateJSONField(answer, maxDNSHistoryFieldBytes)
+			if cut {
+				truncated = true
+			}
+			if budget <= 0 {
+				truncated = true
+				break
+			}
+			if len(bounded) > budget {
+				bounded, _ = truncateJSONField(bounded, budget)
+				truncated = true
+			}
+			presented.Answers = append(presented.Answers, bounded)
+			budget -= len(bounded)
+		}
+	}
+	return presented, truncated
+}
+
+// truncateJSONField cuts value so that its ENCODED JSON form fits budget, and reports whether it
+// was cut.
+//
+// The budget is on the encoded form, not on the input: a rune can become a six-byte `\uXXXX`
+// escape, and an input-length check would let a field of control characters multiply the response.
+// The cut is rune-safe and marked with an ellipsis so a reader can tell the text is incomplete.
+func truncateJSONField(value string, budget int) (string, bool) {
+	if value == "" {
+		return "", false
+	}
+	encoded, err := stdjson.Marshal(value)
+	if err == nil && len(encoded) <= budget {
+		return value, false
+	}
+	runes := []rune(value)
+	low, high := 0, len(runes)
+	for low < high {
+		middle := (low + high + 1) / 2
+		candidate, candidateErr := stdjson.Marshal(string(runes[:middle]))
+		if candidateErr == nil && len(candidate)+len("\\u2026") <= budget {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	if low <= 0 {
+		return "…", true
+	}
+	return string(runes[:low]) + "…", true
 }
 
 // DNSHistoryStats reports the history's accounting plus the bus-side drop count.

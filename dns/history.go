@@ -40,6 +40,11 @@ const (
 	maxHistoryQueryBytes  = 256 << 10
 	maxTopKBuckets        = 16
 	historyRecordOverhead = 64
+	// historyStringOverhead / historySliceOverhead are the headers the retained event pays per
+	// variable field and for the answer slice. They are small, but a record with many fields must
+	// still charge them: the accounting is what the ring is bounded by.
+	historyStringOverhead = 16
+	historySliceOverhead  = 24
 )
 
 // ErrHistoryQueryTooLarge is returned when a caller asks for more output than the history
@@ -372,11 +377,26 @@ func (h *History) evictOldestLocked() {
 	h.records = h.records[1:]
 }
 
-// historyRecordSize is the estimated retained size of one event.
+// historyRecordSize is the RETAINED size of one event: every field the ring holds, every string
+// header and the answer slice, not only the name and the error text.
+//
+// # Why the exact fields matter
+//
+// The accounting used to charge the name, the error and the transport tag. `Rule` is the rule
+// description and for a large rule-set, a `domain_keyword` list or a long domain it is unbounded:
+// a single event carrying a 40,000-character rule was charged 154 bytes for two records, so a
+// `maxBytes=4096` ring held tens of kilobytes and the read side sized its output from the same
+// wrong number. A bound that does not count a field is not a bound.
 func historyRecordSize(event QueryEvent) int {
-	size := historyRecordOverhead + len(event.Name) + len(event.Err) + 2*len(event.TransportTag)
-	for _, answer := range event.Answers {
-		size += len(answer)
+	// One string header per variable field (Name, Err, TransportTag, Rule, Source) plus the fixed
+	// per-record overhead.
+	size := historyRecordOverhead + historyStringOverhead*5
+	size += len(event.Name) + len(event.Err) + len(event.TransportTag) + len(event.Rule) + len(event.Source)
+	if len(event.Answers) > 0 {
+		size += historySliceOverhead
+		for _, answer := range event.Answers {
+			size += historyStringOverhead + len(answer)
+		}
 	}
 	return size
 }
