@@ -177,6 +177,9 @@ type recoveryBatchStep struct {
 	ipv6       bool
 	addresses  []netip.Addr
 	generation uint64
+	// unknown publishes the batch WITHOUT a source stamp, which is the legacy producer's shape: the
+	// addresses are offered but nothing can be said about the environment they came from.
+	unknown bool
 	// advanceTo, when non-zero, moves the router's generation BEFORE this batch is published. It is
 	// how a test builds the exact sequence the defect needs: an old batch accepted while its
 	// environment is still current, then the environment moves, then the confirmation arrives.
@@ -203,7 +206,7 @@ func (r *recoveryBatchRouter) LookupFamilies(ctx context.Context, domain string,
 			IPv6:                step.ipv6,
 			Addresses:           step.addresses,
 			SourceGeneration:    step.generation,
-			HasSourceGeneration: true,
+			HasSourceGeneration: !step.unknown,
 		})
 	}
 	return nil
@@ -391,4 +394,75 @@ func TestLiteralRecoveryLateOldConfirmationDoesNotDowngrade(t *testing.T) {
 	require.Equal(t, 1, countAttempts(attempts, current))
 	requireBusinessData(t, conn)
 	require.NoError(t, conn.Close())
+}
+
+// TestRecoveredSourceStampDecidesTheWinner is the dial-observation segment for C3.
+//
+// The stamp VALUES are exactly what the real Router publishes (verified in
+// dns.TestRealRouterDisableCachePublishesItsSource): a DisableCache exchange names the generation it
+// was asked on. This test feeds the same shape through the real recovery producer and the real
+// scheduler, and the control shows what happens when the source is unknown - the behaviour C3 fixed.
+//
+// The two segments exist because Go's import graph does not allow one: dns imports common/dialer, so
+// a dialer test cannot import dns to drive the real Router in the same process. The Router segment
+// proves the value is published; this segment proves the value decides the launch.
+func TestRecoveredSourceStampDecidesTheWinner(t *testing.T) {
+	const fallbackDelay = 120 * time.Millisecond
+
+	original := netip.MustParseAddr("2001:db8::2c")
+	blackhole6 := netip.MustParseAddr("2001:db8::30")
+	stale4 := netip.MustParseAddr("192.0.2.1")
+	current4 := netip.MustParseAddr("192.0.2.2")
+
+	run := func(t *testing.T, unknown bool) []netip.Addr {
+		t.Helper()
+		router := &recoveryBatchRouter{steps: []recoveryBatchStep{
+			{ipv6: true, addresses: []netip.Addr{blackhole6}, generation: 2, unknown: unknown},
+			{delay: 5 * time.Millisecond, ipv6: false, addresses: []netip.Addr{stale4}, generation: 1, unknown: unknown},
+			{delay: 5 * time.Millisecond, ipv6: false, addresses: []netip.Addr{current4}, generation: 2, unknown: unknown},
+		}}
+		router.generation.Store(2)
+		inner := newStreamOrderDialer(original, blackhole6, stale4)
+		dialer := &resolveDialer{
+			router:        router,
+			dialer:        inner,
+			parallel:      true,
+			fallbackDelay: fallbackDelay,
+			queryOptions:  adapter.DNSQueryOptions{Strategy: C.DomainStrategyPreferIPv4},
+		}
+		ctx, cancel := context.WithTimeout(recoveryContext(), 3*time.Second)
+		defer cancel()
+		conn, err := dialer.DialContext(ctx, "tcp", M.SocksaddrFrom(original, 443))
+		require.NoError(t, err, "attempts: %v", inner.attempts())
+		require.NotNil(t, conn)
+		requireBusinessData(t, conn)
+		require.NoError(t, conn.Close())
+		return inner.attempts()
+	}
+
+	t.Run("known source", func(t *testing.T) {
+		attempts := run(t, false)
+		firstIPv4 := netip.Addr{}
+		for _, address := range attempts {
+			if classifyAddress(address) == familyIPv4 {
+				firstIPv4 = address
+				break
+			}
+		}
+		require.Equal(t, current4, firstIPv4,
+			"the current confirmation must lead its family; attempts: %v", attempts)
+	})
+
+	t.Run("unknown source (control)", func(t *testing.T) {
+		attempts := run(t, true)
+		firstIPv4 := netip.Addr{}
+		for _, address := range attempts {
+			if classifyAddress(address) == familyIPv4 {
+				firstIPv4 = address
+				break
+			}
+		}
+		require.Equal(t, stale4, firstIPv4,
+			"without provenance the queue keeps its arrival order, which is the behaviour C3 fixed")
+	})
 }

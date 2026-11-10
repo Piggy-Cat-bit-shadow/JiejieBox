@@ -310,8 +310,11 @@ func (c *Client) newCacheKey(transport adapter.DNSTransport, question dns.Questi
 // never reject anything.
 func (c *Client) captureGeneration(operation *exchangeOperation) {
 	if c.networkGeneration != nil {
-		operation.generation = c.networkGeneration()
+		generation := c.networkGeneration()
+		operation.generation = generation
 		operation.hasGenerationGuard = true
+		operation.sourceGeneration = generation
+		operation.hasSource = true
 	}
 	// The policy epoch is captured in the same place and for the same reason: at the moment the
 	// question is asked, so it describes the policy the question was asked under rather than the one
@@ -320,6 +323,22 @@ func (c *Client) captureGeneration(operation *exchangeOperation) {
 		operation.policyGeneration = c.policyGeneration()
 		operation.hasPolicyGuard = true
 	}
+}
+
+// captureSource records the environment this operation asks its question under, without enabling the
+// generation GUARD.
+//
+// The two are deliberately separate. The guard is a caching and delivery decision: it lets the client
+// refuse to STORE an answer produced across an environment change. The source is an attribution fact:
+// it says which environment the answer belongs to, and the dialer uses it only to order candidates.
+// Conflating them made the source depend on whether caching was allowed - a DisableCache exchange
+// reported unknown even though its environment was perfectly knowable (C3).
+func (c *Client) captureSource(operation *exchangeOperation) {
+	if c.networkGeneration == nil {
+		return
+	}
+	operation.sourceGeneration = c.networkGeneration()
+	operation.hasSource = true
 }
 
 // policyStillCurrent reports whether a captured policy epoch still describes the live routing policy.
@@ -746,6 +765,12 @@ type exchangeOperation struct {
 	// generation is the network generation this query was issued on. Captured when the operation is
 	// built, which is BEFORE the round trip, and compared before anything is stored.
 	generation uint64
+	// sourceGeneration is the environment this operation asked its question under. It is captured for
+	// EVERY exchange, not only for cached ones: whether a cache may be read or written is a policy
+	// about storage, not a fact about the environment the question was asked on, and an answer whose
+	// source is knowable must not become unknown because caching was disabled (C3).
+	sourceGeneration uint64
+	hasSource        bool
 	// policyGeneration is the routing-policy epoch this query was issued under, captured at the same
 	// moment and for the same reason. A `clash_mode` switch bumps the epoch, so an answer that was in
 	// flight across it is delivered but not recorded.
@@ -825,6 +850,13 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 		return nil, nil, exchangeDone, QuerySourceBlocked, false, errNetworkTransitioning
 	}
 	if !disableCache {
+		// The key is fixed first and the stamp is read immediately after it, BEFORE the entry is
+		// selected (C2). Reading it after the selection - and in particular after the response
+		// checker - let a generation advanced between selection and return relabel an answer that
+		// belonged to the environment the key was built under. Keeping the pair adjacent is what
+		// "the stamp travels with the key" means: a later advance cannot promote the answer, and an
+		// advance during key construction (a transport hook) is still attributed to the question that
+		// is actually sent afterwards.
 		cacheKey := c.newCacheKey(transport, question, message, options)
 		operation.cacheKey = cacheKey
 		c.captureGeneration(operation)
@@ -901,6 +933,11 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			c.captureGeneration(operation)
 			exchangeKey = dnsExchangeKey{dnsCacheKey: cacheKey, timeout: options.Timeout}
 		}
+	} else {
+		// Caching is off, but the question is still asked on SOME environment. Record it so the
+		// answer can be attributed; the generation guard, which exists to protect storage, stays off
+		// exactly as before.
+		c.captureSource(operation)
 	}
 
 	contextTransport, transportTagLoaded := adapter.DNSTransportTagFromContext(ctx)
@@ -1088,8 +1125,8 @@ func (c *Client) exchangeWithSource(ctx context.Context, transport adapter.DNSTr
 		// operation captured. Reporting that generation keeps a shared waiter's hit stamped like a
 		// direct hit instead of degrading it to unknown; a response synthesized before any operation
 		// had an environment (a blocked transition, a malformed question) still reports unknown.
-		if operation != nil && operation.hasGenerationGuard {
-			return earlyResponse, operation.generation, true, err
+		if operation != nil && operation.hasSource {
+			return earlyResponse, operation.sourceGeneration, true, err
 		}
 		return earlyResponse, 0, false, err
 	}
@@ -1097,11 +1134,11 @@ func (c *Client) exchangeWithSource(ctx context.Context, transport adapter.DNSTr
 	response, exchangeErr := c.exchangeToTransport(operation.ctx, transport, operation.message)
 	if exchangeErr != nil {
 		c.emitQueryEvent(started, transport, message, source, false, nil, exchangeErr)
-		return nil, operation.generation, operation.hasGenerationGuard, exchangeErr
+		return nil, operation.sourceGeneration, operation.hasSource, exchangeErr
 	}
 	response, exchangeErr = c.finishExchange(transport, operation, response)
 	c.emitQueryEvent(started, transport, message, source, shared, response, exchangeErr)
-	return response, operation.generation, operation.hasGenerationGuard, exchangeErr
+	return response, operation.sourceGeneration, operation.hasSource, exchangeErr
 }
 
 func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool, callback func(response *dns.Msg, err error)) {
