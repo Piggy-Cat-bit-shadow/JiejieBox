@@ -1,0 +1,105 @@
+# Upstream debug and validation
+
+Reproducible checks for the upstream sync rounds. Everything below was run on
+Windows/amd64 with Go 1.25.5 unless marked otherwise; nothing here is a claim
+about CI or devices.
+
+## Environment
+
+```sh
+export PATH="/c/Deepseek/_gotool/go/bin:$PATH"        # Windows: C:\Deepseek\_gotool\go\bin
+export GOPRIVATE=github.com/Piggy-Cat-bit-shadow/*
+export GOFLAGS=-mod=mod
+# race needs cgo on this host:
+export CGO_ENABLED=1
+export CC=C:\msys64\mingw64\bin\gcc.exe
+```
+
+## sing (stage 02)
+
+Worktree `C:\Deepseek\sing-fork`, branch `dev`, merge commit `4abfaed`.
+
+```sh
+go build ./...
+go test ./common/bufio/... ./common/network/... ./protocol/socks/... ./common/control/... ./common/domain/...
+go test ./...
+go test -race -count=1 -skip '^TestWriteVectorisedPacket$' ./common/bufio/... ./common/network/... ./protocol/socks/...
+```
+
+Results: build 0; targeted 0; `./...` 0; race 0 with that one test skipped. The
+skipped test fails on the untouched `vectorised_windows.go` with a pre-existing
+`checkptr: converted pointer straddles multiple allocations`; it is not caused
+by the merge and is tracked separately.
+
+**Pre-merge proof** (`common/bufio/cache.go` restored from `HEAD~`):
+
+```sh
+go test -count=1 -run TestCached ./common/bufio
+# FAIL: replayed cached payload; ReaderReplaceable stuck false
+go test -race -count=1 -run TestCachedConnReadCloseRace ./common/bufio
+# WARNING: DATA RACE (CachedConn.Read c.buffer vs Close write; Buffer.Release vs Buffer.Read)
+```
+
+The barrier test is `common/bufio/cache_test.go`; it drives 200 independent
+Read/Close pairs and asserts the payload is delivered exactly once.
+
+## sing-tun (stage 02)
+
+Worktree `C:\Deepseek\sing-tun-fork`, branch `dev`, merge commit `99abf3c`.
+
+```sh
+go build ./...
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go vet ./...
+go test -count=1 -skip '^TestGoKernel' .
+go test -race -count=1 -skip '^TestGoKernel' -run 'TestMemoryTun|TestUDPNat|TestGoUDP|TestDetach|TestGSOSplit|TestSystemUDP|TestQueueClose|TestWaiter' .
+```
+
+Results: builds 0; root suite (kernel tests skipped) ok, 112 top-level PASS;
+race ok; `test/go.mod` untouched.
+
+**New tests** (`tun_offload_gso_batch_test.go`, `stack_system_udp_reply_test.go`):
+
+```sh
+go test -count=1 -run '^(TestGSOSplit.*|TestSystemUDPReplyHeaders.*)$' .
+```
+
+Mutation checks: ignoring the `segment` argument makes `GSOSplit` run forever;
+deleting `ipHdr.SetID` makes two replies share IPv4 ID 0.
+
+**Blocked**: all 21 `TestGoKernel*` (TUN adapter creation needs Administrator)
+and Linux-only privileged/netns/iptables tests. They are cross-compiled/vetted,
+never executed; do not report them as PASS.
+
+## Kernel consumption (stage 02)
+
+After bumping `go.mod` and `test/go.mod`:
+
+```sh
+go build ./...
+go build -tags <windows profile> ./...
+go test -count=1 ./transport/device ./protocol/tun
+go test -vet=off -count=1 -tags <windows profile> ./route
+```
+
+`TestPinnedSourceIsTheReplacedFork` verifies the replace names a module path
+and version; `TestSystemReadLoopSurvivesATransientReadError/too_many_segments`
+pins the kernel's explicit `ErrTooManySegments` recoverability.
+
+## GitHub Compare
+
+```sh
+curl -s 'https://api.github.com/repos/SagerNet/sing/compare/Piggy-Cat-bit-shadow:dev...SagerNet:dev'   | jq '.ahead_by'
+curl -s 'https://api.github.com/repos/SagerNet/sing-tun/compare/Piggy-Cat-bit-shadow:dev...SagerNet:dev' | jq '.ahead_by'
+```
+
+Both return 0 (`ahead_by` is the upstream-only count; the fork is `behind_by`
+65/183, i.e. ahead).
+
+## Evidence index
+
+- `_int0145/audit-evidence/upstream/ahead-behind.tsv` — audit snapshot.
+- `.../trial-merge-*.txt` — pre-merge conflict sizing.
+- `.../sing-merge-msg.txt`, `singtun-merge-msg.txt`, `kernel-sync2-msg.txt` —
+  commit rationale/commands.
+- Merge commits: `4abfaed`, `99abf3c`; kernel `33d6e4c`.

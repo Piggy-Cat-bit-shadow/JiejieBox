@@ -415,3 +415,20 @@
 - satelite-one：unit tests + assembleDebug **BUILD SUCCESSFUL**，`verifyCoreProvenance: OK`，integration ff 到 `9cdf782`。
 - 官方 Android 客户端：`:app:assembleDebug` **BUILD SUCCESSFUL**（8m10s，universal/arm64/armv7/x86/x86_64）。
 - 产物：`_int0145/artifacts/0.1.45/`（AAR ×2、APK ×2、provenance、SHA256SUMS）。
+
+---
+
+## 上游同步 Stage 02 — sing 与 sing-tun 融合
+
+- 日期：2026-11-11
+- 报告：`02_SING_SINGTUN_UPSTREAM_INTEGRATION.md`；台账：`docs/fork/UPSTREAM-INTEGRATION.md`
+
+| 仓库 | 合并提交 | 上游 | 结果 |
+|---|---|---|---|
+| sing | `4abfaed41727`（父 `1729220c46c4` + `27b73774b240`） | `SagerNet/sing:dev` | 27 提交（19 新内容 + 8 等价），13 冲突融合；Compare ahead_by=0 |
+| sing-tun | `99abf3c27666`（父 `57e9d17fa852` + `79ed0653fdc6`） | `SagerNet/sing-tun:dev` | 42 提交（8 新内容 + 34 同名），31 冲突（18 fork 保留 / 6 上游 / 13 融合）；Compare ahead_by=0 |
+| 内核消费 | `33d6e4c62a4` | — | pin 更新 + `ReadRetry.Wait()`/`ErrTooManySegments` 适配 |
+
+- 测试：sing build/`./...`/race（排除既有 checkptr）；sing-tun build/linux build+vet/根套件 112 PASS/race；内核 build（含 Windows tags）/`transport/device`/`protocol/tun`/`route` 全量 446.2 s 全过。
+- 阻塞：`TestGoKernel*`（需管理员）、Linux/Darwin 特权与 syscall 路径仅交叉编译。
+- 新增测试：sing CachedConn barrier 竞态 + 所有权；sing-tun GSO 跨批续切与 UDP 回复 IPv4 ID，均做 mutation 验证。

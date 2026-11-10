@@ -24,8 +24,8 @@
 | 仓库 | 正式分支 | 正确上游 | 分支 tip | 上游 tip | ahead/behind |
 |---|---|---|---|---|---|
 | sing-box（主） | `testing` / 施工 `integration/0.1.45-final` | `SagerNet/sing-box:testing` | `4152caf0e5` / `e7e9706a45` | `a13dbe1f78` | 3363/85（testing）；3705/85（集成） |
-| sing | `dev` | `SagerNet/sing:dev` | `1729220c46` | `27b73774b2` | 64/27 |
-| sing-tun | `dev` | `SagerNet/sing-tun:dev` | `57e9d17fa8` | `79ed0653fd` | 182/42 |
+| sing | `dev` | `SagerNet/sing:dev` | `4abfaed417` | `27b73774b2` | **65/0（stage 02 已融合）** |
+| sing-tun | `dev` | `SagerNet/sing-tun:dev` | `99abf3c276` | `79ed0653fd` | **183/0（stage 02 已融合）** |
 | sing-quic | `main` | `SagerNet/sing-quic:main` | `1ef2597cc1` | `5253224b67` | 7/4 |
 | quic-go | `sagernet`（消费线 `integration/0.1.45`） | `SagerNet/quic-go:dev` | `2daa76f5bd`（消费 `ca9992bc79`） | `2e73222e96` | 18/1（消费线 29/1） |
 | utls | `main` | `MetaCubeX/utls:v1.9.0-mod-meta` | `b63a2e9a7b` | `89a07ad380` | 68/1 |
@@ -110,6 +110,8 @@ dashboard 的树差异只有 22 个文件（+20/−2098），并不是“95 个�
 | `REJECTED_WITH_EVIDENCE` | 0（待定） | 旧审计的 systemd root 拒绝仍有效，但不在本轮 85 内 |
 | `BLOCKED_WITH_REASON` | 1 | dashboard：无 merge base，策略未定 |
 | `UNKNOWN` | 77 + 95（dashboard） | 未匹配且未读代码；05 前必须降为 0 或给出决定 |
+
+**2026-11-11 更新**：sing 与 sing-tun 已在阶段 02 完成融合并推送（merge 4abfaed41727 / 99abf3c27666，GitHub Compare head_by=0）；内核 pin 已更新（33d6e4c62a4）。上表保留审计时的初始值，实际状态见 UPSTREAM-INTEGRATION.md。
 
 **统计口径**：一个提交可能含多个主题；上表按提交计。88 个 subject 候选不是“已等价”，只是“需要优先比对”。
 

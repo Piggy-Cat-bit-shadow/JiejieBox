@@ -35,26 +35,36 @@
     {
       "name": "sing",
       "fork_ref": "origin/dev",
-      "fork_sha": "1729220c46c4cf750726b1057514a8d52a1f5e3b",
+      "fork_sha": "4abfaed41727e43d1d98f36385a86114925f8484",
       "upstream_ref": "upstream/dev",
       "upstream_sha": "27b73774b240c645099704ba533d2615727c3410",
       "ahead": 64,
-      "behind": 27,
+      "behind": 0,
       "subject_matched": 9,
       "unmatched": 18,
-      "class": "ADAPT_OR_REDESIGN"
+      "class": "DONE_STAGE_02",
+      "merge_sha": "4abfaed41727e43d1d98f36385a86114925f8484",
+      "integrated_upstream_commits": 27,
+      "new_content_commits": 19,
+      "already_equivalent_commits": 8,
+      "note": "13 conflicts fused; CachedConn mutex adoption + barrier test; compare ahead_by=0"
     },
     {
       "name": "sing-tun",
       "fork_ref": "origin/dev",
-      "fork_sha": "57e9d17fa852eafbc6849ae508c8b772e9fa1a66",
+      "fork_sha": "99abf3c2766646ccd74c77f7b14c197204506121",
       "upstream_ref": "upstream/dev",
       "upstream_sha": "79ed0653fdc66eef261d4147a04db9e16b9e6c50",
       "ahead": 182,
-      "behind": 42,
+      "behind": 0,
       "subject_matched": 31,
       "unmatched": 11,
-      "class": "ADAPT_OR_REDESIGN"
+      "class": "DONE_STAGE_02",
+      "merge_sha": "99abf3c2766646ccd74c77f7b14c197204506121",
+      "integrated_upstream_commits": 42,
+      "new_content_commits": 8,
+      "already_equivalent_commits": 34,
+      "note": "31 conflicts: 18 fork-verbatim, 6 upstream-verbatim, 13 fused; go stack ENOBUFS, auto-redirect, GSO, UDP reply IP IDs; compare ahead_by=0"
     },
     {
       "name": "sing-quic",
@@ -196,7 +206,8 @@
       "REJECTED_WITH_EVIDENCE": 0,
       "BLOCKED_WITH_REASON": 1,
       "UNKNOWN": 172,
-      "OUT_OF_SCOPE": 1
+      "OUT_OF_SCOPE": 1,
+      "DONE_STAGE_02": 2
     }
   },
   "high_risk": [
@@ -359,5 +370,27 @@
       "dns": 5
     }
   },
-  "dashboard_strategy": "merge --allow-unrelated-histories; 22-file tree delta, 13 conflicts, preserve JieJiebox branding; no replace/graft"
+  "dashboard_strategy": "merge --allow-unrelated-histories; 22-file tree delta, 13 conflicts, preserve JieJiebox branding; no replace/graft",
+  "stage02": {
+    "status": "DONE",
+    "sing": {
+      "merge": "4abfaed41727e43d1d98f36385a86114925f8484",
+      "upstream": "27b73774b240c645099704ba533d2615727c3410",
+      "compare_ahead_by": 0
+    },
+    "sing_tun": {
+      "merge": "99abf3c2766646ccd74c77f7b14c197204506121",
+      "upstream": "79ed0653fdc66eef261d4147a04db9e16b9e6c50",
+      "compare_ahead_by": 0
+    },
+    "kernel_pins": {
+      "sing": "v0.9.6-0.20261110222322-4abfaed41727",
+      "sing-tun": "v0.9.7-0.20261110222329-99abf3c27666"
+    },
+    "kernel_adaptations": [
+      "ReadRetry.Wait() no longer takes the read error",
+      "ErrTooManySegments kept recoverable in the kernel read-error predicate"
+    ],
+    "kernel_commit": "33d6e4c62a4c3f55f91b3d6484588153a136ef0b"
+  }
 }

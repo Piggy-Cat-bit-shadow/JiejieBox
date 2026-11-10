@@ -1,5 +1,18 @@
 # Upstream dependency integration — 2026-10-24 (phase 06 state)
 
+> **2026-11-11 stage 02 update.** The 2026-10-24 table below is historical. The current
+> sing/sing-tun pins are:
+>
+> | module | final fork SHA | Go pseudo-version | state |
+> |---|---|---|---|
+> | `github.com/sagernet/sing` | `4abfaed41727e43d1d98f36385a86114925f8484` | `v0.9.6-0.20261110222322-4abfaed41727` | DONE, upstream ancestry, behind 0 |
+> | `github.com/sagernet/sing-tun` | `99abf3c2766646ccd74c77f7b14c197204506121` | `v0.9.7-0.20261110222329-99abf3c27666` | DONE, upstream ancestry, behind 0 |
+>
+> The kernel adapts to `ReadRetry.Wait()` (no error argument) and keeps
+> `ErrTooManySegments` recoverable in `readErrorIsRecoverable`. The other pins are
+> unchanged until stages 03–05. The sing-tun pseudo-version needs the `v0.9.6` tag on
+> the fork remote (pushed with the merge) because Go resolves the preceding tag there.
+
 **Scope.** This is the dependency companion to `UPSTREAM-INTEGRATION-STATUS.json`, which is the
 authoritative ledger. It records the *effective* pins after phases 01–04; the `require` lines are not
 the effective versions, because four modules are redirected to `Piggy-Cat-bit-shadow/*` forks by
