@@ -596,7 +596,12 @@ type exchangeWithRulesResult struct {
 	// a verdict, so the router logs a configured answer at Debug instead of reporting it as a
 	// failure. See ErrLocalVerdict.
 	localAction bool
-	err         error
+	// sourceGeneration and hasSourceGeneration carry the DNS environment generation the answer was
+	// produced under, straight from the client operation that produced it. A locally synthesized
+	// answer and the evaluate-futures path report unknown, which the consumer treats as current.
+	sourceGeneration    uint64
+	hasSourceGeneration bool
+	err                 error
 }
 
 const dnsRespondMissingResponseMessage = "respond action requires an evaluated response from a preceding evaluate action"
@@ -741,11 +746,65 @@ func dnsRefusedResponse(message *mDNS.Msg) *mDNS.Msg {
 	}
 }
 
-func (r *Router) finalizeExchangeOptions(options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
-	if options.Strategy == C.DomainStrategyAsIS {
+// applyDefaultDomainStrategy fills the router's configured default into a query that expressed no
+// preference of its own.
+//
+// # Why a caller's forced family suppresses the fill
+//
+// LookupStrategy is how a caller - and the dual-stack probe - forces ONE family for a work item.
+// Writing the router's default into Strategy on top of that creates a disagreement between two
+// fields that describe the same decision, and the client resolves a disagreement between two strict
+// families as a forbidden item and issues nothing. A complete Lookup from service/resolved
+// returned `empty result` with zero queries whenever the default was the opposite family.
+//
+// The default is a DEFAULT: it may fill an empty Strategy, it may not overrule a decision the caller
+// already made. The rule's own strict strategy is unaffected - a rule writes Strategy during the
+// walk, after this fill, so a genuine disagreement with the caller's forced family is still reported
+// as a forbidden item and still stops the query before the cache and before the wire.
+func (r *Router) applyDefaultDomainStrategy(options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
+	if options.Strategy == C.DomainStrategyAsIS && options.LookupStrategy == C.DomainStrategyAsIS {
 		options.Strategy = r.defaultDomainStrategy
 	}
 	return options
+}
+
+func (r *Router) finalizeExchangeOptions(options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
+	return r.applyDefaultDomainStrategy(options)
+}
+
+// sourcedLookupClient and sourcedExchangeClient are the DNS client capabilities that report the
+// generation an answer was produced under.
+//
+// They are optional and package-private: adapter.DNSClient is a shared interface with implementers
+// outside this package, and adding a method there would break them for a value only this package's
+// streaming path consumes. A client without the capability keeps its previous behaviour and reports
+// an unknown source, which the consumer treats as current.
+type sourcedLookupClient interface {
+	lookupWithSource(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(*mDNS.Msg) bool) ([]netip.Addr, uint64, bool, error)
+}
+
+type sourcedExchangeClient interface {
+	exchangeWithSource(ctx context.Context, transport adapter.DNSTransport, message *mDNS.Msg, options adapter.DNSQueryOptions, responseChecker func(*mDNS.Msg) bool) (*mDNS.Msg, uint64, bool, error)
+}
+
+// clientLookupWithSource asks the client for the answer together with its source, degrading to
+// "unknown" for a client that cannot report one.
+func (r *Router) clientLookupWithSource(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(*mDNS.Msg) bool) ([]netip.Addr, uint64, bool, error) {
+	if sourced, isSourced := r.client.(sourcedLookupClient); isSourced {
+		return sourced.lookupWithSource(ctx, transport, domain, options, responseChecker)
+	}
+	addresses, err := r.client.Lookup(ctx, transport, domain, options, responseChecker)
+	return addresses, 0, false, err
+}
+
+// clientExchangeWithSource is clientLookupWithSource for the rule-walk path, which exchanges a
+// message rather than performing a lookup.
+func (r *Router) clientExchangeWithSource(ctx context.Context, transport adapter.DNSTransport, message *mDNS.Msg, options adapter.DNSQueryOptions, responseChecker func(*mDNS.Msg) bool) (*mDNS.Msg, uint64, bool, error) {
+	if sourced, isSourced := r.client.(sourcedExchangeClient); isSourced {
+		return sourced.exchangeWithSource(ctx, transport, message, options, responseChecker)
+	}
+	response, err := r.client.Exchange(ctx, transport, message, options, responseChecker)
+	return response, 0, false, err
 }
 
 func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, message *mDNS.Msg, state *dnsRuleWalkState, allowFakeIP bool) (exchangeWithRulesResult, *dnsWalkSuspension) {
@@ -1134,11 +1193,13 @@ func (r *Router) finishPendingExchange(ctx context.Context, message *mDNS.Msg, s
 			err:       pending.future.err,
 		}
 	}
-	response, err := r.client.Exchange(adapter.OverrideContext(ctx), pending.transport, message, r.finalizeExchangeOptions(pending.options), nil)
+	response, generation, hasGeneration, err := r.clientExchangeWithSource(adapter.OverrideContext(ctx), pending.transport, message, r.finalizeExchangeOptions(pending.options), nil)
 	return exchangeWithRulesResult{
-		response:  response,
-		transport: pending.transport,
-		err:       err,
+		response:            response,
+		transport:           pending.transport,
+		sourceGeneration:    generation,
+		hasSourceGeneration: hasGeneration,
+		err:                 err,
 	}
 }
 
@@ -1217,7 +1278,7 @@ func filterAddressesByQueryType(addresses []netip.Addr, qType uint16) []netip.Ad
 	}
 }
 
-func (r *Router) lookupWithRules(ctx context.Context, rules []adapter.DNSRule, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
+func (r *Router) lookupWithRules(ctx context.Context, rules []adapter.DNSRule, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, uint64, bool, error) {
 	strategy := r.resolveLookupStrategy(options)
 	lookupOptions := options
 	if strategy != C.DomainStrategyAsIS {
@@ -1248,18 +1309,19 @@ func (r *Router) lookupWithRules(ctx context.Context, rules []adapter.DNSRule, d
 
 	var group task.Group
 	group.Append("exchange4", func(ctx context.Context) error {
-		result, err := r.lookupWithRulesType(ctx, rules, domain, mDNS.TypeA, lookupOptions)
+		result, _, _, err := r.lookupWithRulesType(ctx, rules, domain, mDNS.TypeA, lookupOptions)
 		response4 = result
 		return err
 	})
 	group.Append("exchange6", func(ctx context.Context) error {
-		result, err := r.lookupWithRulesType(ctx, rules, domain, mDNS.TypeAAAA, lookupOptions)
+		result, _, _, err := r.lookupWithRulesType(ctx, rules, domain, mDNS.TypeAAAA, lookupOptions)
 		response6 = result
 		return err
 	})
 	err := group.Run(ctx)
 	if len(response4) == 0 && len(response6) == 0 {
-		return nil, err
+		// The combined answer set was never assembled, so there is no single source to name.
+		return nil, 0, false, err
 	}
 
 	// Refuse a set assembled across an epoch change, before it can be observed as a complete answer.
@@ -1268,14 +1330,16 @@ func (r *Router) lookupWithRules(ctx context.Context, rules []adapter.DNSRule, d
 	// rather than a silently half-stale success. The per-exchange generation guard keeps doing its
 	// own job - nothing from a superseded family is cached either way.
 	if r.dnsGeneration() != lookupEpoch {
-		return nil, E.New("network changed while resolving ", domain,
+		return nil, 0, false, E.New("network changed while resolving ", domain,
 			"; the address families belong to different networks")
 	}
 
-	return sortAddresses(response4, response6, strategy), nil
+	// A complete lookup combines both families into one claim about a name. There is no single
+	// producing operation behind the set, so the source is unknown rather than fabricated.
+	return sortAddresses(response4, response6, strategy), 0, false, nil
 }
 
-func (r *Router) lookupWithRulesType(ctx context.Context, rules []adapter.DNSRule, domain string, qType uint16, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
+func (r *Router) lookupWithRulesType(ctx context.Context, rules []adapter.DNSRule, domain string, qType uint16, options adapter.DNSQueryOptions) ([]netip.Addr, uint64, bool, error) {
 	request := &mDNS.Msg{
 		MsgHdr: mDNS.MsgHdr{
 			RecursionDesired: true,
@@ -1288,10 +1352,10 @@ func (r *Router) lookupWithRulesType(ctx context.Context, rules []adapter.DNSRul
 	}
 	exchangeResult := r.exchangeWithRules(withLookupQueryMetadata(ctx, qType), rules, request, options, false)
 	if exchangeResult.rejectAction != nil {
-		return nil, exchangeResult.rejectAction.Error(ctx)
+		return nil, 0, false, exchangeResult.rejectAction.Error(ctx)
 	}
 	if exchangeResult.err != nil {
-		return nil, exchangeResult.err
+		return nil, exchangeResult.sourceGeneration, exchangeResult.hasSourceGeneration, exchangeResult.err
 	}
 	if exchangeResult.response.Rcode != mDNS.RcodeSuccess {
 		if exchangeResult.localAction {
@@ -1300,11 +1364,13 @@ func (r *Router) lookupWithRulesType(ctx context.Context, rules []adapter.DNSRul
 			// Debug: "the configuration blocked this name" is the feature working, and calling it
 			// `lookup failed` for every blocked dial is both wrong and the log-volume cost the
 			// action's own documentation reasons about.
-			return nil, LocalVerdictRcode(RcodeError(exchangeResult.response.Rcode))
+			return nil, 0, false, LocalVerdictRcode(RcodeError(exchangeResult.response.Rcode))
 		}
-		return nil, RcodeError(exchangeResult.response.Rcode)
+		return nil, exchangeResult.sourceGeneration, exchangeResult.hasSourceGeneration,
+			RcodeError(exchangeResult.response.Rcode)
 	}
-	return filterAddressesByQueryType(MessageToAddresses(exchangeResult.response), qType), nil
+	return filterAddressesByQueryType(MessageToAddresses(exchangeResult.response), qType),
+		exchangeResult.sourceGeneration, exchangeResult.hasSourceGeneration, nil
 }
 
 type dnsExchangeContext struct {
@@ -1452,6 +1518,31 @@ func (r *Router) prepareExchange(ctx context.Context, message *mDNS.Msg) (*dnsEx
 // unchanged environment costs one notify_check per transport.
 func (r *Router) dnsGeneration() uint64 {
 	return r.networkGeneration.Load() + r.observeDNSEnvironment()
+}
+
+// DNSGeneration reports the DNS environment generation currently in force.
+//
+// It exists so the connection layer can tell an answer requested under one environment from the
+// environment it is about to dial in. The value is the router's own aggregate (network generation
+// plus its DNS environment fingerprint counter) and is deliberately NOT the connection-manager's
+// reset epoch: a DNS-only change must not tear down established connections, which is why the two
+// are separate counters in the first place.
+//
+// # Why this reads the counters instead of observing
+//
+// dnsGeneration - the accessor a QUERY uses - calls observeDNSEnvironment, which takes the router's
+// DNS-environment lock and recomputes the fingerprint of every transport's Environment(). That is
+// the right cost once per query: observing at issue is what makes a resolver change visible at the
+// answer that is about to be stamped.
+//
+// It is the wrong cost on the connection path. This reporter is read by the candidate scheduler on
+// every launch decision of every connection, so a reporter that observed would put a process-wide
+// DNS lock and an all-transport scan in the middle of the dial hot path, shared with every
+// concurrent DNS query. The counters are already the published truth, and every query has already
+// observed the environment before it stamped its answer, so a consumer that reads them sees the same
+// value the answer carries and never triggers network observation from a dial.
+func (r *Router) DNSGeneration() uint64 {
+	return r.networkGeneration.Load() + r.dnsEnvironmentGeneration.Load()
 }
 
 // dnsGenerationLocked is dnsGeneration for a caller that already holds dnsEnvironmentAccess.
@@ -2027,17 +2118,35 @@ func (r *Router) finishExchangeAsync(message *mDNS.Msg, transport adapter.DNSTra
 }
 
 func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
+	addresses, _, _, err := r.lookupWithSource(ctx, domain, options)
+	return addresses, err
+}
+
+// lookupWithSource is Lookup plus the DNS environment generation the answer was actually produced
+// under.
+//
+// The stamp travels from the client operation that produced the answer (see
+// Client.lookupWithSource), not from a read taken around this call: rule matching, transport
+// selection and the transport's own hooks all run between a caller-side read and the exchange, and a
+// generation advanced there would make the published stamp older than the answer's source - which
+// demotes a current candidate as if it belonged to the environment the flow had already left.
+//
+// A locally synthesized answer (a predefined rule, an adblock verdict, a rule rejection) and the
+// evaluate-futures path report unknown, and the consumer treats unknown as current.
+func (r *Router) lookupWithSource(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, uint64, bool, error) {
 	r.rulesAccess.RLock()
 	if r.closing {
 		r.rulesAccess.RUnlock()
-		return nil, E.New("dns router closed")
+		return nil, 0, false, E.New("dns router closed")
 	}
 	rules := r.rules
 	legacyDNSMode := r.legacyDNSMode
 	r.rulesAccess.RUnlock()
 	var (
-		responseAddrs []netip.Addr
-		err           error
+		responseAddrs       []netip.Addr
+		sourceGeneration    uint64
+		hasSourceGeneration bool
+		err                 error
 	)
 	printResult := func() {
 		emptyResult := err == nil && len(responseAddrs) == 0
@@ -2102,16 +2211,14 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 		// same reason: the configuration names a server that cannot answer this question, so the honest
 		// answer is an error that names it rather than a different server's answer.
 		if transport.Type() == C.DNSTypeFakeIP {
-			return nil, E.New("domain resolver ", transport.Tag(),
+			return nil, 0, false, E.New("domain resolver ", transport.Tag(),
 				" is a fakeip server: a fakeip server answers with a synthetic address that is only ",
 				"meaningful inside this process, so it cannot resolve a destination that will be dialled")
 		}
-		if options.Strategy == C.DomainStrategyAsIS {
-			options.Strategy = r.defaultDomainStrategy
-		}
-		responseAddrs, err = r.client.Lookup(ctx, transport, domain, options, nil)
+		options = r.applyDefaultDomainStrategy(options)
+		responseAddrs, sourceGeneration, hasSourceGeneration, err = r.clientLookupWithSource(ctx, transport, domain, options, nil)
 	} else if !legacyDNSMode {
-		responseAddrs, err = r.lookupWithRules(ctx, rules, domain, options)
+		responseAddrs, sourceGeneration, hasSourceGeneration, err = r.lookupWithRules(ctx, rules, domain, options)
 	} else {
 		var (
 			transport adapter.DNSTransport
@@ -2126,7 +2233,7 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 			if rule != nil {
 				switch action := rule.Action().(type) {
 				case *R.RuleActionReject:
-					return nil, &R.RejectedError{Cause: action.Error(ctx)}
+					return nil, 0, false, &R.RejectedError{Cause: action.Error(ctx)}
 				case *R.RuleActionPredefined:
 					responseAddrs = nil
 					if action.Rcode != mDNS.RcodeSuccess {
@@ -2158,10 +2265,8 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 				}
 			}
 			responseCheck := addressLimitResponseCheck(rule, metadata)
-			if dnsOptions.Strategy == C.DomainStrategyAsIS {
-				dnsOptions.Strategy = r.defaultDomainStrategy
-			}
-			responseAddrs, err = r.client.Lookup(dnsCtx, transport, domain, dnsOptions, responseCheck)
+			dnsOptions = r.applyDefaultDomainStrategy(dnsOptions)
+			responseAddrs, sourceGeneration, hasSourceGeneration, err = r.clientLookupWithSource(dnsCtx, transport, domain, dnsOptions, responseCheck)
 			if responseCheck == nil || err == nil {
 				break
 			}
@@ -2173,7 +2278,7 @@ response:
 	if len(responseAddrs) > 0 {
 		r.logger.InfoContext(ctx, "lookup succeed for ", domain, ": ", strings.Join(F.MapToString(responseAddrs), " "))
 	}
-	return responseAddrs, err
+	return responseAddrs, sourceGeneration, hasSourceGeneration, err
 }
 
 func isResolverDiscoveryQuery(question mDNS.Question) bool {

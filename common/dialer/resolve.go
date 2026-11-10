@@ -398,8 +398,10 @@ func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, de
 			batch := make([]dualStackCandidate, 0, len(result.Addresses))
 			for _, address := range result.Addresses {
 				batch = append(batch, dualStackCandidate{
-					address: unmapAddress(address),
-					family:  classifyAddress(address),
+					address:          unmapAddress(address),
+					family:           classifyAddress(address),
+					sourceGeneration: result.SourceGeneration,
+					sourceKnown:      result.HasSourceGeneration,
 				})
 			}
 
@@ -650,8 +652,14 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 		original <- literalDialResult{err: originalErr}
 	}
 
-	// Recovery runs concurrently. Its result channel is buffered and it always sends exactly
-	// once, so the goroutine cannot outlive this function blocked on an unread channel.
+	// Recovery runs concurrently, as a STREAM of family answers rather than a single result.
+	//
+	// A single result was the defect: the lookup ended at the first family that passed admission,
+	// and "passes admission" says the address may be dialled, not that anything answers. When that
+	// first answer was the same blackholed literal the caller was already dialling - the ordinary
+	// shape, because the sniffed name commonly resolves to the address the application used -
+	// deduplication left nothing, the other family's query was cancelled, and the flow had no
+	// fallback at all.
 	//
 	// recoveryCtx is cancelled when this function returns, so a recovery lookup does not keep
 	// running DNS after the race is decided. Deriving it from ctx alone left the lookup running
@@ -659,12 +667,59 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 	// connected in a millisecond still had a resolver query in flight long afterwards.
 	recoveryCtx, cancelRecovery := context.WithCancel(ctx)
 	defer cancelRecovery()
+	recovered := d.streamRecoveredCandidates(recoveryCtx, destination, admission)
+	defer recovered.stop()
 
-	recovered := make(chan []netip.Addr, 1)
-	go func() {
-		addresses := d.recoverCandidates(recoveryCtx, destination, admission)
-		recovered <- addresses
-	}()
+	// The first event decides what happens next: the original settling, or a recovered family that
+	// actually contributes a NEW candidate. The producer never publishes a duplicate-only batch, so
+	// "a batch arrived" means there is something genuinely new to race.
+	var firstBatch []dualStackCandidate
+	for firstBatch == nil {
+		select {
+		case result := <-original:
+			if result.err == nil {
+				claimed = true
+				return result.conn, nil
+			}
+			// The original failed. Recovery still gets its chance, and it is NOT required to have
+			// answered yet: the race below waits for the stream, so a fallback that answers later is
+			// used rather than reported as "recovery found nothing".
+			//
+			// This used to read the recovery channel NON-BLOCKINGLY and, finding it empty, return the
+			// original's error immediately. A lookup that had not finished yet was therefore treated
+			// as "recovery found nothing", and a healthy recovered candidate was never tried - which
+			// discards the entire purpose of recovery, because a fast failure is exactly when a
+			// fallback is most useful.
+			return d.dialRecoveredFromStream(ctx, network, destination, nil, recovered, result.err, admission)
+
+		case batch, stillOpen := <-recovered.batches:
+			if !stillOpen {
+				// No recovered candidate will ever arrive; the original attempt is the only candidate,
+				// so wait for it rather than returning early.
+				result := <-original
+				if result.err != nil {
+					return nil, result.err
+				}
+				claimed = true
+				return result.conn, nil
+			}
+			firstBatch = batch
+		}
+	}
+
+	// Recovery produced a NEW candidate while the original is STILL in flight. The original remains
+	// preferred, so give it a bounded head start rather than waiting for it indefinitely.
+	//
+	// Waiting unconditionally was a starvation bug: against a blackholed original the wait consumed
+	// the whole context, so by the time the fallback was reached there was no budget left to dial
+	// with. The recovered candidates - the entire point of doing recovery - could never actually be
+	// used.
+	//
+	// The head start is the connection fallback delay, the same interval that staggers candidates
+	// elsewhere in this package, so a healthy original still wins outright and a hanging one does not
+	// hold the fallback hostage.
+	fallbackTimer := time.NewTimer(d.fallbackDelayOrDefault())
+	defer fallbackTimer.Stop()
 
 	select {
 	case result := <-original:
@@ -672,91 +727,101 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 			claimed = true
 			return result.conn, nil
 		}
-		// The original failed. Recovery still gets its chance.
-		//
-		// This used to read the recovery channel NON-BLOCKINGLY and, finding it empty, return the
-		// original's error immediately. A lookup that had not finished yet was therefore treated
-		// as "recovery found nothing", and a healthy recovered candidate was never tried - which
-		// discards the entire purpose of recovery, because a fast failure is exactly when a
-		// fallback is most useful.
-		//
-		// The wait is bounded by the caller's context and by the recovery lookup's own
-		// cancellation, so this cannot hang: recoverCandidates honours both.
-		select {
-		case addresses := <-recovered:
-			return d.dialRecoveredOrReport(ctx, network, destination, addresses, result.err, admission)
-		case <-ctx.Done():
-			return nil, result.err
-		}
+		return d.dialRecoveredFromStream(ctx, network, destination, firstBatch, recovered, result.err, admission)
 
-	case addresses := <-recovered:
-		if len(addresses) == 0 {
-			// Recovery found nothing; the original attempt is the only candidate, so wait for
-			// it rather than returning early.
-			result := <-original
-			if result.err != nil {
-				return nil, result.err
-			}
-			claimed = true
-			return result.conn, nil
-		}
-
-		// Recovery produced candidates while the original is STILL in flight. The original
-		// remains preferred, so give it a bounded head start rather than waiting for it
-		// indefinitely.
-		//
-		// Waiting unconditionally was a starvation bug: against a blackholed original the wait
-		// consumed the whole context, so by the time the fallback was reached there was no
-		// budget left to dial with. The recovered candidates - the entire point of doing
-		// recovery - could never actually be used.
-		//
-		// The head start is the connection fallback delay, the same interval that staggers
-		// candidates elsewhere in this package, so a healthy original still wins outright and a
-		// hanging one does not hold the fallback hostage.
-		fallbackTimer := time.NewTimer(d.fallbackDelayOrDefault())
-		defer fallbackTimer.Stop()
-
-		select {
-		case result := <-original:
-			if result.err == nil {
-				claimed = true
-				return result.conn, nil
-			}
-			return d.dialRecoveredOrReport(ctx, network, destination, addresses, result.err, admission)
-
-		case <-fallbackTimer.C:
-			// The original has had its head start and is still pending. Dial the recovered
-			// candidates in parallel with it; the first success wins and the other attempt is
-			// cancelled by the deferred cancelOriginal.
-			return d.raceWithPendingOriginal(ctx, network, destination, addresses, original, cancelOriginal, admission)
-		}
+	case <-fallbackTimer.C:
+		// The original has had its head start and is still pending. Dial the recovered stream in
+		// parallel with it; the first success wins and the other side is cancelled by the deferred
+		// cancelOriginal.
+		return d.raceWithPendingOriginal(ctx, network, destination, firstBatch, recovered, original, cancelOriginal, admission)
 	}
 }
 
-// dialRecoveredOrReport dials recovered candidates, or reports the original error when there
-// are none.
-func (d *resolveDialer) dialRecoveredOrReport(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, originalErr error, admission admissionPolicy) (net.Conn, error) {
-	if len(addresses) == 0 {
+// dialRecoveredFromStream races the recovered families, or reports the original error when the
+// lookup produces nothing.
+//
+// It replaces "dial the addresses the lookup already returned". The race stays open while the lookup
+// does, so a family that answers after the original failed - or after an earlier recovered candidate
+// failed - still gets its attempt. The end condition is the scheduler's own: a winner, the stream
+// closing with every attempt failed, or the caller's budget.
+func (d *resolveDialer) dialRecoveredFromStream(ctx context.Context, network string, destination M.Socksaddr, firstBatch []dualStackCandidate, recovered recoveryStream, originalErr error, admission admissionPolicy) (net.Conn, error) {
+	if len(firstBatch) == 0 && !recovered.ready() {
 		return nil, originalErr
 	}
-	// The EFFECTIVE strategy, and the original is merged only if that strategy admits it.
-	//
-	// Merging unconditionally re-introduced an address the policy had just excluded: with
-	// ipv4_only and an IPv6 original, MergeOriginalDestination put the IPv6 address back into the
-	// plan because it has its own rule for AsIS ("keep the caller's family first") and cannot tell
-	// that the effective policy already answered the question.
-	original := destination.Addr
-	if !admission.strategyAllows(original) {
-		original = netip.Addr{}
-	}
-	candidates := MergeOriginalDestination(original, addresses, admission.strategy)
-	conn, err := d.raceCandidatesExcluding(ctx, network, destination, candidates, original, admission)
+
+	raceCtx, cancelRace := context.WithCancel(ctx)
+	defer cancelRace()
+
+	candidates, stopFeed := joinRecoveredBatches(raceCtx, firstBatch, recovered)
+	// The feeder must be gone before this function returns, whatever the outcome, or a winner leaves
+	// a goroutine parked on a channel nobody reads.
+	defer stopFeed()
+
+	// The original is deliberately not part of this plan, and it is not passed as the planner's
+	// original either: it has just failed, and re-dialling the endpoint the application chose would
+	// be a second attempt at an address already proven not to answer. That distinction matters
+	// because `raceCandidatesExcluding` does NOT exclude the address it is handed - it treats it as
+	// the plan's ORIGINAL and puts it back at the head of its family. Only an empty plan expresses
+	// "the application's endpoint is not a candidate here".
+	scheduler := d.newScheduler(admission)
+	conn, _, err := scheduler.dialWithLateCandidatesAdmitting(raceCtx,
+		planCandidates(nil, netip.Addr{}, admission.strategy), candidates, admission.lateAdmission(),
+		func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
+			return d.dialer.DialContext(attemptCtx, network, M.SocksaddrFrom(address, destination.Port))
+		})
 	if err != nil {
-		// Both the original endpoint and every recovered candidate failed. The original error
-		// is the more useful one to surface: it is the endpoint the application asked for.
+		// Both the original endpoint and every recovered candidate failed. The original error is the
+		// more useful one to surface: it is the endpoint the application asked for.
 		return nil, originalErr
 	}
 	return conn, nil
+}
+
+// joinRecoveredBatches turns "an optional first batch plus a live stream" into the single candidate
+// channel the scheduler consumes, and returns the means to stop and join the feeder.
+//
+// The feeder is a goroutine of its own because the stream carries batches while the scheduler wants
+// candidates. It leaves on cancellation even when nobody is reading any more, which is what keeps a
+// winner from inheriting a parked sender; stop() is the proof that it has left.
+func joinRecoveredBatches(ctx context.Context, first []dualStackCandidate, recovered recoveryStream) (<-chan dualStackCandidate, func()) {
+	feedCtx, cancelFeed := context.WithCancel(ctx)
+	candidates := make(chan dualStackCandidate)
+	var feeders sync.WaitGroup
+	feeders.Add(1)
+	go func() {
+		defer feeders.Done()
+		defer close(candidates)
+		send := func(batch []dualStackCandidate) bool {
+			for _, candidate := range batch {
+				select {
+				case candidates <- candidate:
+				case <-feedCtx.Done():
+					return false
+				}
+			}
+			return true
+		}
+		if !send(first) {
+			return
+		}
+		for {
+			select {
+			case batch, stillOpen := <-recovered.batches:
+				if !stillOpen {
+					return
+				}
+				if !send(batch) {
+					return
+				}
+			case <-feedCtx.Done():
+				return
+			}
+		}
+	}()
+	return candidates, func() {
+		cancelFeed()
+		feeders.Wait()
+	}
 }
 
 func (d *resolveDialer) raceCandidates(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, admission admissionPolicy) (net.Conn, error) {
@@ -809,9 +874,14 @@ func (d *resolveDialer) raceCandidatesExcluding(ctx context.Context, network str
 // askers now agree by construction rather than by three copies staying in step.
 func (d *resolveDialer) newScheduler(admission admissionPolicy) *candidateScheduler {
 	if owner, found := findFamilyHealthOwner(d.dialer); found {
-		return owner.newDualStackScheduler(d.fallbackDelay, admission)
+		scheduler := owner.newDualStackScheduler(d.fallbackDelay, admission)
+		// The DNS provenance reader is handed over here rather than built into the owner: health is
+		// a per-dialer fact, while "which DNS environment is current" belongs to the router this
+		// wrapper holds.
+		scheduler.dnsGeneration = d.dnsGenerationReader()
+		return scheduler
 	}
-	return &candidateScheduler{fallbackDelay: d.fallbackDelay}
+	return &candidateScheduler{fallbackDelay: d.fallbackDelay, dnsGeneration: d.dnsGenerationReader()}
 }
 
 // familyHealthOwner is implemented by dialers that own long-lived family health.
@@ -1054,7 +1124,7 @@ func strategyName(strategy C.DomainStrategy) string {
 //
 // The wait is bounded by the loser's own attempt, which is itself bounded by raceCtx and the
 // attempt timeout - so this cannot block on a dial that ignores cancellation forever.
-func (d *resolveDialer) raceWithPendingOriginal(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, original <-chan literalDialResult, cancelOriginal context.CancelFunc, admission admissionPolicy) (net.Conn, error) {
+func (d *resolveDialer) raceWithPendingOriginal(ctx context.Context, network string, destination M.Socksaddr, firstBatch []dualStackCandidate, recovered recoveryStream, original <-chan literalDialResult, cancelOriginal context.CancelFunc, admission admissionPolicy) (net.Conn, error) {
 	// raceCtx governs BOTH attempts. Cancelling it stops the loser's dial; waiting on the
 	// WaitGroup afterwards proves the loser is no longer running.
 	raceCtx, cancelRace := context.WithCancel(ctx)
@@ -1062,23 +1132,35 @@ func (d *resolveDialer) raceWithPendingOriginal(ctx context.Context, network str
 
 	recoveredResult := make(chan literalDialResult, 1)
 
+	candidates, stopFeed := joinRecoveredBatches(raceCtx, firstBatch, recovered)
+	// The feeder belongs to this race. It leaves on cancellation, and this defer is the proof: a
+	// winner must not leave a sender parked on a channel the scheduler has stopped reading.
+	defer stopFeed()
+
 	var workers sync.WaitGroup
 
 	// --- attempt 1: the recovered candidates ---
 	//
-	// The original is deliberately NOT merged into this list. It is already running as its own
-	// attempt, owned by the caller, so including it here dialled the same address twice: once as
-	// the caller's attempt and once as this plan's first candidate. That wasted an attempt and,
-	// because the plan is staggered, pushed the healthy recovered family behind a duplicate of the
-	// address that was already failing - roughly doubling how long recovery took.
+	// The original is deliberately NOT part of this plan, and it is not passed as the planner's
+	// original either. It is already running as its own attempt, owned by the caller, so including
+	// it here dialled the same address twice: once as the caller's attempt and once as this plan's
+	// first candidate. That wasted an attempt and, because the plan is staggered, pushed the healthy
+	// recovered family behind a duplicate of the address that was already failing - roughly doubling
+	// how long recovery took.
 	//
-	// planCandidates still puts the original first when one is supplied, and the literal path
-	// relies on that order for the single-attempt case; this race is the one place where the
-	// original must be excluded, because here it has its own owner.
+	// `raceCandidatesExcluding` does NOT exclude the address it is handed; it treats it as the
+	// plan's ORIGINAL and promotes it to the head of its family. Only an empty plan expresses "the
+	// application's endpoint has its own owner and is not a candidate here", which is why the
+	// recovered side now uses the scheduler directly.
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		conn, err := d.raceCandidatesExcluding(raceCtx, network, destination, addresses, netip.Addr{}, admission)
+		scheduler := d.newScheduler(admission)
+		conn, _, err := scheduler.dialWithLateCandidatesAdmitting(raceCtx,
+			planCandidates(nil, netip.Addr{}, admission.strategy), candidates, admission.lateAdmission(),
+			func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
+				return d.dialer.DialContext(attemptCtx, network, M.SocksaddrFrom(address, destination.Port))
+			})
 		recoveredResult <- literalDialResult{conn: conn, err: err}
 	}()
 
@@ -1096,9 +1178,13 @@ func (d *resolveDialer) raceWithPendingOriginal(ctx context.Context, network str
 	// delivered their single error, and the select below blocks forever on two drained
 	// channels. The dial then returned nothing until the caller's own context expired, so a
 	// user whose addresses had all failed in milliseconds still waited out the whole connect
-	// timeout. This is the case dialLiteralWithRecovery's OTHER arm (dialRecoveredOrReport) has
+	// timeout. This is the case dialLiteralWithRecovery's OTHER arm (dialRecoveredFromStream) has
 	// always handled, which is why the defect only appeared when the head-start timer fired
 	// before the original reported.
+	//
+	// The recovered side settles when its source is exhausted: the recovery stream closing with
+	// every launched attempt failed. That is deliberately later than "the addresses known at the
+	// head start all failed", because the other family may still answer.
 	originalSettled := false
 	recoveredSettled := false
 	for {

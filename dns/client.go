@@ -867,7 +867,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				if isStale {
 					cacheSource = QuerySourceCacheStale
 				}
-				return nil, response, exchangeDone, cacheSource, waitedForShared, nil
+				return operation, response, exchangeDone, cacheSource, waitedForShared, nil
 			}
 			// The exact cache missed. Before any upstream work, check whether this NAME
 			// is already known not to exist: RFC 2308 makes NXDOMAIN a statement about
@@ -877,14 +877,14 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			if negative, hit := c.loadNXDomain(cacheKey, question, message.Id); hit {
 				logCachedResponse(c.logger, ctx, negative, int(computeTimeToLive(negative)))
 				operation.release()
-				return nil, negative, exchangeDone, QuerySourceCacheNXDomain, waitedForShared, nil
+				return operation, negative, exchangeDone, QuerySourceCacheNXDomain, waitedForShared, nil
 			}
 			if !loaded {
 				break
 			}
 			if !allowWait {
 				operation.release()
-				return nil, nil, exchangeWait, QuerySourceBlocked, false, nil
+				return operation, nil, exchangeWait, QuerySourceBlocked, false, nil
 			}
 			select {
 			case <-cond:
@@ -1061,6 +1061,19 @@ func (c *Client) commitCacheState(transport adapter.DNSTransport, operation *exc
 }
 
 func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) (*dns.Msg, error) {
+	response, _, _, err := c.exchangeWithSource(ctx, transport, message, options, responseChecker)
+	return response, err
+}
+
+// exchangeWithSource is Exchange plus the DNS environment generation the operation captured when it
+// issued the question.
+//
+// The generation is the operation's own `captureGeneration` value - the same value the cache
+// mutation and the delivery checks use. Reporting it is what lets the streaming router publish a
+// source stamp that belongs to the answer rather than to a read taken around the call: a generation
+// advanced after this capture belongs to the NEXT environment, and the late answer must keep the
+// stamp of the one it was asked on.
+func (c *Client) exchangeWithSource(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) (*dns.Msg, uint64, bool, error) {
 	started := time.Now()
 	if options.Timeout == 0 {
 		options.Timeout = c.timeout
@@ -1070,17 +1083,25 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 	operation, earlyResponse, status, source, shared, err := c.beginExchange(ctx, transport, message, options, responseChecker, true)
 	if status != exchangeReady {
 		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err)
-		return earlyResponse, err
+		// An early response is still produced by THIS operation when one exists: a cache hit or a
+		// cached NXDOMAIN found under the operation's key, which was built from the environment the
+		// operation captured. Reporting that generation keeps a shared waiter's hit stamped like a
+		// direct hit instead of degrading it to unknown; a response synthesized before any operation
+		// had an environment (a blocked transition, a malformed question) still reports unknown.
+		if operation != nil && operation.hasGenerationGuard {
+			return earlyResponse, operation.generation, true, err
+		}
+		return earlyResponse, 0, false, err
 	}
 	defer operation.release()
-	response, err := c.exchangeToTransport(operation.ctx, transport, operation.message)
-	if err != nil {
-		c.emitQueryEvent(started, transport, message, source, false, nil, err)
-		return nil, err
+	response, exchangeErr := c.exchangeToTransport(operation.ctx, transport, operation.message)
+	if exchangeErr != nil {
+		c.emitQueryEvent(started, transport, message, source, false, nil, exchangeErr)
+		return nil, operation.generation, operation.hasGenerationGuard, exchangeErr
 	}
-	response, err = c.finishExchange(transport, operation, response)
-	c.emitQueryEvent(started, transport, message, source, shared, response, err)
-	return response, err
+	response, exchangeErr = c.finishExchange(transport, operation, response)
+	c.emitQueryEvent(started, transport, message, source, shared, response, exchangeErr)
+	return response, operation.generation, operation.hasGenerationGuard, exchangeErr
 }
 
 func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool, callback func(response *dns.Msg, err error)) {
@@ -1120,14 +1141,55 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 	c.exchangeToTransportAsync(operation.ctx, transport, operation.message, finish)
 }
 
-func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
-	domain = FqdnToDomain(domain)
-	dnsName := dns.Fqdn(domain)
+// conflictingFamilyStrategy reports whether a forced single family and another strict family
+// disagree.
+//
+// Preferences and AsIS never conflict: a preference says which family leads, not which families may
+// be asked, so both remain admissible. Only two opposite "only" decisions are a conflict, because
+// there is no family left that both of them permit.
+func conflictingFamilyStrategy(forced C.DomainStrategy, other C.DomainStrategy) bool {
+	switch forced {
+	case C.DomainStrategyIPv4Only:
+		return other == C.DomainStrategyIPv6Only
+	case C.DomainStrategyIPv6Only:
+		return other == C.DomainStrategyIPv4Only
+	default:
+		return false
+	}
+}
+
+// lookupItem is the family decision for one lookup call: which QTYPE to ask, which options to ask it
+// with, or that the item is forbidden by a policy conflict.
+type lookupItem struct {
+	qType     uint16
+	options   adapter.DNSQueryOptions
+	forbidden bool
+	complete  bool
+}
+
+// lookupItemFor resolves the family decision once, so the public Lookup and the sourced variant
+// cannot drift apart.
+func lookupItemFor(options adapter.DNSQueryOptions) lookupItem {
 	var strategy C.DomainStrategy
 	if options.LookupStrategy != C.DomainStrategyAsIS {
 		strategy = options.LookupStrategy
 	} else {
 		strategy = options.Strategy
+	}
+	// A forced family and a rule's family can disagree, and the rule must not be silently discarded.
+	//
+	// The streaming dual-stack caller asks for one family through LookupStrategy, while the legacy
+	// DNS-rule path records the operator's decision in Strategy. This used to decide the QTYPE from
+	// LookupStrategy and then overwrite the Strategy handed to the exchange layer, so a rule saying
+	// `ipv4_only` for the AAAA item took effect nowhere: the AAAA query was still sent upstream, and
+	// the caller believed its family restriction had been honoured.
+	//
+	// The conflict is a configuration decision, not a transport failure. The forbidden item issues
+	// nothing and returns an empty answer with no error: an empty family result is a normal shape
+	// (see adapter.DNSFamilyResult, and QuietEmptyFamilyResult), and turning a rule into a lookup
+	// error would report a policy as a connection failure.
+	if options.LookupStrategy != C.DomainStrategyAsIS && conflictingFamilyStrategy(options.LookupStrategy, options.Strategy) {
+		return lookupItem{forbidden: true, options: options}
 	}
 	lookupOptions := options
 	if options.LookupStrategy != C.DomainStrategyAsIS {
@@ -1135,27 +1197,70 @@ func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, dom
 	}
 	switch strategy {
 	case C.DomainStrategyIPv4Only:
-		return c.lookupToExchange(ctx, transport, dnsName, dns.TypeA, lookupOptions, responseChecker)
+		return lookupItem{qType: dns.TypeA, options: lookupOptions}
 	case C.DomainStrategyIPv6Only:
-		return c.lookupToExchange(ctx, transport, dnsName, dns.TypeAAAA, lookupOptions, responseChecker)
+		return lookupItem{qType: dns.TypeAAAA, options: lookupOptions}
 	}
-	// Lookup is the COMPLETE-lookup contract, and this is deliberate.
-	//
-	// Both families are exchanged concurrently but Lookup waits for BOTH. Callers use it for
-	// routing, rule matching, the candidate list published on metadata, and diagnostics, and
-	// every one of them expects the whole address set. Returning as soon as one family
-	// answered would hand routing a half-populated candidate list, which is a correctness
-	// change disguised as a latency improvement.
-	//
-	// A family that answers slowly therefore delays the result. That is the intended
-	// trade-off here, and it is why latency-sensitive connection setup does NOT go through
-	// this function: a caller that wants to start connecting before both families have
-	// answered needs a different entry point, not a partial answer from this one.
-	//
-	// Concretely: a resolver answering A in 10ms and AAAA in 3s makes Lookup take about 3s.
-	// That is correct for routing. It would be wrong to shorten it by dropping the second
-	// family, because DestinationAddresses and the rule matcher would then see only half the
-	// addresses the resolver returned.
+	return lookupItem{complete: true, options: lookupOptions}
+}
+
+func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
+	addresses, _, _, err := c.lookupWithSource(ctx, transport, domain, options, responseChecker)
+	return addresses, err
+}
+
+// lookupWithSource is Lookup plus the DNS environment generation the answer was actually produced
+// under.
+//
+// # Why the source has to come from the producing operation
+//
+// A caller that wants to order a candidate against the current environment needs the generation the
+// ANSWER belongs to, not a value read around the call. Reading it in the caller races the very thing
+// it is trying to observe: the transport's own hooks (Type, Tag) run between a caller-side read and
+// the exchange, and a generation advanced there made the answer's stamp older than its source - the
+// candidate was then demoted as if it had come from the environment the flow had left.
+//
+// So the client reports what its operation captured at issue: exchangeOperation.generation, or, for
+// a cache hit, the generation the hit is served under (the cache key includes the environment, so a
+// hit is only ever served for the environment it is delivered in).
+//
+// Unknown is a first-class answer. A client without a generation callback, a complete lookup that
+// combines two families, and a locally synthesized answer all report unknown, and the consumer must
+// treat unknown as current - the same fail-open polarity the candidate policy documents.
+func (c *Client) lookupWithSource(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, uint64, bool, error) {
+	domain = FqdnToDomain(domain)
+	dnsName := dns.Fqdn(domain)
+	item := lookupItemFor(options)
+	switch {
+	case item.forbidden:
+		return nil, 0, false, nil
+	case item.complete:
+		// A complete lookup is ONE claim about a name assembled from two exchanges. There is no
+		// single producing operation to name, so the source is unknown rather than fabricated.
+		addresses, err := c.lookupComplete(ctx, transport, dnsName, item.options, responseChecker)
+		return addresses, 0, false, err
+	default:
+		return c.lookupToExchangeWithSource(ctx, transport, dnsName, item.qType, item.options, responseChecker)
+	}
+}
+
+// lookupComplete is the COMPLETE-lookup contract, and this is deliberate.
+//
+// Both families are exchanged concurrently but it waits for BOTH. Callers use it for routing, rule
+// matching, the candidate list published on metadata, and diagnostics, and every one of them
+// expects the whole address set. Returning as soon as one family answered would hand routing a
+// half-populated candidate list, which is a correctness change disguised as a latency improvement.
+//
+// A family that answers slowly therefore delays the result. That is the intended trade-off here, and
+// it is why latency-sensitive connection setup does NOT go through this function: a caller that
+// wants to start connecting before both families have answered needs a different entry point, not a
+// partial answer from this one.
+//
+// Concretely: a resolver answering A in 10ms and AAAA in 3s makes this take about 3s. That is
+// correct for routing. It would be wrong to shorten it by dropping the second family, because
+// DestinationAddresses and the rule matcher would then see only half the addresses the resolver
+// returned.
+func (c *Client) lookupComplete(ctx context.Context, transport adapter.DNSTransport, dnsName string, lookupOptions adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
 	// The epoch this lookup belongs to, captured BEFORE either family is dispatched.
 	//
 	// # Why a complete lookup needs its own epoch
@@ -1201,7 +1306,7 @@ func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, dom
 			"; the address families belong to different networks")
 	}
 
-	return sortAddresses(response4, response6, strategy), nil
+	return sortAddresses(response4, response6, lookupOptions.Strategy), nil
 }
 
 // collectFamiliesComplete runs both family exchanges and waits for BOTH.
@@ -1226,7 +1331,9 @@ func (c *Client) collectFamiliesComplete(
 
 	exchange := func(qType uint16, ipv6 bool) {
 		defer waitGroup.Done()
-		addresses, err := c.lookupToExchange(ctx, transport, dnsName, qType, options, responseChecker)
+		// The complete lookup assembles two families and reports the combined set, so the per-family
+		// source is discarded here on purpose; lookupWithSource reports unknown for the combination.
+		addresses, _, _, err := c.lookupToExchangeWithSource(ctx, transport, dnsName, qType, options, responseChecker)
 		access.Lock()
 		if ipv6 {
 			response6 = addresses
@@ -1354,7 +1461,18 @@ func (c *Client) storeCache(key dnsCacheKey, message *dns.Msg, timeToLive uint32
 	}
 }
 
-func (c *Client) lookupToExchange(ctx context.Context, transport adapter.DNSTransport, name string, qType uint16, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
+// lookupToExchangeWithSource is lookupToExchange plus the DNS environment generation the answer was
+// produced under.
+//
+// The two paths name different sources, and both are real:
+//
+//	a cache hit      the generation the hit is served under. The cache key includes the network
+//	                 environment, so a hit is only ever served for the environment it is delivered
+//	                 in; the entry is not a claim about an older network.
+//	a fresh exchange the operation's own capture, taken when the question was issued. This is the
+//	                 only value that stays correct for an answer that arrives after the environment
+//	                 moved: a late answer keeps the stamp of the environment it was asked on.
+func (c *Client) lookupToExchangeWithSource(ctx context.Context, transport adapter.DNSTransport, name string, qType uint16, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, uint64, bool, error) {
 	question := dns.Question{
 		Name:   name,
 		Qtype:  qType,
@@ -1375,24 +1493,33 @@ func (c *Client) lookupToExchange(ctx context.Context, transport adapter.DNSTran
 	// loadResponse is also used by internal maintenance paths whose contract differs: refusing there
 	// would change behaviour those callers depend on.
 	if !c.networkTransitionStable() {
-		return nil, errNetworkTransitioning
+		return nil, 0, false, errNetworkTransitioning
 	}
 
 	disableCache := c.disableCache || options.DisableCache
 	if !disableCache {
 		cachedAddresses, err := c.questionCache(ctx, transport, &message, options, responseChecker)
 		if !errors.Is(err, ErrNotCached) {
-			return cachedAddresses, err
+			generation, known := c.currentGeneration()
+			return cachedAddresses, generation, known, err
 		}
 	}
-	response, err := c.Exchange(ctx, transport, &message, options, responseChecker)
+	response, generation, known, err := c.exchangeWithSource(ctx, transport, &message, options, responseChecker)
 	if err != nil {
-		return nil, err
+		return nil, generation, known, err
 	}
 	if response.Rcode != dns.RcodeSuccess {
-		return nil, RcodeError(response.Rcode)
+		return nil, generation, known, RcodeError(response.Rcode)
 	}
-	return MessageToAddresses(response), nil
+	return MessageToAddresses(response), generation, known, nil
+}
+
+// currentGeneration reports the environment generation in force right now, if the client can tell.
+func (c *Client) currentGeneration() (uint64, bool) {
+	if c.networkGeneration == nil {
+		return 0, false
+	}
+	return c.networkGeneration(), true
 }
 
 func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {

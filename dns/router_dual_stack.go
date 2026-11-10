@@ -48,17 +48,42 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 	// A strict strategy is a single-family request, reported once. The check uses the EFFECTIVE
 	// strategy so a router default of ipv4_only or ipv6_only also issues a single query, rather
 	// than querying a family it has been configured never to use.
+	//
+	// The family is forced into `LookupStrategy` AND `Strategy`, not only into the branch.
+	//
+	// Without `Strategy`, the lookup below carries whatever Strategy the caller happened to pass
+	// (often AsIS) and two things can go wrong. A legacy rule could rewrite the QTYPE, so a rule
+	// saying ipv6_only under a caller-forced ipv4_only would query AAAA and then publish the answer
+	// under its own ipv4 label - contradicting both the caller's restriction and the result's
+	// family. And the router's own DEFAULT strategy would be filled in when Strategy is AsIS, so a
+	// router configured `ipv6_only` would turn a caller-forced `ipv4_only` into a conflict.
+	//
+	// Setting both makes the branch internally consistent - the family it forces is the family it
+	// asks for - and leaves the legacy rule as the only writer that can still disagree, which is
+	// exactly the conflict Client.Lookup reports as a forbidden item.
+	//
+	// The published source stamp comes from the operation that produced the answer, not from a read
+	// taken here: a generation advanced during rule matching or transport selection would otherwise
+	// publish an answer under the environment it was NOT asked on.
 	switch effectiveStrategy {
 	case C.DomainStrategyIPv4Only:
-		addresses, err := r.Lookup(ctx, domain, options)
-		publish(adapter.DNSFamilyResult{IPv6: false, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy})
+		familyOptions := options
+		familyOptions.LookupStrategy = C.DomainStrategyIPv4Only
+		familyOptions.Strategy = C.DomainStrategyIPv4Only
+		addresses, generation, hasGeneration, err := r.lookupWithSource(ctx, domain, familyOptions)
+		publish(adapter.DNSFamilyResult{IPv6: false, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
+			SourceGeneration: generation, HasSourceGeneration: hasGeneration})
 		if err != nil && len(addresses) == 0 {
 			return err
 		}
 		return nil
 	case C.DomainStrategyIPv6Only:
-		addresses, err := r.Lookup(ctx, domain, options)
-		publish(adapter.DNSFamilyResult{IPv6: true, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy})
+		familyOptions := options
+		familyOptions.LookupStrategy = C.DomainStrategyIPv6Only
+		familyOptions.Strategy = C.DomainStrategyIPv6Only
+		addresses, generation, hasGeneration, err := r.lookupWithSource(ctx, domain, familyOptions)
+		publish(adapter.DNSFamilyResult{IPv6: true, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
+			SourceGeneration: generation, HasSourceGeneration: hasGeneration})
 		if err != nil && len(addresses) == 0 {
 			return err
 		}
@@ -87,7 +112,7 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 		// name published as only A or only AAAA.
 		familyOptions.QuietEmptyFamilyResult = true
 
-		addresses, err := r.Lookup(ctx, domain, familyOptions)
+		addresses, generation, hasGeneration, err := r.lookupWithSource(ctx, domain, familyOptions)
 
 		access.Lock()
 		if err != nil {
@@ -105,6 +130,9 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 			// Both families report the same effective strategy, so a consumer never has to
 			// decide which result to believe.
 			EffectiveStrategy: effectiveStrategy,
+			// The generation the answer was produced under, from the operation that produced it.
+			SourceGeneration:    generation,
+			HasSourceGeneration: hasGeneration,
 		})
 	}
 
