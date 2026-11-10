@@ -197,13 +197,37 @@ func TestAgentFBurstMustNotCreateAWorkerPerFailure(t *testing.T) {
 	close(start)
 	waitGroup.Wait()
 
-	// The probe is still held, so every worker the burst created is alive and countable.
-	peak := agentFPeakGoroutines(300 * time.Millisecond)
-
 	// The instrument must be armed, or the bound below is vacuous.
 	require.Eventually(t, func() bool { return node.probes.Load() >= 1 },
 		3*time.Second, 5*time.Millisecond,
 		"the burst must actually cause a probe, or nothing is in flight to be counted")
+
+	// The probe is still held, so every worker the burst created is alive and countable.
+	//
+	// # Why this counts a FRAME and not the package census, which is a correction
+	//
+	// The one legitimate round creates a probe batch for itself, and that batch carries a FIXED
+	// worker pool for as long as the round is in flight. MEASURED on this tree: those goroutines
+	// show up as `(*probeBatch).worker` / `newProbeBatch.gowrap1` and move the package census
+	// between 3 and 23 across otherwise identical runs (the same coalesced burst, `recheckRuns` 1
+	// or 2, `recheckWorker` true). They belong to the round, not to the failures, so no tolerance
+	// over the package census can separate "one coalesced worker" from "one coalesced worker plus
+	// its probe pool" - and a bound large enough to cover the pool stops discriminating.
+	//
+	// The coalesced worker is therefore identified the way the control above identifies the
+	// workers IT injects: by its own frame. While the probe is held the worker is blocked inside
+	// the round, so that frame is in its stack; the per-failure storm this test exists to catch
+	// would put ~100 of them there.
+	const drainFrame = "(*URLTestGroup).drainHealthRechecks"
+	peak := 0
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if current := agentFCountFrames(drainFrame); current > peak {
+			peak = current
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	census := agentFGroupGoroutines()
 
 	close(release)
 	require.Eventually(t, func() bool {
@@ -212,16 +236,18 @@ func TestAgentFBurstMustNotCreateAWorkerPerFailure(t *testing.T) {
 		return !group.recheckWorker
 	}, 3*time.Second, 5*time.Millisecond, "the worker must finish so the count is final")
 
-	// The bound: one coalesced worker for the whole burst, plus the tolerance the census needs for the
-	// harness's own frames. One worker per failure would be ~100.
-	const tolerance = 3
-	t.Logf("MEASURED %d concurrent recheck requests: package goroutines %d -> peak %d (tolerance %d), "+
-		"rounds that ran %d", burst, baseline, peak, tolerance, group.recheckRuns.Load())
+	// The bound: one coalesced worker for the whole burst. A replacement may exist for a few
+	// instructions while the previous one unwinds, so the bound is two; a per-failure worker would
+	// be ~100.
+	const bound = 2
+	t.Logf("MEASURED %d concurrent recheck requests: %s workers peak %d (bound %d), package "+
+		"goroutines %d at the peak (baseline %d), rounds that ran %d",
+		burst, drainFrame, peak, bound, census, baseline, group.recheckRuns.Load())
 
-	require.LessOrEqual(t, peak, baseline+tolerance,
-		"%d concurrent traffic failures produced %d goroutines over a baseline of %d: the property is "+
-			"that the burst coalesces into ONE worker, and a per-failure goroutine is exactly the storm "+
-			"a health check exists to avoid", burst, peak, baseline)
+	require.LessOrEqual(t, peak, bound,
+		"%d concurrent traffic failures left %d health-recheck workers alive: the property is "+
+			"that the burst coalesces into ONE worker, and a per-failure goroutine is exactly the "+
+			"storm a health check exists to avoid", burst, peak)
 
 	// Leave the package as it was found: a census test that walks away from 100 workers would poison
 	// every later test in this package that counts anything.
