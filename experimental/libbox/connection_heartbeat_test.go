@@ -49,6 +49,13 @@ func (s *heartbeatDaemon) SubscribeConnections(_ *daemon.SubscribeConnectionsReq
 		}); err != nil {
 			return err
 		}
+		// After the repair, the stream is healthy: a normal increment must apply.
+		if err := stream.Send(&daemon.ConnectionEvents{
+			InstanceId: "i1", Sequence: 2,
+			Events: []*daemon.ConnectionEvent{newEvent("after")},
+		}); err != nil {
+			return err
+		}
 		<-stream.Context().Done()
 		return nil
 	}
@@ -95,8 +102,11 @@ func TestALossHeartbeatTriggersAResync(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		activeIDs, _ := rowsByState(connections, ConnectionStateActive)
-		return len(activeIDs) == 1 && activeIDs[0] == "current"
-	}, 10*time.Second, 5*time.Millisecond, "the heartbeat must lead to the repaired snapshot")
+		return len(activeIDs) == 2
+	}, 10*time.Second, 5*time.Millisecond, "the heartbeat must lead to the repaired snapshot and healthy increments")
+	activeIDs, _ := rowsByState(connections, ConnectionStateActive)
+	require.ElementsMatch(t, []string{"current", "after"}, activeIDs,
+		"the repaired snapshot is the authority and the following increment applies")
 	require.Equal(t, 2, daemonServer.made(), "exactly one resubscription")
 
 	var repaired bool
@@ -107,6 +117,11 @@ func TestALossHeartbeatTriggersAResync(t *testing.T) {
 	}
 	require.True(t, repaired, "the repair snapshot must be marked")
 	require.False(t, connections.NeedsResync())
+
+	// Cancellation is final: no new subscription is started after Disconnect.
+	require.NoError(t, client.Disconnect())
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, 2, daemonServer.made(), "cancellation must not start another subscription")
 }
 
 func TestACleanHeartbeatDoesNotResubscribe(t *testing.T) {

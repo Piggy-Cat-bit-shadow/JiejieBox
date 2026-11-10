@@ -158,6 +158,7 @@ func TestTheFullChainRecoversFromASilentTailOverRealGRPC(t *testing.T) {
 
 	connections := NewConnections()
 	handler := newPausingHandler(connections)
+	startedAt := time.Now()
 	clientOptions := &CommandClientOptions{}
 	clientOptions.AddCommand(CommandConnections)
 	client := NewCommandClient(handler, clientOptions)
@@ -206,11 +207,12 @@ func TestTheFullChainRecoversFromASilentTailOverRealGRPC(t *testing.T) {
 		require.Contains(t, retainedIDs, id, "every consumer row must exist in the retained window")
 	}
 
-	var repaired bool
+	repairs := 0
 	for _, batch := range handler.snapshot() {
 		if batch.Resynced {
-			repaired = true
+			repairs++
 		}
 	}
-	require.True(t, repaired, "the recovery snapshot must be delivered with the resync marker")
+	t.Logf("repairs=%d elapsed=%s", repairs, time.Since(startedAt).Round(time.Millisecond))
+	require.Equal(t, 1, repairs, "one overflow must be repaired exactly once")
 }
