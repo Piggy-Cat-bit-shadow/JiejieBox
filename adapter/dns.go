@@ -39,6 +39,27 @@ type DNSFamilyResult struct {
 	// AsIS is still reported as AsIS when nothing overrides it: the caller then keeps the
 	// existing project behaviour rather than inventing a third interpretation.
 	EffectiveStrategy C.DomainStrategy
+	// SourceGeneration is the DNS environment generation this answer was requested under, and
+	// HasSourceGeneration reports whether the producer could tell.
+	//
+	// # Why the connection layer needs it
+	//
+	// An answer may legitimately be delivered after the DNS environment changed - that delivery
+	// contract is deliberate and test-pinned, because the answer was true when it was asked. What
+	// must not happen is an address resolved for the OLD environment being dialled as if it
+	// belonged to the new one: a split-horizon name whose A record moved from a LAN address to a
+	// tunnel address would send the new socket to the address the previous environment selected.
+	//
+	// The generation is read by the producer at ISSUE time, which is the same instant the DNS
+	// client stamps the exchange with. A cache hit is stamped with the generation it is served
+	// under, which is correct: the hit is answered from the current key namespace.
+	//
+	// Zero with HasSourceGeneration false means "unknown", and unknown must be ALLOWED. Every
+	// third-party implementation of the optional streaming interface predates this field, and a
+	// conservative unknown-as-stale rule would turn every one of them into a flow that cannot
+	// dial.
+	SourceGeneration    uint64
+	HasSourceGeneration bool
 }
 
 // DNSDualStackRouter is an OPTIONAL capability for resolving both families incrementally.
@@ -83,6 +104,22 @@ type DNSRouter interface {
 // DNSRouter so existing implementations keep compiling.
 type DNSStrategyResolver interface {
 	ResolveStrategy(options DNSQueryOptions) C.DomainStrategy
+}
+
+// DNSGenerationReporter is implemented by DNS routers that can report the DNS environment generation
+// they are currently serving.
+//
+// # Why optional, and why it is separate from the answer's own stamp
+//
+// An answer says which environment it was asked under (DNSFamilyResult.SourceGeneration). The
+// consumer that races it also needs "now", to tell a current answer from one that outlived its
+// environment. A router that cannot answer leaves the comparison unavailable, which degrades to the
+// previous behaviour - the candidate is dialled - rather than to a guess.
+//
+// It is a separate interface rather than a DNSRouter method for the same reason DNSStrategyResolver
+// is: adding to DNSRouter would force every implementation and every mock to provide it.
+type DNSGenerationReporter interface {
+	DNSGeneration() uint64
 }
 
 type DNSClient interface {

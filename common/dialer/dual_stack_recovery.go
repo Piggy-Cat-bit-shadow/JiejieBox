@@ -191,7 +191,7 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 		// answered. A cooperative resolver exits as soon as `streamCtx` is cancelled, which is what
 		// releases its send.
 		defer close(inner)
-		deliver := func(addresses []netip.Addr) {
+		deliver := func(addresses []netip.Addr, result adapter.DNSFamilyResult) bool {
 			// "Usable" has to mean ADMISSIBLE, and it has to be decided here rather than one layer
 			// up: the family that passes admission is a candidate for the race, while filtering it
 			// afterwards would let a refused family consume the whole answer and leave the admitted
@@ -205,18 +205,22 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 				}
 				seen[canonical] = struct{}{}
 				batch = append(batch, dualStackCandidate{
-					address: canonical,
-					family:  classifyAddress(canonical),
+					address:          canonical,
+					family:           classifyAddress(canonical),
+					sourceGeneration: result.SourceGeneration,
+					sourceKnown:      result.HasSourceGeneration,
 				})
 			}
 			if len(batch) == 0 {
 				// Nothing NEW. The source stays open: the other family may still answer, and a
 				// duplicate address must never be the reason a usable answer is abandoned.
-				return
+				return true
 			}
 			select {
 			case inner <- batch:
+				return true
 			case <-streamCtx.Done():
+				return false
 			}
 		}
 
@@ -225,7 +229,7 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 				if len(result.Addresses) == 0 {
 					return
 				}
-				deliver(result.Addresses)
+				deliver(result.Addresses, result)
 			})
 			return
 		}
@@ -235,7 +239,9 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 			// would otherwise have been attempted into an error the user never asked for.
 			return
 		}
-		deliver(addresses)
+		// A complete Lookup carries no per-answer stamp: it is one observation of the name, so it
+		// is treated as current rather than given a fabricated provenance.
+		deliver(addresses, adapter.DNSFamilyResult{})
 	}()
 
 	return recoveryStream{
@@ -283,6 +289,40 @@ func candidateAddresses(batch []dualStackCandidate) []netip.Addr {
 		addresses[index] = candidate.address
 	}
 	return addresses
+}
+
+// supersededGeneration reports whether a family answer was requested under a DNS environment that is
+// no longer in force.
+//
+// # Polarity: order, never refuse
+//
+// Unknown provenance is never superseded. Every implementation that predates
+// DNSFamilyResult.SourceGeneration reports no generation, and a router that cannot report "now"
+// leaves the comparison unavailable; both keep their previous behaviour, which is to dial. The
+// verdict only ORDERS a candidate behind current ones - it never removes one, and when nothing
+// current exists the superseded answer is still offered. A DNS environment flap must therefore cost
+// ordering, never a connection.
+//
+// # Why the answer's stamp and the router's "now" are two different values
+//
+// The stamp is read when the query is issued; "now" is read when the answer is consumed. They are
+// equal for a current answer and differ for one that outlived the environment it was asked on -
+// which is exactly the discrimination the DNS client's delivery contract makes necessary: an
+// in-flight answer IS delivered after the environment changed, by design.
+//
+// # Why this is a reader rather than a captured value
+//
+// The scheduler asks it at LAUNCH time, which is after the answer arrived: the environment can move
+// between the query and the attempt, and the ordering decision has to use the value in force when
+// the socket is about to be created.
+func (d *resolveDialer) dnsGenerationReader() func() (uint64, bool) {
+	reporter, ok := d.router.(adapter.DNSGenerationReporter)
+	if !ok || reporter == nil {
+		return nil
+	}
+	return func() (uint64, bool) {
+		return reporter.DNSGeneration(), true
+	}
 }
 
 // admittedRecoveredCandidates drops the recovered addresses this flow may not dial, applying both terms of

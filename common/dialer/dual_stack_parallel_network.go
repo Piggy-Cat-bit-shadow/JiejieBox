@@ -450,9 +450,14 @@ func (d *resolveParallelNetworkDialer) attemptDialer() ParallelInterfaceDialer {
 // now goes through that lookup instead of past it.
 func (d *resolveParallelNetworkDialer) schedulerFor(fallbackDelay time.Duration, admission admissionPolicy) *candidateScheduler {
 	if owner, isOwner := d.attemptDialer().(familyHealthOwner); isOwner {
-		return owner.newDualStackScheduler(d.fallbackDelayOrDefaultFor(fallbackDelay), admission)
+		scheduler := owner.newDualStackScheduler(d.fallbackDelayOrDefaultFor(fallbackDelay), admission)
+		scheduler.dnsGeneration = d.dnsGenerationReader()
+		return scheduler
 	}
-	return &candidateScheduler{fallbackDelay: d.fallbackDelayOrDefaultFor(fallbackDelay)}
+	return &candidateScheduler{
+		fallbackDelay: d.fallbackDelayOrDefaultFor(fallbackDelay),
+		dnsGeneration: d.dnsGenerationReader(),
+	}
 }
 
 // fallbackDelayOrDefaultFor resolves the fallback interval for THIS call: the caller's value when it

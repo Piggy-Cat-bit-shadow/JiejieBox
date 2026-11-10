@@ -58,8 +58,10 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 	case C.DomainStrategyIPv4Only:
 		familyOptions := options
 		familyOptions.LookupStrategy = C.DomainStrategyIPv4Only
+		generation := r.dnsGeneration()
 		addresses, err := r.Lookup(ctx, domain, familyOptions)
-		publish(adapter.DNSFamilyResult{IPv6: false, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy})
+		publish(adapter.DNSFamilyResult{IPv6: false, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
+			SourceGeneration: generation, HasSourceGeneration: true})
 		if err != nil && len(addresses) == 0 {
 			return err
 		}
@@ -67,8 +69,10 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 	case C.DomainStrategyIPv6Only:
 		familyOptions := options
 		familyOptions.LookupStrategy = C.DomainStrategyIPv6Only
+		generation := r.dnsGeneration()
 		addresses, err := r.Lookup(ctx, domain, familyOptions)
-		publish(adapter.DNSFamilyResult{IPv6: true, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy})
+		publish(adapter.DNSFamilyResult{IPv6: true, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
+			SourceGeneration: generation, HasSourceGeneration: true})
 		if err != nil && len(addresses) == 0 {
 			return err
 		}
@@ -97,6 +101,12 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 		// name published as only A or only AAAA.
 		familyOptions.QuietEmptyFamilyResult = true
 
+		// The environment this item is ASKED under, read immediately before the query - the same
+		// instant the DNS client stamps the exchange with (prepareExchange). An answer may be
+		// delivered after the environment moved, and the connection layer needs to know which
+		// environment's address it is holding before it dials it.
+		generation := r.dnsGeneration()
+
 		addresses, err := r.Lookup(ctx, domain, familyOptions)
 
 		access.Lock()
@@ -114,7 +124,9 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 			Err:       err,
 			// Both families report the same effective strategy, so a consumer never has to
 			// decide which result to believe.
-			EffectiveStrategy: effectiveStrategy,
+			EffectiveStrategy:   effectiveStrategy,
+			SourceGeneration:    generation,
+			HasSourceGeneration: true,
 		})
 	}
 

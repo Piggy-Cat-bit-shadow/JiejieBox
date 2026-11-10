@@ -91,6 +91,11 @@ type dualStackCandidate struct {
 	// the strategy expresses no preference, and so diagnostics can say where a candidate
 	// came from.
 	original bool
+	// sourceGeneration is the DNS environment generation the answer was requested under, and
+	// sourceKnown reports whether the producer could tell. Unknown is never stale: a producer that
+	// predates the field keeps its previous behaviour exactly.
+	sourceGeneration uint64
+	sourceKnown      bool
 }
 
 // candidatePlan is the ordered result of planning.
