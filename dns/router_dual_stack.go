@@ -49,15 +49,24 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 	// strategy so a router default of ipv4_only or ipv6_only also issues a single query, rather
 	// than querying a family it has been configured never to use.
 	//
-	// The family is forced into `LookupStrategy`, not only into the branch: without it the lookup
-	// below carries whatever Strategy the caller happened to pass (often AsIS) and lets a legacy
-	// rule rewrite the QTYPE, so a rule saying ipv6_only under a caller-forced ipv4_only would make
-	// this branch query AAAA and then publish the answer under its own ipv4 label - contradicting
-	// both the caller's restriction and the result's family.
+	// The family is forced into `LookupStrategy` AND `Strategy`, not only into the branch.
+	//
+	// Without `Strategy`, the lookup below carries whatever Strategy the caller happened to pass
+	// (often AsIS) and two things can go wrong. A legacy rule could rewrite the QTYPE, so a rule
+	// saying ipv6_only under a caller-forced ipv4_only would query AAAA and then publish the answer
+	// under its own ipv4 label - contradicting both the caller's restriction and the result's
+	// family. And with an explicit transport the router's own DEFAULT strategy is filled in when
+	// Strategy is AsIS, so a router configured `ipv6_only` would turn a caller-forced `ipv4_only`
+	// into a conflict that issues nothing at all.
+	//
+	// Setting both makes the branch internally consistent - the family it forces is the family it
+	// asks for - and leaves the legacy rule as the only writer that can still disagree, which is
+	// exactly the conflict Client.Lookup now reports as a forbidden item.
 	switch effectiveStrategy {
 	case C.DomainStrategyIPv4Only:
 		familyOptions := options
 		familyOptions.LookupStrategy = C.DomainStrategyIPv4Only
+		familyOptions.Strategy = C.DomainStrategyIPv4Only
 		generation := r.dnsGeneration()
 		addresses, err := r.Lookup(ctx, domain, familyOptions)
 		publish(adapter.DNSFamilyResult{IPv6: false, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
@@ -69,6 +78,7 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 	case C.DomainStrategyIPv6Only:
 		familyOptions := options
 		familyOptions.LookupStrategy = C.DomainStrategyIPv6Only
+		familyOptions.Strategy = C.DomainStrategyIPv6Only
 		generation := r.dnsGeneration()
 		addresses, err := r.Lookup(ctx, domain, familyOptions)
 		publish(adapter.DNSFamilyResult{IPv6: true, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
