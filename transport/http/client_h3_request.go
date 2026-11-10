@@ -363,6 +363,9 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 			// RFC 9114 H3_REQUEST_REJECTED: the peer says it did not process the request, so a retry on
 			// another version cannot duplicate an effect. That is the one refusal that is provably safe to
 			// fall back from, and it is not a verdict about the transport either.
+			if testHookAfterRejectClassification != nil {
+				testHookAfterRejectClassification()
+			}
 			return nil, nil, E.Cause(errHTTP3RequestRejected, cause)
 		}
 		if peerResponded(cause) {
@@ -441,6 +444,11 @@ func (c *Client) RoundTripExistingHTTP3(ctx context.Context, request *http.Reque
 	}
 	return roundTripper.RoundTripExistingHTTP3(ctx, request)
 }
+
+// testHookAfterRejectClassification runs after a peer rejection has been classified and before it
+// is returned. Tests use it to make the setup window expire exactly in that instant; nil in
+// production.
+var testHookAfterRejectClassification func()
 
 // isHTTP3RequestRejected reports whether the peer explicitly refused to process the request.
 //

@@ -78,3 +78,35 @@ func TestConnectRequestRejectedByThePeerFallsBack(t *testing.T) {
 		"the peer saw exactly one attempt: no hidden second CONNECT")
 	require.Zero(t, client.http3Broken.Load(), "a rejection is not a transport verdict")
 }
+
+// TestExplicitRejectKeepsItsVerdictWhenTheWindowExpires forces the ordering the review reproduced:
+// the rejection is classified, then the setup window expires before the classification is returned.
+// The outer layering must keep the rejection (fallback, no verdict), not rewrite it to a deadline.
+func TestExplicitRejectKeepsItsVerdictWhenTheWindowExpires(t *testing.T) {
+	freezeTunnelWindow(t, 200*time.Millisecond)
+	address, requestStreams := startRequestRejectingH3Server(t)
+	tcp := &recordingDialer{err: E.New("tcp fallback reached")}
+	client := newNoExtendedConnectClient(t, address, tcp)
+	t.Cleanup(func() { _ = client.Close() })
+
+	hookEntered := make(chan struct{})
+	release := make(chan struct{})
+	testHookAfterRejectClassification = func() {
+		close(hookEntered)
+		<-release
+	}
+	t.Cleanup(func() { testHookAfterRejectClassification = nil })
+	go func() {
+		<-hookEntered
+		// Let the 200 ms setup window expire while the classification is held.
+		time.Sleep(300 * time.Millisecond)
+		close(release)
+	}()
+
+	_, _, _, err := client.openTunnel(context.Background(), tunnelRequestForTest())
+	require.ErrorContains(t, err, "tcp fallback reached",
+		"a classified rejection must still reach the fallback after the window expires")
+	require.EqualValues(t, 1, requestStreams.Load())
+	require.Zero(t, client.http3Broken.Load(),
+		"the setup window expiring after a peer rejection must not arm the H3 backoff")
+}
