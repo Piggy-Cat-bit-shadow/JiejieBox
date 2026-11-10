@@ -86,7 +86,7 @@ type StartedServiceClient interface {
 	// providers. It is additive: an older client simply never calls it.
 	RefreshRemoteProviders(ctx context.Context, in *RefreshRemoteProvidersRequest, opts ...grpc.CallOption) (*RemoteProviderRefreshResponse, error)
 	URLTest(ctx context.Context, in *URLTestRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	SelectOutbound(ctx context.Context, in *SelectOutboundRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	SelectOutbound(ctx context.Context, in *SelectOutboundRequest, opts ...grpc.CallOption) (*SelectOutboundResponse, error)
 	SetGroupExpand(ctx context.Context, in *SetGroupExpandRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SubscribeConnections(ctx context.Context, in *SubscribeConnectionsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ConnectionEvents], error)
 	CloseConnection(ctx context.Context, in *CloseConnectionRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -297,9 +297,9 @@ func (c *startedServiceClient) URLTest(ctx context.Context, in *URLTestRequest, 
 	return out, nil
 }
 
-func (c *startedServiceClient) SelectOutbound(ctx context.Context, in *SelectOutboundRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *startedServiceClient) SelectOutbound(ctx context.Context, in *SelectOutboundRequest, opts ...grpc.CallOption) (*SelectOutboundResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
+	out := new(SelectOutboundResponse)
 	err := c.cc.Invoke(ctx, StartedService_SelectOutbound_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -772,7 +772,7 @@ type StartedServiceServer interface {
 	// providers. It is additive: an older client simply never calls it.
 	RefreshRemoteProviders(context.Context, *RefreshRemoteProvidersRequest) (*RemoteProviderRefreshResponse, error)
 	URLTest(context.Context, *URLTestRequest) (*emptypb.Empty, error)
-	SelectOutbound(context.Context, *SelectOutboundRequest) (*emptypb.Empty, error)
+	SelectOutbound(context.Context, *SelectOutboundRequest) (*SelectOutboundResponse, error)
 	SetGroupExpand(context.Context, *SetGroupExpandRequest) (*emptypb.Empty, error)
 	SubscribeConnections(*SubscribeConnectionsRequest, grpc.ServerStreamingServer[ConnectionEvents]) error
 	CloseConnection(context.Context, *CloseConnectionRequest) (*emptypb.Empty, error)
@@ -854,7 +854,7 @@ func (UnimplementedStartedServiceServer) RefreshRemoteProviders(context.Context,
 func (UnimplementedStartedServiceServer) URLTest(context.Context, *URLTestRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method URLTest not implemented")
 }
-func (UnimplementedStartedServiceServer) SelectOutbound(context.Context, *SelectOutboundRequest) (*emptypb.Empty, error) {
+func (UnimplementedStartedServiceServer) SelectOutbound(context.Context, *SelectOutboundRequest) (*SelectOutboundResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SelectOutbound not implemented")
 }
 func (UnimplementedStartedServiceServer) SetGroupExpand(context.Context, *SetGroupExpandRequest) (*emptypb.Empty, error) {

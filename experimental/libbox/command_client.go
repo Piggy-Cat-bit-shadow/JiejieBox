@@ -619,7 +619,7 @@ func (c *CommandClient) handleOutboundsStream(client daemon.StartedServiceClient
 }
 
 func (c *CommandClient) SelectOutbound(groupTag string, outboundTag string) error {
-	_, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*emptypb.Empty, error) {
+	_, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.SelectOutboundResponse, error) {
 		return client.SelectOutbound(ctx, &daemon.SelectOutboundRequest{
 			GroupTag:    groupTag,
 			OutboundTag: outboundTag,

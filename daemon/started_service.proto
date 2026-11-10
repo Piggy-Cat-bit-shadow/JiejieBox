@@ -23,7 +23,7 @@ service StartedService {
   rpc RefreshRemoteProviders(RefreshRemoteProvidersRequest) returns(RemoteProviderRefreshResponse) {}
 
   rpc URLTest(URLTestRequest) returns(google.protobuf.Empty) {}
-  rpc SelectOutbound(SelectOutboundRequest) returns (google.protobuf.Empty) {}
+  rpc SelectOutbound(SelectOutboundRequest) returns (SelectOutboundResponse) {}
   rpc SetGroupExpand(SetGroupExpandRequest) returns (google.protobuf.Empty) {}
 
   rpc SubscribeConnections(SubscribeConnectionsRequest) returns(stream ConnectionEvents) {}
@@ -157,6 +157,26 @@ message URLTestRequest {
 message SelectOutboundRequest {
   string groupTag = 1;
   string outboundTag = 2;
+  // The caller's identity for THIS attempt. It is echoed in the response, so a confirmation that
+  // arrives after the caller moved on cannot settle a different request.
+  uint64 requestId = 3;
+  // The group revision the caller last observed. Omitted (0) means "do not judge staleness",
+  // which is what a caller that does not track revisions sends.
+  uint64 expectedRevision = 4;
+}
+
+// SelectOutboundResponse is the read-back of a selection: not what the caller asked for, but what
+// the group actually holds after the request.
+message SelectOutboundResponse {
+  // The identity from the request.
+  uint64 requestId = 1;
+  // The group revision after the selection. A selection that changed nothing leaves it unchanged.
+  uint64 appliedRevision = 2;
+  // The member the group now selects, read from the group rather than echoed from the request.
+  string appliedOutboundTag = 3;
+  // The caller's expectedRevision did not match the group when the request arrived, so the
+  // selection was applied to a state the caller had not seen.
+  bool stale = 4;
 }
 
 message SetGroupExpandRequest {

@@ -1158,7 +1158,7 @@ func resolveURLTestTarget(instance *Instance, tag string) (adapter.Outbound, boo
 	return nil, false
 }
 
-func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutboundRequest) (*emptypb.Empty, error) {
+func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutboundRequest) (*SelectOutboundResponse, error) {
 	s.serviceAccess.RLock()
 	boxService := s.instance
 	s.serviceAccess.RUnlock()
@@ -1173,10 +1173,25 @@ func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutb
 	if !isSelector {
 		return nil, status.Error(codes.InvalidArgument, "outbound is not a selector: "+request.GroupTag)
 	}
+	// The revision BEFORE the selection is what the caller's view has to match: it describes the
+	// state the decision was taken against.
+	before := selector.Revision()
 	if !selector.SelectOutbound(request.OutboundTag) {
 		return nil, status.Error(codes.NotFound, "outbound not found in selector: "+request.OutboundTag)
 	}
-	return &emptypb.Empty{}, nil
+	// The response reports what the group now holds, read from the group - not the tag from the
+	// request. A selector that refused to move, or moved somewhere else, is visible here instead of
+	// being inferred from a nil error.
+	appliedTag := ""
+	if selected := selector.Selected(N.NetworkTCP); selected != nil {
+		appliedTag = selected.Tag()
+	}
+	return &SelectOutboundResponse{
+		RequestId:          request.RequestId,
+		AppliedRevision:    selector.Revision(),
+		AppliedOutboundTag: appliedTag,
+		Stale:              request.ExpectedRevision != 0 && request.ExpectedRevision != before,
+	}, nil
 }
 
 func (s *StartedService) SetGroupExpand(ctx context.Context, request *SetGroupExpandRequest) (*emptypb.Empty, error) {

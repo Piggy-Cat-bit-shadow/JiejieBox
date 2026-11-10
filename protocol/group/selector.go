@@ -71,6 +71,11 @@ type Selector struct {
 	// immutable value so a reader never sees half of an update and never races Start. It is nil
 	// until Start has looked.
 	preference atomic.Pointer[selectionPreference]
+	// selectionRevision counts the times this selector's selection CHANGED. A caller that reads it
+	// before and after a selection can tell whether its confirmation describes the state it asked
+	// for, and a confirmation carrying an older revision can be discarded instead of settling a
+	// newer request.
+	selectionRevision atomic.Uint64
 
 	// stateAccess guards tags/outbounds/outboundsCache. The traffic path reads `selected` (an
 	// atomic), not these maps, so a provider update never puts a lock in front of a dial.
@@ -568,6 +573,15 @@ func (s *Selector) readPersistedPreference() (persisted string, rejected string)
 	return "", stored
 }
 
+// Revision is the selector's selection generation: it advances every time the selected member
+// changes, and is unchanged by a selection that selects what was already selected.
+func (s *Selector) Revision() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.selectionRevision.Load()
+}
+
 func (s *Selector) SelectOutbound(tag string) bool {
 	s.providerAccess.Lock()
 	s.stateAccess.RLock()
@@ -581,6 +595,7 @@ func (s *Selector) SelectOutbound(tag string) bool {
 		s.providerAccess.Unlock()
 		return true
 	}
+	s.selectionRevision.Add(1)
 	if s.Tag() != "" {
 		cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
 		if cacheFile != nil {
