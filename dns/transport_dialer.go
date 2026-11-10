@@ -39,6 +39,16 @@ type controlPlaneDialer struct {
 	N.Dialer
 }
 
+// Upstream exposes the wrapped dialer to the chain walkers. Both the detour preflight
+// (common.Cast in dialer.InitializeDetour) and the capability check
+// (common/dialer.resolvedDetour) find the DetourDialer by walking WithUpstream; a wrapper
+// without it silently hides the detour: the detour is not initialized at start, and the
+// "does not carry" warning is never reported even though the transport would fail every
+// query. This is the same contract resolveDialer and DetourDialer already implement.
+func (d controlPlaneDialer) Upstream() any {
+	return d.Dialer
+}
+
 func (d controlPlaneDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	return d.Dialer.DialContext(adapter.WithControlPlaneAdmission(ctx), network, destination)
 }
