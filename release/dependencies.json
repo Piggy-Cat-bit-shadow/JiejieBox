@@ -56,7 +56,7 @@
     {
       "module": "github.com/sagernet/quic-go",
       "slug": "Piggy-Cat-bit-shadow/quic-go",
-      "branch": "sagernet",
+      "branch": "integration/0.1.45",
       "policy": "update",
       "note": "The SagerNet module line only. Never the MetaCubeX line; see docs/fork notes."
     },
@@ -66,6 +66,13 @@
       "branch": "main",
       "policy": "update",
       "note": "Tracks MetaCubeX/utls v1.9.0-mod-meta; UPSTREAM.md in that repository is the authority."
+    },
+    {
+      "module": "github.com/sagernet/wireguard-go",
+      "slug": "Piggy-Cat-bit-shadow/wireguard-go",
+      "branch": "awg3-inject",
+      "policy": "update",
+      "note": "The AmneziaWG injection line (awg3-inject) consumed through the fork replace; the old awg-base/awg-graft refs are not consumed."
     },
     {
       "module": "github.com/sagernet/cronet-go",
