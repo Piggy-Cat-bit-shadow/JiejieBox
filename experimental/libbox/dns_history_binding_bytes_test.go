@@ -1,6 +1,6 @@
 package libbox
 
-// P1.3 (round 3) — the DNS history's retention and its BINDING response are both bounded by real
+// P1.3 (round 3) 鈥?the DNS history's retention and its BINDING response are both bounded by real
 // bytes.
 //
 // The reviewed failure: a local adblock rule whose `domain_keyword` list contains a 40,000-character
@@ -9,20 +9,26 @@ package libbox
 // kilobytes; the binding then sized its JSON from the same retained estimate, and one
 // `DNSHistoryQuery` with `maxBytes=4096` returned 80,485 bytes.
 //
-// These tests drive the real CommandServer, the real router and a real hosts/adblock DNS
-// configuration, and measure the ACTUAL encoded bytes.
+// These tests drive the real CommandServer and the real router, and measure the ACTUAL encoded
+// bytes.
+//
+// # The one adaptation
+//
+// The events are recorded through `(*dns.History).Record` rather than by driving a lookup through
+// the router: the only in-tree way to drive one from here is `Router.LookupDomain`, which arrives
+// with the unmerged diagnostic change. The facts under test are the retention charge and the
+// binding's ceiling, and both live above the event source, so the body of the reviewed event is
+// reproduced exactly - a terminal rule verdict whose `Rule` text is the long keyword.
 
 import (
-	"context"
 	stdjson "encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
-	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/route"
 
 	"github.com/stretchr/testify/require"
@@ -46,33 +52,32 @@ type dnsHistoryBindingQueryResult struct {
 	NextSequence uint64 `json:"nextSequence"`
 }
 
-// longRuleDNSConfig builds a hosts DNS plus an adblock rule whose description is huge.
-func longRuleDNSConfig(extraKeyword string) string {
-	keywords := `"history"`
-	if extraKeyword != "" {
-		keywords += `,` + stdjsonString(extraKeyword)
-	}
-	return fmt.Sprintf(`{"log":{"level":"error"},
-		"dns":{"servers":[{"type":"hosts","tag":"local","predefined":{"unrelated.test":["127.0.0.9"]}}],
-			"final":"local","rules":[{"domain_keyword":[%s],"action":"reject"}]},
-		"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}`, keywords)
-}
+// historyDNSConfig is a hosts DNS plus the direct outbound; the events below are recorded directly.
+const historyDNSConfig = `{"log":{"level":"error"},
+	"dns":{"servers":[{"type":"hosts","tag":"local","predefined":{"unrelated.test":["127.0.0.9"]}}],"final":"local"},
+	"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}`
 
-// stdjsonString quotes a value for the config JSON.
-func stdjsonString(value string) string {
-	encoded, _ := stdjson.Marshal(value)
-	return string(encoded)
-}
-
-// lookupBlockedName drives a real lookup through the router so a real event reaches the history.
-func lookupBlockedName(t *testing.T, server *CommandServer, name string) {
+// recordBlockedName records the same terminal verdict the production rule path emits: a locally
+// rejected query whose Rule text is the rendered rule.
+func recordBlockedName(t *testing.T, server *CommandServer, name string, rule string) {
 	t.Helper()
 	instance := server.Instance()
 	require.NotNil(t, instance)
 	routeRouter, isRouteRouter := instance.Box().Router().(*route.Router)
 	require.True(t, isRouteRouter)
-	// The rule rejects the name, so the lookup errors; the EVENT is what this test is about.
-	_, _ = routeRouter.LookupDomain(context.Background(), name, adapter.DNSQueryOptions{})
+	history := routeRouter.DNSHistory()
+	require.NotNil(t, history, "the history must be enabled before an event can be recorded")
+	history.Record(dns.QueryEvent{
+		Time:         time.Now(),
+		TransportTag: "local",
+		Name:         name,
+		QType:        1,
+		Source:       dns.QuerySource("rule"),
+		RCode:        3,
+		Err:          "rejected",
+		Final:        true,
+		Rule:         rule,
+	})
 }
 
 func queryBinding(t *testing.T, server *CommandServer, queryJSON string) (dnsHistoryBindingQueryResult, int) {
@@ -90,13 +95,12 @@ func queryBinding(t *testing.T, server *CommandServer, queryJSON string) (dnsHis
 // `maxBytes=4096`, the 40,000-character rule cannot be retained at all, so the encoding cannot be
 // large and the rejection is counted.
 func TestALongRuleIsRejectedByTheRetentionBudget(t *testing.T) {
-	server := startDiagnoseTestCommandServer(t, longRuleDNSConfig(strings.Repeat("a", 40_000)))
-	defer server.Close()
+	server := startBoxTestCommandServer(t, historyDNSConfig)
 
 	_, err := server.DNSHistoryEnable(`{"maxEntries":16,"maxBytes":4096,"ttlMs":60000}`)
 	require.NoError(t, err)
 
-	lookupBlockedName(t, server, "history.test")
+	recordBlockedName(t, server, "history.test", strings.Repeat("a", 40_000))
 
 	var result dnsHistoryBindingQueryResult
 	encodedBytes := 0
@@ -118,13 +122,12 @@ func TestALongRuleIsRejectedByTheRetentionBudget(t *testing.T) {
 // and rune-safe field cut.
 func TestTheBindingResponseIsHardCappedWhenTheRuleIsRetained(t *testing.T) {
 	longKeyword := strings.Repeat("b", 40_000)
-	server := startDiagnoseTestCommandServer(t, longRuleDNSConfig(longKeyword))
-	defer server.Close()
+	server := startBoxTestCommandServer(t, historyDNSConfig)
 
 	_, err := server.DNSHistoryEnable(`{"maxEntries":32,"maxBytes":1048576,"ttlMs":60000}`)
 	require.NoError(t, err)
 
-	lookupBlockedName(t, server, "history.test")
+	recordBlockedName(t, server, "history.test", longKeyword)
 
 	var initial dnsHistoryBindingQueryResult
 	require.Eventually(t, func() bool {
@@ -165,14 +168,13 @@ func TestTheBindingResponseIsHardCappedWhenTheRuleIsRetained(t *testing.T) {
 // small budget, following nextSequence until done: every record is returned exactly once and the
 // cursor always advances.
 func TestTheBindingPaginatesThroughTruncatedResponses(t *testing.T) {
-	server := startDiagnoseTestCommandServer(t, longRuleDNSConfig(strings.Repeat("c", 8_000)))
-	defer server.Close()
+	server := startBoxTestCommandServer(t, historyDNSConfig)
 
 	_, err := server.DNSHistoryEnable(`{"maxEntries":32,"maxBytes":1048576,"ttlMs":60000}`)
 	require.NoError(t, err)
 
 	for index := 0; index < 5; index++ {
-		lookupBlockedName(t, server, fmt.Sprintf("history.test"))
+		recordBlockedName(t, server, "history.test", strings.Repeat("c", 8_000))
 	}
 	var initial dnsHistoryBindingQueryResult
 	require.Eventually(t, func() bool {
@@ -184,7 +186,7 @@ func TestTheBindingPaginatesThroughTruncatedResponses(t *testing.T) {
 	seen := make(map[uint64]bool)
 	responses := 0
 	for responses < 64 {
-		result, encodedBytes := queryBinding(t, server, fmt.Sprintf(`{"since":%d,"maxBytes":2048}`, cursor))
+		result, encodedBytes := queryBinding(t, server, `{"since":`+stdjsonNumber(cursor)+`,"maxBytes":2048}`)
 		responses++
 		require.LessOrEqual(t, encodedBytes, maxDNSHistoryBindingBytes)
 		for _, record := range result.Records {
@@ -198,15 +200,21 @@ func TestTheBindingPaginatesThroughTruncatedResponses(t *testing.T) {
 		}
 	}
 	require.Equal(t, initial.Stats.Entries, len(seen), "the loop must visit every retained event exactly once")
-	require.LessOrEqual(t, responses, initial.Stats.Entries+1, "each response carries at least one record, so pagination progresses (plus the terminating empty read)")
+	require.LessOrEqual(t, responses, initial.Stats.Entries+1,
+		"each response carries at least one record, so pagination progresses (plus the terminating empty read)")
+}
+
+// stdjsonNumber renders a uint64 for a JSON query body.
+func stdjsonNumber(value uint64) string {
+	encoded, _ := stdjson.Marshal(value)
+	return string(encoded)
 }
 
 // TestConcurrentHistoryEnableDisableClearAndQuery exercises the management surface under
 // concurrency: the ring is swapped while readers query it, and every response stays bounded and
 // valid.
 func TestConcurrentHistoryEnableDisableClearAndQuery(t *testing.T) {
-	server := startDiagnoseTestCommandServer(t, longRuleDNSConfig(strings.Repeat("d", 4_000)))
-	defer server.Close()
+	server := startBoxTestCommandServer(t, historyDNSConfig)
 
 	var workers sync.WaitGroup
 	stop := make(chan struct{})
@@ -230,7 +238,7 @@ func TestConcurrentHistoryEnableDisableClearAndQuery(t *testing.T) {
 	for round := 0; round < 10; round++ {
 		_, err := server.DNSHistoryEnable(`{"maxEntries":8,"maxBytes":1048576,"ttlMs":60000}`)
 		require.NoError(t, err)
-		lookupBlockedName(t, server, "history.test")
+		recordBlockedName(t, server, "history.test", strings.Repeat("d", 4_000))
 		time.Sleep(time.Millisecond)
 		_, clearErr := server.DNSHistoryClear()
 		require.NoError(t, clearErr)
