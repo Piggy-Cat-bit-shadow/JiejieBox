@@ -45,11 +45,15 @@ var (
 
 type ServerEndpoint struct {
 	endpointBase
-	ctx            context.Context
-	dnsRouter      adapter.DNSRouter
-	listener       *listener.Listener
-	httpServer     *http.Server
-	tlsConfig      tls.ServerConfig
+	ctx        context.Context
+	dnsRouter  adapter.DNSRouter
+	listener   *listener.Listener
+	httpServer *http.Server
+	tlsConfig  tls.ServerConfig
+	// tcpTLSConfig is the TCP listener's ALPN view of tlsConfig. It is a view rather than a clone
+	// because the certificate lifecycle, ACME and Close must stay with the single shared config;
+	// see tls.TransportALPNView. The QUIC listener builds its own view in ListenHTTP3.
+	tcpTLSConfig   tls.ServerConfig
 	http3          bool
 	quicOptions    option.QUICOptions
 	http3Server    io.Closer
@@ -139,7 +143,14 @@ func NewServerEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 			return nil, tlsErr
 		}
 		if tlsConfig != nil {
-			serverEndpoint.httpServer.ConfigureTLS(tlsConfig)
+			// The TCP side needs its OWN ALPN view. ConfigureTLS derives the list this server can
+			// actually speak over TCP (h2, http/1.1) unless the operator configured one; dropping
+			// its return value - which this call used to do - left the shared config without any
+			// ALPN, so a TLS client offering only h2 negotiated nothing and the connection fell
+			// back to HTTP/1.1. Measured: the strict HTTP/2 MASQUE self-to-self failed, and the
+			// version-fallback test passed over h1 rather than h2.
+			tcpNextProtos := serverEndpoint.httpServer.ConfigureTLS(tlsConfig)
+			serverEndpoint.tcpTLSConfig = tls.TransportALPNView(tlsConfig, tcpNextProtos)
 		}
 		serverEndpoint.tlsConfig = tlsConfig
 	}
@@ -356,8 +367,15 @@ func (s *ServerEndpoint) Close() error {
 type serverConnectionHandler ServerEndpoint
 
 func (h *serverConnectionHandler) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	if h.tlsConfig != nil {
-		tlsConn, err := tls.ServerHandshake(ctx, conn, h.tlsConfig)
+	// The TCP handshake uses the TCP ALPN view, never the shared config: the shared one is what the
+	// QUIC listener derives its own view from, and mutating or reusing it would let one transport
+	// advertise the other's protocol.
+	tlsConfig := h.tcpTLSConfig
+	if tlsConfig == nil {
+		tlsConfig = h.tlsConfig
+	}
+	if tlsConfig != nil {
+		tlsConn, err := tls.ServerHandshake(ctx, conn, tlsConfig)
 		if err != nil {
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source, ": TLS handshake"))
