@@ -708,21 +708,16 @@ func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClie
 	}
 }
 
-// consumeConnectionsStream reads one subscription until it ends, and reports whether an incomplete
-// increment was detected (in which case the caller resubscribes).
+// consumeConnectionsStream reads one subscription until it ends, and reports whether the stream
+// should be replaced by a fresh subscription (a lost increment).
+//
+// The accept/stale/resync decision is the SHARED classifier used by Connections.ApplyEvents. The
+// client's own responsibility is narrower than it used to be: it no longer keeps a second, subtly
+// different watermark. A stale duplicate is skipped without delivery and WITHOUT moving the
+// watermark (the reviewed `1R,2,1,3` failure turned 3 into a gap and resubscribed for nothing), and
+// only an accepted batch advances the state.
 func (c *CommandClient) consumeConnectionsStream(stream daemon.StartedService_SubscribeConnectionsClient, subscription uint64, stillCurrent func() bool, resynced bool) bool {
-	// Every subscription starts from a baseline, whatever the peer sent.
-	//
-	// The server's first message IS the snapshot (daemon: buildInitialConnectionState with Reset), so
-	// this normally only confirms it. It exists for the two cases where the flag cannot be relied on:
-	//   - an older daemon that never set it, and
-	//   - a RECONNECT, where the platform may still hold rows from the stream that just died. Marking
-	//     the first batch as a reset tells the consumer to discard them before this stream's events
-	//     apply, so a stale row cannot be carried into the new session.
-	baselinePending := true
-	activeInstanceID := ""
-	lastSequence := uint64(0)
-	droppedBase := uint64(0)
+	state := connectionBatchState{subscription: subscription}
 	for {
 		events, err := stream.Recv()
 		if err != nil {
@@ -737,44 +732,23 @@ func (c *CommandClient) consumeConnectionsStream(stream daemon.StartedService_Su
 		if !stillCurrent() {
 			return false
 		}
-		if !baselinePending && incompleteBatch(events, activeInstanceID, lastSequence, droppedBase) {
+		// Every subscription starts from a baseline, whatever the peer sent. The server's first
+		// message IS the snapshot; forcing Reset covers an older daemon that never set it and a
+		// reconnect where the platform still holds rows from the stream that just died.
+		baselinePending := !state.hasBaseline
+		libboxEvents, _ := connectionEventsForDelivery(events, baselinePending, subscription)
+		switch classifyConnectionBatch(&state, libboxEvents) {
+		case batchStale:
+			continue
+		case batchResync:
 			return true
 		}
-		libboxEvents, nextBaseline := connectionEventsForDelivery(events, baselinePending, subscription)
 		if baselinePending {
-			activeInstanceID = events.InstanceId
-			lastSequence = events.Sequence
-			droppedBase = events.Dropped
 			libboxEvents.Resynced = resynced
-		} else {
-			activeInstanceID = events.InstanceId
-			lastSequence = events.Sequence
-			droppedBase = events.Dropped
 		}
-		baselinePending = nextBaseline
+		state.apply(libboxEvents)
 		c.handler.WriteConnectionEvents(libboxEvents)
 	}
-}
-
-// incompleteBatch reports whether this increment follows a loss.
-//
-// A stale or duplicate batch is NOT incomplete: it describes state that was already applied, and
-// asking for a snapshot over it would churn. It is ignored (by the consumer's ordering rules) rather
-// than repaired. A zero sequence means the peer does not stamp batches (an older daemon), so the
-// wire fields cannot be used and the existing Reset/subscription rules decide.
-func incompleteBatch(events *daemon.ConnectionEvents, activeInstanceID string, lastSequence uint64, droppedBase uint64) bool {
-	if events.Sequence != 0 && lastSequence != 0 {
-		if events.Sequence > lastSequence+1 {
-			return true
-		}
-	}
-	if events.Sequence != 0 && events.Dropped > droppedBase {
-		return true
-	}
-	if events.InstanceId != "" && activeInstanceID != "" && events.InstanceId != activeInstanceID && !events.Reset_ {
-		return true
-	}
-	return false
 }
 
 // connectionEventsForDelivery converts one received batch and applies the first-batch baseline rule.

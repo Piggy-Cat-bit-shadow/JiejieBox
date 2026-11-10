@@ -204,6 +204,10 @@ type Connections struct {
 	// until a Reset snapshot rebaselines the state. It is the consumer-side signal behind
 	// NeedsResync().
 	needsResync bool
+	// hasBaseline reports whether a batch has ever been applied. It is what makes a Reset's authority
+	// checkable: a Reset from the SAME subscription with a sequence at or below the applied one is a
+	// stale duplicate.
+	hasBaseline bool
 }
 
 func NewConnections() *Connections {
@@ -215,73 +219,39 @@ func NewConnections() *Connections {
 // ApplyEvents applies a batch from the event stream. Safe to call concurrently with every other
 // method; the platform calls it from the stream goroutine.
 //
-// A batch is applied only when it can be placed in the stream's order: the first batch of a
-// subscription (or a Reset) is a baseline, and an increment must follow the previous one. The wire's
-// instance identity, sequence and drop count are what make "follow" checkable - without them a
-// consumer that missed a CLOSED event kept the row forever.
+// The decision is the SHARED classifier (connection_batch.go), so the table and the stream client can
+// never disagree about what a batch means. Only an accepted batch advances the instance, sequence and
+// dropped baseline; a stale duplicate is ignored without asking for a snapshot; a gap, a rising drop
+// count or an instance change is refused until a baseline arrives.
 func (c *Connections) ApplyEvents(events *ConnectionEvents) {
 	if events == nil {
 		return
 	}
 	c.access.Lock()
 	defer c.access.Unlock()
-	if events.subscription != 0 {
-		if events.subscription < c.activeSubscription {
-			return
-		}
-		c.activeSubscription = events.subscription
+	state := connectionBatchState{
+		hasBaseline:  c.hasBaseline,
+		needsResync:  c.needsResync,
+		instanceID:   c.activeInstanceID,
+		sequence:     c.lastSequence,
+		dropped:      c.droppedBase,
+		subscription: c.activeSubscription,
 	}
-	if !c.acceptEventBatchLocked(events) {
+	switch classifyConnectionBatch(&state, events) {
+	case batchStale:
+		return
+	case batchResync:
+		c.needsResync = true
 		return
 	}
+	state.apply(events)
+	c.hasBaseline = state.hasBaseline
+	c.needsResync = state.needsResync
+	c.activeInstanceID = state.instanceID
+	c.lastSequence = state.sequence
+	c.droppedBase = state.dropped
+	c.activeSubscription = state.subscription
 	c.applyEventsLocked(events)
-}
-
-// acceptEventBatchLocked decides whether a batch may be applied, and rebaselines on a Reset.
-//
-// The rules are asymmetric on purpose:
-//
-//	Reset            always accepted; it is the snapshot a consumer rebuilds from (and the only thing
-//	                 that clears needsResync).
-//	no wire data     accepted. An older daemon sends zeros; the subscription identity and Reset flag
-//	                 are the only ordering facts that exist there, and refusing would break it.
-//	stale/duplicate  ignored WITHOUT resync: a batch at or below lastSequence describes state that
-//	                 was already applied (or superseded); asking for a snapshot would be churn.
-//	gap/instance/dropped  refused and needsResync set: an increment was lost (sequence gap, rising
-//	                 drop count) or it belongs to another instance's table.
-func (c *Connections) acceptEventBatchLocked(events *ConnectionEvents) bool {
-	if events.Reset {
-		c.activeInstanceID = events.InstanceId
-		c.lastSequence = events.sequence
-		c.droppedBase = events.dropped
-		c.needsResync = false
-		return true
-	}
-	if c.needsResync {
-		return false
-	}
-	if events.InstanceId != "" && c.activeInstanceID != "" && events.InstanceId != c.activeInstanceID {
-		c.needsResync = true
-		return false
-	}
-	if events.sequence != 0 {
-		if c.lastSequence != 0 {
-			if events.sequence <= c.lastSequence {
-				return false
-			}
-			if events.sequence != c.lastSequence+1 {
-				c.needsResync = true
-				return false
-			}
-		}
-		if events.dropped > c.droppedBase {
-			c.needsResync = true
-			return false
-		}
-		c.lastSequence = events.sequence
-		c.droppedBase = events.dropped
-	}
-	return true
 }
 
 // NeedsResync reports whether an incomplete batch was refused and the consumer is waiting for a
