@@ -77,6 +77,12 @@ type ConnectionManager struct {
 	// time up to drainSweepMaxInterval. See scheduleDrainSweepLocked.
 	sweepBackoff int
 	closed       atomic.Bool
+	// disposeAccess guards disposing and the Add/Wait pairing of disposeGroup. It is the
+	// boundary between "a network change hands the close to a disposer" and "the lifecycle is
+	// shutting down and the close is synchronous again". See disposeConnections.
+	disposeAccess sync.Mutex
+	disposing     bool
+	disposeGroup  sync.WaitGroup
 	// reclaimLog, when set, reports each reclaim pass. Diagnostics only; nil in production.
 	reclaimLog func(reason ReclaimReason, closed int, generation uint64)
 	// drainIdleGraceOverride and drainSweepIntervalOverride exist so a test can exercise the drain
@@ -273,9 +279,19 @@ func (m *ConnectionManager) Close() error {
 	// stop the timer, and only then tear the connections down. A timer that fired after this
 	// returned would be reclaiming connections on behalf of a manager whose lifecycle has ended.
 	m.closed.Store(true)
+	// No new disposal task may start once shutdown begins (the group's Add/Wait pairing would be
+	// racy); tasks that already started are waited on below. This is what keeps "everything the
+	// manager owned is closed when Close returns" true even though a network change no longer
+	// waits for the same closes.
+	m.disposeAccess.Lock()
+	m.disposing = true
+	m.disposeAccess.Unlock()
 	m.dialSetups.close()
 	m.stopDrainSweep()
 	m.CloseAll()
+	// A network change may have handed the closes of already-removed connections to a disposer.
+	// Shutdown still completes them before returning; only the reset body stopped waiting.
+	m.disposeGroup.Wait()
 	// Releasing the scheduler here is what unblocks a copy goroutine parked in the gate. Closing
 	// the connections above does not: a flow waiting for a permit is not inside a write, so it
 	// never observes the closed socket.
