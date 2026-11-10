@@ -45,6 +45,9 @@ type Outbound struct {
 	// h3Fallback is owned by this outbound. It is not shared with any other
 	// protocol and holds no per-target state; see h3_fallback.go.
 	h3Fallback h3Fallback
+	// h2Fallback is the optional engine-level QUIC-disabled client used for the
+	// opt-in H2 retry; nil unless the operator opted in. See h2_fallback_engine.go.
+	h2Fallback *h2FallbackClient
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions) (adapter.Outbound, error) {
@@ -256,6 +259,25 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		client:       client,
 		fallbackToH2: options.QUICFallbackToH2,
 	}
+	if options.QUICFallbackToH2 {
+		// The H2 retry needs an ENGINE with QUIC disabled: the pinned Cronet has no
+		// per-request switch, and the H3-first engine may still follow a cached Alt-Svc.
+		// The second engine is created on the first fallback (see h2FallbackClient) and
+		// is only a guarantee for that flow when creation succeeds.
+		fallbackOptions := clientOptions
+		fallbackOptions.QUIC = false
+		naiveOutbound.h2Fallback = newH2FallbackClient(func() (naiveH2Client, error) {
+			fallbackClient, fallbackErr := cronet.NewNaiveClient(fallbackOptions)
+			if fallbackErr != nil {
+				return nil, fallbackErr
+			}
+			if startErr := fallbackClient.Start(); startErr != nil {
+				_ = fallbackClient.Close()
+				return nil, startErr
+			}
+			return fallbackClient, nil
+		})
+	}
 	uotOptions := common.PtrValueOrDefault(options.UDPOverTCP)
 	if uotOptions.Enabled {
 		naiveOutbound.uotClient = &uot.Client{
@@ -282,6 +304,10 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return err
 	}
 	scope.Add(h.client.Close)
+	if h.h2Fallback != nil {
+		// A no-op when the lazy engine was never created.
+		scope.Add(h.h2Fallback.Close)
+	}
 	h.logger.Info("NaiveProxy started, version: ", h.client.Engine().Version())
 	return nil
 }
@@ -321,6 +347,11 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	// must not send the first CONNECT on the new one straight to HTTP/2.
 	h.h3Fallback.reset()
 	h.client.CloseAllConnections()
+	if h.h2Fallback != nil {
+		if fallbackClient := h.h2Fallback.peek(); fallbackClient != nil {
+			fallbackClient.CloseAllConnections()
+		}
+	}
 }
 
 func (h *Outbound) Client() *cronet.NaiveClient {

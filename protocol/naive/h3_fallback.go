@@ -228,7 +228,7 @@ func h3ProbeContext(ctx context.Context) (context.Context, context.CancelFunc, b
 
 // dialWithH3Fallback is the opt-in availability path used by the TCP outbound.
 func (h *Outbound) dialWithH3Fallback(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
-	return dialNaiveWithH3Fallback(ctx, h.client, &h.h3Fallback, h.logger, destination)
+	return dialNaiveWithH3Fallback(ctx, h.client, &h.h3Fallback, h.h2Fallback, h.logger, destination)
 }
 
 // dialNaiveWithH3Fallback is shared by the TCP outbound and the UoT dialer: both
@@ -245,7 +245,7 @@ func (h *Outbound) dialWithH3Fallback(ctx context.Context, destination M.Socksad
 // safe: the H3 attempt has already completed (or failed) its handshake before the
 // H2 attempt starts, so no application byte can have been handed to a connection
 // that is later replaced. There is no migration and no replay.
-func dialNaiveWithH3Fallback(ctx context.Context, client naiveDialerClient, fallback *h3Fallback, l logger.ContextLogger, destination M.Socksaddr) (net.Conn, error) {
+func dialNaiveWithH3Fallback(ctx context.Context, client naiveDialerClient, fallback *h3Fallback, h2 *h2FallbackClient, l logger.ContextLogger, destination M.Socksaddr) (net.Conn, error) {
 	attempt := fallback.begin()
 	if fallback.available(time.Now()) {
 		probeCtx, cancelProbe, bounded := h3ProbeContext(ctx)
@@ -276,7 +276,7 @@ func dialNaiveWithH3Fallback(ctx context.Context, client naiveDialerClient, fall
 				// so this flow retries over H2 but the window stays unarmed -
 				// the next connection must be free to try H3 again.
 				l.DebugContext(ctx, "naive H3 attempt ran out of its probe budget, retrying over HTTP/2 for this flow only: ", err)
-				return dialNaiveTunnelWithQUIC(ctx, client, destination, false)
+				return dialNaiveH2(ctx, client, h2, l, destination)
 			}
 			if !h3TransportFailure(err) {
 				return nil, err
@@ -285,5 +285,5 @@ func dialNaiveWithH3Fallback(ctx context.Context, client naiveDialerClient, fall
 			l.DebugContext(ctx, "naive H3 attempt failed at the transport, retrying over HTTP/2: ", err)
 		}
 	}
-	return dialNaiveTunnelWithQUIC(ctx, client, destination, false)
+	return dialNaiveH2(ctx, client, h2, l, destination)
 }

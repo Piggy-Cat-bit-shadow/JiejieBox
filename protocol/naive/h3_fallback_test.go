@@ -81,7 +81,7 @@ func withFallbackWindow(t *testing.T, window time.Duration) {
 
 func dialFallback(t *testing.T, client naiveDialerClient, fallback *h3Fallback, ctx context.Context) error {
 	t.Helper()
-	_, err := dialNaiveWithH3Fallback(ctx, client, fallback, logger.NOP(), M.ParseSocksaddr("example.com:443"))
+	_, err := dialNaiveWithH3Fallback(ctx, client, fallback, nil, logger.NOP(), M.ParseSocksaddr("example.com:443"))
 	return err
 }
 
@@ -493,7 +493,7 @@ func TestH3FallbackNeverWritesBeforeHandshake(t *testing.T) {
 	client.hand[true] = cronet.NetErrorQUICProtocolError
 	fallback := &h3Fallback{}
 
-	conn, err := dialNaiveWithH3Fallback(context.Background(), client, fallback, logger.NOP(), M.ParseSocksaddr("example.com:443"))
+	conn, err := dialNaiveWithH3Fallback(context.Background(), client, fallback, nil, logger.NOP(), M.ParseSocksaddr("example.com:443"))
 	require.NoError(t, err)
 	h2, ok := conn.(*fakeNaiveConn)
 	require.True(t, ok)
