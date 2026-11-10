@@ -14,6 +14,8 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,4 +85,36 @@ func TestABuildFailureAfterAParseableCandidateRecoversToTheStoredDocument(t *tes
 	require.Equal(t, configRevisionOf(buildFailingConfig), info.FailedRevision)
 	require.Equal(t, configRevisionOf(minimalConfig), info.ActiveRevision)
 	require.Equal(t, minimalConfig, storedActive(t, directory), "recovery does not replace the stored document")
+}
+
+// TestTheRecoverySurvivesAProcessRestart is the in-process form of the acceptance's last step:
+// the daemon is terminated, a NEW service object is opened on the same directory, and the same
+// failing candidate is applied again. Recovery must read the transaction from disk, not from the
+// previous object's memory, and the candidate marker must not survive.
+func TestTheRecoverySurvivesAProcessRestart(t *testing.T) {
+	directory := t.TempDir()
+	first := recoveryService(t, directory, true)
+	require.NoError(t, first.StartOrReloadService(context.Background(), minimalConfig, nil))
+	require.NoError(t, first.CloseService())
+	first.Close()
+
+	// A fresh object on the same directory: nothing of the previous instance is in memory.
+	second := recoveryService(t, directory, true)
+	require.NoError(t, second.StartOrReloadService(context.Background(), buildFailingConfig, nil),
+		"the restarted instance recovers from the transaction on disk")
+
+	report := second.LastServiceChange()
+	require.NotNil(t, report)
+	require.Equal(t, ServiceChangeStatusRecovered, report.Status)
+	require.Equal(t, configRevisionOf(minimalConfig), report.ActiveRevision)
+	require.Equal(t, configRevisionOf(buildFailingConfig), report.Plan.TargetRevision)
+	require.NotNil(t, second.Instance(), "a Box must be running after the replay recovered")
+
+	info := second.LastConfigRecovery()
+	require.NotNil(t, info)
+	require.Equal(t, configRevisionOf(buildFailingConfig), info.FailedRevision)
+	require.Equal(t, configRevisionOf(minimalConfig), info.ActiveRevision)
+	require.Equal(t, minimalConfig, storedActive(t, directory), "the replay does not replace the stored document")
+	_, statErr := os.Stat(filepath.Join(directory, "commit.candidate"))
+	require.True(t, os.IsNotExist(statErr), "the candidate marker must not survive a completed start")
 }
