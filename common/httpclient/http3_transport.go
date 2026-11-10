@@ -303,10 +303,12 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 	hasBody := request.Body != nil && request.Body != http.NoBody
 	attemptRequest := request
 	var owner *requestBodyOwner
+	var upload *uploadBody
 	if hasBody {
 		owner = &requestBodyOwner{body: request.Body}
+		upload = &uploadBody{ReadCloser: request.Body, owner: owner}
 		attemptRequest = request.Clone(request.Context())
-		attemptRequest.Body = &shieldedRequestBody{ReadCloser: request.Body}
+		attemptRequest.Body = upload
 	}
 	var issue h3Issue
 	if onlyCached {
@@ -375,16 +377,18 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 	if owner != nil {
 		switch {
 		case issue.err == nil:
-			// The request was accepted and answered. quic-go does not close a request body on
-			// success, and the upload may still be streaming; the body's owner is therefore tied
-			// to the RESPONSE: when the caller releases the response, the request is over.
-			issue.response.Body = &responseBodyWithOwner{ReadCloser: issue.response.Body, owner: owner}
+			// The upload may still be running after the response headers: quic-go closes the body
+			// when its send goroutine reaches EOF (sendRequestBody defers body.Close), which is the
+			// upload's own end, so nothing is closed here. allowClose covers the case where that
+			// close arrives through an abort after this point.
+			upload.allowClose.Store(true)
 		case issue.sent:
 			// The body may have been consumed by the failed attempt, so it cannot carry a retry.
+			upload.allowClose.Store(true)
 			owner.Close()
 		}
-		// !sent: the body is untouched and still owned by the request, which the fallback will
-		// hand to HTTP/2.
+		// !sent: no byte was read, so the transport's error-path Close was suppressed and the body
+		// is still owned by the request, which the fallback will hand to HTTP/2.
 	}
 	return issue
 }
@@ -393,11 +397,9 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 //
 // # Why an owner object instead of a direct Close
 //
-// The same body can be reached from two directions - the attempt that started it and the response
-// the caller releases - and the HTTP/3 transport deliberately does not close it on success. A
-// single owner makes "closed once" a property of the object rather than of every caller remembering
-// the rule, which is what the review measured: an upload body closed zero times after a successful
-// H3 request, or closed twice when both a race leg and the cleanup reached it.
+// The same body can be reached from two directions - the transport that read it and the race that
+// keeps one copy per leg - and "closed exactly once" must be a property of the object rather than
+// of every caller remembering the rule.
 type requestBodyOwner struct {
 	body io.ReadCloser
 	once sync.Once
@@ -409,26 +411,43 @@ func (o *requestBodyOwner) Close() {
 	})
 }
 
-// responseBodyWithOwner releases the request body when the caller releases the response.
-type responseBodyWithOwner struct {
+// uploadBody is the request body handed to ONE HTTP/3 or HTTP/2 attempt.
+//
+// # Why the close is gated on a read
+//
+// quic-go closes a request body in two very different situations: after its send goroutine
+// finishes (success, or an abort mid-upload) and from RoundTripOpt when the request failed before a
+// stream existed. The second one must NOT destroy the caller's body, because the fallback re-sends
+// it. The transport reads the body exactly when it actually starts sending, so "a read happened"
+// is the proof that a Close now describes this attempt's lifecycle rather than a rejected retry.
+//
+// # Why the close is not tied to the response
+//
+// A server may answer 200 and only then read the upload. Closing at response-header time truncated
+// exactly that upload (the review's probe wrote to an io.Pipe after the headers and got
+// "read/write on closed pipe"); quic-go's own deferred Close fires at the upload's end, which is
+// the only correct moment.
+type uploadBody struct {
 	io.ReadCloser
-	owner *requestBodyOwner
-	once  sync.Once
+	owner   *requestBodyOwner
+	started atomic.Bool
+	// allowClose is set once the attempt has been decided (sent, successful, or a cancelled race
+	// leg), so a transport Close that arrives afterwards is authoritative.
+	allowClose atomic.Bool
 }
 
-func (b *responseBodyWithOwner) Close() error {
-	err := b.ReadCloser.Close()
-	b.once.Do(b.owner.Close)
-	return err
+func (b *uploadBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 || errors.Is(err, io.EOF) {
+		b.started.Store(true)
+	}
+	return n, err
 }
 
-// shieldedRequestBody absorbs the HTTP/3 transport's error-path Close while an attempt still owns
-// the body. See issueH3.
-type shieldedRequestBody struct {
-	io.ReadCloser
-}
-
-func (b *shieldedRequestBody) Close() error {
+func (b *uploadBody) Close() error {
+	if b.started.Load() || b.allowClose.Load() {
+		b.owner.Close()
+	}
 	return nil
 }
 
@@ -443,22 +462,32 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 		cancels  []context.CancelFunc
 		received int
 	)
-	// Each leg gets its own shielded request body and an owner for it: the HTTP/3 transport does
-	// not close a request body on success and the HTTP/2 transport's Close is shielded here, so the
-	// race itself is the only party that can close both copies exactly once - including the copy of
-	// a leg that never started.
-	legRequest := func(base *http.Request) (*http.Request, *requestBodyOwner) {
+	// Each leg owns its own request-body copy and hands its transport an uploadBody. The winning
+	// leg's body must stay readable after the response headers (a server can answer 200 first and
+	// read the body after), so the race does NOT close it: quic-go's send goroutine closes it at
+	// EOF, and allowClose lets an abort reach it too. A copy that never reached a transport has
+	// nobody else to release it, and a cancelled loser is released here.
+	type legState struct {
+		owner   *requestBodyOwner
+		upload  *uploadBody
+		started bool
+	}
+	var legs [2]legState
+	legRequest := func(index int, base *http.Request) *http.Request {
 		if base.Body == nil || base.Body == http.NoBody {
-			return base, nil
+			return base
 		}
 		owner := &requestBodyOwner{body: base.Body}
+		upload := &uploadBody{ReadCloser: base.Body, owner: owner}
+		legs[index] = legState{owner: owner, upload: upload}
 		clone := base.Clone(base.Context())
-		clone.Body = &shieldedRequestBody{ReadCloser: base.Body}
-		return clone, owner
+		clone.Body = upload
+		return clone
 	}
-	h3Leg, h3Owner := legRequest(h3Request)
-	h2Leg, h2Owner := legRequest(h2Request)
-	startRoundTrip := func(useH3 bool, base *http.Request) {
+	h3Leg := legRequest(0, h3Request)
+	h2Leg := legRequest(1, h2Request)
+	startRoundTrip := func(index int, useH3 bool, base *http.Request) {
+		legs[index].started = true
 		ctx, cancel := context.WithCancel(request.Context())
 		cancels = append(cancels, cancel)
 		raceRequest := base.WithContext(ctx)
@@ -481,11 +510,18 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 				cancel()
 			}
 		}
-		if h3Owner != nil {
-			h3Owner.Close()
-		}
-		if h2Owner != nil {
-			h2Owner.Close()
+		for index := range legs {
+			if legs[index].owner == nil {
+				continue
+			}
+			// Let a transport Close that arrives later reach the body: after this point the leg
+			// has either won (its upload may still be streaming) or been cancelled.
+			legs[index].upload.allowClose.Store(true)
+			if index != winner || !legs[index].started {
+				// The cancelled loser's upload is being aborted, and a copy that never reached a
+				// transport has nobody else to close it.
+				legs[index].owner.Close()
+			}
 		}
 		for range len(cancels) - received {
 			go func() {
@@ -496,7 +532,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 			}()
 		}
 	}
-	startRoundTrip(true, h3Leg)
+	startRoundTrip(0, true, h3Leg)
 	timer := time.NewTimer(t.fallbackDelay)
 	defer timer.Stop()
 	var (
@@ -507,7 +543,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 		select {
 		case <-timer.C:
 			if len(cancels) == 1 {
-				startRoundTrip(false, h2Leg)
+				startRoundTrip(1, false, h2Leg)
 			}
 		case raceResult := <-results:
 			received++
@@ -531,7 +567,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 						default:
 						}
 					}
-					startRoundTrip(false, h2Leg)
+					startRoundTrip(1, false, h2Leg)
 				}
 			} else {
 				fallbackErr = raceResult.err

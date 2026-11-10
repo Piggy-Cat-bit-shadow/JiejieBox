@@ -522,3 +522,68 @@ func TestHotH3PostAfterTheServerProcessedItIsNotResent(t *testing.T) {
 	require.Zero(t, h2Server.executed(),
 		"a POST the peer may already have processed must not be re-sent over HTTP/2")
 }
+
+// TestH3RaceWinnerCanFinishUploadAfterResponseHeaders is the upload-lifetime boundary of the race.
+//
+// A server may flush the 200 and only then read the request body, and the client may not have
+// written it yet when RoundTrip returns. The race used to close the winning leg's body when it
+// picked the winner, which turned that upload into "io: read/write on closed pipe". The body is
+// now closed by quic-go at the upload's own end (sendRequestBody defers body.Close), so the upload
+// completes after the headers and the peer receives the whole payload.
+func TestH3RaceWinnerCanFinishUploadAfterResponseHeaders(t *testing.T) {
+	packet, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	readBody := make(chan string, 1)
+	server := &http3.Server{
+		TLSConfig: &stdTLS.Config{Certificates: []stdTLS.Certificate{retrySafetyCertificate(t)}, NextProtos: []string{http3.NextProtoH3}},
+		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.WriteHeader(http.StatusOK)
+			writer.(http.Flusher).Flush()
+			body, _ := io.ReadAll(request.Body)
+			readBody <- string(body)
+		}),
+	}
+	go func() { _ = server.Serve(packet) }()
+	t.Cleanup(func() { _ = server.Close(); _ = packet.Close() })
+	transport := newRetrySafetyTransport(nil, dialRetrySafetyH3(packet.LocalAddr().String()), time.Hour)
+	t.Cleanup(func() { _ = transport.h3Transport.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+packet.LocalAddr().String(), io.NopCloser(strings.NewReader("payload")))
+	require.NoError(t, err)
+	request.Header.Set("Idempotency-Key", "upload-lifetime")
+	clones := 0
+	request.GetBody = func() (io.ReadCloser, error) {
+		clones++
+		if clones == 1 {
+			return reader, nil
+		}
+		return io.NopCloser(strings.NewReader("payload")), nil
+	}
+	response, err := transport.RoundTrip(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, "HTTP/3.0", response.Proto)
+
+	uploadDone := make(chan error, 1)
+	go func() {
+		_, writeErr := io.WriteString(writer, "payload")
+		_ = writer.Close()
+		uploadDone <- writeErr
+	}()
+	select {
+	case writeErr := <-uploadDone:
+		require.NoError(t, writeErr, "the winning upload was closed when only response headers had arrived")
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case payload := <-readBody:
+		require.Equal(t, "payload", payload)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
