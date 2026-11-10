@@ -341,7 +341,7 @@
 
 ### Dashboard / Desktop（已真正构建+测试）
 
-- 便携 Node **v22.23.4** + pnpm **11.13.0**（`_int0145/tools/`，不进仓库）；`@bufbuild/buf` 生成 protobuf；dashboard 的 `vendor/iterm2-color-schemes` 子模块初始化。
+- 便携 Node **v22.23.4** 与项目声明的 **v26.7.0**（两个都跑通）+ pnpm **11.13.0**（`_int0145/tools/`，不进仓库）；`@bufbuild/buf` 生成 protobuf；dashboard 的 `vendor/iterm2-color-schemes` 子模块初始化。
 - **Dashboard**：`integration/0.1.45` 由 `fc1dbb4` fast-forward 到 **`62f1582`**；在 Desktop 布局中 **98/98 tests PASS**、`pnpm build` PASS。
 - **Desktop**：`integration/0.1.45` 由 `aa63764` fast-forward 到 **`28dc4a9`**（4 提交），dashboard gitlink `62f1582`；`pnpm install/generate/typecheck/test/build` 全 0，**59/59 tests PASS**。
 - 内核 `clients/desktop` gitlink：`aa63764` → **`28dc4a9`**（提交 `1fe0d9a6432`）。
@@ -365,3 +365,8 @@
 3. `pnpm generate` 产物不入库，CI/打包必须先 generate。
 4. `release/dependencies.json` 的客户端 intent 仍是 `branch: main`；第 06 阶段 freeze 以 gitlink 为准或先合并到 main，不能按 intent 解析出旧 tip。
 5. `source-lock.json` 仍是 0.1.44 快照；第 06 阶段统一生成。
+
+### 收尾补跑（2026-11-11 05:00）
+
+- **Node 26.7.0 验证**：按 desktop `engines` 声明的版本重跑 install/generate/typecheck/test/build，9 个步骤全部 exit 0；dashboard **98/98**、desktop **59/59** 不变。证据 `stage05/07-clients-node26.log`。
+- **satelite-one 尝试**：补装 JDK **17.0.21**（Temurin 便携版），复用已有 `C:\Deepseek\sdk`（Android 36 / build-tools 36）与缓存 Gradle 9.7，跑 `:app:testDebugUnitTest`/`:app:assembleDebug`。**失败在 `app/libs/libbox.aar` 缺失**（`verifyCoreProvenance` 输入不存在），Kotlin 编译报 libbox 符号未解析。阻塞点是内核 Android AAR（gomobile + NDK + provenance），不是 JDK/SDK；未合并。证据 `stage05/08-satelite-jdk17.log`。

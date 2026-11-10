@@ -13,7 +13,7 @@
   1. 内核 8 个 NE/Libbox 提交全部 cherry-pick（0 冲突）；daemon/provider/libbox/boxdd 定向测试与 `-race` 通过；Windows 全量 106 包 ok（仅 3 个既有/权限失败）。
   2. **Dashboard 与 Desktop 真正完成了构建和测试**：在没有 Node 的环境里装了便携 Node 22.23.4 + pnpm 11.13.0，跑通 dashboard 98/98、desktop 59/59、typecheck、build；Dashboard 已先 fast-forward 到 `62f1582`，Desktop 随后 fast-forward 到 `28dc4a9` 并把内核 gitlink 指到已验证的 Desktop。
   3. Apple 两条功能线经 trial merge 确认只有 **3 个冲突文件**（34 个自动合并），但本机没有 Xcode/macOS：**BLOCKED_BY_ENVIRONMENT**，pin 保持 `7fce711`，不做未经验证的合并。
-  4. Android pin 已等于 main，未改动；satelite-one 是独立 Android 产品，缺 JDK17 与 Android SDK，**BLOCKED_BY_ENVIRONMENT**，未动它的 integration 分支。
+  4. Android pin 已等于 main，未改动；satelite-one 是独立 Android 产品，补装 JDK17 并复用现有 Android SDK 后真正跑了 Gradle：**卡在内核 `app/libs/libbox.aar` 产物缺失**（不是 JDK/SDK），未动它的 integration 分支。
 
 ---
 
@@ -28,10 +28,10 @@
 - Desktop：在 next 分支（含 dashboard 子模块）安装、生成、typecheck、测试、构建，fast-forward 集成分支并把内核 `clients/desktop` gitlink 指向它；
 - Apple：核实三条分支关系与差异，做 trial merge 统计冲突，记录语义融合输入；不合并（无 Xcode）；
 - Android：核对 pin 与 main 一致，保持不动；
-- satelite-one：核对分支状态与构建前提，标记阻塞（JDK17 + Android SDK）；
+- satelite-one：核对分支、补装 JDK17 并复用 Android SDK，跑 Gradle 单元测试/assembleDebug，卡在内核 `libbox.aar` 产物（BLOCKED）；
 - 输出本报告 + 契约文档 + 各客户端最终 SHA。
 
-未执行：Apple iOS/macOS 构建与 Swift 测试；Android APK 构建；satelite-one 的 Gradle 构建/测试。原因见 §8。
+未执行：Apple iOS/macOS 构建与 Swift 测试（无 macOS/Xcode）；Android APK 构建（satelite-one 需要内核 `libbox.aar`，见 §6/§8）。
 
 ---
 
@@ -68,12 +68,12 @@
 
 本机原本没有 Node/npm/pnpm。为了真正验证客户端而不是"静态检查通过就说完成"，安装了**便携**工具链到 `_int0145/tools/`（不进任何仓库）：
 
-- Node.js **v22.23.4**（官方 win-x64 zip，35.6 MB）；
-- pnpm **11.13.0**（`npm install -g`，本地 node 目录内）；
+- Node.js **v22.23.4** 与项目声明的 **v26.7.0**（官方 win-x64 zip，35.6 / 41.2 MB，两个都保留）；
+- pnpm **11.13.0**（`npm install -g`，各自 node 目录内）；
 - `@bufbuild/buf`（仓库 devDependency）生成 protobuf 代码；
 - dashboard 的 `vendor/iterm2-color-schemes` 子模块初始化（主题生成需要）。
 
-注意：desktop 的 `package.json` engines 写的是 `node 26.7.0`，pnpm 会警告；在 Node 22 上 install/typecheck/test/build 全部通过，但正式 CI 仍应以项目声明的版本为准（§8 风险 2）。
+最终验证在项目声明的 **Node 26.7.0** 上重跑：install/generate/typecheck/test/build 全部 exit 0（`07-clients-node26.log`）；Node 22.23.4 同样全绿，作为兼容性证据保留。
 
 ### 4.2 顺序
 
@@ -124,7 +124,7 @@
 ## 6. Android 与 satelite-one
 
 - **Android**：内核 pin `c7837107dc01` 与 `origin/main` 完全相同，`clients/android` 干净；按文档"没有新改动就保持不动"，未做任何提交。
-- **satelite-one**：独立产品仓库（不是 `clients/android` 子模块）。当前 `main=c9a0735`，`next/subscription-refresh=9cdf782`（+16 提交，22 文件），本地已有 `integration/0.1.45` worktree 但仍在 main 上。构建前提：`gradlew` + Android `app` 模块；本机只有 **Java 1.8**，没有 JDK 17，没有 `ANDROID_HOME`/Android SDK，因此 **BLOCKED_BY_ENVIRONMENT**，未合并、未构建。按仓库 `AGENTS.md`，Satelite APK 发布是 Release 流程的一部分，应在具备 JDK17 + Android SDK 的仓库环境完成。
+- **satelite-one**：独立产品仓库（不是 `clients/android` 子模块）。当前 `main=c9a0735`，`next/subscription-refresh=9cdf782`（+16 提交，22 文件），集成 worktree 仍在 main。收尾时补装 **JDK 17.0.21**（Temurin 便携版）并复用已有的 `C:\Deepseek\sdk`（Android 36 / build-tools 36），用缓存的 Gradle 9.7 真正跑了 `:app:testDebugUnitTest` 与 `:app:assembleDebug`：**失败在 `app/libs/libbox.aar` 缺失**（`verifyCoreProvenance` 的输入不存在），Kotlin 编译随之报大量 libbox 符号未解析。阻塞点是**内核 Android AAR 产物**（需要 gomobile + Android NDK 构建并带 provenance），不是 JDK/SDK。因此 **BLOCKED_BY_ENVIRONMENT**，未合并；证据 `08-satelite-jdk17.log`。
 
 ---
 
@@ -146,7 +146,7 @@
 ### 7.2 未执行
 
 - Apple iOS/macOS 构建与 Swift tests：无 macOS/Xcode。
-- Android/satelite-one Gradle 构建与测试：无 JDK17 + Android SDK。
+- satelite-one Gradle 构建/测试：JDK17 与 Android SDK 已具备，卡在内核 `libbox.aar` 产物缺失（gomobile + NDK），见 §6/§8。
 - 客户端真机/端到端：无设备。
 
 ---
@@ -154,12 +154,13 @@
 ## 8. 风险、遗留与接口约束
 
 1. **Apple 语义融合未完成**（BLOCKED）：trial merge 只有 3 个冲突文件，但必须由能编译 Swift 的环境按 §5 的语义逐条融合并跑 iOS/macOS tests；不得直接二选一覆盖。
-2. **Node 版本声明不一致**：desktop `engines.node=26.7.0`，本机验证用 22.23.4（全绿）；正式 CI 应使用声明版本，或由维护者修正 engines，不能把 22 的通过当作 26 的保证。
+2. **Node 版本已对齐**：声明的 **26.7.0** 上全部通过（`07-clients-node26.log`），22.23.4 也通过；engines 无需修改。
 3. **生成代码不随仓库提交**：`src/shared/gen/**`、dashboard `src/gen/**` 由 `pnpm generate` 产生；CI/打包必须先 generate，否则测试/build 会报缺失模块（本阶段已实测）。
 4. **Dashboard 独立测试不成立**：`@shared` 别名依赖 Desktop 布局；验收必须在 Desktop 仓库内跑 dashboard 测试。
 5. **客户端 pin 的 intent 仍是 `main`**：`release/dependencies.json` 记录 branch=main，而本阶段集成在 `integration/0.1.45`；第 06 阶段 freeze 时要么从 gitlink 读取（当前 gitlink 已指向验证过的 SHA），要么按流程合并到 main，不能直接按 intent 解析出旧 tip。
 6. **第 06 阶段注意**：内核 `clients/desktop` 已指向 `28dc4a9`，dashboard 嵌在其 gitlink `62f1582`；Apple/Android/satelite-one 的 pin 仍未变。
 7. **`source-lock.json` 仍是 0.1.44 快照**：第 06 阶段统一生成，包含上述客户端 gitlink。
+8. **satelite-one 需要内核 Android AAR**：`app/libs/libbox.aar` 必须由内核用 gomobile + Android NDK 构建并带 provenance；本机没有 NDK，也没有该构建流程。该产物应与内核 Release 一起产出（仓库 AGENTS 的 Satelite APK 流程），第 06 阶段处理。
 
 ---
 
