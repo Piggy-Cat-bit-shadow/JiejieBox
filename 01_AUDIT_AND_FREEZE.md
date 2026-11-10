@@ -204,7 +204,7 @@
 
 ## 5. 分支关系矩阵（相对候选 base `0b1b6a3b2f0d`）
 
-计算方式：`git merge-base`、`git rev-list --left-right --count`、`--cherry-pick`、`git patch-id --stable`（对 `base..topic` 与 `topic..base` 两侧补丁求交集）、`git diff --numstat base...topic`。原始数据：`_audit01/matrix/matrix.tsv` 与 `_audit01/matrix/files_*.txt`。
+计算方式：`git merge-base`、`git rev-list --left-right --count`、`--cherry-pick`、`git patch-id --stable`（对 `base..topic` 与 `topic..base` 两侧补丁求交集）、`git diff --numstat base...topic`。原始数据：`_int0145/audit-evidence/matrix/matrix.tsv` 与 `_int0145/audit-evidence/matrix/files_*.txt`。
 
 | 分支 | tip | merge-base | base 独有 | topic 独有 | 文件 | +/− | 重复补丁 | 判断 |
 |---|---|---|---:|---:|---:|---|---:|---|
@@ -458,7 +458,7 @@ pin bca854425f4d
 | 文档要求 | 状态 |
 |---|---|
 | 所有仓库、分支、本地未提交工作已盘点 | ✅ 13 仓库 + 112 clone/worktree + 12 子模块 module 仓库 |
-| 所有基线 SHA 有记录 | ✅ §2/§3/§7 + `_audit01/*.json`/`*.tsv` |
+| 所有基线 SHA 有记录 | ✅ §2/§3/§7 + `_int0145/audit-evidence/`（inventory_raw.json、worktree_state.tsv、matrix/、remote_*.txt） |
 | 集成工作区已隔离 | ✅ §7，`C:\Deepseek\_int0145` |
 | 主仓库集成分支从正确候选创建 | ✅ `integration/0.1.45-final` @ `0b1b6a3b2f0d` |
 | 依赖关系和分支差异矩阵完成 | ✅ §5/§6 |
