@@ -141,6 +141,27 @@ func TestTheDaemonDNSHistoryRPCBoundsARetainedLongRule(t *testing.T) {
 	require.LessOrEqual(t, len(result.Records[0].Rule), 4104)
 	require.True(t, strings.HasSuffix(result.Records[0].Rule, "…"))
 
+	// The RPC carries the same effective-budget contract as the gomobile binding: 1 KiB (the floor),
+	// the default and a request above the ceiling all stay within what was applied.
+	for _, testCase := range []struct {
+		id     string
+		budget int32
+		limit  int
+	}{
+		{"floor", 1024, 1024},
+		{"default", 0, 65536},
+		{"above-ceiling", 100_000_000, 65536},
+	} {
+		floorResponse, queryErr := service.DNSHistoryQuery(ctx, &DNSHistoryQueryRequest{MaxBytes: testCase.budget})
+		require.NoError(t, queryErr)
+		require.LessOrEqual(t, len(floorResponse.RecordsJson), testCase.limit,
+			"the %s request must fit the applied budget", testCase.id)
+		var floorResult dnsHistoryRPCResult
+		require.NoError(t, stdjson.Unmarshal([]byte(floorResponse.RecordsJson), &floorResult))
+		require.NotEmpty(t, floorResult.Records)
+		require.NotZero(t, floorResult.NextSequence)
+	}
+
 	topK, err := service.DNSHistoryTopK(ctx, &DNSHistoryTopKRequest{Field: "source", Limit: 4})
 	require.NoError(t, err)
 	require.Contains(t, topK.EntriesJson, `"field":"source"`)

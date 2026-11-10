@@ -148,9 +148,16 @@ func HistoryBindingBudget(requested int) int {
 // BuildHistoryQueryView converts a query's records and stats into the bounded presentation.
 //
 // The budget is measured on the growing ENCODED document, because that is what the caller receives:
-// JSON escaping and the field names are part of it. A record is added only while the whole document
-// fits; the first record is always carried so the cursor advances (its fields are already bounded,
-// so the response stays under the server ceiling).
+// JSON escaping and the field names are part of it.
+//
+// # The first record also obeys the budget
+//
+// It used to be carried unconditionally "so the cursor advances", which let a single 40,000-character
+// rule produce a 4,378-byte response for a 1 KiB request. The record is still always carried - a
+// response that returns nothing leaves the caller without a cursor - but its variable fields are
+// SHRUNK until the whole document fits, down to the minimal form (sequence, time, rcode and a
+// truncated marker). That is the contract: progress is guaranteed, the caller's effective budget is
+// not exceeded, and the response says it was cut.
 func BuildHistoryQueryView(records []HistoryRecord, stats HistoryStats, dropped uint64, requestedMaxBytes int) HistoryQueryView {
 	result := HistoryQueryView{
 		Records: make([]HistoryRecordView, 0, len(records)),
@@ -159,6 +166,13 @@ func BuildHistoryQueryView(records []HistoryRecord, stats HistoryStats, dropped 
 	budget := HistoryBindingBudget(requestedMaxBytes)
 	truncated := false
 	for index, record := range records {
+		if index == 0 {
+			presented, cut := fitFirstHistoryRecord(record, result.Stats, budget)
+			result.Records = append(result.Records, presented)
+			result.NextSequence = record.Sequence
+			truncated = cut || len(records) > 1
+			continue
+		}
 		presented, fieldCut := PresentHistoryRecord(record)
 		candidate := HistoryQueryView{
 			Records:      append(append([]HistoryRecordView(nil), result.Records...), presented),
@@ -174,13 +188,7 @@ func BuildHistoryQueryView(records []HistoryRecord, stats HistoryStats, dropped 
 			break
 		}
 		if len(encoded) > budget {
-			if index == 0 {
-				truncated = true
-				result.Records = candidate.Records
-				result.NextSequence = record.Sequence
-			} else {
-				truncated = true
-			}
+			truncated = true
 			break
 		}
 		result.Records = candidate.Records
@@ -191,6 +199,32 @@ func BuildHistoryQueryView(records []HistoryRecord, stats HistoryStats, dropped 
 	}
 	result.Truncated = truncated
 	return result
+}
+
+// fitFirstHistoryRecord shrinks one record's variable fields until the document fits the budget.
+//
+// The envelope and stats are accounted by measuring the real marshaled candidate, so escaping and
+// the stats block are inside the budget rather than estimated. When even the minimal record does not
+// fit (only possible below the 1 KiB floor, which HistoryBindingBudget rejects), the minimal form is
+// returned anyway: a cursor that advances is more useful than an empty page.
+func fitFirstHistoryRecord(record HistoryRecord, stats HistoryStatsView, budget int) (HistoryRecordView, bool) {
+	budgets := defaultHistoryFieldBudgets()
+	for {
+		presented, cut := presentHistoryRecord(record, budgets)
+		encoded, encodeErr := stdjson.Marshal(HistoryQueryView{
+			Records:      []HistoryRecordView{presented},
+			Stats:        stats,
+			Truncated:    true,
+			NextSequence: record.Sequence,
+		})
+		if encodeErr == nil && len(encoded) <= budget {
+			return presented, cut
+		}
+		if budgets.minimal() {
+			return presented, true
+		}
+		budgets = budgets.shrink()
+	}
 }
 
 // BuildHistoryStatsView converts the accounting for a stats response.
@@ -210,17 +244,57 @@ func BuildHistoryTopKView(field TopField, entries []TopEntry) HistoryTopKResultV
 	return result
 }
 
+// historyFieldBudgets are the ENCODED-size budgets for one record's variable fields. The default is
+// the per-field ceiling; the first record of a response shrinks them until the document fits.
+type historyFieldBudgets struct {
+	name       int
+	transport  int
+	rule       int
+	err        int
+	answersSum int
+}
+
+func defaultHistoryFieldBudgets() historyFieldBudgets {
+	return historyFieldBudgets{
+		name:       MaxHistoryFieldBytes,
+		transport:  MaxHistoryFieldBytes,
+		rule:       MaxHistoryFieldBytes,
+		err:        MaxHistoryFieldBytes,
+		answersSum: MaxHistoryAnswersBytes,
+	}
+}
+
+// shrink halves every budget, so a record that does not fit converges to the minimal form quickly.
+func (b historyFieldBudgets) shrink() historyFieldBudgets {
+	return historyFieldBudgets{
+		name:       b.name / 2,
+		transport:  b.transport / 2,
+		rule:       b.rule / 2,
+		err:        b.err / 2,
+		answersSum: b.answersSum / 2,
+	}
+}
+
+func (b historyFieldBudgets) minimal() bool {
+	return b.name == 0 && b.transport == 0 && b.rule == 0 && b.err == 0 && b.answersSum == 0
+}
+
 // PresentHistoryRecord converts one record and bounds every variable field by its ENCODED size.
 func PresentHistoryRecord(record HistoryRecord) (HistoryRecordView, bool) {
+	return presentHistoryRecord(record, defaultHistoryFieldBudgets())
+}
+
+// presentHistoryRecord is PresentHistoryRecord with explicit per-field budgets.
+func presentHistoryRecord(record HistoryRecord, budgets historyFieldBudgets) (HistoryRecordView, bool) {
 	event := record.Event
 	truncated := false
-	name, cut := TruncateJSONField(event.Name, MaxHistoryFieldBytes)
+	name, cut := TruncateJSONField(event.Name, budgets.name)
 	truncated = truncated || cut
-	transport, cut := TruncateJSONField(event.TransportTag, MaxHistoryFieldBytes)
+	transport, cut := TruncateJSONField(event.TransportTag, budgets.transport)
 	truncated = truncated || cut
-	ruleText, cut := TruncateJSONField(event.Rule, MaxHistoryFieldBytes)
+	ruleText, cut := TruncateJSONField(event.Rule, budgets.rule)
 	truncated = truncated || cut
-	errText, cut := TruncateJSONField(event.Err, MaxHistoryFieldBytes)
+	errText, cut := TruncateJSONField(event.Err, budgets.err)
 	truncated = truncated || cut
 	presented := HistoryRecordView{
 		Sequence:   record.Sequence,
@@ -242,9 +316,9 @@ func PresentHistoryRecord(record HistoryRecord) (HistoryRecordView, bool) {
 			answers = answers[:MaxHistoryAnswers]
 			truncated = true
 		}
-		budget := MaxHistoryAnswersBytes
+		budget := budgets.answersSum
 		for _, answer := range answers {
-			bounded, cut := TruncateJSONField(answer, MaxHistoryFieldBytes)
+			bounded, cut := TruncateJSONField(answer, minInt(budgets.name, MaxHistoryFieldBytes))
 			if cut {
 				truncated = true
 			}
@@ -261,6 +335,13 @@ func PresentHistoryRecord(record HistoryRecord) (HistoryRecordView, bool) {
 		}
 	}
 	return presented, truncated
+}
+
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 // TruncateJSONField cuts value so that its ENCODED JSON form fits budget, and reports whether it

@@ -87,6 +87,79 @@ func queryBinding(t *testing.T, server *CommandServer, queryJSON string) (dnsHis
 	return result, len(boxed.Value)
 }
 
+// TestTheRealBindingObeysTheCallersEffectiveBudget drives the REAL CommandServer with the reviewed
+// configuration and checks every clamp path: 1 KiB (the floor), 4 KiB, the default and a request
+// above the ceiling. The first record must be carried, fit the applied budget, and advance the
+// cursor; the next page must not repeat it.
+func TestTheRealBindingObeysTheCallersEffectiveBudget(t *testing.T) {
+	server := startDiagnoseTestCommandServer(t, longRuleDNSConfig(strings.Repeat("e", 40_000)))
+	defer server.Close()
+
+	_, err := server.DNSHistoryEnable(`{"maxEntries":32,"maxBytes":1048576,"ttlMs":60000}`)
+	require.NoError(t, err)
+	for index := 0; index < 3; index++ {
+		lookupBlockedName(t, server, "history.test")
+	}
+	var initial dnsHistoryBindingQueryResult
+	require.Eventually(t, func() bool {
+		initial, _ = queryBinding(t, server, `{"maxBytes":65536}`)
+		return initial.Stats.Entries >= 2
+	}, 5*time.Second, time.Millisecond)
+
+	testCases := []struct {
+		id        string
+		query     string
+		maxBudget int
+	}{
+		{"floor", `{"maxBytes":1024}`, 1024},
+		{"four-kilobyte", `{"maxBytes":4096}`, 4096},
+		{"default", `{}`, 65536},
+		{"above-ceiling", `{"maxBytes":100000000}`, 65536},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.id, func(t *testing.T) {
+			view, encodedBytes := queryBinding(t, server, testCase.query)
+			require.LessOrEqual(t, encodedBytes, testCase.maxBudget,
+				"the actual encoded response must fit the applied budget")
+			require.NotEmpty(t, view.Records, "a page that returns nothing has no cursor")
+			require.NotZero(t, view.NextSequence)
+
+			// The next page starts after the last sequence carried and never repeats it.
+			next, nextBytes := queryBinding(t, server, fmt.Sprintf(`{"since":%d,"maxBytes":1024}`, view.NextSequence))
+			require.LessOrEqual(t, nextBytes, 1024)
+			if len(next.Records) > 0 {
+				require.Greater(t, next.Records[0].Sequence, view.NextSequence,
+					"the cursor is exclusive and must advance")
+			}
+		})
+	}
+}
+
+// TestTheRealBindingCarriesALongRuleUnderOneKilobyte is the reviewed number: a 40,000-character rule
+// at maxBytes=1024 used to encode to ~4,378 bytes. The real binding must stay within the budget.
+func TestTheRealBindingCarriesALongRuleUnderOneKilobyte(t *testing.T) {
+	server := startDiagnoseTestCommandServer(t, longRuleDNSConfig(strings.Repeat("f", 40_000)))
+	defer server.Close()
+
+	_, err := server.DNSHistoryEnable(`{"maxEntries":32,"maxBytes":1048576,"ttlMs":60000}`)
+	require.NoError(t, err)
+	lookupBlockedName(t, server, "history.test")
+
+	var result dnsHistoryBindingQueryResult
+	require.Eventually(t, func() bool {
+		result, _ = queryBinding(t, server, `{"maxBytes":1024}`)
+		return len(result.Records) >= 1
+	}, 5*time.Second, time.Millisecond, "the long-rule event is retained")
+
+	_, encodedBytes := queryBinding(t, server, `{"maxBytes":1024}`)
+	require.LessOrEqual(t, encodedBytes, 1024)
+	require.Len(t, result.Records, 1)
+	require.True(t, result.Truncated)
+	require.NotZero(t, result.NextSequence)
+	require.True(t, strings.HasSuffix(result.Records[0].Rule, "…"),
+		"the long rule is cut and marked, not silently mangled")
+}
+
 // TestALongRuleIsRejectedByTheRetentionBudget closes the reviewed example at its source: with
 // `maxBytes=4096`, the 40,000-character rule cannot be retained at all, so the encoding cannot be
 // large and the rejection is counted.
