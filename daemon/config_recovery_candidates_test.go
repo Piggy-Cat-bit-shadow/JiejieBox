@@ -118,3 +118,25 @@ func TestTheRecoverySurvivesAProcessRestart(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(directory, "commit.candidate"))
 	require.True(t, os.IsNotExist(statErr), "the candidate marker must not survive a completed start")
 }
+
+// TestARecoveryFromACorruptedStoreDoesNotClaimSuccess: the store on disk is the evidence recovery
+// reads. If the active document cannot be decoded, the daemon must report a failure and must not
+// present a recovery event as if a valid configuration had come back.
+func TestARecoveryFromACorruptedStoreDoesNotClaimSuccess(t *testing.T) {
+	directory := t.TempDir()
+	service := recoveryService(t, directory, true)
+	require.NoError(t, service.StartOrReloadService(context.Background(), minimalConfig, nil))
+
+	// Corrupt the document the store would recover from.
+	activePath := filepath.Join(directory, "active.json")
+	require.NoError(t, os.WriteFile(activePath, []byte("{not json"), 0o644))
+
+	err := service.StartOrReloadService(context.Background(), anotherBuildFailingConfig, nil)
+	t.Logf("corrupted store: err=%v recovery=%v instance=%v report=%+v", err, service.LastConfigRecovery(), service.Instance(), service.LastServiceChange())
+	require.Error(t, err, "a store that cannot be read is not a successful recovery")
+	require.Nil(t, service.LastConfigRecovery(), "no recovery event may be invented")
+	require.Nil(t, service.Instance(), "nothing is running when both the candidate and the store failed")
+	report := service.LastServiceChange()
+	require.NotNil(t, report)
+	require.NotEqual(t, ServiceChangeStatusRecovered, report.Status)
+}
