@@ -327,24 +327,38 @@ func (d *resolveParallelNetworkDialer) feedRecoveryAsLateCandidates(ctx context.
 	feedCtx, cancelFeed := context.WithCancel(ctx)
 	lateCandidates := make(chan dualStackCandidate, 1)
 	done := make(chan struct{})
+	// Every family the lookup publishes is fed, not just the first. A family is diallable when its
+	// answer passes admission, which says nothing about whether anything on the other side answers;
+	// stopping at the first family is what left a literal flow with no fallback when that family
+	// silently blackholed. The scheduler - not the lookup - decides when there is nothing left to
+	// try, and it does so when the stream closes with every attempt failed.
+	stream := d.streamRecoveredCandidates(feedCtx, destination, admission)
 	var producers sync.WaitGroup
 	producers.Add(1)
 	go func() {
 		defer producers.Done()
 		defer close(done)
 		defer close(lateCandidates)
-		recovered := d.recoverCandidates(feedCtx, destination, admission)
-		if len(recovered) == 0 {
-			return
-		}
-		for _, address := range d.mergeRecovered(destination, recovered, admission) {
-			if address == destination.Addr {
-				// The literal is already in the plan. Feeding it again would be a second attempt at the
-				// endpoint the caller asked for, and the scheduler would only deduplicate it.
-				continue
-			}
+		for {
 			select {
-			case lateCandidates <- dualStackCandidate{address: unmapAddress(address), family: classifyAddress(address)}:
+			case batch, stillOpen := <-stream.batches:
+				if !stillOpen {
+					return
+				}
+				for _, candidate := range batch {
+					if candidate.address == unmapAddress(destination.Addr) {
+						// The literal is already in the plan. Feeding it again would be a second attempt
+						// at the endpoint the caller asked for, and the scheduler would only
+						// deduplicate it. The stream already drops it; this is the defensive second
+						// reading of one rule.
+						continue
+					}
+					select {
+					case lateCandidates <- candidate:
+					case <-feedCtx.Done():
+						return
+					}
+				}
 			case <-feedCtx.Done():
 				return
 			}
@@ -354,10 +368,13 @@ func (d *resolveParallelNetworkDialer) feedRecoveryAsLateCandidates(ctx context.
 		candidates: lateCandidates,
 		done:       done,
 		// stop cancels the feed and WAITS for the producer, so a caller that invokes it has proof the
-		// goroutine has exited rather than an expectation that it will.
+		// goroutine has exited rather than an expectation that it will. The recovery stream is
+		// stopped on the same terms: the lookup below this producer is deliberately not joined, so
+		// stop returns even for a resolver that ignores cancellation.
 		stop: func() {
 			cancelFeed()
 			producers.Wait()
+			stream.stop()
 		},
 	}
 }

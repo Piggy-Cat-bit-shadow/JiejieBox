@@ -44,8 +44,11 @@ import (
 type streamOrderDialer struct {
 	access sync.Mutex
 	stall  map[netip.Addr]bool
-	order  []netip.Addr
-	times  []time.Time
+	// fail makes the named address report an immediate connect error, which is how a refused
+	// connect reports itself as opposed to a silent blackhole that reports nothing until cancelled.
+	fail  map[netip.Addr]error
+	order []netip.Addr
+	times []time.Time
 }
 
 func newStreamOrderDialer(stalled ...netip.Addr) *streamOrderDialer {
@@ -61,8 +64,12 @@ func (d *streamOrderDialer) DialContext(ctx context.Context, network string, des
 	d.order = append(d.order, destination.Addr)
 	d.times = append(d.times, time.Now())
 	stalled := d.stall[destination.Addr]
+	failure := d.fail[destination.Addr]
 	d.access.Unlock()
 
+	if failure != nil {
+		return nil, failure
+	}
 	if stalled {
 		// A path that accepts packets and never answers. Nothing is reported until the race is
 		// cancelled, so no failure can advance the schedule.
