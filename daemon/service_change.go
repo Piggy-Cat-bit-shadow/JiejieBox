@@ -182,7 +182,10 @@ func (s *StartedService) planningOverrides(options *OverrideOptions) *OverrideOp
 	}
 	s.serviceAccess.RLock()
 	defer s.serviceAccess.RUnlock()
-	if s.instance == nil || !s.instance.hasOverrides {
+	// The same predicate `runningDocumentSnapshot` uses: during STARTING/STOPPING there is an instance
+	// but no running document to compare against, so inheriting its overrides would label a
+	// first-start plan with inputs from a Box that is not serving anything.
+	if s.instance == nil || s.serviceStatus.Status != ServiceStatus_STARTED || !s.instance.hasOverrides {
 		return nil
 	}
 	inherited := s.instance.overrideOptions
@@ -209,6 +212,13 @@ func overrideInputNames(options *OverrideOptions) []string {
 	}
 	if len(options.LoopbackAddress) > 0 {
 		names = append(names, "loopback_address")
+	}
+	if len(names) == 0 {
+		// An override SET was supplied and every field was zero. That is not the same input as "no
+		// override": an all-zero set CLEARS the document fields the overrides own (auto_redirect),
+		// so a reader comparing this plan with one computed without it must be able to tell them
+		// apart.
+		return []string{"empty_override_set"}
 	}
 	return names
 }

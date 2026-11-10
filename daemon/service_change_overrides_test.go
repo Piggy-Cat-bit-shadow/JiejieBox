@@ -104,7 +104,8 @@ func TestAnExplicitOverrideBeatsTheRunningOne(t *testing.T) {
 	require.False(t, plan.Unchanged)
 	require.True(t, plan.ChangedDocument)
 	require.True(t, plan.RestartRequired, "the effective document really changed")
-	require.Empty(t, plan.OverridesConsidered, "no override input was applied this time")
+	require.Equal(t, []string{"empty_override_set"}, plan.OverridesConsidered,
+		"an empty override set is an input of its own: it clears the document fields the overrides own")
 }
 
 // TestAPreviewWithTheSameExplicitOverrideIsUnchanged proves the comparison is about the effective
@@ -130,4 +131,34 @@ func TestAProfileWithoutOverridesStillPlans(t *testing.T) {
 	require.True(t, plan.Unchanged)
 	require.Empty(t, plan.OverridesConsidered)
 	require.Contains(t, plan.UncoveredInputs, "platform network settings")
+}
+
+// TestAnEmptyOverrideSetIsItsOwnInput pins the difference the plan must be able to state: an override
+// SET with every field zero clears the document fields the overrides own (`auto_redirect`), so it is
+// not the same input as passing no overrides at all - and a plan that reported neither would hide
+// which of the two produced it.
+func TestAnEmptyOverrideSetIsItsOwnInput(t *testing.T) {
+	loopback := OverrideOptions{LoopbackAddress: []netip.Addr{netip.MustParseAddr("10.7.0.1")}}
+	service := serviceRunningWithOverrides(t, tunProfile, &loopback, configRevisionOf(tunProfile))
+
+	plan, err := service.PlanServiceChange(tunProfile, &OverrideOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"empty_override_set"}, plan.OverridesConsidered)
+	require.True(t, plan.RestartRequired, "the effective document really changed: the loopback patch is gone")
+}
+
+// TestAServiceThatIsNotStartedDoesNotLendItsOverrides closes the window between "an instance exists"
+// and "a document runs": during STARTING/STOPPING there is nothing to inherit from, and labelling a
+// first-start plan with a Box that is not serving anything would be a claim about the wrong object.
+func TestAServiceThatIsNotStartedDoesNotLendItsOverrides(t *testing.T) {
+	loopback := OverrideOptions{LoopbackAddress: []netip.Addr{netip.MustParseAddr("10.7.0.1")}}
+	service := serviceRunningWithOverrides(t, tunProfile, &loopback, configRevisionOf(tunProfile))
+	service.serviceAccess.Lock()
+	service.serviceStatus.Status = ServiceStatus_STARTING
+	service.serviceAccess.Unlock()
+
+	plan, err := service.PlanServiceChange(tunProfile, nil)
+	require.NoError(t, err)
+	require.False(t, plan.Started, "there is no running document to compare against")
+	require.Empty(t, plan.OverridesConsidered, "an instance that is not serving lends no overrides")
 }

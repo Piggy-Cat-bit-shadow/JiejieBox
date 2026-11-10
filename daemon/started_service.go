@@ -430,9 +430,29 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 // It is returned even when the call fails, because a failed attempt still has a state worth
 // reporting: which document is running now, whether the previous one was retained, and why.
 func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent string, options *OverrideOptions) (*ServiceChangeReport, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	s.interruptStart()
 	s.lifecycleAccess.Lock()
 	defer s.lifecycleAccess.Unlock()
+	// A caller that is already gone decides nothing - and in particular nothing is CLOSED for it.
+	// The restart path below tears down a healthy Box before it builds a replacement, so answering a
+	// cancelled request by "applying" it would destroy a working service on behalf of nobody, with a
+	// context that cannot build a replacement either. The live path has the same guard below, for the
+	// cancellation that arrives while the provider refresh is running.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		_, runningRevision, running := s.runningDocumentSnapshot()
+		report := &ServiceChangeReport{
+			Plan:           ServiceChangePlan{TargetRevision: configRevisionOf(profileContent)},
+			Status:         ServiceChangeStatusFailed,
+			Retained:       running,
+			ActiveRevision: runningRevision,
+			Reason:         "the request was cancelled before anything was applied; the running configuration was left in place: " + ctxErr.Error(),
+		}
+		s.recordServiceChange(report)
+		return report, ctxErr
+	}
 	// C04: the candidate is parsed and planned BEFORE the running Box is touched.
 	//
 	// A profile that does not even parse used to cost the running configuration: the old Box was
@@ -482,7 +502,21 @@ func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent 
 			liveFallbackReason = "provider refresh: " + providerReport.Reason
 		}
 		// Nothing was delivered (or the refresh was refused). Report success for none of it:
-		// fall through to the restart path, which is the honest answer.
+		// fall through to the restart path, which is the honest answer - UNLESS the reason is that
+		// the caller left. The document is unchanged, so the running Box is exactly what the caller
+		// asked for; closing it to "apply" a request whose answer has nowhere to go is damage done
+		// on behalf of nobody.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			report := &ServiceChangeReport{
+				Plan:           plan,
+				Status:         ServiceChangeStatusFailed,
+				Retained:       true,
+				ActiveRevision: plan.CurrentRevision,
+				Reason:         "the caller was cancelled during the provider refresh; the running configuration was left in place: " + ctxErr.Error(),
+			}
+			s.recordServiceChange(report)
+			return report, ctxErr
+		}
 		plan.RestartRequired = true
 	}
 	if plan.Started && plan.LiveOnly {
