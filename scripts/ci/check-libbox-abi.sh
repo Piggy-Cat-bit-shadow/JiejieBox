@@ -310,9 +310,9 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 # Re-probed at the exact tree:
 #
 #   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
-#     --lang swift --root <sing-box-for-apple @ 0297d7bbb86bf9ef2bf922319e11e994f16927fd>
+#     --lang swift --root <sing-box-for-apple @ 8cbac9548199f8199fcbe3f4f4b555b5613f28a8>
 #   {"scanned": 434, "violations": [], "interface_methods": 3, "error": ""}
-VERIFIED_APPLE_SHA="0297d7bbb86bf9ef2bf922319e11e994f16927fd"
+VERIFIED_APPLE_SHA="8cbac9548199f8199fcbe3f4f4b555b5613f28a8"
 
 client_root=""
 skip_client=0
