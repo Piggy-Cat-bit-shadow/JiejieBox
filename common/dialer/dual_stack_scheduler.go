@@ -355,15 +355,45 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	}
 	pendingCount := len(candidates)
 
-	takeFromFamily := func(family addressFamily) (dualStackCandidate, bool) {
+	// takePreferred takes the first candidate of this family that is NOT superseded, or the head when
+	// every candidate in the family is.
+	//
+	// Within one family the queue can hold two batches - the previous DNS environment's answer and
+	// the current one - because the destination family did not change between them. Taking the head
+	// unconditionally launched the stale batch first even when a current candidate was already
+	// queued behind it. A current candidate leads its family; the superseded ones keep their relative
+	// order behind it and are still launched when nothing current remains.
+	takePreferred := func(family addressFamily) (dualStackCandidate, bool) {
 		queue := pendingByFamily[family]
 		if len(queue) == 0 {
 			return dualStackCandidate{}, false
 		}
-		candidate := queue[0]
-		pendingByFamily[family] = queue[1:]
+		index := 0
+		if s.dnsGeneration != nil {
+			for candidateIndex, candidate := range queue {
+				if !s.candidateSuperseded(candidate) {
+					index = candidateIndex
+					break
+				}
+			}
+		}
+		candidate := queue[index]
+		pendingByFamily[family] = append(queue[:index], queue[index+1:]...)
 		pendingCount--
 		return candidate, true
+	}
+
+	// familyHasCurrent reports whether this family still holds a candidate from the current DNS
+	// environment. It is asked of the WHOLE queue rather than the head: a family can have a
+	// superseded head with a current candidate behind it, and comparing only heads made such a
+	// family look stale and lose the slot to another family's superseded candidate.
+	familyHasCurrent := func(family addressFamily) bool {
+		for _, candidate := range pendingByFamily[family] {
+			if !s.candidateSuperseded(candidate) {
+				return true
+			}
+		}
+		return false
 	}
 
 	// nextFamily chooses which family launches next: the other family first, then the family that
@@ -379,10 +409,10 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	// created in: a split-horizon name whose A record moved would otherwise send the new connection
 	// to the address the previous environment selected.
 	//
-	// The demotion is an ORDERING rule and never a refusal. When both heads are superseded - or when
-	// provenance is unknown, which is every implementation that predates the field - the normal
-	// alternation applies and the candidate is still launched. A DNS flap must cost a launch slot,
-	// never a connection.
+	// The demotion is an ORDERING rule and never a refusal. When neither family has a current
+	// candidate - or when provenance is unknown, which is every implementation that predates the
+	// field - the normal alternation applies and the candidate is still launched. A DNS flap must
+	// cost a launch slot, never a connection.
 	nextFamily := func() (addressFamily, bool) {
 		if pendingCount == 0 {
 			return familyInvalid, false
@@ -395,14 +425,10 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			otherPending := len(pendingByFamily[other]) > 0
 			samePending := len(pendingByFamily[lastStartedFamily]) > 0
 			if otherPending && samePending {
-				otherStale := s.candidateSuperseded(pendingByFamily[other][0])
-				sameStale := s.candidateSuperseded(pendingByFamily[lastStartedFamily][0])
-				// The alternation is the tie-break: it only loses to "this one is current".
-				if otherStale && !sameStale {
+				// The alternation is the tie-break: it only loses to "that family still has a
+				// current candidate and this one does not".
+				if familyHasCurrent(lastStartedFamily) && !familyHasCurrent(other) {
 					return lastStartedFamily, true
-				}
-				if !otherStale && sameStale {
-					return other, true
 				}
 			}
 			if otherPending {
@@ -425,7 +451,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 		if !ok {
 			return dualStackCandidate{}, false
 		}
-		return takeFromFamily(family)
+		return takePreferred(family)
 	}
 
 	// seen deduplicates across the initial set and every late arrival, including the original
@@ -439,7 +465,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 	// scheduler would choose, so this is also the reference ordering the alternation above
 	// reproduces for candidates that arrive later.
 	if len(candidates) > 0 {
-		if head, taken := takeFromFamily(candidates[0].family); taken {
+		if head, taken := takePreferred(candidates[0].family); taken {
 			startAttempt(head)
 			// With recent family failure recorded, the other family's first candidate starts
 			// together with it so a broken family costs no delay at all.
@@ -451,7 +477,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			// connection paid the full fallback delay even after the first had measured the
 			// family as stalled.
 			if next, haveNext := nextFamily(); haveNext && s.healthUrgesFirstStart(&startedFamilies, next) {
-				if candidate, taken := takeFromFamily(next); taken {
+				if candidate, taken := takePreferred(next); taken {
 					startAttempt(candidate)
 				}
 			}
@@ -637,7 +663,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 				startNow = s.healthUrgesFirstStart(&startedFamilies, candidate.family)
 			}
 			if startNow {
-				if next, taken := takeFromFamily(candidate.family); taken {
+				if next, taken := takePreferred(candidate.family); taken {
 					startAttempt(next)
 					// The cadence STILL applies to whatever follows in this burst.
 					//
