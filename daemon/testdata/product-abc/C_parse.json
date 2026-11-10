@@ -1,0 +1,8 @@
+{
+  "log": {"level": "error"},
+  "inbounds": [
+    {"type": "http", "tag": "dup", "listen": "127.0.0.1", "listen_port": 1},
+    {"type": "http", "tag": "dup", "listen": "127.0.0.1", "listen_port": 2}
+  ],
+  "outbounds": [{"type": "direct", "tag": "direct"}]
+}

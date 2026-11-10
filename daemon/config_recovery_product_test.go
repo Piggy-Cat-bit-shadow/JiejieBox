@@ -24,6 +24,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -280,5 +282,32 @@ func requireRejectedWith(t *testing.T, service *StartedService, proxyPort int, p
 	if err == nil {
 		response.Body.Close()
 		require.NotEqual(t, http.StatusOK, response.StatusCode)
+	}
+}
+
+// TestWriteProductFixtureDocuments exports the exact documents the fixture proves, with fixed
+// ports, so the authenticated product run drives the same JSON. Set BOXDD_FIXTURE_OUT to a
+// directory; the test is a no-op otherwise.
+func TestWriteProductFixtureDocuments(t *testing.T) {
+	output := os.Getenv("BOXDD_FIXTURE_OUT")
+	if output == "" {
+		t.Skip("set BOXDD_FIXTURE_OUT to write the fixture documents")
+	}
+	const (
+		proxyPort = 18080
+		nodeA     = 18081
+		nodeB     = 18082
+		ruleA     = 18091
+		ruleB     = 18092
+	)
+	documents := map[string]string{
+		"A.json":       productWitnessConfig(proxyPort, nodeA, ruleA),
+		"B.json":       productWitnessConfig(proxyPort, nodeB, ruleB),
+		"C_parse.json": duplicateInboundTagConfig,
+		"C_build.json": buildFailingConfig,
+	}
+	require.NoError(t, os.MkdirAll(output, 0o755))
+	for name, content := range documents {
+		require.NoError(t, os.WriteFile(filepath.Join(output, name), []byte(content), 0o644))
 	}
 }
