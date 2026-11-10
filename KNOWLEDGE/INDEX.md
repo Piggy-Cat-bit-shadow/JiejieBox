@@ -9,6 +9,17 @@
 | Apple 接管等待、IPv4-mapped 回环、固定客户端来源 | [Apple 自签与回环](modules/apple-selfsign-loopback.md) 与 [子仓库](modules/child-repositories.md) |
 | preparation、精确 SHA 门禁、契约检查误判、正式运行 | [CI 与发布](modules/ci-release.md) 与 [Release 指引](../docs/RELEASE-WINDOWS.md) |
 
+## 2026-11-10 归档：配置规则与恢复（0.1.45 目录）
+
+目录名 `0.1.45` 由交接指定；实际构建/发布版本是 `0.1.44`，归档时不存在 `0.1.45` 的构建记录。
+
+| 任务 / 关键符号 | 直接入口 |
+| --- | --- |
+| 配置恢复入口回归、A/B/C 夹具、损坏存储、重启重放 | [结果报告](reports/0.1.45/CONFIG-RECOVERY-AND-PREVIEW-2026-11-10.md) |
+| 两端 `started` 预览语义、真实内核 fixture、消费构建与产物 SHA | [结果报告](reports/0.1.45/CONFIG-RECOVERY-AND-PREVIEW-2026-11-10.md) |
+| 反例、负向对照、假绿排查与已修缺陷 | [定向自审](reports/0.1.45/DEBUG-SELF-REVIEW-2026-11-10.md) |
+| 产品 A/B/C、独占窗口、Apple 运行期的环境与通过标准 | [验收交接](reports/0.1.45/HANDOFF-ACCEPTANCE.md) |
+
 ## 2026-11-05 新增导航（New routes）
 
 | 任务 / 路径 / 关键符号 | 直接入口 |
