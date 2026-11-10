@@ -266,24 +266,56 @@ func parseLoopbackAddresses(iterator StringIterator) []netip.Addr {
 	return addresses
 }
 
+// StartOrReloadService applies a configuration to the running service.
+//
+// The error-only contract is unchanged for every existing embedder. `ApplyServiceChangeReport` is
+// the same attempt with the report attached; keeping both means an older client cannot be affected
+// by the newer one, and the newer one cannot drift from the older one's behaviour.
 func (s *CommandServer) StartOrReloadService(configContent string, options *OverrideOptions) error {
+	_, err := s.applyServiceChange(configContent, options)
+	return err
+}
+
+// ApplyServiceChangeReport applies a configuration and returns the report THIS call produced, as a
+// versioned JSON document.
+//
+// # Why this is a separate method instead of "call apply, then read the last report"
+//
+// Reading `GetLastServiceChange` after an apply is not a receipt: the report it returns belongs to
+// whichever attempt was last, and an apply that was interrupted or recovered returns no error at
+// all, so a caller has nothing else to distinguish "my document is running" from "something else
+// is". This method leaves the daemon's own ownership boundary (`StartedService.ApplyServiceChange`
+// holds `lifecycleAccess` across the whole attempt) with the report in hand, and it never returns a
+// Go error, because the gomobile bridge throws on a non-nil error and would drop the document:
+// the outcome, including a failure, travels INSIDE the document.
+//
+// See `daemon.DescribeServiceChangeOutcome` for the shape and for why `ok` is not "no error".
+func (s *CommandServer) ApplyServiceChangeReport(configContent string, options *OverrideOptions) *StringBox {
+	report, applyErr := s.applyServiceChange(configContent, options)
+	return wrapString(daemon.EncodeServiceChangeOutcome(daemon.DescribeServiceChangeOutcome(report, applyErr)))
+}
+
+// applyServiceChange is the one implementation behind both exported entry points.
+func (s *CommandServer) applyServiceChange(configContent string, options *OverrideOptions) (*daemon.ServiceChangeReport, error) {
 	saveConfigSnapshot(configContent)
 	if s.powerManager.Recorder() != nil {
 		copyConfigSnapshot(filepath.Join(sWorkingPath, powerreport.DraftDirectoryName))
 	}
-	err := s.StartedService.StartOrReloadService(s.ctx, configContent, &daemon.OverrideOptions{
+	report, err := s.StartedService.ApplyServiceChange(s.ctx, configContent, &daemon.OverrideOptions{
 		AutoRedirect:    options.AutoRedirect,
 		IncludePackage:  iteratorToArray(options.IncludePackage),
 		ExcludePackage:  iteratorToArray(options.ExcludePackage),
 		LoopbackAddress: parseLoopbackAddresses(options.LoopbackAddress),
 	})
 	if err != nil {
-		return E.Cause(err, "start or reload service")
+		// The report is returned with the error: a failed attempt still has a state worth
+		// reporting (which document runs, whether the previous one was retained, and why).
+		return report, E.Cause(err, "start or reload service")
 	}
 	// The window is closed again: whatever the platform reported while there was no Box is applied to
 	// the Box that now exists. See rememberDeviceLevel.
 	s.restoreDeviceLevel()
-	return nil
+	return report, nil
 }
 
 func (s *CommandServer) CloseService() error {
