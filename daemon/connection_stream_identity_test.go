@@ -87,3 +87,17 @@ func TestEachServiceHasItsOwnStreamInstance(t *testing.T) {
 	require.NotEqual(t, first.connectionStreamInstance, second.connectionStreamInstance,
 		"two services are two Box generations; a client must be able to tell their streams apart")
 }
+
+// TestAReloadGivesTheStreamANewInstance is the reload half: `StartOrReloadService` closes one Box
+// and builds the next inside the same service, so a consumer that kept the old rows must see a
+// different instance rather than assume the ids it has never seen are new connections.
+func TestAReloadGivesTheStreamANewInstance(t *testing.T) {
+	service := startedForChange(t, minimalConfig)
+	first := service.connectionStreamInstance
+	require.NotZero(t, first)
+
+	require.NoError(t, service.StartOrReloadService(context.Background(), modeConfig("Direct"), nil))
+	second := service.connectionStreamInstance
+	require.NotZero(t, second)
+	require.NotEqual(t, first, second, "a new Box is a new stream instance")
+}

@@ -87,3 +87,37 @@ func TestSelectOutboundReportsAnUnknownMember(t *testing.T) {
 	})
 	require.Error(t, err, "an unknown member is an error, not a silent no-op")
 }
+
+// TestThreeSelectionsCarryThreeIdentities is the A->B->C shape: three attempts, three request ids,
+// and each answer names the member the group held after ITS request. A confirmation that arrives
+// late carries an older request id, so a caller matching on the id cannot settle the wrong attempt.
+func TestThreeSelectionsCarryThreeIdentities(t *testing.T) {
+	service := selectorService(t, selectorOutboundConfig)
+	tags := []string{"b", "a", "b"}
+	responses := make([]*SelectOutboundResponse, 0, len(tags))
+	for index, tag := range tags {
+		response, err := service.SelectOutbound(context.Background(), &SelectOutboundRequest{
+			GroupTag:    "sel",
+			OutboundTag: tag,
+			RequestId:   uint64(index + 1),
+		})
+		require.NoError(t, err)
+		require.EqualValues(t, index+1, response.RequestId)
+		require.Equal(t, tag, response.AppliedOutboundTag)
+		responses = append(responses, response)
+	}
+	require.Greater(t, responses[1].AppliedRevision, responses[0].AppliedRevision)
+	require.Greater(t, responses[2].AppliedRevision, responses[1].AppliedRevision)
+
+	// A duplicate request (the caller retried because the answer was slow) must not look like a
+	// second change: the revision is unchanged, and the answer still names the same member.
+	duplicate, err := service.SelectOutbound(context.Background(), &SelectOutboundRequest{
+		GroupTag:    "sel",
+		OutboundTag: "b",
+		RequestId:   3,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, duplicate.RequestId)
+	require.Equal(t, responses[2].AppliedRevision, duplicate.AppliedRevision)
+	require.Equal(t, "b", duplicate.AppliedOutboundTag)
+}

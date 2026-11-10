@@ -576,6 +576,10 @@ func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option
 	}
 	s.serviceAccess.Lock()
 	s.instance = instance
+	// A new Box is a new stream instance: a client that kept rows from the previous Box must be
+	// able to tell the events apart even if it ignored the snapshot reset. The counter is
+	// process-wide, so two services never share an id either.
+	s.connectionStreamInstance = connectionStreamInstanceCounter.Add(1)
 	s.serviceAccess.Unlock()
 	if s.beforeInstanceStart != nil {
 		s.beforeInstanceStart()
@@ -1217,6 +1221,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	}
 	s.serviceAccess.RLock()
 	boxService := s.instance
+	boxInstance := s.connectionStreamInstance
 	s.serviceAccess.RUnlock()
 
 	trafficManager := boxService.trafficManager
@@ -1238,7 +1243,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	err = server.Send(&ConnectionEvents{
 		Events:   initialEvents,
 		Reset_:   true,
-		Instance: s.connectionStreamInstance,
+		Instance: boxInstance,
 	})
 	if err != nil {
 		return err
@@ -1286,7 +1291,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			if len(pendingEvents) > 0 {
 				err = server.Send(&ConnectionEvents{
 					Events:   pendingEvents,
-					Instance: s.connectionStreamInstance,
+					Instance: boxInstance,
 					Dropped:  emitted.Dropped(),
 				})
 				if err != nil {
@@ -1304,7 +1309,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			// property of the stream, not of one message.
 			err = server.Send(&ConnectionEvents{
 				Events:   protoEvents,
-				Instance: s.connectionStreamInstance,
+				Instance: boxInstance,
 				Dropped:  emitted.Dropped(),
 			})
 			if err != nil {
