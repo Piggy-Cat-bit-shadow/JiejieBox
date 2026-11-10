@@ -715,7 +715,7 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 			content, _ = parser.DecodeBase64URLSafe(others)
 		}
 	}
-	nodeErr, groupErr := s.applyContent(content)
+	nodeErr, groupErr := s.applyContent(ctx, content)
 	after := s.publishedTags()
 	report.RequestedTags = s.ResolvedTags(s.lastOutOpts)
 	report.AppliedTags, report.PendingTags = diffTags(report.RequestedTags, after)
@@ -953,7 +953,7 @@ func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionIn
 }
 
 func (s *ProviderRemote) updateProviderFromContent(content string) error {
-	nodeErr, groupErr := s.applyContent(content)
+	nodeErr, groupErr := s.applyContent(s.ctx, content)
 	if nodeErr != nil {
 		return nodeErr
 	}
@@ -963,7 +963,24 @@ func (s *ProviderRemote) updateProviderFromContent(content string) error {
 // applyContent parses the document and applies it, returning the node round's failure and the
 // group round's failure SEPARATELY: they mean different things to the report (a node failure
 // leaves members pending, a group refusal leaves the published graph differ from the document).
-func (s *ProviderRemote) applyContent(content string) (nodeErr error, groupErr error) {
+//
+// # Where the cancellable boundary is
+//
+// Parsing, decoding and filtering are PURE: a cancellation that arrives while they run has nothing to
+// undo. `UpdateNodes` is the first irreversible step - the nodes become live, the report's applied
+// tags describe them, and nothing later can put the previous set back without a second publish. So
+// the caller's context is checked exactly there, not only after the body was read: a cancellation
+// that lands during option decoding used to publish the whole document and report `committed`,
+// because the parse ran on the provider's lifecycle context and could not see the caller leaving.
+//
+// The check sits BETWEEN the two phases rather than inside them for the same reason the report
+// distinguishes partials: once `UpdateNodes` has run the document IS partly installed, and calling it
+// "not applied" would be a lie. The group round then proceeds, because it refines what is already
+// live.
+func (s *ProviderRemote) applyContent(ctx context.Context, content string) (nodeErr error, groupErr error) {
+	// The parser resolves services (the outbound registry) from the context, so it keeps running on
+	// the provider's own tree: the caller's context is the cancellation signal, not a service
+	// carrier, and swapping it in here would make every document undecodable outside a Box.
 	outboundOpts, err := parser.ParseSubscription(s.ctx, content, s.overrideDialer, s.Tag())
 	if err != nil {
 		return err, nil
@@ -971,6 +988,9 @@ func (s *ProviderRemote) applyContent(content string) (nodeErr error, groupErr e
 	outboundOpts = common.Filter(outboundOpts, func(it option.Outbound) bool {
 		return (s.exclude == nil || !s.exclude.MatchString(it.Tag)) && (s.include == nil || s.include.MatchString(it.Tag))
 	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return E.Cause(ctxErr, "apply provider document"), nil
+	}
 	updateErr := s.UpdateNodes(outboundOpts)
 	// The callbacks may refuse the membership the update would create (a cycle in the published
 	// graph). Reporting that is what keeps a refresh honest: the nodes are installed, but the
