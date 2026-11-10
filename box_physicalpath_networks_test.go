@@ -491,17 +491,7 @@ func TestRepeatedStartAndCloseOnARefusedBox(t *testing.T) {
 // the URL-test history, the network manager, the power governor - and the Box's own error path is
 // what releases them. This asserts that path rather than trusting it.
 func TestRefusedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
-	settle := func() int {
-		var count int
-		for attempt := 0; attempt < 40; attempt++ {
-			count = runtime.NumGoroutine()
-			time.Sleep(25 * time.Millisecond)
-			if runtime.NumGoroutine() <= count {
-				return count
-			}
-		}
-		return count
-	}
+	settle := settleGoroutines
 	before := settle()
 	for _, testCase := range networkRequirementMatrix {
 		// Capability cases start with a warning now; only the fatal ones leave a refused Box whose
@@ -527,17 +517,7 @@ func TestRefusedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
 // a recheck or cloned a group would leave something behind on the instances that DO start - which
 // is the case a "refused configurations do not leak" assertion would never see.
 func TestStartedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
-	settle := func() int {
-		var count int
-		for attempt := 0; attempt < 40; attempt++ {
-			count = runtime.NumGoroutine()
-			time.Sleep(25 * time.Millisecond)
-			if runtime.NumGoroutine() <= count {
-				return count
-			}
-		}
-		return count
-	}
+	settle := settleGoroutines
 	before := settle()
 	for _, testCase := range networkRequirementMatrix {
 		if !testCase.wantStart {
@@ -553,4 +533,37 @@ func TestStartedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
 	after := settle()
 	require.LessOrEqual(t, after, before+2,
 		"an instance that started and closed must not leave goroutines behind")
+}
+
+// settleGoroutines waits until the goroutine count has been stable for a short window and returns it.
+//
+// The original in-test helper returned as soon as one sample taken 25 ms later was not higher. On a
+// loaded machine the count can stay elevated for longer than that while goroutines that already
+// decided to exit are still being reaped - MEASURED on Linux: runtime.NumGoroutine() reported 6
+// while runtime.Stack(all) listed only the test goroutine and main. The leak assertions below are
+// about goroutines that PERSIST, so this waits for eight consecutive equal samples (200 ms), bounded
+// at five seconds. The assertion itself is unchanged: a real leak never becomes stable at the
+// baseline, and a flaky process-wide count is no longer reported as one.
+func settleGoroutines() int {
+	const (
+		stableSamples = 8
+		interval      = 25 * time.Millisecond
+		maxAttempts   = 200
+	)
+	var count int
+	stable := 0
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		current := runtime.NumGoroutine()
+		if current == count {
+			stable++
+			if stable >= stableSamples {
+				return current
+			}
+		} else {
+			count = current
+			stable = 0
+		}
+		time.Sleep(interval)
+	}
+	return count
 }
