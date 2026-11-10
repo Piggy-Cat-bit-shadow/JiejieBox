@@ -364,10 +364,18 @@ func ResolveVersion(version int, path string, host string) int {
 }
 
 func (c *Client) http3Available() bool {
+	return c.http3BaseAvailable() && !c.http3ExtendedConnectUnsupported.Load()
+}
+
+// http3BaseAvailable reports whether the HTTP/3 TRANSPORT may be used here, without consulting the
+// extended-CONNECT capability memory.
+//
+// The memory answers "can this server carry a :protocol CONNECT"; it says nothing about an ordinary
+// CONNECT (RFC 9114 §4.4), which stays legal on an HTTP/3 server that never advertised
+// SETTINGS_ENABLE_CONNECT_PROTOCOL. The plain path therefore consults this, and only the extended
+// path consults http3Available.
+func (c *Client) http3BaseAvailable() bool {
 	if c.http3 == nil {
-		return false
-	}
-	if c.http3ExtendedConnectUnsupported.Load() {
 		return false
 	}
 	brokenUntil := c.http3Broken.Load()
@@ -574,7 +582,7 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
 	var http3AttemptErr error
-	if c.http3Available() {
+	if c.http3BaseAvailable() {
 		// The sequence number is taken BEFORE the attempt, so an outcome is judged against the
 		// newest attempt STARTED rather than the one that happened to report last. See
 		// claimHTTP3Outcome.
@@ -630,6 +638,16 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 			// The proxy answered this CONNECT. Our own window expiring in the same instant does
 			// not change the answer, and a second CONNECT over HTTP/2 would duplicate a request
 			// the peer already handled.
+			return nil, err
+		} else if errors.Is(err, errHTTP3DialSuperseded) {
+			// The dial belongs to the network being left. This call continues on the new
+			// network's TCP path; nothing is remembered about the peer.
+		} else if errors.Is(err, errHTTP3PreSend) {
+			// Nothing was written, so the CONNECT cannot have reached the peer: a TCP attempt is
+			// safe. Our own window expiring is not a transport verdict either.
+		} else if errors.Is(err, errHTTP3ResponsePending) {
+			// The request header went out and the response did not arrive. The proxy may already
+			// have opened the tunnel; repeating the CONNECT on another version would duplicate it.
 			return nil, err
 		} else if !probeExpired && !errors.Is(err, ErrHTTP3Unavailable) {
 			return nil, err
@@ -831,6 +849,12 @@ var (
 	// server speaks HTTP/3 but did not advertise SETTINGS_ENABLE_CONNECT_PROTOCOL, so an HTTP/3
 	// CONNECT would be a protocol violation. See openConnectStream.
 	errHTTP3ExtendedConnectUnsupported = E.New("server does not support HTTP/3 extended CONNECT")
+	// errHTTP3DialSuperseded marks a dial that belongs to the network being left. Its result is
+	// never installed; the caller continues on the new network.
+	errHTTP3DialSuperseded = E.New("the network changed while the HTTP/3 connection was being dialled")
+	// errHTTP3PreSend marks an HTTP/3 CONNECT that ended before its request header was written.
+	// The peer cannot have processed anything, so another version may be tried.
+	errHTTP3PreSend = E.New("HTTP/3 CONNECT ended before the request header was sent")
 )
 
 // peerRespondedError marks an error that IS an answer from the proxy: the CONNECT was received

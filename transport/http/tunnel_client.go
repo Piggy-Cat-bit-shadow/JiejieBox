@@ -183,8 +183,20 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 			// that expired in the same instant does not change that answer, and a second tunnel
 			// over HTTP/2 would be a duplicate setup of one the peer already decided.
 			return nil, nil, TunnelTransportUnknown, err
-		case errors.Is(err, errHTTP3ResponsePending):
+		case errors.Is(err, errHTTP3DialSuperseded):
+			// The dial belonged to the network being left. This setup continues on the new
+			// network's TCP path below; nothing is remembered about the peer.
+		case errors.Is(err, errHTTP3PreSend):
+			// Nothing was written: the peer cannot have processed a CONNECT. The fallback is safe
+			// for this setup, and our own window expiring says nothing about the transport.
 			c.noteHTTP3AmbiguousOutcome(http3Attempt)
+		case errors.Is(err, errHTTP3ResponsePending):
+			// The request header was written and no response arrived. The peer may have accepted
+			// the tunnel already, so opening a second one over HTTP/2 would be an unsafe duplicate
+			// - the review measured the old code doing exactly that, with the H3 address still
+			// allocated when the H2 tunnel came up. Report the stage instead.
+			return nil, nil, TunnelTransportUnknown, E.Cause(err,
+				"the HTTP/3 CONNECT header was sent and no response arrived; refusing to open a second tunnel over HTTP/2")
 		case errors.Is(err, ErrHTTP3Unavailable):
 			c.markHTTP3Broken(http3Attempt)
 		case !probeExpired:
@@ -192,9 +204,11 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 			c.markHTTP3Broken(http3Attempt)
 		default:
-			// The window expired, but the error is not a timeout (an application response raced
-			// it): still not a transport verdict.
-			c.noteHTTP3AmbiguousOutcome(http3Attempt)
+			// The window expired and nothing here proves the request header was never written.
+			// Stop rather than risk a second tunnel; the caller's retry re-enters with a fresh
+			// budget and a known connection state.
+			return nil, nil, TunnelTransportUnknown, E.Cause(err,
+				"HTTP/3 CONNECT ended without a verdict; refusing to retry on another version")
 		}
 	}
 	if c.tcpFallbackDiagnostic != "" {

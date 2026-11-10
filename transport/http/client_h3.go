@@ -54,9 +54,16 @@ type http3ClientImpl struct {
 	access            sync.Mutex
 	conn              *http3.ClientConn
 	rawConn           net.Conn
-	// generation increments every time a NEW ClientConn is installed. It exists so lifecycle
-	// tracing can say "old 3 -> new 4" instead of pointing at two opaque pointers, which is
-	// what makes a redial visible in a log without an operator having to correlate addresses.
+	// dialGateAccess protects dialGate, the per-generation single flight that serialises dials
+	// without holding access; see acquire.
+	dialGateAccess sync.Mutex
+	dialGate       *http3DialGate
+	// closed stops this client from installing a connection dialled after Close.
+	closed atomic.Bool
+	// generation increments every time a NEW ClientConn is installed or the connection is
+	// retired (reset/close). It exists so lifecycle tracing can say "old 3 -> new 4" instead of
+	// pointing at two opaque pointers, which is what makes a redial visible in a log without an
+	// operator having to correlate addresses, and it is what retires an in-flight dial.
 	generation atomic.Uint64
 	// lifecycleLogger is a copy of the owning Client's. nil is allowed and means "do not
 	// trace", which is what every construction site that does not set it gets.
@@ -131,12 +138,12 @@ func (c *http3ClientImpl) HTTP3ConnectionAuthority() (string, bool) {
 	return c.authority, true
 }
 
-func (c *http3ClientImpl) acquire(ctx context.Context) (*http3.ClientConn, error) {
+// cachedConn returns the live, memoized connection and reports WHY a cached one was rejected.
+func (c *http3ClientImpl) cachedConn(ctx context.Context) (*http3.ClientConn, bool) {
 	c.access.Lock()
 	defer c.access.Unlock()
 	if c.conn != nil && c.conn.Context().Err() == nil {
-		c.traceLifecycle(ctx, "http3 connection accepted from cache", c.generation.Load(), 0)
-		return c.conn, nil
+		return c.conn, true
 	}
 	// Report WHY the cached connection was rejected, which is the difference between "there was
 	// never one" and "there was one and it is dead" -- the distinction the 1.84s/30s investigation
@@ -151,7 +158,68 @@ func (c *http3ClientImpl) acquire(ctx context.Context) (*http3.ClientConn, error
 		c.rawConn.Close()
 		c.rawConn = nil
 	}
+	return nil, false
+}
 
+// acquire returns a live HTTP/3 connection, dialing one if the cache is empty.
+//
+// # Ownership: no long I/O under the pool lock
+//
+// The dial and the QUIC handshake used to run while holding c.access, so ResetConnection (a network
+// change) waited for a handshake that belonged to the network being left - up to the handshake
+// timeout. The dial now runs outside the lock, serialised by a per-generation gate, and the result
+// is only installed if the generation it was made on is still current; a late dial closes its
+// connection instead of resurrecting the old network.
+//
+// # Why a retired gate is not waited for
+//
+// The generation this call belongs to has already moved on when it meets a gate from an older one.
+// Waiting would spend the caller's budget on a handshake that is being abandoned, so the call
+// reports "superseded" and its caller can continue on the new network (the tunnel path falls back
+// to HTTP/2, which dials on the new generation).
+func (c *http3ClientImpl) acquire(ctx context.Context) (*http3.ClientConn, error) {
+	for {
+		if clientConn, live := c.cachedConn(ctx); live {
+			c.traceLifecycle(ctx, "http3 connection accepted from cache", c.generation.Load(), 0)
+			return clientConn, nil
+		}
+		generation := c.generation.Load()
+		releaseSlot, superseded, err := c.acquireDialSlot(ctx, generation)
+		if err != nil {
+			return nil, err
+		}
+		if superseded {
+			c.traceLifecycle(ctx, "http3 dial superseded by a network change", c.generation.Load(), generation)
+			return nil, errHTTP3DialSuperseded
+		}
+		// Another setup may have published while this one waited for the slot.
+		if clientConn, live := c.cachedConn(ctx); live {
+			releaseSlot()
+			c.traceLifecycle(ctx, "http3 connection accepted from cache", c.generation.Load(), 0)
+			return clientConn, nil
+		}
+		if c.generation.Load() != generation {
+			// The network moved while this call waited; retry against the new generation.
+			releaseSlot()
+			continue
+		}
+		rawConn, quicConn, dialErr := c.dialConn(ctx, generation)
+		if dialErr != nil {
+			releaseSlot()
+			return nil, dialErr
+		}
+		clientConn, published := c.publishConn(ctx, generation, rawConn, quicConn)
+		releaseSlot()
+		if !published {
+			c.traceLifecycle(ctx, "http3 dial finished on a retired generation", c.generation.Load(), generation)
+			return nil, errHTTP3DialSuperseded
+		}
+		return clientConn, nil
+	}
+}
+
+// dialConn performs one connection attempt. It runs WITHOUT the pool lock; see acquire.
+func (c *http3ClientImpl) dialConn(ctx context.Context, generation uint64) (net.Conn, *quic.Conn, error) {
 	// One connector, used by BOTH paths, so a raced candidate and a plain one are built the
 	// same way. That is what keeps the congestion-control ordering identical whether or not a
 	// hook is installed: the connector is the only place it happens.
@@ -176,17 +244,76 @@ func (c *http3ClientImpl) acquire(ctx context.Context) (*http3.ClientConn, error
 	}
 	if err != nil {
 		c.traceLifecycle(ctx, "http3 dial failed", c.generation.Load(), 0, "error", err)
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if c.generation.Load() != generation {
+			return nil, nil, errHTTP3DialSuperseded
 		}
-		return nil, E.Cause1(ErrHTTP3Unavailable, err)
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		return nil, nil, E.Cause1(ErrHTTP3Unavailable, err)
+	}
+	return rawConn, quicConn, nil
+}
+
+// publishConn installs a freshly dialled connection, unless the generation it belongs to has been
+// retired (reset or close) in the meantime.
+func (c *http3ClientImpl) publishConn(ctx context.Context, generation uint64, rawConn net.Conn, quicConn *quic.Conn) (*http3.ClientConn, bool) {
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.closed.Load() || c.generation.Load() != generation {
+		if quicConn != nil {
+			quicConn.CloseWithError(0, "")
+		}
+		if rawConn != nil {
+			rawConn.Close()
+		}
+		return nil, false
 	}
 	previousGeneration := c.generation.Load()
 	c.conn = c.transport.NewClientConn(quicConn)
 	c.rawConn = rawConn
-	generation := c.generation.Add(1)
+	generation = c.generation.Add(1)
 	c.traceLifecycle(ctx, "http3 dial succeeded", generation, previousGeneration)
-	return c.conn, nil
+	return c.conn, true
+}
+
+// http3DialGate is the per-generation single flight that serialises HTTP/3 dials.
+type http3DialGate struct {
+	generation uint64
+	done       chan struct{}
+}
+
+// acquireDialSlot takes the dial slot for this generation, or reports that the generation was
+// retired while this call was waiting for it.
+func (c *http3ClientImpl) acquireDialSlot(ctx context.Context, generation uint64) (func(), bool, error) {
+	for {
+		c.dialGateAccess.Lock()
+		gate := c.dialGate
+		if gate == nil {
+			gate = &http3DialGate{generation: generation, done: make(chan struct{})}
+			c.dialGate = gate
+			c.dialGateAccess.Unlock()
+			return func() {
+				c.dialGateAccess.Lock()
+				if c.dialGate == gate {
+					c.dialGate = nil
+				}
+				close(gate.done)
+				c.dialGateAccess.Unlock()
+			}, false, nil
+		}
+		if gate.generation != generation {
+			c.dialGateAccess.Unlock()
+			return nil, true, nil
+		}
+		waiting := gate.done
+		c.dialGateAccess.Unlock()
+		select {
+		case <-waiting:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
 }
 
 // traceLifecycle emits a connection-lifecycle event at TRACE level.
@@ -293,10 +420,15 @@ func (c *http3ClientImpl) connectCandidateAt(ctx context.Context, address netip.
 func (c *http3ClientImpl) openStream(ctx context.Context, request *http.Request) (*http3.RequestStream, *http3.ClientConn, error) {
 	stream, clientConn, err := c.openConnectStream(ctx, request)
 	if err != nil {
+		if peerResponded(err) {
+			// The peer answered. The setup context expiring afterwards does not change the answer,
+			// and rewriting it to the caller's expiry would lose the status the caller needs.
+			return nil, nil, E.Cause(err, "HTTP/3 CONNECT")
+		}
 		if ctx.Err() != nil {
-			// Preserve the marker that says the connection came up but the response did not
-			// arrive: openTunnel must not turn that delay into a transport verdict.
-			if errors.Is(err, errHTTP3ResponsePending) {
+			// Preserve the markers that say what the attempt proved: "nothing was written" is
+			// retryable on another version, and "the header may have been written" is not.
+			if errors.Is(err, errHTTP3ResponsePending) || errors.Is(err, errHTTP3PreSend) {
 				return nil, nil, err
 			}
 			return nil, nil, ctx.Err()
@@ -341,6 +473,8 @@ func (c *http3ClientImpl) OpenTunnel(ctx context.Context, request tunnelRequest)
 func (c *http3ClientImpl) ResetConnection() {
 	c.access.Lock()
 	defer c.access.Unlock()
+	// Retire any dial that is in flight: its result belongs to the network being left.
+	c.generation.Add(1)
 	if c.conn != nil {
 		c.conn.CloseWithError(0, "")
 		c.conn = nil
@@ -352,8 +486,9 @@ func (c *http3ClientImpl) ResetConnection() {
 }
 
 func (c *http3ClientImpl) Close() error {
+	c.closed.Store(true)
 	c.access.Lock()
-	defer c.access.Unlock()
+	c.generation.Add(1)
 	if c.conn != nil {
 		c.conn.CloseWithError(0, "")
 		c.conn = nil
@@ -362,6 +497,7 @@ func (c *http3ClientImpl) Close() error {
 		c.rawConn.Close()
 		c.rawConn = nil
 	}
+	c.access.Unlock()
 	return c.transport.Close()
 }
 

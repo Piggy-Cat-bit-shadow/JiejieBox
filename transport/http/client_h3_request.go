@@ -4,6 +4,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/netip"
@@ -316,6 +317,16 @@ func (c *http3ClientImpl) RoundTripExistingHTTP3(ctx context.Context, request *h
 // context on return, and if that cancellation were still wired to the stream it would tear down a
 // perfectly healthy tunnel. So the hook is stopped before returning, and lifetime passes to the
 // stream's owner.
+// isExtendedConnectRequest reports whether this request uses the RFC 9220 :protocol pseudo-header.
+//
+// It mirrors quic-go's own predicate (http3/request_writer.go) so the client-side capability check
+// and the transport's protocol check cannot disagree about which requests need
+// SETTINGS_ENABLE_CONNECT_PROTOCOL. A plain CONNECT carries no :protocol and is legal on HTTP/3
+// without the setting (RFC 9114 §4.4).
+func isExtendedConnectRequest(request *http.Request) bool {
+	return request.Method == http.MethodConnect && request.Proto != "" && request.Proto != "HTTP/1.1"
+}
+
 func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.Request) (*http3.RequestStream, *http3.ClientConn, error) {
 	clientConn, err := c.acquire(ctx)
 	if err != nil {
@@ -323,10 +334,11 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 	}
 	stream, err := clientConn.OpenRequestStream(ctx)
 	if err != nil {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && clientConn.Context().Err() == nil {
 			// The connection is already established; failing to open a request stream because the
-			// setup window expired is a delay, not evidence that the version is unavailable.
-			return nil, nil, newHTTP3ResponsePendingError(ctx.Err())
+			// setup window expired is a delay, not evidence that the version is unavailable. The
+			// request header was NEVER written, so a second attempt on another version is safe.
+			return nil, nil, E.Cause(errHTTP3PreSend, ctx.Err())
 		}
 		return nil, nil, E.Cause1(ErrHTTP3Unavailable, err)
 	}
@@ -335,12 +347,29 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 		stream.CancelWrite(quic.StreamErrorCode(h3StreamErrorCodeRequestCanceled))
 	})
 	// From here on the stream must be released on every failure path.
-	fail := func(cause error) (*http3.RequestStream, *http3.ClientConn, error) {
+	//
+	// headerSent is the safety boundary this function reports to its caller: before the request
+	// header is written the peer cannot have processed anything, so another version may be tried;
+	// after it, "did the peer see it?" is unknown and a second tunnel would be a guess.
+	fail := func(cause error, headerSent bool) (*http3.RequestStream, *http3.ClientConn, error) {
 		stopSetupCancel()
 		stream.CancelRead(quic.StreamErrorCode(h3StreamErrorCodeRequestCanceled))
 		_ = stream.Close()
+		if errors.Is(cause, errHTTP3ExtendedConnectUnsupported) {
+			// A definitive capability answer: it outranks our own window expiring.
+			return nil, nil, cause
+		}
+		if peerResponded(cause) {
+			// The peer ANSWERED. The setup context expiring afterwards cannot change an answer that
+			// was already decoded, and rewriting it to "response pending" is what made the caller
+			// fall back and open a SECOND tunnel for a request the peer had already decided.
+			return nil, nil, cause
+		}
 		if ctx.Err() != nil {
-			return nil, nil, newHTTP3ResponsePendingError(ctx.Err())
+			if headerSent {
+				return nil, nil, newHTTP3ResponsePendingError(ctx.Err())
+			}
+			return nil, nil, E.Cause(errHTTP3PreSend, ctx.Err())
 		}
 		return nil, nil, cause
 	}
@@ -350,30 +379,29 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 	select {
 	case <-clientConn.ReceivedSettings():
 	case <-clientConn.Context().Done():
-		return fail(context.Cause(clientConn.Context()))
+		return fail(context.Cause(clientConn.Context()), false)
 	case <-ctx.Done():
-		return fail(ctx.Err())
+		return fail(ctx.Err(), false)
 	}
-	// The peer's SETTINGS are known now, and an Extended CONNECT request is only legal once the
-	// server advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 9220 §3). A server can be perfectly
-	// healthy for ordinary HTTP/3 and still not enable CONNECT; sending the header anyway is a
-	// protocol violation, and its rejection looks like the peer refusing THIS tunnel. Checking
-	// before the header means the client can fall back to HTTP/2 - which may support extended
-	// CONNECT - without ever putting an illegal request on the wire.
-	if !clientConn.Settings().EnableExtendedConnect {
-		return fail(errHTTP3ExtendedConnectUnsupported)
+	// The peer's SETTINGS are known now, and an EXTENDED CONNECT request is only legal once the
+	// server advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 9220 §3). The setting belongs to the
+	// :protocol pseudo-header: a plain CONNECT (RFC 9114 §4.4) does not use it and must not be
+	// refused for its absence, or a strict server's perfectly usable HTTP/3 tunnel would be taken
+	// away and downgraded. The transport applies the same predicate, so the two cannot disagree.
+	if isExtendedConnectRequest(request) && !clientConn.Settings().EnableExtendedConnect {
+		return fail(errHTTP3ExtendedConnectUnsupported, false)
 	}
 	if err = stream.SendRequestHeader(request); err != nil {
-		return fail(E.Cause(err, "send CONNECT request header"))
+		return fail(E.Cause(err, "send CONNECT request header"), true)
 	}
 	response, err := stream.ReadResponse()
 	if err != nil {
-		return fail(E.Cause(err, "read CONNECT response"))
+		return fail(E.Cause(err, "read CONNECT response"), true)
 	}
 	if response.StatusCode != http.StatusOK {
 		// The tunnel was refused. The response body is not a tunnel and is not read: the caller
 		// receives the status error, and the stream is released.
-		return fail(statusError(response))
+		return fail(statusError(response), true)
 	}
 	if !stopSetupCancel() && ctx.Err() != nil {
 		// Setup "succeeded" only after the caller gave up. Returning the stream would hand over a
