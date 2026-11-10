@@ -8,6 +8,15 @@
 > | `github.com/sagernet/sing` | `4abfaed41727e43d1d98f36385a86114925f8484` | `v0.9.6-0.20261110222322-4abfaed41727` | DONE, upstream ancestry, behind 0 |
 > | `github.com/sagernet/sing-tun` | `99abf3c2766646ccd74c77f7b14c197204506121` | `v0.9.7-0.20261110222329-99abf3c27666` | DONE, upstream ancestry, behind 0 |
 >
+> **2026-11-11 stage 03 update.** Transport-layer pins now point at:
+>
+> | module | final SHA | Go pseudo-version | state |
+> |---|---|---|---|
+> | `github.com/sagernet/sing-quic` | `4a95023f3e26f74dcc9be6c189e30a5f1024e7ae` | `v0.7.2-0.20261110231703-4a95023f3e26` | DONE, behind 0 |
+> | `github.com/sagernet/quic-go` | `158445cdda77c05e4430fe40721709bf7bc2ffe2` (consumed line) | `v0.61.1-0.20261110231807-158445cdda77` | DONE, sagernet behind 0 |
+> | `github.com/metacubex/utls` | `e14b88879d809306332be7d2c226384a6f3e8fba` | `v1.8.8-0.20261110231903-e14b88879d80` | DONE, 1.9 line behind 0 |
+> | `github.com/sagernet/wireguard-go` | `a765d957fd814e5c0ee579936a0780e73d66e533` | `v0.0.0-20261109042158-a765d957fd81` | unchanged, 0 behind |
+>
 > The kernel adapts to `ReadRetry.Wait()` (no error argument) and keeps
 > `ErrTooManySegments` recoverable in `readErrorIsRecoverable`. The other pins are
 > unchanged until stages 03–05. The sing-tun pseudo-version needs the `v0.9.6` tag on

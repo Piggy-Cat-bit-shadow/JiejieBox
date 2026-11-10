@@ -69,42 +69,48 @@
     {
       "name": "sing-quic",
       "fork_ref": "origin/main",
-      "fork_sha": "1ef2597cc1298146fcdddfeaa0384999f890d0c3",
+      "fork_sha": "4a95023f3e26f74dcc9be6c189e30a5f1024e7ae",
       "upstream_ref": "upstream/main",
       "upstream_sha": "5253224b67cf495b6faba0899a6e3155ee93ebb0",
       "ahead": 7,
-      "behind": 4,
+      "behind": 0,
       "subject_matched": 0,
       "unmatched": 4,
-      "class": "ADAPT_OR_REDESIGN"
+      "class": "DONE_STAGE_03",
+      "merge_sha": "7075cd7",
+      "note": "Salamander runt reads, XPlus write length/vectorised removal, ACK-only pacing in CUBIC/BBR/Brutal; compare ahead_by=0"
     },
     {
       "name": "quic-go",
       "fork_ref": "origin/sagernet",
-      "fork_sha": "2daa76f5bd52dcb8d2d2a25f65f280905c48f18e",
+      "fork_sha": "f864f2f12006f053f22d577c90fdd8f3b45d4d47",
       "upstream_ref": "upstream/dev",
       "upstream_sha": "2e73222e969f886968e02d993e6903007e969002",
       "ahead": 18,
-      "behind": 1,
+      "behind": 0,
       "subject_matched": 0,
       "unmatched": 1,
-      "class": "ADAPT_OR_REDESIGN",
+      "class": "DONE_STAGE_03",
       "consumed_ref": "integration/0.1.45",
-      "consumed_sha": "ca9992bc795e8699db2b22ad6459216e6f13649d",
+      "consumed_sha": "158445cdda77c05e4430fe40721709bf7bc2ffe2",
       "consumed_ahead": 29,
-      "consumed_behind": 1
+      "consumed_behind": 0,
+      "merge_sha": "7fde0eb4",
+      "note": "CUBIC ACK-only pacing + regression test; sagernet merge 7fde0eb4, tested f864f2f1, consumed line 158445cd"
     },
     {
       "name": "utls",
       "fork_ref": "origin/main",
-      "fork_sha": "b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc",
+      "fork_sha": "e14b88879d809306332be7d2c226384a6f3e8fba",
       "upstream_ref": "upstream/v1.9.0-mod-meta",
       "upstream_sha": "89a07ad380e263f7c3b406a3f7beb2a70dea263c",
       "ahead": 68,
-      "behind": 1,
+      "behind": 0,
       "subject_matched": 0,
       "unmatched": 1,
-      "class": "ADAPT_OR_REDESIGN"
+      "class": "DONE_STAGE_03",
+      "merge_sha": "e14b888",
+      "note": "preset QUIC transport parameters; fork marshal-time helper kept, conflict resolved with upstream finding documented; compare ahead_by=0"
     },
     {
       "name": "cronet-go",
@@ -128,7 +134,8 @@
       "behind": 0,
       "subject_matched": null,
       "unmatched": 0,
-      "class": "ALREADY_ANCESTOR"
+      "class": "DONE_NO_WORK",
+      "note": "awg3-inject contains sagernet/wireguard-go main; device tests pass; no upstream-only commits"
     },
     {
       "name": "apple",
@@ -207,7 +214,8 @@
       "BLOCKED_WITH_REASON": 1,
       "UNKNOWN": 172,
       "OUT_OF_SCOPE": 1,
-      "DONE_STAGE_02": 2
+      "DONE_STAGE_02": 2,
+      "DONE_STAGE_03": 3
     }
   },
   "high_risk": [
@@ -392,5 +400,46 @@
       "ErrTooManySegments kept recoverable in the kernel read-error predicate"
     ],
     "kernel_commit": "33d6e4c62a4c3f55f91b3d6484588153a136ef0b"
+  },
+  "stage03": {
+    "status": "DONE",
+    "sing_quic": {
+      "merge": "4a95023f3e26f74dcc9be6c189e30a5f1024e7ae",
+      "upstream": "5253224b67cf495b6faba0899a6e3155ee93ebb0",
+      "compare_ahead_by": 0
+    },
+    "quic_go": {
+      "sagernet": "f864f2f12006f053f22d577c90fdd8f3b45d4d47",
+      "merge": "7fde0eb4",
+      "upstream": "2e73222e969f886968e02d993e6903007e969002",
+      "consumed": "158445cdda77c05e4430fe40721709bf7bc2ffe2",
+      "compare_ahead_by": 0
+    },
+    "utls": {
+      "merge": "e14b88879d809306332be7d2c226384a6f3e8fba",
+      "upstream": "89a07ad380e263f7c3b406a3f7beb2a70dea263c",
+      "compare_ahead_by": 0
+    },
+    "wireguard": {
+      "tip": "a765d957fd814e5c0ee579936a0780e73d66e533",
+      "upstream": "e4d85ef2ed387cc07233b5324d4a40f3df94566e",
+      "behind": 0
+    },
+    "kernel_pins": {
+      "sing-quic": "v0.7.2-0.20261110231703-4a95023f3e26",
+      "quic-go": "v0.61.1-0.20261110231807-158445cdda77",
+      "utls": "v1.8.8-0.20261110231903-e14b88879d80"
+    },
+    "kernel_commit": "a6450700129495dbd12a5e2b3221a0b4a0aea51b",
+    "consumer_tests": [
+      "transport/v2rayquic",
+      "transport/v2rayxhttp",
+      "transport/masque",
+      "protocol/masque",
+      "protocol/hysteria2",
+      "protocol/tuic",
+      "transport/wireguard",
+      "protocol/naive"
+    ]
   }
 }

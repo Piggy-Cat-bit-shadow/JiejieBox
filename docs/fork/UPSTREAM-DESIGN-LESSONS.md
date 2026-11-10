@@ -73,3 +73,30 @@ header made every reply share ID 0; the new test mutation-checks `SetID`.
   left for a later pin bump: `ReadRetry.Wait()` and
   `ErrTooManySegments` recoverability would otherwise break the read loop
   silently.
+
+
+## 8. ACK-only is not a send
+
+Pacing accounts for bytes that compete for the congestion window. An ACK-only
+packet carries no retransmittable data, so calling `pacer.SentPacket` before the
+`isRetransmittable` check charges it against the budget and delays real data.
+The fix must cover every sender: CUBIC, BBR and Brutal had the same ordering.
+The regression test observes `pacer.lastSentTime` and budget directly because a
+concrete pacer gives no injectable fake.
+
+## 9. A runt obfuscated datagram is not payload
+
+Salamander returns `(0, addr, nil)` for a datagram no longer than the salt.
+A bare `return` after a successful underlying read reports the salt length as if
+it were plaintext, so the caller sees the salt as payload. Test the boundary
+around the salt, not just the happy path.
+
+## 10. Transport parameters must be written into the marshalled extension
+
+`SetTransportParameters` writes `quic.transportParams`, but a preset ClientHello
+marshals the extension cloned by `ApplyPreset`; the two are different objects.
+The fork's marshal-time `syncQUICTransportParameters` parses and writes the
+cloned extension (and covers SetTransportParameters-before-ApplyPreset, when no
+extension exists yet), so it subsumes upstream's direct `marshalResult` write.
+Keeping the stronger helper is correct; document the upstream finding instead of
+copying a weaker write.

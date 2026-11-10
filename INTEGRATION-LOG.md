@@ -432,3 +432,23 @@
 - 测试：sing build/`./...`/race（排除既有 checkptr）；sing-tun build/linux build+vet/根套件 112 PASS/race；内核 build（含 Windows tags）/`transport/device`/`protocol/tun`/`route` 全量 446.2 s 全过。
 - 阻塞：`TestGoKernel*`（需管理员）、Linux/Darwin 特权与 syscall 路径仅交叉编译。
 - 新增测试：sing CachedConn barrier 竞态 + 所有权；sing-tun GSO 跨批续切与 UDP 回复 IPv4 ID，均做 mutation 验证。
+
+---
+
+## 上游同步 Stage 03 — QUIC / TLS / WireGuard
+
+- 日期：2026-11-11
+- 报告：`03_QUIC_TLS_WIREGUARD_UPSTREAM_INTEGRATION.md`；台账：`docs/fork/UPSTREAM-INTEGRATION.md`
+
+| 仓库 | 合并/最终提交 | 上游 | 结果 |
+|---|---|---|---|
+| sing-quic | `4a95023f3e26`（merge `7075cd7` + Salamander 测试） | `SagerNet/sing-quic:main` @ `5253224b67` | 4 提交，0 冲突；Compare ahead_by=0 |
+| quic-go | `sagernet` `f864f2f1`（merge `7fde0eb4` + CUBIC 测试）；消费线 `158445cd` | `SagerNet/quic-go:dev` @ `2e73222e96` | 1 提交，0 冲突；Compare ahead_by=0；全量测试 PASS |
+| utls | `e14b88879d80` | `MetaCubeX/utls:v1.9.0-mod-meta` @ `89a07ad380` | 1 提交，1 冲突（保留 fork marshal-time helper）；Compare ahead_by=0；全量测试 PASS |
+| WireGuard | `awg3-inject` `a765d957` | `sagernet/wireguard-go:main` @ `e4d85ef2ed` | 已 0 落后，无需合并；device 测试 PASS |
+| 内核消费 | `a6450700129` | — | sing-quic / quic-go / utls pin 更新；传输层消费者全过 |
+
+- 新增测试：sing-quic Salamander 短包边界（旧代码失败、新代码通过）；quic-go CUBIC ACK-only pacing（旧顺序失败、新顺序通过）。
+- 内核全量：仅 `common/tls`/`common/tlsspoof`/`common/windivert` 三个既有基线失败。
+- 风险：Darwin msgx/sendto 路径无本机验证；sing-quic 三个 sender 的 pacing 由 quic-go 测试与消费者间接覆盖。
+

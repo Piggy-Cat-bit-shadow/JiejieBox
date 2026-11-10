@@ -133,3 +133,62 @@ Both return 0 (`ahead_by` is the upstream-only count; the fork is `behind_by`
 - `.../sing-merge-msg.txt`, `singtun-merge-msg.txt`, `kernel-sync2-msg.txt` —
   commit rationale/commands.
 - Merge commits: `4abfaed`, `99abf3c`; kernel `33d6e4c`.
+
+## Transport layer (stage 03)
+
+### sing-quic
+
+```sh
+cd _deps/sing-quic
+go build ./...
+go test -count=1 ./...
+go test -count=1 -run 'TestSalamanderReadFromRunt' ./hysteria2
+```
+
+All pass. The Salamander test fails on the pre-merge `hysteria2/salamander.go`
+(runt reads return 7/8 bytes instead of 0); the merged file passes.
+
+### quic-go
+
+```sh
+cd _sync-quicgo
+go test -count=1 ./internal/congestion
+go test -count=1 ./...
+```
+
+Full suite passes. Restoring the pre-merge CUBIC ordering makes
+`TestCubicACKOnlyDoesNotConsumePacer` fail on its first assertion.
+
+### utls
+
+```sh
+cd _dep_audit/utls
+go test -count=1 -run TestUQUICPresetTransportParametersReachClientHello ./...
+go test -count=1 ./...
+```
+
+Both pass. Correct upstream is `MetaCubeX/utls:v1.9.0-mod-meta`; the repository
+default `v1.7.0-mod-meta` must not be used.
+
+### WireGuard
+
+```sh
+cd _scratch/wgmerge
+git merge-base --is-ancestor origin/main HEAD
+go test -count=1 ./...
+```
+
+Ancestry passes; `device` tests pass. `go build ./...` at the repository root
+reports `function main is undeclared` by design (platform-specific main), so use
+`go test`/package builds instead.
+
+### Kernel consumers
+
+```sh
+go test -vet=off -count=1 -tags <windows profile> \
+  ./transport/v2rayquic ./transport/v2rayxhttp ./transport/masque \
+  ./protocol/masque ./protocol/hysteria2 ./protocol/tuic \
+  ./transport/wireguard ./protocol/naive
+```
+
+All pass with the stage-03 pins. Full suite (`-p 1`, DLL on PATH): only the three known baseline packages (`common/tls`, `common/tlsspoof`, `common/windivert`) fail; everything else passes. Log: `kernel-windows-full-3.txt`.
