@@ -31,29 +31,42 @@ type http2DialGate struct {
 	done       chan struct{}
 }
 
-// acquireHTTP2DialSlot takes the dial slot for this generation. The bool reports that the pool
-// still carries a dial for a RETIRED generation and this one has none of its own - the caller must
-// not spend its budget on that handshake.
-func (c *Client) acquireHTTP2DialSlot(ctx context.Context, generation uint64) (func(), bool, error) {
+// acquireHTTP2DialSlot takes the dial slot for this generation.
+//
+// A slot left behind by an OLDER generation never blocks this call: the older dial is being
+// abandoned (its result will be refused by publishHTTP2Conn), so this generation replaces the slot
+// and dials now. A slot from a NEWER generation means this call is stale and reports superseded.
+// Each release only clears the slot while it is still its own, so the retired dial cannot clear the
+// new generation's slot when it finally returns.
+func (c *Client) acquireHTTP2DialSlot(ctx context.Context, generation uint64) (func(), error) {
+	newSlot := func() func() {
+		gate := &http2DialGate{generation: generation, done: make(chan struct{})}
+		c.http2DialGate = gate
+		return func() {
+			c.http2GateAccess.Lock()
+			if c.http2DialGate == gate {
+				c.http2DialGate = nil
+			}
+			close(gate.done)
+			c.http2GateAccess.Unlock()
+		}
+	}
 	for {
 		c.http2GateAccess.Lock()
 		gate := c.http2DialGate
 		if gate == nil {
-			newGate := &http2DialGate{generation: generation, done: make(chan struct{})}
-			c.http2DialGate = newGate
+			release := newSlot()
 			c.http2GateAccess.Unlock()
-			return func() {
-				c.http2GateAccess.Lock()
-				if c.http2DialGate == newGate {
-					c.http2DialGate = nil
-				}
-				close(newGate.done)
-				c.http2GateAccess.Unlock()
-			}, false, nil
+			return release, nil
 		}
 		if gate.generation != generation {
+			if gate.generation > generation {
+				c.http2GateAccess.Unlock()
+				return nil, errHTTP2DialSuperseded
+			}
+			release := newSlot()
 			c.http2GateAccess.Unlock()
-			return nil, true, nil
+			return release, nil
 		}
 		waiting := gate.done
 		c.http2GateAccess.Unlock()
@@ -61,7 +74,7 @@ func (c *Client) acquireHTTP2DialSlot(ctx context.Context, generation uint64) (f
 		case <-waiting:
 			// The dial finished; go around and try to take the slot, or use its connection.
 		case <-ctx.Done():
-			return nil, false, ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 }
@@ -83,14 +96,9 @@ func (c *Client) acquireHTTP2(ctx context.Context) (*http2ClientConn, net.Conn, 
 	// the old network down. The dial is serialised by its own gate instead, and its result is
 	// only published if the network it was made on is still the current one.
 	generation := c.networkEpoch.Load()
-	releaseSlot, retired, err := c.acquireHTTP2DialSlot(ctx, generation)
+	releaseSlot, err := c.acquireHTTP2DialSlot(ctx, generation)
 	if err != nil {
 		return nil, nil, err
-	}
-	if retired {
-		// A setup that began on the network being left fails once and its retry dials on the new
-		// network immediately; waiting here would spend its budget on an abandoned handshake.
-		return nil, nil, errHTTP2DialSuperseded
 	}
 	// Another setup may have finished a dial while this one waited for the slot.
 	if clientConn, conn, reserved := c.reserveHTTP2Conn(); reserved {
@@ -172,25 +180,20 @@ func (c *Client) isCurrentNetwork(networkEpoch uint64) bool {
 // publishHTTP2Conn installs a freshly dialled connection unless the client is closed or the network
 // it was dialled on is no longer current.
 //
-// The check and the append are one transaction against ResetConnections and Close: ResetConnections
-// takes the same capability lock around its epoch bump and its pool clear, so either this
-// connection is cleared by that reset or this connection never enters the pool.
+// The closed/epoch checks and the append happen under the SAME pool lock as Close and
+// ResetConnections' clear, instead of checking closed before taking the lock. With the old order a
+// publisher could pass the check, lose the CPU, let Close() return after clearing the pool, and
+// then append its connection to an already-torn-down pool - the review reproduced exactly that
+// interleaving. Now either the append happens before the clear (and the clear closes it) or the
+// check sees the closed client / new epoch and refuses.
 func (c *Client) publishHTTP2Conn(networkEpoch uint64, clientConn *http2ClientConn, conn net.Conn) bool {
-	c.capabilityAccess.Lock()
-	defer c.capabilityAccess.Unlock()
-	if c.closed.Load() {
-		// A dial that finished after Close must not resurrect the pool, and the caller must not
-		// receive a connection the client has already promised to tear down.
-		conn.Close()
-		return false
-	}
-	if c.networkEpoch.Load() != networkEpoch {
-		conn.Close()
-		return false
-	}
 	c.http2Access.Lock()
+	defer c.http2Access.Unlock()
+	if c.closed.Load() || c.networkEpoch.Load() != networkEpoch {
+		conn.Close()
+		return false
+	}
 	c.http2Conns = append(c.http2Conns, clientConn)
-	c.http2Access.Unlock()
 	return true
 }
 
