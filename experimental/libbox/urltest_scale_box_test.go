@@ -1,6 +1,6 @@
 package libbox
 
-// Section 5 scale 鈥?a REAL Box with two remote providers and two URLTest groups over thousands of
+// Section 5 scale 闁?a REAL Box with two remote providers and two URLTest groups over thousands of
 // nodes, driven through the real service.
 //
 // The component-level budget tests use a synthetic registry; this one exercises the actual provider
@@ -164,7 +164,7 @@ func TestRealBoxProviderScale(t *testing.T) {
 	}
 
 	scale := newScaleProviderServer(t, nodes)
-	server := startDiagnoseTestCommandServer(t, providerScaleConfig(scale.server.URL))
+	server := startBoxTestCommandServer(t, providerScaleConfig(scale.server.URL))
 
 	// Provider documents are fetched by the service; both groups then receive all nodes. A large
 	// document is still being parsed by the provider's own startup refresh when the manual call

@@ -42,8 +42,33 @@ func failoverGroupOutbound(t *testing.T, server *CommandServer) recoverySnapshot
 	return snapshotter
 }
 
+// startBoxTestCommandServer mirrors the running-box fixture the other end-to-end tests use: a
+// real CommandServer over a real Box, with the package paths pointed at temporary directories.
+//
+// It is local to this file rather than shared with the diagnose fixture that has the same shape,
+// because that fixture travels with an unmerged diagnostic change; the configuration mapping for
+// the failover policy must be verifiable without taking that feature with it.
+func startBoxTestCommandServer(t *testing.T, configContent string) *CommandServer {
+	t.Helper()
+	previousWorking, previousTemp := sWorkingPath, sTempPath
+	previousBase := sBasePath
+	previousUser, previousGroup := sUserID, sGroupID
+	sWorkingPath, sTempPath, sBasePath = t.TempDir(), t.TempDir(), t.TempDir()
+	sUserID, sGroupID = -1, -1
+	t.Cleanup(func() {
+		sWorkingPath, sTempPath = previousWorking, previousTemp
+		sBasePath = previousBase
+		sUserID, sGroupID = previousUser, previousGroup
+	})
+	server, err := NewCommandServer(nil, refreshPlatform{})
+	require.NoError(t, err)
+	t.Cleanup(server.Close)
+	require.NoError(t, server.StartOrReloadService(configContent, &OverrideOptions{}))
+	return server
+}
+
 func TestTheAbsentFailoverBlockKeepsTheHistoricalProbing(t *testing.T) {
-	server := startDiagnoseTestCommandServer(t, failoverConfigTestServer(t, ""))
+	server := startBoxTestCommandServer(t, failoverConfigTestServer(t, ""))
 	groupOutbound := failoverGroupOutbound(t, server)
 
 	require.True(t, groupOutbound.HealthSnapshot().Disabled,
@@ -51,7 +76,7 @@ func TestTheAbsentFailoverBlockKeepsTheHistoricalProbing(t *testing.T) {
 }
 
 func TestTheFailoverBlockEnablesThePolicy(t *testing.T) {
-	server := startDiagnoseTestCommandServer(t, failoverConfigTestServer(t,
+	server := startBoxTestCommandServer(t, failoverConfigTestServer(t,
 		`,"failover":{"widen_after":1,"settle_after":2,"recover_after":1,"tolerance":1}`))
 	groupOutbound := failoverGroupOutbound(t, server)
 

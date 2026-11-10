@@ -181,7 +181,7 @@ func TestRealBoxProviderRecovery(t *testing.T) {
 	}
 
 	scale := newScaleProviderServer(t, nodes)
-	server := startDiagnoseTestCommandServer(t, providerScaleConfig(scale.server.URL))
+	server := startBoxTestCommandServer(t, providerScaleConfig(scale.server.URL))
 
 	refreshUntilPublished := func(providerTag string) {
 		deadline := time.Now().Add(300 * time.Second)
