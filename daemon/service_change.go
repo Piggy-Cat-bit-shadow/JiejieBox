@@ -81,6 +81,19 @@ type ServiceChangePlan struct {
 	// Stale is set on a report whose plan could not be committed because the running configuration
 	// was no longer the one the plan was computed against.
 	Stale bool `json:"stale,omitempty"`
+	// OverridesConsidered names the run-only override inputs this plan was computed WITH.
+	//
+	// They are part of the effective configuration - `parseEffectiveOptions` merges them into the
+	// document before anything is compared - so a plan that silently omitted one would compare two
+	// documents that differ by an input it never saw and report a change the apply does not make.
+	// Naming them is how a reader can tell which inputs the answer covers.
+	OverridesConsidered []string `json:"overridesConsidered,omitempty"`
+	// UncoveredInputs names effective-configuration inputs this plan CANNOT see, so that no preview
+	// is read as "applying this document needs no restart" when the embedder is about to change
+	// something of its own. The platform's network settings (installed routes, APNs exclusion, the
+	// system proxy) are applied by the embedder when it opens the TUN, not by this document, and
+	// they take effect only through a rebuild.
+	UncoveredInputs []string `json:"uncoveredInputs,omitempty"`
 	// ChangedSections names the top-level document sections that differ outside the domains with a
 	// live owner. It is the reason a restart is required, in the caller's own vocabulary: "the
 	// providers changed" is actionable, "the document changed" is not.
@@ -143,12 +156,71 @@ func (s *StartedService) LastServiceChange() *ServiceChangeReport {
 
 // PlanServiceChange answers what applying this profile would require, without touching the
 // running Box. An unparseable candidate is an error, the same one the entry would refuse.
+//
+// # Why nil means "the running instance's overrides"
+//
+// The overrides are not decoration: `parseEffectiveOptions` merges them into the document, so they
+// are part of what is running. A caller that passes nil because it does not know them - which is
+// every preview, since the platform sends its TUN patch with the apply - used to get a plan
+// computed against a DIFFERENT document than the one in force, and a body that is byte-identical
+// to the running one was reported as a change. Defaulting to the overrides the running document was
+// built with makes the preview compare the same input the apply would. A caller that knows its
+// overrides still wins, which is what an embedder previewing a settings change needs.
 func (s *StartedService) PlanServiceChange(profileContent string, options *OverrideOptions) (ServiceChangePlan, error) {
-	target, err := s.parseEffectiveOptions(s.ctx, profileContent, options)
+	effectiveOverrides := s.planningOverrides(options)
+	target, err := s.parseEffectiveOptions(s.ctx, profileContent, effectiveOverrides)
 	if err != nil {
 		return ServiceChangePlan{}, err
 	}
-	return s.planServiceChange(&target, configRevisionOf(profileContent)), nil
+	return s.planServiceChange(&target, configRevisionOf(profileContent), effectiveOverrides), nil
+}
+
+// planningOverrides resolves the override input a plan is computed with.
+func (s *StartedService) planningOverrides(options *OverrideOptions) *OverrideOptions {
+	if options != nil {
+		return options
+	}
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	if s.instance == nil || !s.instance.hasOverrides {
+		return nil
+	}
+	inherited := s.instance.overrideOptions
+	return &inherited
+}
+
+// overrideInputNames lists the override inputs a plan was computed with, for the plan's own report.
+//
+// It names WHAT was applied, never the values: an override can carry a platform address or a
+// package list, and a diagnostic document is not the place for either.
+func overrideInputNames(options *OverrideOptions) []string {
+	if options == nil {
+		return nil
+	}
+	var names []string
+	if options.AutoRedirect {
+		names = append(names, "auto_redirect")
+	}
+	if len(options.IncludePackage) > 0 {
+		names = append(names, "include_package")
+	}
+	if len(options.ExcludePackage) > 0 {
+		names = append(names, "exclude_package")
+	}
+	if len(options.LoopbackAddress) > 0 {
+		names = append(names, "loopback_address")
+	}
+	return names
+}
+
+// uncoveredOverrideInputs are the effective-configuration inputs this process never sees.
+//
+// The platform installs its own network settings when the embedder opens the TUN: included and
+// excluded routes, the APNs exclusion, the DNS match domains, the system proxy. They are not part
+// of the document and no document comparison can observe them, so a plan has to SAY so - otherwise
+// "already runs this document" reads as "nothing would change", which is false for an APNs switch.
+func uncoveredOverrideInputs() []string {
+	return []string{"platform network settings"}
 }
 
 // runningInstance returns the instance a plan may compare against, or nil.
@@ -178,7 +250,7 @@ func (s *StartedService) runningDocumentSnapshot() (document option.Options, rev
 }
 
 // planServiceChange compares a target document with the running one.
-func (s *StartedService) planServiceChange(target *option.Options, targetRevision string) ServiceChangePlan {
+func (s *StartedService) planServiceChange(target *option.Options, targetRevision string, overrides *OverrideOptions) ServiceChangePlan {
 	plan := ServiceChangePlan{
 		TargetRevision: targetRevision,
 		// Named even when there is nothing to compare, so a report says which domains were asked
@@ -186,6 +258,10 @@ func (s *StartedService) planServiceChange(target *option.Options, targetRevisio
 		Mode: DomainPlan{Domain: "mode"},
 		DNS:  DomainPlan{Domain: "dns"},
 		Rule: DomainPlan{Domain: "rule"},
+		// The platform's own network settings are outside every document comparison this plan
+		// makes, whatever the answer below turns out to be.
+		OverridesConsidered: overrideInputNames(overrides),
+		UncoveredInputs:     uncoveredOverrideInputs(),
 	}
 	snapshot, currentRevision, available := s.runningDocumentSnapshot()
 	if !available {
