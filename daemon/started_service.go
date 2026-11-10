@@ -83,13 +83,39 @@ type StartedService struct {
 	logSubscriber           *observable.Subscriber[*log.Entry]
 	logObserver             *observable.Observer[*log.Entry]
 	instance                *Instance
-	startedAt               time.Time
-	urlTestSubscriber       *observable.Subscriber[struct{}]
-	urlTestObserver         *observable.Observer[struct{}]
-	clashModeSubscriber     *observable.Subscriber[struct{}]
-	clashModeObserver       *observable.Observer[struct{}]
-	notificationSubscriber  *observable.Subscriber[*NotificationEvent]
-	notificationObserver    *observable.Observer[*NotificationEvent]
+	// instanceID identifies the running instance for the connection-event stream. It is written
+	// under serviceAccess together with instance, and a stream captures it at subscribe time so a
+	// batch produced by a replaced instance can be told apart from the current one.
+	instanceID             string
+	startedAt              time.Time
+	urlTestSubscriber      *observable.Subscriber[struct{}]
+	urlTestObserver        *observable.Observer[struct{}]
+	clashModeSubscriber    *observable.Subscriber[struct{}]
+	clashModeObserver      *observable.Observer[struct{}]
+	notificationSubscriber *observable.Subscriber[*NotificationEvent]
+	notificationObserver   *observable.Observer[*NotificationEvent]
+}
+
+// setInstanceLocked records the running instance and the identity a connection-event stream
+// reports. Caller holds serviceAccess.
+//
+// A new identity per instance (not per process) is what lets a client discard a batch produced by
+// an instance that a reload already replaced, instead of applying an old snapshot over the new
+// state.
+func (s *StartedService) setInstanceLocked(instance *Instance) {
+	s.instance = instance
+	if instance == nil {
+		s.instanceID = ""
+		return
+	}
+	s.instanceID = uuid.Must(uuid.NewV4()).String()
+}
+
+// currentInstanceID returns the identity of the running instance, or "" when none is running.
+func (s *StartedService) currentInstanceID() string {
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	return s.instanceID
 }
 
 type ServiceOptions struct {
@@ -348,7 +374,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	}
 	oldInstance := s.instance
 	if oldInstance != nil {
-		s.instance = nil
+		s.setInstanceLocked(nil)
 		s.updateStatus(ServiceStatus_STOPPING)
 		s.serviceAccess.Unlock()
 		oomRecorder := service.FromContext[*oomkiller.Recorder](s.ctx)
@@ -408,20 +434,20 @@ func (s *StartedService) buildAndStart(ctx context.Context, profileContent strin
 		instance.clashMode.AddUpdateHook(s.clashModeSubscriber)
 	}
 	s.serviceAccess.Lock()
-	s.instance = instance
+	s.setInstanceLocked(instance)
 	s.serviceAccess.Unlock()
 	err = instance.Start()
 	s.serviceAccess.Lock()
 	if s.startInterrupted {
 		s.startInterrupted = false
-		s.instance = nil
+		s.setInstanceLocked(nil)
 		s.serviceAccess.Unlock()
 		_ = instance.Close()
 		runtimeDebug.FreeOSMemory()
 		return nil, nil
 	}
 	if err != nil {
-		s.instance = nil
+		s.setInstanceLocked(nil)
 		s.serviceAccess.Unlock()
 		_ = instance.Close()
 		runtimeDebug.FreeOSMemory()
@@ -491,7 +517,7 @@ func (s *StartedService) CloseService() error {
 		s.serviceAccess.Unlock()
 		return nil
 	}
-	s.instance = nil
+	s.setInstanceLocked(nil)
 	s.updateStatus(ServiceStatus_STOPPING)
 	s.serviceAccess.Unlock()
 	if instance != nil {
@@ -1042,10 +1068,10 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 
 	connectionSnapshots := make(map[uuid.UUID]connectionSnapshot)
 	initialEvents := s.buildInitialConnectionState(trafficManager, connectionSnapshots)
-	err = server.Send(&ConnectionEvents{
-		Events: initialEvents,
-		Reset_: true,
-	})
+	// The stream's identity and gap accounting belong to this subscription: a reload replaces the
+	// instance for later streams, and a gap is only visible against the source sequence.
+	envelope := &connectionEventEnvelope{instanceID: s.currentInstanceID()}
+	err = server.Send(envelope.wrap(initialEvents, true))
 	if err != nil {
 		return err
 	}
@@ -1067,6 +1093,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			return nil
 
 		case event := <-subscription:
+			envelope.observe(event)
 			var pendingEvents []*ConnectionEvent
 			if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
 				pendingEvents = append(pendingEvents, protoEvent)
@@ -1075,6 +1102,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			for {
 				select {
 				case event = <-subscription:
+					envelope.observe(event)
 					if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
 						pendingEvents = append(pendingEvents, protoEvent)
 					}
@@ -1083,7 +1111,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 				}
 			}
 			if len(pendingEvents) > 0 {
-				err = server.Send(&ConnectionEvents{Events: pendingEvents})
+				err = server.Send(envelope.wrap(pendingEvents, false))
 				if err != nil {
 					return err
 				}
@@ -1094,7 +1122,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			if len(protoEvents) == 0 {
 				continue
 			}
-			err = server.Send(&ConnectionEvents{Events: protoEvents})
+			err = server.Send(envelope.wrap(protoEvents, false))
 			if err != nil {
 				return err
 			}

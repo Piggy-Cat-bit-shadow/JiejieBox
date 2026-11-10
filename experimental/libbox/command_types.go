@@ -99,8 +99,17 @@ type ConnectionEvent struct {
 }
 
 type ConnectionEvents struct {
-	Reset  bool
-	events []*ConnectionEvent
+	Reset bool
+	// InstanceId identifies the Box instance that produced this batch. A reload replaces the
+	// instance while a subscription can still be open, so a batch stamped with a different
+	// identity must not be applied over the current state.
+	InstanceId string
+	// Sequence advances once per delivered batch; a gap means a batch was lost.
+	Sequence uint64
+	// Dropped is the number of connection events this subscription missed (source-side sequence
+	// gaps), so a consumer can tell "no events" from "events were lost".
+	Dropped uint64
+	events  []*ConnectionEvent
 	// subscription is the identity of the stream that produced this batch. It is set by the
 	// command client, never by the platform: the consumer uses it to ignore a batch that belongs to
 	// a subscription a newer one has already superseded (the reviewed failure: a paused old batch
@@ -525,7 +534,10 @@ func connectionEventsFromGRPC(events *daemon.ConnectionEvents) *ConnectionEvents
 		return nil
 	}
 	libboxEvents := &ConnectionEvents{
-		Reset: events.Reset_,
+		Reset:      events.Reset_,
+		InstanceId: events.InstanceId,
+		Sequence:   events.Sequence,
+		Dropped:    events.Dropped,
 	}
 	for _, event := range events.Events {
 		if libboxEvent := connectionEventFromGRPC(event); libboxEvent != nil {

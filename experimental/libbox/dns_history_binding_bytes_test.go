@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/route"
 
 	"github.com/stretchr/testify/require"
@@ -136,14 +137,14 @@ func TestTheBindingResponseIsHardCappedWhenTheRuleIsRetained(t *testing.T) {
 	t.Logf("long-rule: records=%d encoded=%d truncated=%v ruleField=%d retainedBytes=%d",
 		len(result.Records), encodedBytes, result.Truncated, len(result.Records[0].Rule), result.Stats.Bytes)
 
-	require.LessOrEqual(t, encodedBytes, maxDNSHistoryBindingBytes,
+	require.LessOrEqual(t, encodedBytes, dns.MaxHistoryBindingBytes,
 		"one binding response must never exceed the server ceiling")
 	require.LessOrEqual(t, encodedBytes, 8192,
 		"a 4 KiB request is answered with a bounded single record, not the retained rule text")
 	require.NotEmpty(t, result.Records, "the first record is always carried so the cursor advances")
 	require.True(t, result.Truncated, "a cut response must say so")
 	require.NotZero(t, result.NextSequence, "the caller needs a cursor to continue from")
-	require.LessOrEqual(t, len(result.Records[0].Rule), maxDNSHistoryFieldBytes+8,
+	require.LessOrEqual(t, len(result.Records[0].Rule), dns.MaxHistoryFieldBytes+8,
 		"the rule text is bounded by its encoded budget")
 	require.True(t, strings.HasSuffix(result.Records[0].Rule, "…"), "a cut field is marked")
 	require.Greater(t, result.Stats.Bytes, 40_000,
@@ -151,13 +152,13 @@ func TestTheBindingResponseIsHardCappedWhenTheRuleIsRetained(t *testing.T) {
 
 	// A request above the server ceiling is clamped, not honoured.
 	clamped, clampedBytes := queryBinding(t, server, `{"maxBytes":100000000}`)
-	require.LessOrEqual(t, clampedBytes, maxDNSHistoryBindingBytes)
+	require.LessOrEqual(t, clampedBytes, dns.MaxHistoryBindingBytes)
 	require.NotEmpty(t, clamped.Records)
 
 	// A request below the floor still makes progress and stays under the ceiling.
 	floor, floorBytes := queryBinding(t, server, `{"maxBytes":1}`)
 	require.NotEmpty(t, floor.Records)
-	require.LessOrEqual(t, floorBytes, maxDNSHistoryBindingBytes)
+	require.LessOrEqual(t, floorBytes, dns.MaxHistoryBindingBytes)
 	require.True(t, floor.Truncated)
 }
 
@@ -197,7 +198,7 @@ func TestTheBindingPaginatesThroughTruncatedResponses(t *testing.T) {
 	for responses < 64 {
 		result, encodedBytes := queryBinding(t, server, fmt.Sprintf(`{"since":%d,"maxBytes":2048}`, cursor))
 		responses++
-		require.LessOrEqual(t, encodedBytes, maxDNSHistoryBindingBytes)
+		require.LessOrEqual(t, encodedBytes, dns.MaxHistoryBindingBytes)
 		for _, record := range result.Records {
 			require.False(t, seen[record.Sequence], "a record must not be returned twice")
 			seen[record.Sequence] = true
