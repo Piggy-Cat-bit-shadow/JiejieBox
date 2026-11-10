@@ -350,6 +350,9 @@ func BenchmarkLinuxGSOGroupingVsSendmmsgOnly(b *testing.B) {
 // benchmark because the bound is generous and the point is that planning is not the
 // dominant term.
 func TestLinuxGSOPlanningCostIsNegligible(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("a per-batch planning cost measured against a syscall budget is meaningless under the race detector")
+	}
 	const (
 		batch       = 64
 		payloadSize = 64
