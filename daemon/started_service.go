@@ -357,7 +357,30 @@ func (s *StartedService) followInstance(ctx context.Context, run func(ctx contex
 	}
 }
 
+// StartOrReloadService applies a profile to the running service.
+//
+// The error-only contract is what every existing caller has; the report this call produced is
+// what `ApplyServiceChange` returns, and this function is that same path with the report dropped.
+// Keeping one implementation means the two entry points cannot disagree about what an apply did.
 func (s *StartedService) StartOrReloadService(ctx context.Context, profileContent string, options *OverrideOptions) error {
+	_, err := s.ApplyServiceChange(ctx, profileContent, options)
+	return err
+}
+
+// ApplyServiceChange applies a profile and returns the report THIS call produced.
+//
+// # Why the report is a return value and not a later read
+//
+// `LastServiceChange` is the last report this daemon wrote, whoever wrote it. A caller that applied
+// something and then read it back has read a fact about the LAST attempt, not about its own: a
+// concurrent apply (another profile, another window) can land in between, and an interrupted or
+// recovered attempt returns no error at all, so the caller has nothing else to go on. The report
+// belongs to the ownership boundary this function already holds - `lifecycleAccess` - and leaving
+// that boundary with the report in hand is what makes "what did my apply do" answerable.
+//
+// It is returned even when the call fails, because a failed attempt still has a state worth
+// reporting: which document is running now, whether the previous one was retained, and why.
+func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent string, options *OverrideOptions) (*ServiceChangeReport, error) {
 	s.interruptStart()
 	s.lifecycleAccess.Lock()
 	defer s.lifecycleAccess.Unlock()
@@ -370,14 +393,15 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	targetOptions, err := s.parseEffectiveOptions(ctx, profileContent, options)
 	if err != nil {
 		_, runningRevision, running := s.runningDocumentSnapshot()
-		s.recordServiceChange(&ServiceChangeReport{
+		report := &ServiceChangeReport{
 			Plan:           ServiceChangePlan{TargetRevision: configRevisionOf(profileContent)},
 			Status:         ServiceChangeStatusFailed,
 			Retained:       running,
 			ActiveRevision: runningRevision,
 			Reason:         err.Error(),
-		})
-		return err
+		}
+		s.recordServiceChange(report)
+		return report, err
 	}
 	targetRevision := configRevisionOf(profileContent)
 	plan := s.planServiceChange(&targetOptions, targetRevision)
@@ -393,7 +417,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		case (providerReport.Status == DomainStatusCommitted ||
 			providerReport.Status == DomainStatusUnchanged ||
 			providerReport.Status == DomainStatusPartial) && providerRefreshDelivered(providerReport):
-			report := ServiceChangeReport{
+			report := &ServiceChangeReport{
 				Plan:           plan,
 				Status:         ServiceChangeStatusAppliedLive,
 				ActiveRevision: plan.CurrentRevision,
@@ -403,8 +427,8 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 				report.Reason = providerReport.Reason
 			}
 			report.Persistence, report.PersistenceWarning = s.persistRunningConfig(profileContent)
-			s.recordServiceChange(&report)
-			return nil
+			s.recordServiceChange(report)
+			return report, nil
 		default:
 			liveFallbackReason = "provider refresh: " + providerReport.Reason
 		}
@@ -422,7 +446,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 				report.Persistence, report.PersistenceWarning = s.persistRunningConfig(profileContent)
 			}
 			s.recordServiceChange(&report)
-			return nil
+			return &report, nil
 		}
 		// The live path could not be taken after all. Fall through to the restart path rather than
 		// report success for a change the running Box did not absorb.
@@ -433,7 +457,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	s.serviceAccess.Lock()
 	if s.closed {
 		s.serviceAccess.Unlock()
-		return os.ErrClosed
+		return nil, os.ErrClosed
 	}
 	oldInstance := s.instance
 	if oldInstance != nil {
@@ -460,11 +484,12 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		// The start was interrupted; buildAndStart has already cleaned up, and the original
 		// path returned nil without touching the status, which this preserves. Nothing is left
 		// running, so no revision may be named as active.
-		s.recordServiceChange(&ServiceChangeReport{
+		report := &ServiceChangeReport{
 			Plan: plan, Status: ServiceChangeStatusInterrupted,
 			RestartRequired: plan.RestartRequired,
-		})
-		return nil
+		}
+		s.recordServiceChange(report)
+		return report, nil
 	}
 	if err != nil {
 		// C05: with a store configured, a failed start recovers to the last-good profile and
@@ -475,12 +500,13 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 			// saved A: A is running now, B is not, and the previous configuration was not
 			// retained. Saying `retained` for every recovery hid exactly that difference.
 			retained := plan.Started && plan.CurrentRevision == recoveredRevision
-			s.recordServiceChange(&ServiceChangeReport{
+			report := &ServiceChangeReport{
 				Plan: plan, Status: ServiceChangeStatusRecovered, Retained: retained,
 				RestartRequired: plan.RestartRequired,
 				ActiveRevision:  recoveredRevision, Reason: err.Error(),
-			})
-			return nil
+			}
+			s.recordServiceChange(report)
+			return report, nil
 		}
 		s.discardPendingCandidate()
 		s.serviceAccess.Lock()
@@ -489,11 +515,12 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		// The running Box was closed before the candidate was built and no recovery brought one
 		// back: nothing runs, so naming the previous revision as active would describe a service
 		// that does not exist.
-		s.recordServiceChange(&ServiceChangeReport{
+		report := &ServiceChangeReport{
 			Plan: plan, Status: ServiceChangeStatusFailed,
 			RestartRequired: plan.RestartRequired, Reason: err.Error(),
-		})
-		return err
+		}
+		s.recordServiceChange(report)
+		return report, err
 	}
 	s.serviceAccess.Lock()
 	s.startedAt = time.Now()
@@ -502,7 +529,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	runtimeDebug.FreeOSMemory()
 	// What the caller asked for is now running; the plan says whether a rebuild was required to
 	// get there or whether the document change was one the running Box could have absorbed.
-	report := ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRestarted, RestartRequired: plan.RestartRequired, ActiveRevision: targetRevision}
+	report := &ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRestarted, RestartRequired: plan.RestartRequired, ActiveRevision: targetRevision}
 	if !plan.Started {
 		report.Status = ServiceChangeStatusStarted
 	}
@@ -512,8 +539,8 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	// The profile is running: it becomes the document a later failed start can return to - when the
 	// disk accepted it. A committed-but-unsaved configuration is reported as such.
 	report.Persistence, report.PersistenceWarning = s.persistRunningConfig(profileContent)
-	s.recordServiceChange(&report)
-	return nil
+	s.recordServiceChange(report)
+	return report, nil
 }
 
 // buildAndStart builds one Box and starts it.
