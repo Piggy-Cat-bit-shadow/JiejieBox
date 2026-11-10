@@ -216,6 +216,15 @@ func TestTheWindowLifecycleKeepsTheCursorHonest(t *testing.T) {
 	result, _ = queryBinding(t, server, `{}`)
 	require.Empty(t, result.Records, "re-enabling starts a fresh window")
 	require.False(t, result.Truncated)
+
+	// A cursor carried across the disable is meaningless in the NEW window: the sequence space
+	// restarted, so nothing is after it. Pinned rather than accidental: the page is empty AND the
+	// window is empty, so a client that tracks the stats can tell "the window restarted" from
+	// "I reached the end of a window that still has records".
+	stale, _ := queryBinding(t, server, fmt.Sprintf(`{"since":%d,"limit":8}`, cursor))
+	require.Empty(t, stale.Records, "a cursor from the previous window sees nothing in the new one")
+	require.False(t, stale.Truncated)
+	require.Zero(t, stale.Stats.Entries, "the new window is empty, which is how a client detects the restart")
 }
 
 // TestARecordMissingFromTheRingIsNotAHoleInThePage: a record rejected by the retention budget is
