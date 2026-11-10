@@ -55,22 +55,24 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 	// (often AsIS) and two things can go wrong. A legacy rule could rewrite the QTYPE, so a rule
 	// saying ipv6_only under a caller-forced ipv4_only would query AAAA and then publish the answer
 	// under its own ipv4 label - contradicting both the caller's restriction and the result's
-	// family. And with an explicit transport the router's own DEFAULT strategy is filled in when
-	// Strategy is AsIS, so a router configured `ipv6_only` would turn a caller-forced `ipv4_only`
-	// into a conflict that issues nothing at all.
+	// family. And the router's own DEFAULT strategy would be filled in when Strategy is AsIS, so a
+	// router configured `ipv6_only` would turn a caller-forced `ipv4_only` into a conflict.
 	//
 	// Setting both makes the branch internally consistent - the family it forces is the family it
 	// asks for - and leaves the legacy rule as the only writer that can still disagree, which is
-	// exactly the conflict Client.Lookup now reports as a forbidden item.
+	// exactly the conflict Client.Lookup reports as a forbidden item.
+	//
+	// The published source stamp comes from the operation that produced the answer, not from a read
+	// taken here: a generation advanced during rule matching or transport selection would otherwise
+	// publish an answer under the environment it was NOT asked on.
 	switch effectiveStrategy {
 	case C.DomainStrategyIPv4Only:
 		familyOptions := options
 		familyOptions.LookupStrategy = C.DomainStrategyIPv4Only
 		familyOptions.Strategy = C.DomainStrategyIPv4Only
-		generation := r.dnsGeneration()
-		addresses, err := r.Lookup(ctx, domain, familyOptions)
+		addresses, generation, hasGeneration, err := r.lookupWithSource(ctx, domain, familyOptions)
 		publish(adapter.DNSFamilyResult{IPv6: false, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
-			SourceGeneration: generation, HasSourceGeneration: true})
+			SourceGeneration: generation, HasSourceGeneration: hasGeneration})
 		if err != nil && len(addresses) == 0 {
 			return err
 		}
@@ -79,10 +81,9 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 		familyOptions := options
 		familyOptions.LookupStrategy = C.DomainStrategyIPv6Only
 		familyOptions.Strategy = C.DomainStrategyIPv6Only
-		generation := r.dnsGeneration()
-		addresses, err := r.Lookup(ctx, domain, familyOptions)
+		addresses, generation, hasGeneration, err := r.lookupWithSource(ctx, domain, familyOptions)
 		publish(adapter.DNSFamilyResult{IPv6: true, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy,
-			SourceGeneration: generation, HasSourceGeneration: true})
+			SourceGeneration: generation, HasSourceGeneration: hasGeneration})
 		if err != nil && len(addresses) == 0 {
 			return err
 		}
@@ -111,13 +112,7 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 		// name published as only A or only AAAA.
 		familyOptions.QuietEmptyFamilyResult = true
 
-		// The environment this item is ASKED under, read immediately before the query - the same
-		// instant the DNS client stamps the exchange with (prepareExchange). An answer may be
-		// delivered after the environment moved, and the connection layer needs to know which
-		// environment's address it is holding before it dials it.
-		generation := r.dnsGeneration()
-
-		addresses, err := r.Lookup(ctx, domain, familyOptions)
+		addresses, generation, hasGeneration, err := r.lookupWithSource(ctx, domain, familyOptions)
 
 		access.Lock()
 		if err != nil {
@@ -134,9 +129,10 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 			Err:       err,
 			// Both families report the same effective strategy, so a consumer never has to
 			// decide which result to believe.
-			EffectiveStrategy:   effectiveStrategy,
+			EffectiveStrategy: effectiveStrategy,
+			// The generation the answer was produced under, from the operation that produced it.
 			SourceGeneration:    generation,
-			HasSourceGeneration: true,
+			HasSourceGeneration: hasGeneration,
 		})
 	}
 
