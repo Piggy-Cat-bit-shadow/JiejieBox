@@ -57,7 +57,10 @@ func TestHistoryEnforcesTheByteBound(t *testing.T) {
 }
 
 func TestARecordLargerThanTheBudgetIsRejectedNotRetained(t *testing.T) {
-	history := NewHistory(HistoryOptions{MaxBytes: 128})
+	// The budget must hold a small record under the FULL accounting (fixed overhead, five string
+	// headers and the source string); 128 bytes no longer does, which is the point of counting every
+	// retained field.
+	history := NewHistory(HistoryOptions{MaxBytes: 512})
 	now := time.Now()
 	history.Record(historyEvent("small.example.", "t", QuerySourceUpstream, now))
 	history.Record(historyEvent(string(make([]byte, 512)), "t", QuerySourceUpstream, now))
