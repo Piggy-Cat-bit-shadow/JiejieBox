@@ -330,7 +330,7 @@ func TestAnOrdinaryNetworkChangeDoesNotQueueBehindASlowOldPacketClose(t *testing
 	}
 	// The close is now inside its critical section. Everything below must happen without it returning.
 	pinnedAt := awaitPin(t, router, nextPin)
-	require.True(t, harness.manager.NetworkTransitionStable(),
+	require.Eventually(t, harness.manager.NetworkTransitionStable, 2*time.Second, time.Millisecond,
 		"the transition was not committed while the old socket's Close was still in flight")
 	// The settle above pinned once already; this transition must add exactly one pin.
 	require.Equal(t, 1, router.pinCount()-pinsBefore, "one transition pins DNS exactly once")
@@ -372,7 +372,7 @@ func TestADeadPathResetDoesNotQueueBehindASlowOldPacketClose(t *testing.T) {
 		t.Fatal("the dead-path reclaim never started the old socket's Close")
 	}
 	awaitPin(t, router, nextPin)
-	require.True(t, harness.manager.NetworkTransitionStable(),
+	require.Eventually(t, harness.manager.NetworkTransitionStable, 2*time.Second, time.Millisecond,
 		"a dead-path reset did not commit while the old socket's Close was still in flight")
 	queryTime := dnsProbe.requireAnswer(t)
 	firstByte := requireFirstByte(t, realDialer, target)

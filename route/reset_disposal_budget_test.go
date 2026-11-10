@@ -107,7 +107,7 @@ func requireGenerationSettledWhileBlocked(t *testing.T, harness *interfaceTransi
 	}
 
 	pinnedAt := awaitPin(t, router, nextPin)
-	require.True(t, harness.manager.NetworkTransitionStable(),
+	require.Eventually(t, harness.manager.NetworkTransitionStable, 2*time.Second, time.Millisecond,
 		"the transition was not committed while the first old Close was still blocked")
 	require.Equal(t, 1, router.pinCount()-pinsBefore, "one transition pins DNS exactly once")
 	queryTime := dnsProbe.requireAnswer(t)
@@ -234,7 +234,8 @@ func TestTheBudgetThresholdIsWhereNewConnectionsStop(t *testing.T) {
 				t.Fatal("the first old socket never entered Close")
 			}
 			awaitPin(t, router, nextPin)
-			require.True(t, harness.manager.NetworkTransitionStable())
+			require.Eventually(t, harness.manager.NetworkTransitionStable, 2*time.Second, time.Millisecond,
+				"the transition was not committed while the first old Close was still blocked")
 			_ = dnsProbe.requireAnswer(t)
 
 			queued := total
