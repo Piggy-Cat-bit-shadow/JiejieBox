@@ -304,7 +304,15 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 #   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
 #     --lang swift --root <sing-box-for-apple @ 40e59c767085a1cee033177813f8b40e2bde06e7>
 #   {"scanned": 433, "violations": [], "interface_methods": 3, "error": ""}
-VERIFIED_APPLE_SHA="40e59c767085a1cee033177813f8b40e2bde06e7"
+# Moved to 0297d7b on 2026-11-10 (window 06 round 8): 0297d7b restores the legacy failure
+# contract, binds provider refreshes to the confirmed startedAt, and splits Hako batch save from
+# its final apply. It adds one Swift file (ProviderTargetGuard.swift) and changes no Go surface.
+# Re-probed at the exact tree:
+#
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <sing-box-for-apple @ 0297d7bbb86bf9ef2bf922319e11e994f16927fd>
+#   {"scanned": 434, "violations": [], "interface_methods": 3, "error": ""}
+VERIFIED_APPLE_SHA="0297d7bbb86bf9ef2bf922319e11e994f16927fd"
 
 client_root=""
 skip_client=0
