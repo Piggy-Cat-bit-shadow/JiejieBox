@@ -97,9 +97,9 @@ func TestProductConfigurationRPCs(t *testing.T) {
 	}
 
 	records := map[string]any{
-		"binary":       binary,
-		"preview":      plan.Json,
-		"last_change":  report.Json,
+		"binary":        binary,
+		"preview":       plan.Json,
+		"last_change":   report.Json,
 		"last_recovery": recovery.Json,
 	}
 	encoded, err := json.MarshalIndent(records, "", "  ")
