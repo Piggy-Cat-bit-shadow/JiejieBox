@@ -1,299 +1,154 @@
 {
-  "schema": 1,
-  "stage": "02-dependency-convergence",
-  "generated_at": "2026-11-11T01:09:53+08:00",
+  "schema": 2,
+  "stage": "06-final-freeze",
+  "generated_at": "2026-11-11T04:59:18+08:00",
+  "release_version": "0.1.45",
   "main_repo": {
     "name": "Piggy-Cat-bit-shadow/JiejieBox",
     "baseline_branch": "candidate/w07-2026-11-10",
     "baseline_sha": "0b1b6a3b2f0d2e3f3d2f580a4bc77d769ff57e20",
     "integration_branch": "integration/0.1.45-final",
-    "pins_changed_this_stage": false,
-    "note": "go.mod / test/go.mod / gitlinks / source-lock are untouched in stage 02; this file is the only input for the stage-06 freeze."
+    "source_lock_commit": "69e8dcb457a41695224a094411a32c80fd39e09d",
+    "rc_commit": "the commit that contains this file and the FINAL_*.md reports",
+    "pushed": false,
+    "note": "local integration branch only; testing/main untouched"
   },
-  "closing_pass": {
-    "performed_at": "2026-11-11T01:13:54+08:00",
-    "pushed": [
-      "Piggy-Cat-bit-shadow/quic-go refs/heads/integration/0.1.45 = ca9992bc795e8699db2b22ad6459216e6f13649d"
-    ],
-    "verified": [
-      "remote SHA equals local SHA after push",
-      "canonical pseudo-version v0.61.1-0.20261110165647-ca9992bc795e resolved from GitHub (fresh VCS cache)",
-      "kernel full Windows-profile build against both real pins: exit 0",
-      "kernel protocol/tun and common/httpclient tests: exit 0",
-      "kernel transport/v2rayquic -race suite: 26 tests, exit 0"
-    ],
-    "not_pushed": [
-      "sing-tun integration/0.1.45 (its final SHA 57e9d17fa852 is already reachable from origin/dev; a branch ref would add no resolvability)",
-      "main repo integration/0.1.45-final (stage 06 owns that push)"
-    ]
-  },  "dependencies": [
+  "go_modules": [
     {
-      "repo": "Piggy-Cat-bit-shadow/sing",
       "module": "github.com/sagernet/sing",
-      "policy": "update",
-      "source_branch": "dev",
-      "pinned_before": "1729220c46c4cf750726b1057514a8d52a1f5e3b",
-      "source_tip": "1729220c46c4cf750726b1057514a8d52a1f5e3b",
       "final_sha": "1729220c46c4cf750726b1057514a8d52a1f5e3b",
-      "final_pseudo_version": "v0.9.6-0.20261027185736-1729220c46c4",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "new_commits_above_pin": 0,
-      "verification": "pin equals origin/dev tip; kernel full build with this pin exit 0"
+      "version": "v0.9.6-0.20261027185736-1729220c46c4",
+      "relation": "identical to origin/dev"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "module": "github.com/sagernet/sing-tun",
-      "policy": "update",
-      "source_branch": "dev",
-      "pinned_before": "9c3dcb2b1edfde31798981aa05f08851c0eee401",
-      "source_tip": "57e9d17fa852eafbc6849ae508c8b772e9fa1a66",
       "final_sha": "57e9d17fa852eafbc6849ae508c8b772e9fa1a66",
-      "final_pseudo_version": "v0.0.0-20261110141903-57e9d17fa852",
-      "action": "fast-forward",
-      "integration_branch": "integration/0.1.45",
-      "new_commits_above_pin": 13,
-      "diff_above_pin": "5 production files +379/-48, 13 test files",
-      "verification": "49 targeted tests PASS; full ./... minus admin-only PASS; -race ./... minus admin-only PASS; kernel protocol/tun PASS incl. TestPinnedSourceIsTheReplacedFork; kernel full build exit 0",
-      "blocked_tests": [
-        "TestGoKernel* (needs admin: Access is denied)",
-        "internal/winipcfg TestIPChange*/TestAddDelete*/TestGetIfRow/TestFlushDNS/TestSetDNS (need admin)"
-      ],
-      "push_required_for_pin": false,
-      "note": "the final SHA is already on origin/dev, so no new commit and no push are needed."
+      "version": "v0.0.0-20261110141903-57e9d17fa852",
+      "relation": "identical to origin/dev"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/sing-quic",
       "module": "github.com/sagernet/sing-quic",
-      "policy": "update",
-      "source_branch": "main",
-      "pinned_before": "1ef2597cc1298146fcdddfeaa0384999f890d0c3",
-      "source_tip": "1ef2597cc1298146fcdddfeaa0384999f890d0c3",
       "final_sha": "1ef2597cc1298146fcdddfeaa0384999f890d0c3",
-      "final_pseudo_version": "v0.7.2-0.20261024181351-1ef2597cc129",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "new_commits_above_pin": 0,
-      "verification": "pin equals origin/main tip; kernel full build with this pin exit 0"
+      "version": "v0.7.2-0.20261024181351-1ef2597cc129",
+      "relation": "identical to origin/main"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/quic-go",
       "module": "github.com/sagernet/quic-go",
-      "policy": "update",
-      "source_branch": "network/path-length-fix + fix/task08-h3-usecount",
-      "pinned_before": "bca854425f4daf5818ef57c6702de548b27f222b",
-      "source_shas": {
-        "shared": [
-          "0028a4c7",
-          "4b11a7be"
-        ],
-        "network/path-length-fix": "0e7c69dacb546194565de61af1ed99a337d2a685",
-        "fix/task08-h3-usecount_pick": "0b8709ebb15e6d6782409035a5615dc7657c5533"
-      },
       "final_sha": "ca9992bc795e8699db2b22ad6459216e6f13649d",
-      "final_pseudo_version": "v0.61.1-0.20261110165647-ca9992bc795e",
-      "final_pseudo_version_status": "verified from GitHub after push (2026-11-11T01:13:54+08:00)",
-      "action": "fast-forward (path-length-fix) + cherry-pick (0b8709eb)",
-      "integration_branch": "integration/0.1.45",
-      "new_commits_above_pin": 4,
-      "diff_above_pin": "6 files +167/-21",
-      "verification": "go test -vet=off ./... exit 0; http3 usecount test PASS; kernel full build exit 0; kernel transport/v2rayquic -race suite 26/26 PASS incl. TestCloseDuringAMigrationReleasesTheCandidateAndPublishesNothing",
-      "push_required_for_pin": false,
-      "remote_ref": "refs/heads/integration/0.1.45",
-      "remote_sha_verified": "ca9992bc795e8699db2b22ad6459216e6f13649d",
-      "note": "the fusion commit is pushed and verified; the canonical pseudo-version resolves from GitHub and the kernel was built/tested against it."
+      "version": "v0.61.1-0.20261110165647-ca9992bc795e",
+      "relation": "identical to origin/integration/0.1.45 (pushed stage 02)"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/utls",
       "module": "github.com/metacubex/utls",
-      "policy": "update",
-      "source_branch": "main",
-      "pinned_before": "b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc",
-      "source_tip": "b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc",
       "final_sha": "b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc",
-      "final_pseudo_version": "v1.8.8-0.20261028133436-b63a2e9a7b1e",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "new_commits_above_pin": 0,
-      "audit_baseline": "mirror/meta-v1.9.0 = a6a364afbd13 (not a product branch)",
-      "verification": "pin equals origin/main tip; kernel full build with this pin exit 0"
+      "version": "v1.8.8-0.20261028133436-b63a2e9a7b1e",
+      "relation": "identical to origin/main"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/cronet-go",
-      "modules": [
-        "github.com/sagernet/cronet-go",
-        "github.com/sagernet/cronet-go/all",
-        "github.com/sagernet/cronet-go/lib/* (29)"
-      ],
-      "policy": "update (root/all) + controlled (29 native modules)",
-      "source_branch": "go",
-      "pinned_before": {
-        "root": "362e63b14ce21678e0b197cfcd2392e64abb98e2",
-        "all": "7ce9c49b464ad90629a13061309a58c89890fea6",
-        "native_modules": "362e63b14ce21678e0b197cfcd2392e64abb98e2"
-      },
-      "final_sha": {
-        "root": "362e63b14ce21678e0b197cfcd2392e64abb98e2",
-        "all": "7ce9c49b464ad90629a13061309a58c89890fea6",
-        "native_modules": "362e63b14ce21678e0b197cfcd2392e64abb98e2"
-      },
-      "final_pseudo_version": {
-        "root": "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2",
-        "all": "v0.0.0-20261105062941-7ce9c49b464a",
-        "native_modules": "v0.0.0-20261105062326-362e63b14ce2"
-      },
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "verification": "all/go.mod requires 29 lib modules at 20261105062326-362e63b14ce2; kernel go.mod has 29 require + 29 replace entries; publish order main(4c96192) -> 362e63b(root build) -> 7ce9c49(all regen) confirmed",
-      "rejected_sources": [
-        {
-          "branch": "feat/per-dial-quic (local _np_audit clone, unpublished, 2 commits)",
-          "reason": "contains rebuilt native archives that differ from release/cronet-provenance.txt (darwin_arm64/libcronet.a: 48110296 B sha256 f680ff96... vs recorded 48112336 B dae99ed2...); controlled policy requires Chromium-toolchain rebuild + full verification"
-        }
-      ],
-      "note": "native modules must not move without rebuilt-and-verified archives."
-    },
-    {
-      "repo": "Piggy-Cat-bit-shadow/wireguard-go",
       "module": "github.com/sagernet/wireguard-go",
-      "policy": "update",
-      "source_branch": "awg3-inject",
-      "pinned_before": "a765d957fd814e5c0ee579936a0780e73d66e533",
-      "source_tip": "a765d957fd814e5c0ee579936a0780e73d66e533",
       "final_sha": "a765d957fd814e5c0ee579936a0780e73d66e533",
-      "final_pseudo_version": "v0.0.0-20261109042158-a765d957fd81",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "new_commits_above_pin": 0,
-      "awg_decision": "deferred / superseded by the pin",
-      "awg_evidence": {
-        "awg-base_unique": [
-          "b3540b3 device: Apply pre-shared keys to lazily created peers (present in pin: device.go:483, NewPeerConfig.PresharedKey)",
-          "ca3bc60 device: Add blocking per-peer packet injection (present in pin: send.go:682 InputPackets, send.go:1165 Peer.WritePackets, send.go:1116 waitOutboundSpace)"
-        ],
-        "awg-graft_unique": [
-          "52a2765 graft: first slice of the AmneziaWG obfuscation files from lx-awg2-v007 (pin has all obf_*.go + cookie.go + one extra test)"
-        ],
-        "kernel_consumers": [
-          "transport/wireguard/port.go calls Device.InputPackets",
-          "transport/wireguard/device_peer_router.go calls Peer.WritePackets"
-        ],
-        "kernel_tests": "option TestAmneziaWGOptions* 2 PASS; transport/wireguard AWG/Reserved/Framing 6 PASS"
-      },
-      "note": "no new commit; keep awg-base/awg-graft refs until the stage-06 archive-then-delete proof."
+      "version": "v0.0.0-20261109042158-a765d957fd81",
+      "relation": "identical to awg3-inject"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
-      "kind": "client gitlink",
-      "policy": "update",
-      "declared_branch": "main",
-      "pinned_before": "7fce7117b33a38ef4c73c81db67c49f0be7a7dad",
+      "module": "github.com/sagernet/cronet-go",
+      "final_sha": "362e63b14ce21678e0b197cfcd2392e64abb98e2",
+      "version": "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2",
+      "relation": "ahead of main (publish order main 4c96192 -> root 362e63b); policy update, no move"
+    },
+    {
+      "module": "github.com/sagernet/cronet-go/all",
+      "final_sha": "7ce9c49b464ad90629a13061309a58c89890fea6",
+      "version": "v0.0.0-20261105062941-7ce9c49b464a",
+      "relation": "ahead of main; aggregate regenerated one publish commit later"
+    },
+    {
+      "module": "github.com/sagernet/cronet-go/lib/* (29)",
+      "final_sha": "362e63b14ce21678e0b197cfcd2392e64abb98e2",
+      "relation": "controlled; unchanged (no Chromium toolchain rebuild)"
+    }
+  ],
+  "clients": [
+    {
+      "path": "clients/apple",
       "final_sha": "7fce7117b33a38ef4c73c81db67c49f0be7a7dad",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "findings": "the pin lives on origin/next/client-consumption (tip 7e2f5c43633a), not on origin/main (97b35d1ce242, an ancestor). dependencies.json declares branch main - unresolved for stage 05/06.",
-      "verification": "submodule checked out at the pin in _int0145/jiejiebox; not built (no Xcode)"
+      "status": "pin unchanged; on next/client-consumption, not on declared main",
+      "verification": "BLOCKED_BY_ENVIRONMENT: no macOS/Xcode; trial merge of next+NE has 3 conflicts"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
-      "kind": "client gitlink",
-      "policy": "update",
-      "source_branch": "main",
-      "pinned_before": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
+      "path": "clients/android",
       "final_sha": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "verification": "pin equals origin/main tip; no local unpushed work (a stale tracking ref had looked like it, refetch disproved it); build BLOCKED (no JDK 17/Android Studio)"
+      "status": "pin equals main; unchanged",
+      "verification": "BLOCKED_BY_ENVIRONMENT: no JDK17/Android SDK build for the Android client"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
-      "kind": "client gitlink",
-      "policy": "update",
-      "source_branch": "main",
-      "pinned_before": "aa63764a61c312562a348e174522d1dc1c86d954",
-      "final_sha": "aa63764a61c312562a348e174522d1dc1c86d954",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "local_unpushed": "next/client-consumption 28dc4a973bcd (main + 4) is local-only and belongs to stage 05",
-      "verification": "pin equals origin/main tip; submodule checked out; build BLOCKED (no Node)"
+      "path": "clients/desktop",
+      "final_sha": "28dc4a973bcd76eecf1af1d8d37a633f5c5bfb58",
+      "status": "verified integration commit (main + 4)",
+      "verification": "install/generate/typecheck/59 tests/build PASS with Node 26.7.0"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
-      "kind": "nested gitlink (in Desktop)",
-      "policy": "report",
-      "source_branch": "main",
-      "pinned_before": "fc1dbb4a48bb06358d549de05eb90df17ab7110d",
-      "final_sha": "fc1dbb4a48bb06358d549de05eb90df17ab7110d",
-      "action": "unchanged",
-      "integration_branch": "integration/0.1.45",
-      "other_branch": "next/client-consumption 62f158255ce9 (main + 1), pinned by Desktop's next branch (stage 05)",
-      "verification": "nested submodule checked out at the pin; build BLOCKED (no Node)"
+      "path": "clients/desktop:dashboard",
+      "final_sha": "62f158255ce981ffa7ea2d37ff2150c9ced516ed",
+      "status": "verified nested commit (main + 1)",
+      "verification": "dashboard 98/98 tests/build PASS inside the desktop layout"
     },
     {
-      "repo": "Piggy-Cat-bit-shadow/satelite-one",
-      "kind": "independent product repository (not a kernel gitlink)",
-      "policy": "n/a",
-      "source_branch": "main",
-      "pinned_before": null,
+      "path": "satelite-one (independent repo)",
       "final_sha": "c9a07350e4c7a4d60a918488478893de5a49b6ac",
-      "action": "registered only",
-      "integration_branch": "integration/0.1.45",
-      "other_branch": "next/subscription-refresh 9cdf782b8c8c (main + 16, published)",
-      "scope_decision": "belongs to stage 05; not a kernel dependency"
+      "status": "integration branch still at main; next/subscription-refresh not merged",
+      "verification": "BLOCKED_BY_ENVIRONMENT: missing kernel libbox.aar (gomobile+NDK)"
     }
   ],
-  "nested_submodules": [
-    {
-      "parent": "clients/apple",
-      "path": "Frameworks/Runestone",
-      "url": "https://github.com/nekohasekai/Runestone.git",
-      "sha": "baeb3cbf8332d26b4f7b4c175a01f288ebbf3e7f",
-      "state": "initialised in _int0145/jiejiebox"
-    },
-    {
-      "parent": "clients/desktop",
-      "path": "dashboard",
-      "url": "https://github.com/Piggy-Cat-bit-shadow/sing-box-dashboard.git",
-      "sha": "fc1dbb4a48bb06358d549de05eb90df17ab7110d",
-      "state": "initialised"
-    },
-    {
-      "parent": "clients/desktop/dashboard",
-      "path": "vendor/iterm2-color-schemes",
-      "url": "https://github.com/mbadolato/iTerm2-Color-Schemes",
-      "sha": "8c84dd1a859f36ec8601b082bd97b4ec888f0f4d",
-      "state": "not initialised (233 MB; no Node/npm/pnpm on this machine)"
-    },
-    {
-      "parent": "cronet-go",
-      "path": "naiveproxy",
-      "url": "https://github.com/Piggy-Cat-bit-shadow/naiveproxy.git",
-      "sha": "0ca66a00765564593eb4d2e6d061fe950ac7cce2",
-      "state": "not initialised (local clones are partial clones; network clone stalled)"
-    }
-  ],
+  "freeze": {
+    "tool": "scripts/ci/release-freeze.py",
+    "commands": [
+      "resolve",
+      "check",
+      "snapshot",
+      "verify"
+    ],
+    "resolve_rows": "8 go modules + 3 clients + 1 nested + 2 upstreams + 29 controlled natives",
+    "check_result": "PASS: every target comparable, none diverged, no pin needs to move",
+    "verify_result": "PASS: every pin in the tree is the pin the lock records",
+    "lock": "release/source-lock.json",
+    "lock_release_version": "0.1.45"
+  },
   "deferred": [
     {
       "repo": "wireguard-go",
       "refs": [
-        "awg-base (ca3bc60c4ce7)",
-        "awg-graft (52a27657d805)"
+        "awg-base ca3bc60c4ce7",
+        "awg-graft 52a27657d805"
       ],
-      "reason": "superseded by the pinned awg3-inject; their unique commits are already present in the pin in a newer form"
+      "reason": "superseded by awg3-inject; archive tags created, refs not consumed"
     },
     {
       "repo": "cronet-go",
       "refs": [
-        "local feat/per-dial-quic in _np_audit clone"
+        "feat/per-dial-quic"
       ],
-      "reason": "native archives differ from the recorded provenance; controlled policy forbids adoption without a Chromium-toolchain rebuild and verification"
+      "reason": "native archives differ from provenance; controlled policy"
+    },
+    {
+      "repo": "Apple client",
+      "refs": [
+        "next/client-consumption",
+        "fix/task10-apple-ne-runtime-final"
+      ],
+      "reason": "no Xcode; semantic fusion not performed"
+    },
+    {
+      "repo": "satelite-one",
+      "refs": [
+        "next/subscription-refresh"
+      ],
+      "reason": "blocked on kernel libbox.aar; independent product"
     }
   ],
-  "stage06_prerequisites": [
-    "Update go.mod / test/go.mod replaces to: sing-tun v0.0.0-20261110141903-57e9d17fa852 and quic-go v0.61.1-0.20261110165647-ca9992bc795e (all other pins unchanged; both versions resolve from the pushed remote).",
-    "Regenerate release/source-lock.json from the real tree (never hand-write SHAs) and run scripts/ci/release-freeze.py resolve/check/snapshot/verify.",
-    "Resolve the Apple client branch inconsistency (pin on next/client-consumption vs declared main) before writing client gitlinks.",
-    "Keep the 29 cronet native modules at 362e63b14ce2 unless rebuilt archives with proven provenance exist.",
-    "Record archive tags for awg-base/awg-graft before deleting refs, per the stage-06 cleanup proof."
-  ]
+  "branch_cleanup": {
+    "archive_tags": "local archive/0.1.45/<repo>/<branch> tags created for every candidate",
+    "remote_deletions": "deferred: RC not pushed, archive tags not pushed; see CLEANUP_REPORT.md",
+    "local_deletions": "none: every candidate still has a worktree or is needed for the archive proof"
+  }
 }

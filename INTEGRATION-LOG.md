@@ -370,3 +370,39 @@
 
 - **Node 26.7.0 验证**：按 desktop `engines` 声明的版本重跑 install/generate/typecheck/test/build，9 个步骤全部 exit 0；dashboard **98/98**、desktop **59/59** 不变。证据 `stage05/07-clients-node26.log`。
 - **satelite-one 尝试**：补装 JDK **17.0.21**（Temurin 便携版），复用已有 `C:\Deepseek\sdk`（Android 36 / build-tools 36）与缓存 Gradle 9.7，跑 `:app:testDebugUnitTest`/`:app:assembleDebug`。**失败在 `app/libs/libbox.aar` 缺失**（`verifyCoreProvenance` 输入不存在），Kotlin 编译报 libbox 符号未解析。阻塞点是内核 Android AAR（gomobile + NDK + provenance），不是 JDK/SDK；未合并。证据 `stage05/08-satelite-jdk17.log`。
+
+---
+
+## Stage 06 — 最终冻结、全量验收与分支清理
+
+- 执行日期：2026-11-11（Asia/Shanghai）
+- 报告：`FINAL_0.1.45_INTEGRATION_REPORT.md`、`FINAL_DEPENDENCY_LOCK_REPORT.md`、`FINAL_TEST_MATRIX.md`、`CLEANUP_REPORT.md`
+
+### 冻结
+
+- `release/JIEJIE_VERSION` → **0.1.45**；`release/dependencies.json` 补 `wireguard-go`（`awg3-inject`），quic-go 声明改为 `integration/0.1.45`。
+- `release-freeze.py resolve/check`：8 个 Go module + 3 client + nested dashboard + 29 controlled natives；**PASS**，无 diverged、无 pin 需要移动。
+- `release-freeze.py snapshot` 由真实树生成 `release/source-lock.json`（`release_version=0.1.45`，提交 `69e8dcb457a`）；`verify --lock` **PASS**。
+- 知识库：四个文档分支的共享报告按 blob 取最新相同版本，独有 7 份并入 `KNOWLEDGE/reports/0.1.45/`；INDEX/reports README 改写为 0.1.45 RC 归档，未堆叠重复段落。文档提交 `d6e2b12de60`。
+
+### 全量验收（最终树）
+
+| 项 | 结果 |
+|---|---|
+| 内核构建（无 tag / Windows profile） | PASS |
+| Windows 全量 `./...` | 106 包 PASS；3 个既有/权限失败（tls/tlsspoof/windivert） |
+| Linux 全量 `./...` | 113 包 PASS；仅 `common/netns`（WSL 环境）失败 |
+| 客户端 Dashboard / Desktop | 98/98、59/59、typecheck、build 全 PASS（Node 26.7.0） |
+| Apple / Android / satelite-one | BLOCKED（Xcode / AAR / Android 构建链） |
+| release-freeze verify | PASS |
+
+### 清理
+
+- 创建 20 个本地 archive tag（主仓库 13 + Apple 2 + Desktop/Dashboard/satelite 3 + quic-go 2 + wireguard 2）。
+- **未删除任何分支**（本地或远端）：RC 与 archive tags 未推送，按阶段 06 安全条件延期；`CLEANUP_REPORT.md` 给出逐分支证明与后续精确命令。
+- 发现并记录：主仓库 `origin` remote 误指向 `sing-box-for-desktop`，推送必须使用显式 JiejieBox URL。
+
+### RC
+
+- source-lock 快照 `69e8dcb457a`；最终报告与 `dependency-final-shas.json` 所在提交为 RC 提交（见 `git log`）。
+- 未推送、未合入 `testing`、未创建正式 release。
