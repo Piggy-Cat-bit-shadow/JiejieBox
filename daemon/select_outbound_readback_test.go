@@ -121,3 +121,23 @@ func TestThreeSelectionsCarryThreeIdentities(t *testing.T) {
 	require.Equal(t, responses[2].AppliedRevision, duplicate.AppliedRevision)
 	require.Equal(t, "b", duplicate.AppliedOutboundTag)
 }
+
+// TestASelectionThatLostItsBoxIsAborted is the reload-during-selection window: the selector moved,
+// and by the time the handler reads back the published instance the service had swapped the Box.
+// Reporting that as applied would leave the caller holding a confirmation for a selection that no
+// longer exists in the running service.
+func TestASelectionThatLostItsBoxIsAborted(t *testing.T) {
+	service := selectorService(t, selectorOutboundConfig)
+	service.beforeSelectionInstanceCheck = func() {
+		require.NoError(t, service.StartOrReloadService(context.Background(), "{\"log\":{\"level\":\"error\"}}", nil))
+	}
+	t.Cleanup(func() { service.beforeSelectionInstanceCheck = nil })
+
+	_, err := service.SelectOutbound(context.Background(), &SelectOutboundRequest{
+		GroupTag:    "sel",
+		OutboundTag: "b",
+		RequestId:   9,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "reloaded")
+}

@@ -144,13 +144,17 @@ type StartedService struct {
 	// and the service is STARTING, but Start has not returned yet. A test uses it to call
 	// interruptStart at the exact instant the concurrent CloseService/SetError does. Nil in
 	// production.
-	beforeInstanceStart    func()
-	urlTestSubscriber      *observable.Subscriber[struct{}]
-	urlTestObserver        *observable.Observer[struct{}]
-	clashModeSubscriber    *observable.Subscriber[struct{}]
-	clashModeObserver      *observable.Observer[struct{}]
-	notificationSubscriber *observable.Subscriber[*NotificationEvent]
-	notificationObserver   *observable.Observer[*NotificationEvent]
+	beforeInstanceStart func()
+	// beforeSelectionInstanceCheck is a test seam for the reload-during-selection window: it runs
+	// after the selector moved and before the handler re-reads the published instance. A test uses
+	// it to reload the service at that exact instant. Nil in production.
+	beforeSelectionInstanceCheck func()
+	urlTestSubscriber            *observable.Subscriber[struct{}]
+	urlTestObserver              *observable.Observer[struct{}]
+	clashModeSubscriber          *observable.Subscriber[struct{}]
+	clashModeObserver            *observable.Observer[struct{}]
+	notificationSubscriber       *observable.Subscriber[*NotificationEvent]
+	notificationObserver         *observable.Observer[*NotificationEvent]
 	// connectionStreamInstance identifies the Box generation this service's connection streams
 	// belong to. See connectionStreamInstanceCounter.
 	connectionStreamInstance uint64
@@ -1189,6 +1193,19 @@ func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutb
 	appliedTag := ""
 	if selected := selector.Selected(N.NetworkTCP); selected != nil {
 		appliedTag = selected.Tag()
+	}
+	// A selection that landed on a Box that has since been replaced (or closed) must not be
+	// reported as applied: the caller would store a confirmation for state that no longer exists.
+	// The window is narrow - a reload during one RPC - but the alternative is a silent success on a
+	// dead object, and Aborted is a retry the caller already knows how to do.
+	if s.beforeSelectionInstanceCheck != nil {
+		s.beforeSelectionInstanceCheck()
+	}
+	s.serviceAccess.RLock()
+	currentInstance := s.instance
+	s.serviceAccess.RUnlock()
+	if currentInstance != boxService {
+		return nil, status.Error(codes.Aborted, "the service was reloaded during the selection")
 	}
 	return &SelectOutboundResponse{
 		RequestId:          request.RequestId,
