@@ -310,3 +310,42 @@ func TestRetentionOptionsKeepTheirOwnContract(t *testing.T) {
 	require.Len(t, result.Records, 1)
 	require.LessOrEqual(t, encodedBytes, 1024)
 }
+
+// TestTheFinalEnvelopeFitsWhenALaterRecordDoesNot is the review's 2504 -> 2521 counterexample.
+//
+// The per-record acceptance measured a candidate whose `truncated` flag was whatever was known at
+// that moment. When a LATER record does not fit, the flag turns true after the carried page was
+// already measured - and `omitempty` then adds its bytes to the envelope that actually leaves the
+// server. The budget is a promise about the bytes that are sent, not about an intermediate form.
+func TestTheFinalEnvelopeFitsWhenALaterRecordDoesNot(t *testing.T) {
+	server := startBoxTestCommandServer(t, historyDNSConfig)
+	_, err := server.DNSHistoryEnable(`{"maxEntries":8,"maxBytes":1048576,"ttlMs":60000}`)
+	require.NoError(t, err)
+	history := historyOf(t, server)
+	// Go's JSON encoder escapes `<` to \u003c, so this field is long in the ENCODED form - the
+	// shape the review used to make the second record fail to fit.
+	long := shortRecordEvent("escaped")
+	long.Rule = strings.Repeat("<", 360)
+	history.Record(long)
+	second := shortRecordEvent("second")
+	history.Record(second)
+
+	full, fullBytes := queryBinding(t, server, `{"limit":1}`)
+	require.Len(t, full.Records, 1)
+	require.True(t, full.Truncated, "one record with more behind it must say so")
+	require.Equal(t, full.Records[0].Sequence, full.NextSequence)
+
+	// One byte budget away from the envelope that carries the flag: the second record cannot fit,
+	// so the page carries the first record and the flag - which is what was NOT accounted for.
+	budget := fullBytes - 1
+	page, pageBytes := queryBinding(t, server, fmt.Sprintf(`{"limit":8,"maxBytes":%d}`, budget))
+	require.LessOrEqual(t, pageBytes, budget,
+		"the bytes that leave the server must fit the requested budget (requested %d, got %d)", budget, pageBytes)
+	require.Len(t, page.Records, 1, "the first record still rides so the cursor advances")
+	require.Equal(t, full.Records[0].Sequence, page.NextSequence)
+	require.True(t, page.Truncated, "there is still a second record behind this page")
+
+	rest, _ := queryBinding(t, server, fmt.Sprintf(`{"since":%d}`, page.NextSequence))
+	require.Len(t, rest.Records, 1, "the second record is still reachable through the cursor")
+	require.Greater(t, rest.Records[0].Sequence, full.Records[0].Sequence)
+}

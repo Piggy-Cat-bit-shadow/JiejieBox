@@ -291,7 +291,47 @@ func (s *CommandServer) DNSHistoryQuery(queryJSON string) (*StringBox, error) {
 		return nil, E.New("dns history: the response budget cannot carry one record")
 	}
 	result.Truncated = truncated
+	if !fitDNSHistoryEnvelope(&result, page.Records, budget) {
+		return nil, E.New("dns history: the response budget cannot carry one record")
+	}
 	return wrapString(marshalBindingJSON(result)), nil
+}
+
+// fitDNSHistoryEnvelope makes the bytes that LEAVE the server fit the budget.
+//
+// The per-record acceptance above measures a candidate whose `truncated` flag is the one known at
+// that moment. When a LATER record does not fit, the flag turns true after the carried page was
+// already measured - and `omitempty` then adds its bytes to the envelope that is actually sent.
+// That is the review counterexample: 2,504 requested, 2,521 delivered.
+//
+// The trim keeps the contract intact: dropping a trailing record moves the cursor back to the last
+// one actually carried; dropping everything leaves the FIRST record cropped (identity and cursor
+// survive), which is what lets the caller continue. False is returned only when even the
+// identity-only form cannot fit.
+func fitDNSHistoryEnvelope(result *commandServerDNSHistoryQueryResult, records []dns.HistoryRecord, budget int) bool {
+	for encodedDNSHistorySize(*result) > budget {
+		if len(result.Records) == 0 {
+			return false
+		}
+		result.Records = result.Records[:len(result.Records)-1]
+		result.Truncated = true
+		if len(result.Records) > 0 {
+			result.NextSequence = result.Records[len(result.Records)-1].Sequence
+			continue
+		}
+		result.NextSequence = 0
+		if len(records) == 0 {
+			return false
+		}
+		cropped, _, size := fitFirstDNSHistoryRecord(records[0], nil, result.Stats, budget)
+		if size <= 0 || size > budget {
+			return false
+		}
+		result.Records = cropped.Records
+		result.NextSequence = cropped.NextSequence
+		result.Truncated = true
+	}
+	return true
 }
 
 // appendDNSHistoryRecord appends one presented record without aliasing the caller's slice.
