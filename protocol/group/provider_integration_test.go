@@ -346,3 +346,28 @@ func TestAProviderPublicationThatMovesTheSelectionAdvancesTheRevision(t *testing
 	require.Equal(t, "prov/b", next.AppliedTag)
 	require.Equal(t, selector.Revision(), next.Revision)
 }
+
+// TestASameTagReplacementIsStillAStateChange is the boundary the three-counterexample pass did not
+// list: a provider republication that keeps the selected TAG but replaces the OBJECT.
+//
+// The tag a client stores stays valid, so bumping the revision costs it one re-read; not bumping it
+// would let a client keep a confirmation that names an object the group no longer holds. The
+// revision is a state version, and the state includes the object.
+func TestASameTagReplacementIsStillAStateChange(t *testing.T) {
+	provider := &stubProvider{tag: "prov"}
+	world, selector := newProviderWorld(t, provider)
+	world.start(selector)
+	require.NoError(t, provider.publish(newEdgeLeaf("prov/a", "tcp", "udp")))
+
+	snapshot, ok := selector.SelectOutboundSnapshot("prov/a")
+	require.True(t, ok)
+	require.Equal(t, "prov/a", snapshot.AppliedTag)
+	selectedBefore := selector.Selected("tcp")
+
+	// Same tag, DIFFERENT object.
+	require.NoError(t, provider.publish(newEdgeLeaf("prov/a", "tcp", "udp")))
+	require.NotSame(t, selectedBefore, selector.Selected("tcp"), "the fixture must have replaced the object")
+	require.Equal(t, "prov/a", selector.Selected("tcp").Tag())
+	require.Greater(t, selector.Revision(), snapshot.Revision,
+		"a replacement under the same tag is still a change of the state the caller stored")
+}
