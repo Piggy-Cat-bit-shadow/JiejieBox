@@ -2,6 +2,7 @@ package libbox
 
 import (
 	"context"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -104,17 +105,47 @@ type ConnectionEvents struct {
 	// instance while a subscription can still be open, so a batch stamped with a different
 	// identity must not be applied over the current state.
 	InstanceId string
-	// Sequence advances once per delivered batch; a gap means a batch was lost.
-	Sequence uint64
-	// Dropped is the number of connection events this subscription missed (source-side sequence
-	// gaps), so a consumer can tell "no events" from "events were lost".
-	Dropped uint64
-	events  []*ConnectionEvent
+	// Resynced marks the first batch of a stream the client started because it detected a lost
+	// increment (a sequence gap or a rising drop count). The batch is also a Reset snapshot, so a
+	// consumer rebuilds from it; the flag exists so a UI can tell "the stream was rebuilt because
+	// something was missed" from an ordinary first connect.
+	Resynced bool
+	// sequence and dropped are uint64 on the wire, but gomobile does not bind uint64 fields: it
+	// SKIPS them with "unsupported type", so the platform saw neither value. They are private and
+	// exposed as int64 accessors below; see Sequence and Dropped for the conversion contract.
+	sequence uint64
+	dropped  uint64
+	events   []*ConnectionEvent
 	// subscription is the identity of the stream that produced this batch. It is set by the
 	// command client, never by the platform: the consumer uses it to ignore a batch that belongs to
 	// a subscription a newer one has already superseded (the reviewed failure: a paused old batch
 	// applied after the new snapshot and rolled the table back).
 	subscription uint64
+}
+
+// Sequence is the batch's wire sequence (0 when the peer does not stamp one).
+//
+// The wire value is uint64. gomobile does not bind uint64, so the binding carries int64: a value
+// above MaxInt64 saturates at MaxInt64. A counter would have to exceed 9.2e18 batches to reach
+// that (one batch per second for 292 billion years), and a saturated value is still ordered and
+// still reveals gaps; exactness beyond it is not a property any consumer can use.
+func (c *ConnectionEvents) Sequence() int64 {
+	return saturatingInt64(c.sequence)
+}
+
+// Dropped is the cumulative number of connection events this subscription missed, on the wire's
+// uint64 with the same int64 saturation as Sequence. A RISING value means the batch that carried it
+// follows a loss; the consumer must wait for a Reset snapshot before applying increments again.
+func (c *ConnectionEvents) Dropped() int64 {
+	return saturatingInt64(c.dropped)
+}
+
+// saturatingInt64 converts an unsigned wire counter to the binding's signed type.
+func saturatingInt64(value uint64) int64 {
+	if value > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(value)
 }
 
 func (c *ConnectionEvents) Iterator() ConnectionEventIterator {
@@ -161,6 +192,18 @@ type Connections struct {
 	// OLDER subscription is ignored: it describes state that was replaced. Batches without an
 	// identity (subscription == 0, e.g. a test or an older caller) keep applying as before.
 	activeSubscription uint64
+	// activeInstanceID is the instance the applied state belongs to. A non-Reset batch from a
+	// different instance describes a table the consumer never saw the baseline of, so it is refused
+	// until a Reset snapshot arrives (instanceId is empty on older peers and then not checked).
+	activeInstanceID string
+	// lastSequence is the last applied batch sequence and droppedBase its cumulative drop count.
+	// A gap or a rising drop count means an increment was lost between the two batches.
+	lastSequence uint64
+	droppedBase  uint64
+	// needsResync is set when a batch was refused as incomplete; every further increment is refused
+	// until a Reset snapshot rebaselines the state. It is the consumer-side signal behind
+	// NeedsResync().
+	needsResync bool
 }
 
 func NewConnections() *Connections {
@@ -171,6 +214,11 @@ func NewConnections() *Connections {
 
 // ApplyEvents applies a batch from the event stream. Safe to call concurrently with every other
 // method; the platform calls it from the stream goroutine.
+//
+// A batch is applied only when it can be placed in the stream's order: the first batch of a
+// subscription (or a Reset) is a baseline, and an increment must follow the previous one. The wire's
+// instance identity, sequence and drop count are what make "follow" checkable - without them a
+// consumer that missed a CLOSED event kept the row forever.
 func (c *Connections) ApplyEvents(events *ConnectionEvents) {
 	if events == nil {
 		return
@@ -183,7 +231,65 @@ func (c *Connections) ApplyEvents(events *ConnectionEvents) {
 		}
 		c.activeSubscription = events.subscription
 	}
+	if !c.acceptEventBatchLocked(events) {
+		return
+	}
 	c.applyEventsLocked(events)
+}
+
+// acceptEventBatchLocked decides whether a batch may be applied, and rebaselines on a Reset.
+//
+// The rules are asymmetric on purpose:
+//
+//	Reset            always accepted; it is the snapshot a consumer rebuilds from (and the only thing
+//	                 that clears needsResync).
+//	no wire data     accepted. An older daemon sends zeros; the subscription identity and Reset flag
+//	                 are the only ordering facts that exist there, and refusing would break it.
+//	stale/duplicate  ignored WITHOUT resync: a batch at or below lastSequence describes state that
+//	                 was already applied (or superseded); asking for a snapshot would be churn.
+//	gap/instance/dropped  refused and needsResync set: an increment was lost (sequence gap, rising
+//	                 drop count) or it belongs to another instance's table.
+func (c *Connections) acceptEventBatchLocked(events *ConnectionEvents) bool {
+	if events.Reset {
+		c.activeInstanceID = events.InstanceId
+		c.lastSequence = events.sequence
+		c.droppedBase = events.dropped
+		c.needsResync = false
+		return true
+	}
+	if c.needsResync {
+		return false
+	}
+	if events.InstanceId != "" && c.activeInstanceID != "" && events.InstanceId != c.activeInstanceID {
+		c.needsResync = true
+		return false
+	}
+	if events.sequence != 0 {
+		if c.lastSequence != 0 {
+			if events.sequence <= c.lastSequence {
+				return false
+			}
+			if events.sequence != c.lastSequence+1 {
+				c.needsResync = true
+				return false
+			}
+		}
+		if events.dropped > c.droppedBase {
+			c.needsResync = true
+			return false
+		}
+		c.lastSequence = events.sequence
+		c.droppedBase = events.dropped
+	}
+	return true
+}
+
+// NeedsResync reports whether an incomplete batch was refused and the consumer is waiting for a
+// fresh snapshot. It clears when a Reset batch is applied.
+func (c *Connections) NeedsResync() bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return c.needsResync
 }
 
 // applyEventsLocked is the body of ApplyEvents. It exists so the caller can compose it with other
@@ -536,8 +642,8 @@ func connectionEventsFromGRPC(events *daemon.ConnectionEvents) *ConnectionEvents
 	libboxEvents := &ConnectionEvents{
 		Reset:      events.Reset_,
 		InstanceId: events.InstanceId,
-		Sequence:   events.Sequence,
-		Dropped:    events.Dropped,
+		sequence:   events.Sequence,
+		dropped:    events.Dropped,
 	}
 	for _, event := range events.Events {
 		if libboxEvent := connectionEventFromGRPC(event); libboxEvent != nil {

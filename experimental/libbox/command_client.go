@@ -634,35 +634,83 @@ func (c *CommandClient) handleClashModeStream(client daemon.StartedServiceClient
 	}
 }
 
+// connectionResyncAttempts bounds how many times a lost increment is repaired by resubscribing
+// before the client reports the stream as failed. A repair costs one snapshot, so a stream that keeps
+// losing events must not spin: the backoff doubles per attempt.
+const connectionResyncAttempts = 4
+
+// handleConnectionsStream delivers the connection-event stream, and repairs a lost increment by
+// resubscribing for a fresh snapshot.
+//
+// # Why the wire fields matter here
+//
+// The subscription identity can only tell "this batch belongs to an older stream" apart; it cannot
+// tell "batches 7 and 8 never arrived". The daemon stamps each batch with its instanceId, sequence and
+// cumulative dropped count for exactly that question. A gap, a rising drop count, or an increment
+// from a different instance without a Reset means the consumer's table is missing a change (the
+// reviewed symptom: a CLOSED event was lost and the row stayed forever). The incomplete batch is NOT
+// delivered; the stream is cancelled and a new subscription is opened, whose first batch is the
+// daemon's snapshot. That snapshot is delivered with `Resynced` set, so the platform can tell a
+// repair from an ordinary connect.
 func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {
 	interval := c.options.StatusInterval
-
-	// The subscription's identity is bound BEFORE the call that can block.
-	//
-	// It used to be taken after SubscribeConnections returned, and that is the reviewed failure: a
-	// call parked in establishment across the next connect would come back, read the CURRENT
-	// generation, and claim the old subscription as the new one - including a subscription NUMBER
-	// higher than the new stream's, which made the consumer accept its snapshot as fresher. The
-	// identity belongs to the subscription's creation, so it is taken here, together with the
-	// connection it belongs to.
-	subscription := connectionSubscriptionID.Add(1)
 	stillCurrent := func() bool { return c.stillConnected(generation) }
 
-	stream, err := client.SubscribeConnections(ctx, &daemon.SubscribeConnectionsRequest{
-		Interval: interval,
-	})
-	if err != nil {
-		if stillCurrent() {
-			c.handler.Disconnected(E.Cause(err, "subscribe connections").Error())
+	resynced := false
+	for attempt := 0; attempt <= connectionResyncAttempts; attempt++ {
+		if !stillCurrent() {
+			return
 		}
-		return
+		// The subscription's identity is bound BEFORE the call that can block.
+		//
+		// It used to be taken after SubscribeConnections returned, and that is the reviewed failure:
+		// a call parked in establishment across the next connect would come back, read the CURRENT
+		// generation, and claim the old subscription as the new one - including a subscription
+		// NUMBER higher than the new stream's, which made the consumer accept its snapshot as
+		// fresher. The identity belongs to the subscription's creation, so it is taken here,
+		// together with the connection it belongs to.
+		subscription := connectionSubscriptionID.Add(1)
+		streamCtx, cancelStream := context.WithCancel(ctx)
+		stream, err := client.SubscribeConnections(streamCtx, &daemon.SubscribeConnectionsRequest{
+			Interval: interval,
+		})
+		if err != nil {
+			cancelStream()
+			if stillCurrent() {
+				c.handler.Disconnected(E.Cause(err, "subscribe connections").Error())
+			}
+			return
+		}
+		if !stillCurrent() {
+			// Established late: this stream belongs to a connection a newer one has replaced.
+			// Nothing it carries may be applied, and its termination says nothing about the current
+			// state.
+			cancelStream()
+			return
+		}
+		lost := c.consumeConnectionsStream(stream, subscription, stillCurrent, resynced)
+		cancelStream()
+		if !lost {
+			return
+		}
+		if attempt == connectionResyncAttempts {
+			if stillCurrent() {
+				c.handler.Disconnected("connection event stream could not be resynchronised after a lost increment")
+			}
+			return
+		}
+		resynced = true
+		select {
+		case <-time.After(time.Duration(attempt+1) * 20 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
 	}
-	if !stillCurrent() {
-		// Established late: this stream belongs to a connection a newer one has replaced. Nothing
-		// it carries may be applied, and its termination says nothing about the current state.
-		return
-	}
+}
 
+// consumeConnectionsStream reads one subscription until it ends, and reports whether an incomplete
+// increment was detected (in which case the caller resubscribes).
+func (c *CommandClient) consumeConnectionsStream(stream daemon.StartedService_SubscribeConnectionsClient, subscription uint64, stillCurrent func() bool, resynced bool) bool {
 	// Every subscription starts from a baseline, whatever the peer sent.
 	//
 	// The server's first message IS the snapshot (daemon: buildInitialConnectionState with Reset), so
@@ -672,24 +720,61 @@ func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClie
 	//     the first batch as a reset tells the consumer to discard them before this stream's events
 	//     apply, so a stale row cannot be carried into the new session.
 	baselinePending := true
+	activeInstanceID := ""
+	lastSequence := uint64(0)
+	droppedBase := uint64(0)
 	for {
 		events, err := stream.Recv()
 		if err != nil {
 			if !stillCurrent() {
 				// A reconnect already replaced this stream; its termination says nothing about the
 				// new state and must not clear it.
-				return
+				return false
 			}
 			c.handler.Disconnected(E.Cause(err, "connections stream recv").Error())
-			return
+			return false
 		}
 		if !stillCurrent() {
-			return
+			return false
+		}
+		if !baselinePending && incompleteBatch(events, activeInstanceID, lastSequence, droppedBase) {
+			return true
 		}
 		libboxEvents, nextBaseline := connectionEventsForDelivery(events, baselinePending, subscription)
+		if baselinePending {
+			activeInstanceID = events.InstanceId
+			lastSequence = events.Sequence
+			droppedBase = events.Dropped
+			libboxEvents.Resynced = resynced
+		} else {
+			activeInstanceID = events.InstanceId
+			lastSequence = events.Sequence
+			droppedBase = events.Dropped
+		}
 		baselinePending = nextBaseline
 		c.handler.WriteConnectionEvents(libboxEvents)
 	}
+}
+
+// incompleteBatch reports whether this increment follows a loss.
+//
+// A stale or duplicate batch is NOT incomplete: it describes state that was already applied, and
+// asking for a snapshot over it would churn. It is ignored (by the consumer's ordering rules) rather
+// than repaired. A zero sequence means the peer does not stamp batches (an older daemon), so the
+// wire fields cannot be used and the existing Reset/subscription rules decide.
+func incompleteBatch(events *daemon.ConnectionEvents, activeInstanceID string, lastSequence uint64, droppedBase uint64) bool {
+	if events.Sequence != 0 && lastSequence != 0 {
+		if events.Sequence > lastSequence+1 {
+			return true
+		}
+	}
+	if events.Sequence != 0 && events.Dropped > droppedBase {
+		return true
+	}
+	if events.InstanceId != "" && activeInstanceID != "" && events.InstanceId != activeInstanceID && !events.Reset_ {
+		return true
+	}
+	return false
 }
 
 // connectionEventsForDelivery converts one received batch and applies the first-batch baseline rule.

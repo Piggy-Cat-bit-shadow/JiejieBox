@@ -252,8 +252,8 @@ func TestTheWireIdentityAndGapAccountingReachTheConsumer(t *testing.T) {
 		},
 	}, false)
 	require.Equal(t, "instance-7", delivered.InstanceId)
-	require.EqualValues(t, 12, delivered.Sequence)
-	require.EqualValues(t, 3, delivered.Dropped)
+	require.EqualValues(t, 12, delivered.Sequence())
+	require.EqualValues(t, 3, delivered.Dropped())
 	require.Equal(t, 1, len(delivered.events))
 }
 
