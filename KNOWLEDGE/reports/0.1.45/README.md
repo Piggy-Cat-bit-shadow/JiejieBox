@@ -13,7 +13,10 @@
 | [`DEBUG-SELF-REVIEW-2026-11-10.md`](DEBUG-SELF-REVIEW-2026-11-10.md) | 定向自审：10 条反例/发现、负向对照、“绿了但没生效”排查与证伪记录 |
 | [`HANDOFF-ACCEPTANCE.md`](HANDOFF-ACCEPTANCE.md) | 三项外部条件验收交接：环境、责任窗口、下一条命令、通过标准、产物与 SHA 映射 |
 | [`EVIDENCE-KIT.md`](EVIDENCE-KIT.md) | 采样/判定工具的接口、源码 SHA256、重建命令与原始数据位置（工具不入库） |
+| [`DUAL-STACK-SOURCE-AND-RECOVERY-2026-11-10.md`](DUAL-STACK-SOURCE-AND-RECOVERY-2026-11-10.md) | 双栈收尾：DNS 结果来源三处修复（字面恢复跨代重确认、热缓存戳、禁缓存来源）、B4 组→Direct→候选同流、D1 netns 双方向设备验收、E3 进程/分流/缓存归属、两处自主攻击、F 静默丢包红灯与发布门禁 |
 
 ## 一句话状态
 
 本窗口能做的验证已完成：配置恢复的真实入口回归（含损坏存储与重启重放）、两端预览语义修复与回归、Windows 安装包与运行时审计、Apple iOS/macOS 无签名构建与包标识核对、D 的采样协议与判定器自证。仍缺三件**外部条件**：提权+认证客户端的 Windows 产品进程 A/B/C、可证明独占的采样窗口、可安装的 Apple 设备/签名环境。详见交接文件。
+
+同目录的双栈收尾报告（`DUAL-STACK-SOURCE-AND-RECOVERY-2026-11-10.md`）记录了另一窗口的三个 C 类来源修复与验收：候选 `31a3e9acea1` 已推送未合并；D1 两方向设备实测通过；F 的 Hysteria2/TUIC 静默丢包跨族回退仍是依赖所有者门禁。该报告不改变上面这轮的结论，也不代表 `0.1.45` 已发布。

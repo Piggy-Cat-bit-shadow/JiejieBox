@@ -21,6 +21,16 @@
 | 产品 A/B/C、独占窗口、Apple 运行期的环境与通过标准 | [验收交接](reports/0.1.45/HANDOFF-ACCEPTANCE.md) |
 | 采样/判定工具的重建方式与原始数据位置 | [证据工具包](reports/0.1.45/EVIDENCE-KIT.md) |
 
+## 2026-11-10 归档：双栈 DNS 来源与字面恢复（0.1.45 目录）
+
+目录名 `0.1.45` 由交接指定；候选 `31a3e9acea1` 已推送未合并，实际版本仍是 `0.1.44`。
+
+| 任务 / 关键符号 | 直接入口 |
+| --- | --- |
+| `LookupFamilies` 来源戳、`questionCache` 热命中、`DisableCache` 交换来源（C1/C2/C3） | [双栈收尾报告](reports/0.1.45/DUAL-STACK-SOURCE-AND-RECOVERY-2026-11-10.md) |
+| `recoveredStamp`、跨代重确认、同地址去重与 `DialSerialNetwork` 富接口分派 | [双栈收尾报告](reports/0.1.45/DUAL-STACK-SOURCE-AND-RECOVERY-2026-11-10.md) |
+| netns 双方向设备验收、进程匹配/分流/缓存归属、Hysteria2/TUIC 静默丢包红灯 | [双栈收尾报告](reports/0.1.45/DUAL-STACK-SOURCE-AND-RECOVERY-2026-11-10.md) |
+
 ## 2026-11-05 新增导航（New routes）
 
 | 任务 / 路径 / 关键符号 | 直接入口 |
