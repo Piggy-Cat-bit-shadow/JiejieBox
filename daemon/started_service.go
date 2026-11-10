@@ -8,6 +8,7 @@ import (
 	"runtime"
 	runtimeDebug "runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -46,6 +47,46 @@ const (
 )
 
 var _ StartedServiceServer = (*StartedService)(nil)
+
+// connectionStreamInstanceCounter hands every StartedService a process-unique stream instance.
+//
+// A connection stream belongs to a service, and a client application can outlive the Box that
+// produced the stream it is holding - a reload closes one Box and builds the next inside the same
+// service. Without an instance on the wire, events from the new Box would be applied to the model
+// the client built from the old one: connection A's deltas land on connection B's row. The id is
+// what lets the client say this stream is a different box instead of guessing from ids it has never
+// seen.
+var connectionStreamInstanceCounter atomic.Uint64
+
+// connectionStreamSequence tracks the producer's emission order on ONE stream and turns a gap into a
+// drop count.
+//
+// The last event the daemon receives is not necessarily the last event the manager emitted: a
+// subscriber whose buffer is full drops events rather than blocking a connection. A gap in Sequence
+// is exactly that loss, and Dropped is the cumulative count the client can compare with the rows it
+// holds - and the reason to resynchronise from a snapshot rather than apply a delta to a model that
+// is missing events.
+type connectionStreamSequence struct {
+	last    uint64
+	dropped uint64
+}
+
+// Observe records one received emission and returns the cumulative drop count.
+func (s *connectionStreamSequence) Observe(sequence uint64) uint64 {
+	if sequence == 0 {
+		return s.dropped
+	}
+	if s.last != 0 && sequence > s.last+1 {
+		s.dropped += sequence - s.last - 1
+	}
+	if sequence > s.last {
+		s.last = sequence
+	}
+	return s.dropped
+}
+
+// Dropped is the cumulative number of emissions this stream never received.
+func (s *connectionStreamSequence) Dropped() uint64 { return s.dropped }
 
 type StartedService struct {
 	// closeOnce makes Close idempotent and safe to call concurrently; see Close.
@@ -110,6 +151,9 @@ type StartedService struct {
 	clashModeObserver      *observable.Observer[struct{}]
 	notificationSubscriber *observable.Subscriber[*NotificationEvent]
 	notificationObserver   *observable.Observer[*NotificationEvent]
+	// connectionStreamInstance identifies the Box generation this service's connection streams
+	// belong to. See connectionStreamInstanceCounter.
+	connectionStreamInstance uint64
 }
 
 type ServiceOptions struct {
@@ -202,8 +246,9 @@ func NewStartedService(options ServiceOptions) *StartedService {
 	// and to every later Box.
 	pause.WithDefaultManager(startedCtx)
 	s := &StartedService{
-		ctx:                  startedCtx,
-		fakeIPIssuanceLedger: fakeIPIssuanceLedger,
+		ctx:                      startedCtx,
+		fakeIPIssuanceLedger:     fakeIPIssuanceLedger,
+		connectionStreamInstance: connectionStreamInstanceCounter.Add(1),
 		// platform:                options.Platform,
 		handler:           options.Handler,
 		debug:             options.Debug,
@@ -1171,13 +1216,28 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	defer trafficManager.UnSubscribeEvents(subscription)
 
 	connectionSnapshots := make(map[uuid.UUID]connectionSnapshot)
+	// emitted tracks the producer's sequence on THIS stream. A gap is a dropped event, and the
+	// cumulative count travels with every message so the consumer can decide to resynchronise.
+	var emitted connectionStreamSequence
 	initialEvents := s.buildInitialConnectionState(trafficManager, connectionSnapshots)
 	err = server.Send(&ConnectionEvents{
-		Events: initialEvents,
-		Reset_: true,
+		Events:   initialEvents,
+		Reset_:   true,
+		Instance: s.connectionStreamInstance,
 	})
 	if err != nil {
 		return err
+	}
+
+	// apply translates one received emission and advances the gap tracker. An event the snapshot
+	// already knows is suppressed from the message but still counts as observed: suppressing it is
+	// deduplication, not loss.
+	apply := func(event trafficcontrol.ConnectionEvent, pending []*ConnectionEvent) []*ConnectionEvent {
+		emitted.Observe(event.Sequence)
+		if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
+			return append(pending, protoEvent)
+		}
+		return pending
 	}
 
 	interval := time.Duration(request.Interval)
@@ -1198,22 +1258,22 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 
 		case event := <-subscription:
 			var pendingEvents []*ConnectionEvent
-			if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
-				pendingEvents = append(pendingEvents, protoEvent)
-			}
+			pendingEvents = apply(event, pendingEvents)
 		drain:
 			for {
 				select {
 				case event = <-subscription:
-					if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
-						pendingEvents = append(pendingEvents, protoEvent)
-					}
+					pendingEvents = apply(event, pendingEvents)
 				default:
 					break drain
 				}
 			}
 			if len(pendingEvents) > 0 {
-				err = server.Send(&ConnectionEvents{Events: pendingEvents})
+				err = server.Send(&ConnectionEvents{
+					Events:   pendingEvents,
+					Instance: s.connectionStreamInstance,
+					Dropped:  emitted.Dropped(),
+				})
 				if err != nil {
 					return err
 				}
@@ -1224,7 +1284,14 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			if len(protoEvents) == 0 {
 				continue
 			}
-			err = server.Send(&ConnectionEvents{Events: protoEvents})
+			// The reconcile events are synthesised from the live table, not received from the
+			// emitter, so they carry no Sequence of their own. Dropped is still reported: it is a
+			// property of the stream, not of one message.
+			err = server.Send(&ConnectionEvents{
+				Events:   protoEvents,
+				Instance: s.connectionStreamInstance,
+				Dropped:  emitted.Dropped(),
+			})
 			if err != nil {
 				return err
 			}
@@ -1280,12 +1347,14 @@ func (s *StartedService) applyConnectionEvent(event trafficcontrol.ConnectionEve
 			Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
 			Id:         event.ID.String(),
 			Connection: buildConnectionProto(event.Metadata),
+			Sequence:   event.Sequence,
 		}
 	case trafficcontrol.ConnectionEventClosed:
 		delete(snapshots, event.ID)
 		protoEvent := &ConnectionEvent{
-			Type: ConnectionEventType_CONNECTION_EVENT_CLOSED,
-			Id:   event.ID.String(),
+			Type:     ConnectionEventType_CONNECTION_EVENT_CLOSED,
+			Id:       event.ID.String(),
+			Sequence: event.Sequence,
 		}
 		closedAt := event.ClosedAt
 		if closedAt.IsZero() && !event.Metadata.ClosedAt.IsZero() {

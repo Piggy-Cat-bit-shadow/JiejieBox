@@ -1223,6 +1223,10 @@ type ConnectionEvent struct {
 	UplinkDelta   int64                  `protobuf:"varint,4,opt,name=uplinkDelta,proto3" json:"uplinkDelta,omitempty"`
 	DownlinkDelta int64                  `protobuf:"varint,5,opt,name=downlinkDelta,proto3" json:"downlinkDelta,omitempty"`
 	ClosedAt      int64                  `protobuf:"varint,6,opt,name=closedAt,proto3" json:"closedAt,omitempty"`
+	// The producer's monotonic emission order. A gap tells the consumer that the stream lost
+	// events (a slow subscriber is dropped, never blocked), so it can resynchronise from a
+	// snapshot instead of applying a delta to a model that is missing events.
+	Sequence      uint64 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1299,10 +1303,22 @@ func (x *ConnectionEvent) GetClosedAt() int64 {
 	return 0
 }
 
+func (x *ConnectionEvent) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
 type ConnectionEvents struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Events        []*ConnectionEvent     `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
-	Reset_        bool                   `protobuf:"varint,2,opt,name=reset,proto3" json:"reset,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Events []*ConnectionEvent     `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	Reset_ bool                   `protobuf:"varint,2,opt,name=reset,proto3" json:"reset,omitempty"`
+	// The Box instance that produced this stream. A new instance invalidates any state the
+	// consumer built from an older stream.
+	Instance uint64 `protobuf:"varint,3,opt,name=instance,proto3" json:"instance,omitempty"`
+	// How many events the producer knows it lost for this stream, cumulative.
+	Dropped       uint64 `protobuf:"varint,4,opt,name=dropped,proto3" json:"dropped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1349,6 +1365,20 @@ func (x *ConnectionEvents) GetReset_() bool {
 		return x.Reset_
 	}
 	return false
+}
+
+func (x *ConnectionEvents) GetInstance() uint64 {
+	if x != nil {
+		return x.Instance
+	}
+	return 0
+}
+
+func (x *ConnectionEvents) GetDropped() uint64 {
+	if x != nil {
+		return x.Dropped
+	}
+	return 0
 }
 
 type Connection struct {
@@ -7823,7 +7853,7 @@ const file_started_service_proto_rawDesc = "" +
 	"\bmodeList\x18\x01 \x03(\tR\bmodeList\x12 \n" +
 	"\vcurrentMode\x18\x02 \x01(\tR\vcurrentMode\"9\n" +
 	"\x1bSubscribeConnectionsRequest\x12\x1a\n" +
-	"\binterval\x18\x01 \x01(\x03R\binterval\"\xea\x01\n" +
+	"\binterval\x18\x01 \x01(\x03R\binterval\"\x86\x02\n" +
 	"\x0fConnectionEvent\x12/\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1b.daemon.ConnectionEventTypeR\x04type\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x122\n" +
@@ -7832,10 +7862,13 @@ const file_started_service_proto_rawDesc = "" +
 	"connection\x12 \n" +
 	"\vuplinkDelta\x18\x04 \x01(\x03R\vuplinkDelta\x12$\n" +
 	"\rdownlinkDelta\x18\x05 \x01(\x03R\rdownlinkDelta\x12\x1a\n" +
-	"\bclosedAt\x18\x06 \x01(\x03R\bclosedAt\"Y\n" +
+	"\bclosedAt\x18\x06 \x01(\x03R\bclosedAt\x12\x1a\n" +
+	"\bsequence\x18\a \x01(\x04R\bsequence\"\x8f\x01\n" +
 	"\x10ConnectionEvents\x12/\n" +
 	"\x06events\x18\x01 \x03(\v2\x17.daemon.ConnectionEventR\x06events\x12\x14\n" +
-	"\x05reset\x18\x02 \x01(\bR\x05reset\"\x95\x05\n" +
+	"\x05reset\x18\x02 \x01(\bR\x05reset\x12\x1a\n" +
+	"\binstance\x18\x03 \x01(\x04R\binstance\x12\x18\n" +
+	"\adropped\x18\x04 \x01(\x04R\adropped\"\x95\x05\n" +
 	"\n" +
 	"Connection\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +

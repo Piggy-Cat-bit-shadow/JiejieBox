@@ -2,6 +2,7 @@ package trafficcontrol
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -25,6 +26,14 @@ type ConnectionEvent struct {
 	ID       uuid.UUID
 	Metadata *TrackerMetadata
 	ClosedAt time.Time
+	// Sequence is the manager's monotonic counter for every event it emits.
+	//
+	// The pipe to a subscriber is lossy on purpose: a slow reader's buffer is full and the event
+	// is dropped rather than blocking a connection. Without a sequence, the reader cannot tell a
+	// dropped event from a connection that never existed - the stream just looks shorter. With it,
+	// a gap is the drop, and the consumer can resynchronise from a fresh snapshot instead of
+	// applying a delta to a model it no longer has.
+	Sequence uint64
 }
 
 const closedConnectionsLimit = 1000
@@ -43,6 +52,12 @@ type Manager struct {
 
 	eventSubscriber *observable.Subscriber[ConnectionEvent]
 	eventObserver   *observable.Observer[ConnectionEvent]
+	eventSequence   atomic.Uint64
+}
+
+// nextSequence stamps one event with the manager's emission order.
+func (m *Manager) nextSequence() uint64 {
+	return m.eventSequence.Add(1)
 }
 
 func NewManager() *Manager {
@@ -83,6 +98,7 @@ func (m *Manager) join(tracker Tracker) {
 		Type:     ConnectionEventNew,
 		ID:       metadata.ID,
 		Metadata: metadata,
+		Sequence: m.nextSequence(),
 	})
 }
 
@@ -116,6 +132,7 @@ func (m *Manager) leave(tracker Tracker) {
 		ID:       metadata.ID,
 		Metadata: &metadataCopy,
 		ClosedAt: closedAt,
+		Sequence: m.nextSequence(),
 	})
 }
 

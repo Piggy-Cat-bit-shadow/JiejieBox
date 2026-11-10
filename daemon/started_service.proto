@@ -190,11 +190,20 @@ message ConnectionEvent {
   int64 uplinkDelta = 4;
   int64 downlinkDelta = 5;
   int64 closedAt = 6;
+  // The producer's monotonic emission order. A gap tells the consumer that the stream lost
+  // events (a slow subscriber is dropped, never blocked), so it can resynchronise from a
+  // snapshot instead of applying a delta to a model that is missing events.
+  uint64 sequence = 7;
 }
 
 message ConnectionEvents {
   repeated ConnectionEvent events = 1;
   bool reset = 2;
+  // The Box instance that produced this stream. A new instance invalidates any state the
+  // consumer built from an older stream.
+  uint64 instance = 3;
+  // How many events the producer knows it lost for this stream, cumulative.
+  uint64 dropped = 4;
 }
 
 message Connection {
