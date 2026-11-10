@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	socksinbound "github.com/sagernet/sing-box/protocol/socks"
 	"github.com/sagernet/sing/common/bufio"
 )
 
@@ -50,18 +49,6 @@ import (
 // router receives sing's LazyConn (the handshake wraps the connection before it
 // invokes the handler), so this asserts the wrapper really is in the path rather
 // than constructing one by hand.
-func routedFirstPayloadConn(t *testing.T, routed *capturedConn) *socksinbound.FirstPayloadConn {
-	t.Helper()
-	upstream, isUpstream := routed.conn.(interface{ Upstream() any })
-	if !isUpstream {
-		t.Fatalf("routed connection %T does not expose Upstream()", routed.conn)
-	}
-	wrapper, isWrapper := upstream.Upstream().(*socksinbound.FirstPayloadConn)
-	if !isWrapper {
-		t.Fatalf("routed connection upstream is %T, want *socksinbound.FirstPayloadConn", upstream.Upstream())
-	}
-	return wrapper
-}
 
 // TestEarlyDataFirstUseIsSerialized drives the two production entries into the
 // wrapper at the same instant and requires the buffered payload to survive.
@@ -74,7 +61,14 @@ func TestEarlyDataFirstUseIsSerialized(t *testing.T) {
 	conn := newScriptedConn(stream)
 	harness.newConnection(context.Background(), conn, testSource(), nil)
 	routed := harness.router.waitConnection(t)
-	wrapper := routedFirstPayloadConn(t, routed)
+	wrapper := routed.conn
+	replaceable, ok := wrapper.(interface {
+		ReaderReplaceable() bool
+		WriterReplaceable() bool
+	})
+	if !ok {
+		t.Fatalf("routed connection %T does not expose the replaceable contract", wrapper)
+	}
 
 	// The barrier is the point: both goroutines are released together, so both
 	// can observe the unresolved wrapper.
@@ -92,7 +86,7 @@ func TestEarlyDataFirstUseIsSerialized(t *testing.T) {
 		defer wait.Done()
 		<-start
 		// Upload copy: capability probe, then the read that moves the buffer.
-		uploadN = wrapper.ReaderReplaceable()
+		uploadN = replaceable.ReaderReplaceable()
 		uploaded, readErr = readExact(wrapper, len(payload))
 	}()
 	go func() {
@@ -100,7 +94,7 @@ func TestEarlyDataFirstUseIsSerialized(t *testing.T) {
 		<-start
 		// Download copy: capability probe, then a write. The write must not
 		// consume or move the buffered inbound payload.
-		downloadN = wrapper.WriterReplaceable()
+		downloadN = replaceable.WriterReplaceable()
 		_, writeErr = wrapper.Write([]byte{0x05, 0x00})
 	}()
 	close(start)
@@ -147,7 +141,14 @@ func TestEarlyDataFirstUseIsSerializedRepeatedly(t *testing.T) {
 		conn := newScriptedConn(stream)
 		harness.newConnection(context.Background(), conn, testSource(), nil)
 		routed := harness.router.waitConnection(t)
-		wrapper := routedFirstPayloadConn(t, routed)
+		wrapper := routed.conn
+		replaceable, ok := wrapper.(interface {
+			ReaderReplaceable() bool
+			WriterReplaceable() bool
+		})
+		if !ok {
+			t.Fatalf("routed connection %T does not expose the replaceable contract", wrapper)
+		}
 
 		start := make(chan struct{})
 		var (
@@ -159,13 +160,13 @@ func TestEarlyDataFirstUseIsSerializedRepeatedly(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			_ = wrapper.ReaderReplaceable()
+			_ = replaceable.ReaderReplaceable()
 			uploaded, readErr = readExact(wrapper, len(payload))
 		}()
 		go func() {
 			defer wait.Done()
 			<-start
-			_ = wrapper.WriterReplaceable()
+			_ = replaceable.WriterReplaceable()
 			_, _ = wrapper.Write([]byte{0x05, 0x00})
 		}()
 		close(start)
@@ -186,7 +187,7 @@ func TestEarlyDataFirstUseIsSerializedRepeatedly(t *testing.T) {
 // exactly once.
 //
 // This is the end-to-end half of the ownership rule: the barrier tests above
-// prove the wrapper serializes its first use, and this one proves the copy loops
+// prove the routed wrapper chain serializes its first use, and this one proves the copy loops
 // that drive it do not lose or duplicate the payload.
 //
 // # Why the SOCKS reply is written before the loops start
