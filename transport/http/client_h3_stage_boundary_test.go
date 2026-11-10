@@ -79,6 +79,30 @@ func TestPreSendTimeoutStillFallsBackToTCP(t *testing.T) {
 	require.Zero(t, client.http3Broken.Load(), "our own window is not a transport verdict")
 }
 
+// TestRetryAfterAPossiblySentSetupTakesTheTCPPath is the availability half of the same rule: the
+// first setup still fails (no duplicate tunnel), but the caller's RETRY must not pay the same H3
+// timeout again - it takes the TCP path directly.
+func TestRetryAfterAPossiblySentSetupTakesTheTCPPath(t *testing.T) {
+	h3 := &boundaryHTTP3Client{
+		openTunnelErr: newHTTP3ResponsePendingError(context.DeadlineExceeded),
+	}
+	tcp := &recordingDialer{err: E.New("tcp fallback reached")}
+	client := newStageBoundaryClient(h3, tcp)
+
+	_, err := client.OpenTunnel(context.Background(), "connect-ip", "/")
+	require.ErrorContains(t, err, "refusing to open a second tunnel")
+
+	_, err = client.OpenTunnel(context.Background(), "connect-ip", "/")
+	require.ErrorContains(t, err, "tcp fallback reached",
+		"the retry must take the TCP path instead of paying the HTTP/3 timeout again")
+	require.Equal(t, 1, h3.tunnelCalls, "the retry must not attempt HTTP/3 again")
+	require.Equal(t, 1, tcp.calls)
+
+	client.ResetConnections()
+	require.Zero(t, client.http3TunnelAmbiguousUntil.Load(),
+		"a network change must forget the ambiguity")
+}
+
 // TestPlainConnectPostSendPendingIsNotRetried is the same boundary on the ordinary CONNECT path.
 func TestPlainConnectPostSendPendingIsNotRetried(t *testing.T) {
 	h3 := &boundaryHTTP3Client{

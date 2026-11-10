@@ -181,12 +181,22 @@ type Client struct {
 	// http3ExtendedConnectUnsupported is a CAPABILITY answer, not a failure: HTTP/3 works at
 	// this authority, but the server did not enable extended CONNECT, so no HTTP/3 CONNECT can
 	// succeed here. It is sticky until the network changes.
-	//
 	// It is deliberately separate from the http3Broken ladder. A capability does not heal on a
 	// timer, and charging the failure ladder for it would both pay a fresh CONNECT-IP setup
 	// window on every reconnect and read as "the transport is broken" in diagnostics when the
 	// truth is "this server cannot carry CONNECT over HTTP/3".
 	http3ExtendedConnectUnsupported atomic.Bool
+	// http3TunnelAmbiguousUntil is when the last CONNECT-IP setup whose request header MAY have
+	// been written stops being relevant. Until then the next setup goes straight to HTTP/2.
+	//
+	// # Why a window, when the ambiguous attempt already refuses to fall back
+	//
+	// Refusing the fallback inside one attempt is what prevents a duplicate tunnel. The window is
+	// what keeps a server that is merely slower than the setup window usable: the caller's retry
+	// then takes the HTTP/2 path instead of paying the same HTTP/3 timeout again and again. The
+	// first attempt still fails - that is the price of not guessing - but the tunnel comes up on
+	// the retry instead of never.
+	http3TunnelAmbiguousUntil atomic.Int64
 	// networkEpoch increments on every ResetConnections. A capability observed by an attempt
 	// that STARTED before the reset belongs to the network being left; storing it afterwards
 	// would make the new network skip a version that works there.
@@ -700,6 +710,7 @@ func (c *Client) ResetConnections() {
 	c.http2Unsupported.Store(false)
 	c.http2ExtendedConnectUnsupported.Store(false)
 	c.http3ExtendedConnectUnsupported.Store(false)
+	c.http3TunnelAmbiguousUntil.Store(0)
 	// The pool is cleared INSIDE the same critical section as the epoch bump, so a dial that
 	// finishes concurrently either lands in the pool before this clear (and is cleared) or sees
 	// the new epoch and is discarded. Taking http2Access here can wait for a reserve, which is a
