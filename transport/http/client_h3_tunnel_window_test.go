@@ -23,6 +23,12 @@ import (
 
 func freezeTunnelWindow(t *testing.T, window time.Duration) {
 	t.Helper()
+	if raceDetectorEnabled {
+		// A window this short is a real-time budget; instrumentation makes the same loopback
+		// handshake take an order of magnitude longer, which would turn the timing assertion into
+		// a failure about the race detector instead of the code under test.
+		window *= 10
+	}
 	previous := http3TunnelEstablishTimeout
 	http3TunnelEstablishTimeout = window
 	t.Cleanup(func() { http3TunnelEstablishTimeout = previous })
