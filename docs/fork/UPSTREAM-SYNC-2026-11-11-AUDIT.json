@@ -328,5 +328,18 @@
     "behind_logs": "behind-<repo>.txt",
     "subject_match": "match-<repo>.txt",
     "fetch_logs": "0*-*.log"
+  },
+  "github_compare": {
+    "main": {
+      "status": "diverged",
+      "ahead_by": 85,
+      "behind_by": 3363
+    },
+    "sing": {
+      "status": "diverged",
+      "ahead_by": 27,
+      "behind_by": 64
+    },
+    "dashboard": "no common ancestor"
   }
 }

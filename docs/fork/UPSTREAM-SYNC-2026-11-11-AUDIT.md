@@ -38,6 +38,7 @@
 | satelite-one | 独立产品 | 无（不跟踪 SagerNet） | `c9a07350e4`（集成分支 `9cdf782b`） | — | — |
 
 satelite-one 不是主仓 gitlink、也没有上游 fork 关系；不纳入“零落后”目标，但它的内核 AAR 消费契约仍属于本轮依赖验收。
+**GitHub Compare API 交叉核对**（2026-11-11）：`SagerNet/sing-box` compare `Piggy-Cat-bit-shadow:testing...SagerNet:testing` 返回 `status=diverged, ahead_by=85, behind_by=3363`；`SagerNet/sing` compare 返回 `ahead_by=27, behind_by=64`。API 的 `ahead_by` 即上游独有提交数，与本地 `rev-list --left-right` 的 behind 列一致。dashboard 因无共同祖先无法 compare，只能按本地提交主题审计。
 
 ## 2. 主内核增量（85 个提交）
 
