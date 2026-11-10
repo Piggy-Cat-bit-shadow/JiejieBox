@@ -1,82 +1,82 @@
 {
-    "clients":  [
-                    {
-                        "path":  "clients/apple",
-                        "pinned":  "7fce7117b33a38ef4c73c81db67c49f0be7a7dad"
-                    },
-                    {
-                        "path":  "clients/android",
-                        "pinned":  "c7837107dc0126fb704fdf08cf203e10b30c8a22"
-                    },
-                    {
-                        "path":  "clients/desktop",
-                        "pinned":  "aa63764a61c312562a348e174522d1dc1c86d954"
-                    }
-                ],
-    "cronet_native":  {
-                          "modules":  29,
-                          "policy":  "controlled",
-                          "shas":  [
-                                       "362e63b14ce2"
-                                   ]
-                      },
-    "go_modules":  [
-                       {
-                           "module":  "github.com/sagernet/sing",
-                           "pinned":  "1729220c46c4",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/sing",
-                           "version":  "v0.9.6-0.20261027185736-1729220c46c4"
-                       },
-                       {
-                           "module":  "github.com/sagernet/sing-tun",
-                           "pinned":  "9c3dcb2b1edf",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/sing-tun",
-                           "version":  "v0.0.0-20261109155445-9c3dcb2b1edf"
-                       },
-                       {
-                           "module":  "github.com/sagernet/sing-quic",
-                           "pinned":  "1ef2597cc129",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/sing-quic",
-                           "version":  "v0.7.2-0.20261024181351-1ef2597cc129"
-                       },
-                       {
-                           "module":  "github.com/sagernet/quic-go",
-                           "pinned":  "bca854425f4d",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/quic-go",
-                           "version":  "v0.61.1-0.20261109135246-bca854425f4d"
-                       },
-                       {
-                           "module":  "github.com/metacubex/utls",
-                           "pinned":  "b63a2e9a7b1e",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/utls",
-                           "version":  "v1.8.8-0.20261028133436-b63a2e9a7b1e"
-                       },
-                       {
-                           "module":  "github.com/sagernet/cronet-go",
-                           "pinned":  "362e63b14ce2",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/cronet-go",
-                           "version":  "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2"
-                       },
-                       {
-                           "module":  "github.com/sagernet/cronet-go/all",
-                           "pinned":  "7ce9c49b464a",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/cronet-go/all",
-                           "version":  "v0.0.0-20261105062941-7ce9c49b464a"
-                       },
-                       {
-                           "module":  "github.com/sagernet/wireguard-go",
-                           "pinned":  "a765d957fd81",
-                           "target":  "github.com/Piggy-Cat-bit-shadow/wireguard-go",
-                           "version":  "v0.0.0-20261109042158-a765d957fd81"
-                       }
-                   ],
-    "nested":  [
-                   {
-                       "parent":  "clients/desktop",
-                       "path":  "dashboard",
-                       "pinned":  "fc1dbb4a48bb06358d549de05eb90df17ab7110d"
-                   }
-               ],
-    "release_version":  "0.1.44",
-    "schema":  1
+  "clients": [
+    {
+      "path": "clients/apple",
+      "pinned": "7fce7117b33a38ef4c73c81db67c49f0be7a7dad"
+    },
+    {
+      "path": "clients/android",
+      "pinned": "c7837107dc0126fb704fdf08cf203e10b30c8a22"
+    },
+    {
+      "path": "clients/desktop",
+      "pinned": "28dc4a973bcd76eecf1af1d8d37a633f5c5bfb58"
+    }
+  ],
+  "cronet_native": {
+    "modules": 29,
+    "policy": "controlled",
+    "shas": [
+      "362e63b14ce2"
+    ]
+  },
+  "go_modules": [
+    {
+      "module": "github.com/sagernet/sing",
+      "pinned": "1729220c46c4",
+      "target": "github.com/Piggy-Cat-bit-shadow/sing",
+      "version": "v0.9.6-0.20261027185736-1729220c46c4"
+    },
+    {
+      "module": "github.com/sagernet/sing-tun",
+      "pinned": "57e9d17fa852",
+      "target": "github.com/Piggy-Cat-bit-shadow/sing-tun",
+      "version": "v0.0.0-20261110141903-57e9d17fa852"
+    },
+    {
+      "module": "github.com/sagernet/sing-quic",
+      "pinned": "1ef2597cc129",
+      "target": "github.com/Piggy-Cat-bit-shadow/sing-quic",
+      "version": "v0.7.2-0.20261024181351-1ef2597cc129"
+    },
+    {
+      "module": "github.com/sagernet/quic-go",
+      "pinned": "ca9992bc795e",
+      "target": "github.com/Piggy-Cat-bit-shadow/quic-go",
+      "version": "v0.61.1-0.20261110165647-ca9992bc795e"
+    },
+    {
+      "module": "github.com/metacubex/utls",
+      "pinned": "b63a2e9a7b1e",
+      "target": "github.com/Piggy-Cat-bit-shadow/utls",
+      "version": "v1.8.8-0.20261028133436-b63a2e9a7b1e"
+    },
+    {
+      "module": "github.com/sagernet/wireguard-go",
+      "pinned": "a765d957fd81",
+      "target": "github.com/Piggy-Cat-bit-shadow/wireguard-go",
+      "version": "v0.0.0-20261109042158-a765d957fd81"
+    },
+    {
+      "module": "github.com/sagernet/cronet-go",
+      "pinned": "362e63b14ce2",
+      "target": "github.com/Piggy-Cat-bit-shadow/cronet-go",
+      "version": "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2"
+    },
+    {
+      "module": "github.com/sagernet/cronet-go/all",
+      "pinned": "7ce9c49b464a",
+      "target": "github.com/Piggy-Cat-bit-shadow/cronet-go/all",
+      "version": "v0.0.0-20261105062941-7ce9c49b464a"
+    }
+  ],
+  "nested": [
+    {
+      "parent": "clients/desktop",
+      "path": "dashboard",
+      "pinned": "62f158255ce981ffa7ea2d37ff2150c9ced516ed"
+    }
+  ],
+  "release_version": "0.1.45",
+  "schema": 1
 }
