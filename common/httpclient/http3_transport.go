@@ -381,7 +381,17 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 			// when its send goroutine reaches EOF (sendRequestBody defers body.Close), which is the
 			// upload's own end, so nothing is closed here. allowClose covers the case where that
 			// close arrives through an abort after this point.
+			//
+			// The caller can also ABANDON the response: closing the response body or cancelling the
+			// request must release the body, because quic-go's send goroutine may be blocked inside
+			// the caller's Read and no amount of QUIC-stream cancellation wakes a blocked Reader.
 			upload.allowClose.Store(true)
+			stopAfter := context.AfterFunc(request.Context(), owner.Close)
+			issue.response.Body = &responseBodyWithOwner{
+				ReadCloser: issue.response.Body,
+				owner:      owner,
+				stop:       stopAfter,
+			}
 		case issue.sent:
 			// The body may have been consumed by the failed attempt, so it cannot carry a retry.
 			upload.allowClose.Store(true)
@@ -438,9 +448,10 @@ type uploadBody struct {
 
 func (b *uploadBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
-	if n > 0 || errors.Is(err, io.EOF) {
-		b.started.Store(true)
-	}
+	// ANY read - including the 0, err one - means the transport started on this body, so a Close
+	// that arrives afterwards describes this attempt's lifecycle and must be forwarded. Gating
+	// only on n > 0 or EOF left the body unclosed when the very first read failed.
+	b.started.Store(true)
 	return n, err
 }
 
@@ -554,7 +565,23 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 					t.clearH3Broken(authority, attempt)
 				}
 				finish(winner)
-				raceResult.response.Body = &cancelOnCloseBody{ReadCloser: raceResult.response.Body, cancel: cancels[winner]}
+				// The winner's upload may still be running, and it may be blocked inside the
+				// caller's Read (an io.Pipe, a slow producer). quic-go cannot wake that Read by
+				// cancelling the stream, so the two ways a caller gives up - closing the response
+				// and cancelling the request - both release the body. Normal completion still
+				// closes it at EOF, and the owner makes all three paths close it exactly once.
+				releaseWinner := func() {
+					if legs[winner].owner != nil {
+						legs[winner].owner.Close()
+					}
+				}
+				stopAfter := context.AfterFunc(request.Context(), releaseWinner)
+				raceResult.response.Body = &cancelOnCloseBody{
+					ReadCloser: raceResult.response.Body,
+					cancel:     cancels[winner],
+					release:    releaseWinner,
+					stop:       stopAfter,
+				}
 				return raceResult.response, nil
 			}
 			if raceResult.h3 {
@@ -590,12 +617,41 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 
 type cancelOnCloseBody struct {
 	io.ReadCloser
-	cancel context.CancelFunc
+	cancel  context.CancelFunc
+	release func()
+	stop    func() bool
 }
 
 func (b *cancelOnCloseBody) Close() error {
 	err := b.ReadCloser.Close()
 	b.cancel()
+	if b.release != nil {
+		b.release()
+	}
+	if b.stop != nil {
+		b.stop()
+	}
+	return err
+}
+
+// responseBodyWithOwner releases the request body when the caller releases the response: closing
+// the response is an abandonment of a still-running upload, and quic-go's send goroutine may be
+// blocked inside the caller's Read.
+type responseBodyWithOwner struct {
+	io.ReadCloser
+	owner *requestBodyOwner
+	stop  func() bool
+	once  sync.Once
+}
+
+func (b *responseBodyWithOwner) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(func() {
+		b.owner.Close()
+		if b.stop != nil {
+			b.stop()
+		}
+	})
 	return err
 }
 
