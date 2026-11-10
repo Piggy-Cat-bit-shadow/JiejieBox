@@ -1120,6 +1120,23 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 	c.exchangeToTransportAsync(operation.ctx, transport, operation.message, finish)
 }
 
+// conflictingFamilyStrategy reports whether a forced single family and another strict family
+// disagree.
+//
+// Preferences and AsIS never conflict: a preference says which family leads, not which families may
+// be asked, so both remain admissible. Only two opposite "only" decisions are a conflict, because
+// there is no family left that both of them permit.
+func conflictingFamilyStrategy(forced C.DomainStrategy, other C.DomainStrategy) bool {
+	switch forced {
+	case C.DomainStrategyIPv4Only:
+		return other == C.DomainStrategyIPv6Only
+	case C.DomainStrategyIPv6Only:
+		return other == C.DomainStrategyIPv4Only
+	default:
+		return false
+	}
+}
+
 func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
 	domain = FqdnToDomain(domain)
 	dnsName := dns.Fqdn(domain)
@@ -1128,6 +1145,21 @@ func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, dom
 		strategy = options.LookupStrategy
 	} else {
 		strategy = options.Strategy
+	}
+	// A forced family and a rule's family can disagree, and the rule must not be silently discarded.
+	//
+	// The streaming dual-stack caller asks for one family through LookupStrategy, while the legacy
+	// DNS-rule path records the operator's decision in Strategy. This function used to decide the
+	// QTYPE from LookupStrategy and then overwrite the Strategy handed to the exchange layer, so a
+	// rule saying `ipv4_only` for the AAAA item took effect nowhere: the AAAA query was still sent
+	// upstream, and the caller believed its family restriction had been honoured.
+	//
+	// The conflict is a configuration decision, not a transport failure. The forbidden item issues
+	// nothing and returns an empty answer with no error: an empty family result is a normal shape
+	// (see adapter.DNSFamilyResult, and QuietEmptyFamilyResult), and turning a rule into a lookup
+	// error would report a policy as a connection failure.
+	if options.LookupStrategy != C.DomainStrategyAsIS && conflictingFamilyStrategy(options.LookupStrategy, options.Strategy) {
+		return nil, nil
 	}
 	lookupOptions := options
 	if options.LookupStrategy != C.DomainStrategyAsIS {

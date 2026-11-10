@@ -48,16 +48,26 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 	// A strict strategy is a single-family request, reported once. The check uses the EFFECTIVE
 	// strategy so a router default of ipv4_only or ipv6_only also issues a single query, rather
 	// than querying a family it has been configured never to use.
+	//
+	// The family is forced into `LookupStrategy`, not only into the branch: without it the lookup
+	// below carries whatever Strategy the caller happened to pass (often AsIS) and lets a legacy
+	// rule rewrite the QTYPE, so a rule saying ipv6_only under a caller-forced ipv4_only would make
+	// this branch query AAAA and then publish the answer under its own ipv4 label - contradicting
+	// both the caller's restriction and the result's family.
 	switch effectiveStrategy {
 	case C.DomainStrategyIPv4Only:
-		addresses, err := r.Lookup(ctx, domain, options)
+		familyOptions := options
+		familyOptions.LookupStrategy = C.DomainStrategyIPv4Only
+		addresses, err := r.Lookup(ctx, domain, familyOptions)
 		publish(adapter.DNSFamilyResult{IPv6: false, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy})
 		if err != nil && len(addresses) == 0 {
 			return err
 		}
 		return nil
 	case C.DomainStrategyIPv6Only:
-		addresses, err := r.Lookup(ctx, domain, options)
+		familyOptions := options
+		familyOptions.LookupStrategy = C.DomainStrategyIPv6Only
+		addresses, err := r.Lookup(ctx, domain, familyOptions)
 		publish(adapter.DNSFamilyResult{IPv6: true, Addresses: addresses, Err: err, EffectiveStrategy: effectiveStrategy})
 		if err != nil && len(addresses) == 0 {
 			return err
