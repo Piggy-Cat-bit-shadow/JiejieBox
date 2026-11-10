@@ -163,3 +163,122 @@ func TestATicketConsumedAfterATransitionBelongsToTheNewGeneration(t *testing.T) 
 		"a connection tracked after the transition was stamped with the old generation")
 	require.Equal(t, 1, manager.Count())
 }
+
+// pausingAdmission wraps a real manager and pauses the production dialer between the ticket
+// reservation and the tracking call. It is the 12-order's "authorized, not yet registered" attack
+// driven through the real DefaultDialer, not the manager API alone.
+type pausingAdmission struct {
+	*ConnectionManager
+	staged chan struct{}
+	resume chan struct{}
+}
+
+func (p *pausingAdmission) AcquireConnection(ctx context.Context) (adapter.ConnectionTicket, error) {
+	ticket, err := p.ConnectionManager.AcquireConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case <-p.staged:
+	default:
+		close(p.staged)
+	}
+	<-p.resume
+	return ticket, nil
+}
+
+func TestTheDialerCannotAdmitAfterShutdownMidHandoff(t *testing.T) {
+	harness := newInterfaceTransitionHarness(t)
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	pausing := &pausingAdmission{ConnectionManager: manager, staged: make(chan struct{}), resume: make(chan struct{})}
+	var resumeOnce sync.Once
+	releaseDialer := func() { resumeOnce.Do(func() { close(pausing.resume) }) }
+	t.Cleanup(releaseDialer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			select {
+			case accepted <- conn:
+			default:
+				_ = conn.Close()
+			}
+		}
+	}()
+
+	realDialer := newGenerationDialer(t, harness.manager, pausing)
+	dialResult := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		conn, dialErr := realDialer.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr(listener.Addr().String()))
+		if conn != nil {
+			_ = conn.Close()
+		}
+		dialResult <- dialErr
+	}()
+	select {
+	case <-pausing.staged:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dialer never reached the admission hand-off")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		defer close(closeDone)
+		_ = manager.Close()
+	}()
+	require.Eventually(t, manager.closed.Load, 2*time.Second, time.Millisecond)
+	releaseDialer()
+
+	select {
+	case dialErr := <-dialResult:
+		require.ErrorIs(t, dialErr, net.ErrClosed,
+			"the dialer returned from a hand-off that shutdown had revoked")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dial never returned")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after the revoked hand-off settled")
+	}
+	require.Equal(t, 0, manager.Count())
+	require.Equal(t, 0, manager.admittedConnections())
+	if conn := <-accepted; conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func TestPriorityTicketsAreReleasedByTrackingAndDoubleReleaseIsIdempotent(t *testing.T) {
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	t.Cleanup(func() { _ = manager.Close() })
+	controlCtx := adapter.WithControlPlaneAdmission(context.Background())
+
+	for index := 0; index < controlPlaneAdmissionReservation; index++ {
+		ticket, err := manager.AcquireConnection(controlCtx)
+		require.NoError(t, err)
+		client, server := net.Pipe()
+		tracked, trackErr := ticket.TrackConn(client)
+		require.NoError(t, trackErr)
+		require.NotNil(t, tracked)
+		_ = server.Close()
+		t.Cleanup(func() { _ = client.Close() })
+	}
+	require.Equal(t, 0, manager.priorityAdmittedConnections(),
+		"tracking must return the control-plane reservation")
+
+	ticket, err := manager.AcquireConnection(context.Background())
+	require.NoError(t, err)
+	ticket.Release()
+	ticket.Release()
+	require.Equal(t, 0, manager.admittedConnections(),
+		"a second Release must not underflow or double-return the slot")
+}
