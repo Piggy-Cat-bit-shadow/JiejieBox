@@ -71,6 +71,24 @@ deleting `ipHdr.SetID` makes two replies share IPv4 ID 0.
 and Linux-only privileged/netns/iptables tests. They are cross-compiled/vetted,
 never executed; do not report them as PASS.
 
+## Linux execution (WSL, stage 02)
+
+The Windows-only limits were closed as far as this host allows:
+
+```sh
+# sing, native Linux
+go build ./... && go test -count=1 ./... && go test -race -count=1 ./common/bufio ./common/network ./protocol/socks
+
+# sing-tun, TUN tests inside an unprivileged user+net namespace
+unshare -Urn bash -c 'ip link set lo up; go test -count=1 ./...'
+```
+
+sing: build/test/race all pass. sing-tun: the full suite passes except
+`TestGoMemoryDial/ipv6=false/unreachable`, which also fails on the pre-merge
+commit `57e9d17` in the same namespace (a userns does not deliver the ICMP
+unreachable the test expects); it is an environment limit, not a merge
+regression. Evidence: `audit-evidence/upstream/linux/`.
+
 ## Kernel consumption (stage 02)
 
 After bumping `go.mod` and `test/go.mod`:
@@ -81,6 +99,18 @@ go build -tags <windows profile> ./...
 go test -count=1 ./transport/device ./protocol/tun
 go test -vet=off -count=1 -tags <windows profile> ./route
 ```
+
+Full Windows suite (DLL on PATH, serialized packages):
+
+```sh
+go test -vet=off -count=1 -p 1 -tags <windows profile> -timeout 60m ./...
+```
+
+Result: `protocol/mixed`, `protocol/naive`, `protocol/mieru` now pass. Remaining
+failures are the three known baseline packages (`common/tls`, `common/tlsspoof`,
+`common/windivert`) and a flaky `common/artifact` lease test that passes three
+consecutive standalone runs (test isolation under the full run, unrelated to the
+pin bump).
 
 `TestPinnedSourceIsTheReplacedFork` verifies the replace names a module path
 and version; `TestSystemReadLoopSurvivesATransientReadError/too_many_segments`

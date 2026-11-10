@@ -60,15 +60,20 @@ GitHub Compare（base=fork:dev, head=upstream:dev）：sing `ahead_by=0`、`behi
 | 内核 build（无 tag / Windows profile） | exit 0 |
 | 内核 `./transport/device ./protocol/tun` | exit 0 |
 | 内核 `./route` | **PASS**（446.2 s，全量） |
+| sing Linux（WSL）build/test/race | **PASS**（`go test ./...` 全绿） |
+| sing-tun Linux（WSL，`unshare -Urn`）全套 | 除 `TestGoMemoryDial/unreachable` 外全绿；该用例在合并前 `57e9d17` 同样失败（userns 不投递 ICMP unreachable），属环境限制 |
+| 内核 `protocol/mixed` | **PASS**（测试已适配 sing 新增的 `CachedConn` 包装层，提交 `4d1469a923d`） |
+| 内核 Windows 全量（新 pin，`-p 1`，含 DLL） | mixed/naive/mieru 全过；仅 3 个已知基线失败（tls/tlsspoof/windivert）+ `common/artifact` 偶发（单独跑 3 次全过） |
 
-**BLOCKED**：`TestGoKernel*`（21 个，TUN 适配器创建需要管理员）、Linux 特权/netns/iptables 测试（仅交叉编译）、sing 的 `TestWriteVectorisedPacket`（既有 Windows checkptr 崩溃，未触碰该文件）。
+**BLOCKED**：`TestGoKernel*`（21 个，TUN 适配器创建需要管理员；Linux 侧已在 `unshare -Urn` 跑通，仅 `TestGoMemoryDial/unreachable` 因 userns 不投递 ICMP 失败，且合并前同样失败）、sing 的 `TestWriteVectorisedPacket`（既有 Windows checkptr 崩溃，未触碰该文件）。
 
 ## 6. 风险与遗留
 
-1. Darwin/Linux 的 mmsg/msgx/sendto、GSO、redirect 路径只做了编译/类型检查，未在对应平台执行；阶段 05 需在目标平台 CI 复跑。
-2. 上游语义变化已消费但需观察：batch 写遇 `EMSGSIZE` 现在“跳过该报文并最终返回一次错误”，不再是立即中止；`NewServerPacketConn` 增加 peer 参数；`AssociatePacketConn.RemoteAddr` 返回 `M.Socksaddr`；空地址并行拨号由 panic/递归改为显式错误。
-3. sing-tun 的 `NewForwardDispatcher` MTU 参数、`portNAT.routed`/returns 结构未采纳，fork 继续用 `RoutedPort`/`PortMTU`；这是有意的结构差异，不是遗漏。
-4. `internal/winipcfg` 的测试文件存在既有 vet 失败，与本轮合并无关。
+1. Linux 已在 WSL 实际执行（sing 全套、sing-tun `unshare -Urn` 全套）；Darwin 的 msgx/sendto/redirect 路径仍只做编译/类型检查，阶段 05 需在 darwin CI 复跑。
+2. `common/artifact` 的 `TestTwoStoresOnOneDirectoryShareLeases` 在全量并发下偶发“旧版本未回收”，单独连跑 3 次全过；与 sing/sing-tun 改动无调用关系，记为既有测试隔离问题，阶段 05 全量时复跑确认。
+3. 上游语义变化已消费但需观察：batch 写遇 `EMSGSIZE` 现在“跳过该报文并最终返回一次错误”，不再是立即中止；`NewServerPacketConn` 增加 peer 参数；`AssociatePacketConn.RemoteAddr` 返回 `M.Socksaddr`；空地址并行拨号由 panic/递归改为显式错误。
+4. sing-tun 的 `NewForwardDispatcher` MTU 参数、`portNAT.routed`/returns 结构未采纳，fork 继续用 `RoutedPort`/`PortMTU`；这是有意的结构差异，不是遗漏。
+5. `internal/winipcfg` 的测试文件存在既有 vet 失败，与本轮合并无关。
 
 ## 7. 下一阶段交接
 
