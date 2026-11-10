@@ -36,6 +36,7 @@ import (
 // cache hit (no exchange) from a miss without inspecting the client's cache.
 type countingSourceTransport struct {
 	adapter.DNSTransport
+	tag        string
 	access     sync.Mutex
 	answers    []netip.Addr
 	exchanges  int
@@ -48,8 +49,13 @@ func newCountingSourceTransport(answers ...netip.Addr) *countingSourceTransport 
 	return &countingSourceTransport{answers: answers}
 }
 
-func (t *countingSourceTransport) Type() string                                   { return "counting-source" }
-func (t *countingSourceTransport) Tag() string                                    { return "counting-source" }
+func (t *countingSourceTransport) Type() string { return "counting-source" }
+func (t *countingSourceTransport) Tag() string {
+	if t.tag != "" {
+		return t.tag
+	}
+	return "counting-source"
+}
 func (t *countingSourceTransport) Reset()                                         {}
 func (t *countingSourceTransport) Close() error                                   { return nil }
 func (t *countingSourceTransport) Dependencies() []string                         { return nil }
@@ -152,4 +158,43 @@ func TestDirectCacheHitKeepsTheGenerationItWasSelectedUnder(t *testing.T) {
 	require.EqualValues(t, 2, stamp, "the key was built under generation 2")
 	require.Equal(t, []netip.Addr{netip.MustParseAddr("192.0.2.1")}, addresses)
 	require.Equal(t, 1, transport.exchangeCount())
+}
+
+// TestCacheIsOwnedByItsTransport covers the cache-ownership cell of §E3: the same name resolved
+// through two transports must not share an entry. The key includes the transport tag, so each
+// transport keeps its own answer and neither is served from the other's cache.
+func TestCacheIsOwnedByItsTransport(t *testing.T) {
+	generation := &atomic.Uint64{}
+	generation.Store(1)
+	first := newCountingSourceTransport(netip.MustParseAddr("192.0.2.1"))
+	first.tag = "transport-a"
+	second := newCountingSourceTransport(netip.MustParseAddr("192.0.2.2"))
+	second.tag = "transport-b"
+	client := sourceClient(generation)
+	options := adapter.DNSQueryOptions{LookupStrategy: C.DomainStrategyIPv4Only}
+	domain := "owned.test."
+	ctx := context.Background()
+
+	addresses, stamp, known, err := client.lookupWithSource(ctx, first, domain, options, nil)
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("192.0.2.1")}, addresses)
+	require.True(t, known)
+	require.EqualValues(t, 1, stamp)
+
+	addresses, _, _, err = client.lookupWithSource(ctx, second, domain, options, nil)
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("192.0.2.2")}, addresses,
+		"the second transport must not be served from the first transport's entry")
+	require.Equal(t, 1, first.exchangeCount())
+	require.Equal(t, 1, second.exchangeCount())
+
+	// Each transport keeps its own entry: repeating either is a hit for THAT transport.
+	addresses, _, _, err = client.lookupWithSource(ctx, first, domain, options, nil)
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("192.0.2.1")}, addresses)
+	addresses, _, _, err = client.lookupWithSource(ctx, second, domain, options, nil)
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("192.0.2.2")}, addresses)
+	require.Equal(t, 1, first.exchangeCount(), "the repeat must be a hit for its own transport")
+	require.Equal(t, 1, second.exchangeCount(), "the repeat must be a hit for its own transport")
 }
