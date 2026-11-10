@@ -86,16 +86,34 @@
 | `git status --porcelain=v1`（112 clone/worktree） | 0 | 105 干净 / 7 非干净（已备份） |
 | `git worktree add`（13） | 0 | 全部干净、HEAD = 预期 pin |
 | `git bundle create`（5） | 0（3 个非空） | 备份完成 |
+| 子模块初始化（本地 clone + `protocol.file.allow=always`） | 0 | 5 个嵌套子模块按 gitlink 检出 |
+| `go build ./constant ./log ./common/...` | 0 | 集成基线冒烟构建通过（7.8 s） |
+| `go test ./common/runtimecoord`（pending 测试 @ 候选） | 0 | 4/4 PASS |
+| `go test ./experimental/libbox`（pending 测试 @ 候选） | 1 | 3 PASS / 4 FAIL；同组测试在分支 base 上同样 4 FAIL |
+| `go vet ./common/dialer ./dns`（review 探针 @ task09-repair） | 0 | 探针可编译 |
 
-`go build` / `go test` / lint / race / CI：**NOT RUN**（本阶段无代码变更，无需执行）。
+以上构建/测试只用于审计判定（工具链、吸收证据、分支可移植性），**不是** 0.1.45 验收测试：`go test ./...`、`-race`、lint、CI、平台构建均为 **NOT RUN / BLOCKED**（缺 Xcode、JDK 17、Node/pnpm）。
+
+### 收尾补做（同日追加，详见报告 §12）
+
+- 子模块：`clients/{apple,android,desktop}`、`desktop/dashboard`、`apple/Frameworks/Runestone` 已按 gitlink 初始化；
+  `dashboard/vendor/iterm2-color-schemes` 与 `cronet-go/naiveproxy` 保持未初始化并记录原因。
+- 新发现 4 个嵌套依赖并登记（Runestone、iterm2-color-schemes、naiveproxy + dashboard 本身）。
+- `next/config`、`next/protocols`：逐个 blob 与候选比对（22/23、2/3 完全相同，其余为候选更新的测试），确认**已完全吸收**。
+- `pending/device-axis-reload-window-tests`：本地未跟踪文件与分支文件逐字节相同；`runtimecoord` 4/4 PASS，`libbox` 4 FAIL 且在其 base 上同样 4 FAIL → 不是候选回归。
+- `review/task09-dual-stack` 的 4 个探针文件在 `fix/task09-repair` 上可编译（`go vet` 退出 0）。
+- 工具链：Go 1.25.5 @ `C:\Deepseek\_gotool\go\bin`，GOMODCACHE 13.5 GB，gcc @ `C:\msys64\mingw64\bin`；无 Node/pnpm、无 JDK 17、无 macOS。
+- 临时 worktree（`_probecheck*`）已删除；证据输出在 `_int0145/audit-evidence/`。
 
 ### 提交
 
 - Stage 01 内容提交：`c30c63e8eadd02f2b4ad2e57c6e268fab6b3c866`（本行由紧随其后的回填提交写入）
+- 收尾补做提交：见 `git log --oneline`（本文件所在分支）
 - 本阶段未推送任何远端引用。
 
 ### 遗留 / 下一阶段注意
 
-1. 主仓库集成 worktree 的子模块尚未初始化，第 05 阶段开始前必须 `submodule update --init`（期望落点见报告 §7）。
+1. `dashboard/vendor/iterm2-color-schemes` 与 `cronet-go/naiveproxy` 未初始化；前者随第 05 阶段 dashboard 构建处理，后者随第 06 阶段 native 重建处理（命令与阻断原因见报告 §12.1）。
 2. `backup/02-ecfffe7d0` 按并行工作线处理，不得整支 merge，也不得当旧备份忽略。
 3. cronet-go 的 29 个原生模块保持 controlled；本地 `feat/per-dial-quic` 携带的重建归档来源待查证。
+4. 平台构建在本机 **BLOCKED**（无 Xcode/JDK 17/Node），第 05/06 阶段不得标 PASS。

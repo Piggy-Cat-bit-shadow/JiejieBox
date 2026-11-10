@@ -135,6 +135,21 @@
 - `cronet-go`：main → `362e63b`（Build from 4c96192d）→ `7ce9c49`（Generate all package）顺序成立；`go.mod` 中 29 个 `cronet-go/lib/<platform>` 与 root 同 pin。
 - `satelite-one`：`next/subscription-refresh` = main + 16，已推送。
 
+### 3.4 嵌套子模块与新增依赖（`.gitmodules` 扫描发现）
+
+任务清单列出的 13 个仓库之外，`.gitmodules` 还揭示了 4 个嵌套依赖。它们不在 Go 模块图中，但影响客户端/原生构建与可复现性，必须纳入盘点：
+
+| 父仓库 | 路径 | URL | 固定 SHA | 集成工作区状态 |
+|---|---|---|---|---|
+| `clients/apple` | `Frameworks/Runestone` | `nekohasekai/Runestone` | `baeb3cbf8332d26b4f7b4c175a01f288ebbf3e7f` | ✅ 已初始化（本地 clone，`go`/Swift 源码仓库） |
+| `clients/desktop` | `dashboard` | `Piggy-Cat-bit-shadow/sing-box-dashboard` | `fc1dbb4a48bb06358d549de05eb90df17ab7110d` | ✅ 已初始化 |
+| `clients/desktop/dashboard` | `vendor/iterm2-color-schemes` | `mbadolato/iTerm2-Color-Schemes` | `8c84dd1a859f36ec8601b082bd97b4ec888f0f4d` | ⚠️ 未初始化（远端 233 MB；且本机无 Node/pnpm，dashboard 构建本就 BLOCKED） |
+| `cronet-go` | `naiveproxy` | `Piggy-Cat-bit-shadow/naiveproxy` | `0ca66a00765564593eb4d2e6d061fe950ac7cce2` | ⚠️ 未初始化：本地 3 个 clone 均为 partial clone，不能作克隆源；网络克隆 12 分钟无 pack 产出后中止（不影响 Go 依赖，见 §12.1） |
+
+- 这 4 个 SHA 只存在于各自父仓库的 tree 中；`release/dependencies.json` 与 `release/source-lock.json` 都没有覆盖这一层。第 06 阶段冻结时必须明确 `source-lock` 是否记录嵌套子模块（尤其 `vendor/iterm2-color-schemes`）。
+- `naiveproxy` 是 cronet-go 的原生子模块（仓库约 161 MB），与 Go 依赖 pin 无关，但重建 cronet 原生归档时可能需要；`policy: controlled` 的任何移动都要先确认它。
+- `Runestone` 与 `iterm2-color-schemes` 都不参与内核构建，只影响 Apple/Dashboard 客户端。
+
 ---
 
 ## 4. 本地工作保护（未改动任何用户工作）
@@ -323,7 +338,7 @@ pin bca854425f4d
 
 | 路径 | 仓库 | 分支 | 起始 / 当前 HEAD | 状态 |
 |---|---|---|---|---|
-| `_int0145\jiejiebox` | JiejieBox | `integration/0.1.45-final` | `0b1b6a3b2f0d2e3f3d2f580a4bc77d769ff57e20` | clean |
+| `_int0145\jiejiebox` | JiejieBox | `integration/0.1.45-final` | 起始 `0b1b6a3b2f0d`，此后仅追加本阶段文档提交 | clean，子模块已初始化（§3.4） |
 | `_int0145\sing` | sing | `integration/0.1.45` | `1729220c46c4cf750726b1057514a8d52a1f5e3b` | clean |
 | `_int0145\sing-tun` | sing-tun | `integration/0.1.45` | `9c3dcb2b1edfde31798981aa05f08851c0eee401` | clean |
 | `_int0145\sing-quic` | sing-quic | `integration/0.1.45` | `1ef2597cc1298146fcdddfeaa0384999f890d0c3` | clean |
@@ -341,9 +356,12 @@ pin bca854425f4d
 
 - 全部通过 `git worktree add <path> -b <branch> <pin>` 建立，未 checkout 任何既有工作区。
 - 主仓库 `integration/0.1.45` 命名使用文档要求的 `integration/0.1.45-final`（主仓库专用后缀），依赖仓库统一 `integration/0.1.45`。
-- **主仓库集成分支的子模块尚未初始化**（`clients/apple`、`clients/android`、`clients/desktop`）。这是有意为之：工作区已隔离，客户端的实际 checkout 与 ABI 验证属于第 05 阶段。初始化方式（届时执行）：
-  `git -C C:\Deepseek\_int0145\jiejiebox submodule update --init --recursive clients/apple clients/android clients/desktop`
-  期望落点：apple `7fce7117b33a`、android `c7837107dc01`、desktop `aa63764a61c3`，desktop 内嵌 dashboard `fc1dbb4a48bb`。
+- **主仓库集成分支的子模块已在本轮收尾中初始化**（见 §12.1），落点与树中 gitlink 完全一致：
+  `clients/apple`=`7fce7117b33a`、`clients/android`=`c7837107dc01`、`clients/desktop`=`aa63764a61c3`、
+  `clients/desktop/dashboard`=`fc1dbb4a48bb`、`clients/apple/Frameworks/Runestone`=`baeb3cbf8332`。
+  唯一未初始化的是 `clients/desktop/dashboard/vendor/iterm2-color-schemes`（`8c84dd1a859f`，原因见 §3.4）。
+- 初始化用本地对象库克隆完成（未重复下载 3 个客户端仓库），随后把每个子模块的 `origin` 与 `submodule.*.url` 恢复为
+  `https://github.com/Piggy-Cat-bit-shadow/...`，因此 `git submodule update`、`git fetch` 仍指向规范远端。
 - 本阶段**没有推送**任何分支；全部远端引用保持审计时刻状态。
 
 ---
@@ -353,6 +371,8 @@ pin bca854425f4d
 ### 第 02 阶段（依赖收敛）
 
 - 基线固定为 §7 的 `integration/0.1.45` 起始 SHA，**不要**用各仓库分支 tip 当基线。
+- 工具链（本轮实测）：Go 1.25.5 位于 `C:\Deepseek\_gotool\go\bin`（不在 PATH，需显式加前缀）；`GOMODCACHE` 已有 13.5 GB 预热；`CGO_ENABLED=0` 为默认值，需要 cgo 时用 `C:\msys64\mingw64\bin\gcc.exe`。`go build ./constant ./log ./common/...` 在集成基线上退出 0（§12.6）。
+- `cronet-go` 的 `naiveproxy` 子模块 pin `0ca66a007655` 已在本轮初始化；重建任何原生归档前先核对该 SHA。
 - `sing-tun`：pin `9c3dcb2b1edf` → `dev` `57e9d17fa852` 的 13 个提交逐条审查（TUN 内存预算、waiter 清理、背压、关闭路径），基线是 pin 而不是 `dev`。
 - `quic-go`：以 `bca854425f4d` 为基线，融合 `0e7c69da`（connid mutex）与 `0b8709eb`（http3 pool reference）；两者共享 `0028a4c7`/`4b11a7be`，冲突面小但必须分别验证 path retirement 与 usecount 语义。
 - `wireguard-go`：`awg-base`/`awg-graft` 与 pin 分叉（2/25、3/25），先回答主仓库是否真的消费 AWG；未纳入则明确 deferred，不得为清分支而合。
@@ -362,14 +382,15 @@ pin bca854425f4d
 
 ### 第 03 阶段（内核网络与资源）
 
-- 来源：`next/network`（36 独有，基线落后 193）、`closeout/resources`（21 独有，已含 `next/resources`）、`pending/device-axis-reload-window-tests`（1 提交，3 个测试文件；`ne-hardening/p3A` 内有同名未跟踪副本，先比对内容再决定是否移植）。
+- 来源：`next/network`（36 独有，基线落后 193）、`closeout/resources`（21 独有，已含 `next/resources`）。
+- `pending/device-axis-reload-window-tests` 已在本阶段定案（§12.4）：`ne-hardening/p3A` 的 3 个未跟踪文件与该分支**逐字节相同**，不是额外本地工作；其 `common/runtimecoord` 4 个测试在候选上 **4/4 PASS**（可作纯回归测试移植），而 `experimental/libbox` 的测试在候选上失败、在**该分支自己的 base**（`4c7d96c0fbc`）上也**同样失败** → 不是候选回归，分支本身是红的，libbox 测试不得原样移植。
 - `backup/02-ecfffe7d0` 按 §5.2 重新定性：需逐提交评估，不可整支 merge；其中 `experimental/libbox` 部分可能与第 05 阶段重叠。
 - 需复核 `next/config`（configtx 6 提交已被 patch 吸收）与 `next/protocols`（trusttunnel 2 提交已吸收）是否还有边界缺口。
 
 ### 第 04 阶段（双栈 DNS 与 H3/H2）
 
 - 主来源：`fix/task09-repair`（31 独有；已包含 local `review/task09-final`→`fix/task09-final` 全部内容）。
-- 唯一未进 repair 的本地内容：`review/task09-dual-stack` 的 2 个探针提交（4 个 `zz_review_probe*_test.go`）——决定归档或选择性保留。
+- 唯一未进 repair 的本地内容：`review/task09-dual-stack` 的 2 个探针提交（4 个 `zz_review_probe*_test.go`）。已验证它们**能编译在 `fix/task09-repair` 上**（`go vet ./common/dialer ./dns` 退出 0，§12.5），所以是可执行的对抗性探针，不再是"未知内容"；第 04 阶段只需决定是否把 4 个测试文件并入。
 - H3/H2 主来源：`task08/h3-h2-fallback-2026-11-10`（39 独有）；本地 `trial/task08-h3-h2-merge` 已给出与 `integration/next-round` 的试合并结果，可复用冲突解决但不能复用为最终提交。
 - 配置恢复测试去重对象：`integration/next-round`、`fix/task09-repair`、`docs/task09-knowledge-0.1.45`。
 
@@ -380,6 +401,7 @@ pin bca854425f4d
 - Desktop：`next/client-consumption` `28dc4a973bcd` = main + 4（未推送），且其 dashboard gitlink 已指向 `62f158255ce9`（dashboard main+1）。
 - Dashboard：`next/client-consumption` `62f158255ce9` = main + 1。
 - Android：pin = main tip，无待合并；`satelite-one next/subscription-refresh`（+16）待决定。
+- 客户端侧嵌套依赖：Apple 构建依赖 `Frameworks/Runestone`（`baeb3cbf8332`，集成工作区已初始化）；Dashboard 构建依赖 `vendor/iterm2-color-schemes`（`8c84dd1a859f`，未初始化且本机无 Node）。
 - `backup/02-ecfffe7d0` 的 libbox/daemon 流控部分是第 05 阶段的重要候选来源。
 
 ### 第 06 阶段（冻结与清理）
@@ -404,8 +426,13 @@ pin bca854425f4d
 | `git worktree add` × 13 | 0 | §7 |
 | `git bundle create` × 5 | 0（3 个非空） | §4.2 |
 | `git diff`（备份 jiejiebox-docs） | 0 | 4 566 B |
+| 子模块初始化（本地 clone + `-c protocol.file.allow=always`） | 0 | §12.1；落点 = 树中 gitlink |
+| `go build ./constant ./log ./common/...`（集成基线） | 0 | 7.8 s，§12.6 |
+| `go test ./common/runtimecoord`（pending 测试 @ 候选） | 0 | 4/4 PASS，§12.4 |
+| `go test ./experimental/libbox`（pending 测试 @ 候选） | 1 | 3 PASS / 4 FAIL；同一组测试在分支 base 上也 4 FAIL，§12.4 |
+| `go vet ./common/dialer ./dns`（review 探针 @ task09-repair） | 0 | §12.5 |
 
-未执行：`go build`、`go test`、`go vet`、lint、race、CI、任何平台构建。**状态一律记为 NOT RUN（本阶段无需）**，不得引用为本阶段测试通过。
+§12 的构建与测试只用于**审计判定**：证明工具链可用、被吸收分支没有残余代码、两个陈旧分支的测试是否可移植。它们**不是** 0.1.45 的验收测试：`go test ./...`、`-race`、lint、完整 CI、Apple/Android/Desktop/Dashboard 平台构建均**未执行**，状态仍为 **NOT RUN**，其中平台构建为 **BLOCKED**（缺 Xcode、JDK 17、Node/pnpm，见 §12.6）。不得把本节任何 PASS 引用为最终验收通过。
 
 ---
 
@@ -416,11 +443,13 @@ pin bca854425f4d
 3. **Apple pin 三处声明不一致**（`dependencies.json` / 实际 pin / `apple-client-refs.env`）。第 05 阶段若直接按 `main` 构建，会得到与 kernel pin 不同的客户端 SHA。
 4. **Desktop 4 个未推送提交 + dashboard gitlink 漂移**：Desktop `next/client-consumption` 依赖 dashboard `62f158255ce9`，而候选 pin 是 `fc1dbb4a48bb`。第 05 阶段必须先处理 Dashboard → Desktop 的顺序。
 5. **cronet-go 本地重建的原生归档**（`feat/per-dial-quic`，约 1.8 GB）来源未证明；`policy: controlled` 要求 Chromium 工具链重建证据，第 02 阶段必须先查证来源，不得直接采用。
-6. **主仓库子模块未初始化**：若后续阶段在 `_int0145/jiejiebox` 直接跑客户端相关脚本，会因缺少 `clients/*` 内容而失败；需按 §7 的说明先 init。
-7. **`next/config`/`next/protocols` 的 patch 等价**只是形式证据，第 03 阶段仍需按文件检查边界条件。
-8. **未做任何 pin 修改**：candidate tip 仍指向 `0.1.44` 的 source-lock（`release_version: 0.1.44`），0.1.45 的 pin 冻结在第 06 阶段。
+6. **平台环境缺口（本轮实测）**：无 macOS/Xcode、无 JDK 17（仅 Java 8）、Android SDK 存在但缺 JDK、无 Node/npm/pnpm。因此 Apple/Android/Desktop/Dashboard 的构建与设备测试在本环境 **BLOCKED**；第 05/06 阶段必须按 BLOCKED 记录，不得标 PASS。
+7. **两个嵌套子模块未初始化**：`vendor/iterm2-color-schemes`（`8c84dd1a859f`，233 MB）与 `naiveproxy`（`0ca66a007655`，本地 clone 全为 partial clone）。前者与 Node 缺失一起留到第 05 阶段，后者留到第 06 阶段重建 native 时处理；两者都不影响 Go 依赖与内核构建。
+8. **`backup/02-ecfffe7d0` 与 `next/routing-dns` 是同一 tip**：清理时必须一起处理，不能只删一个 ref 就认为该工作线已归档。
+9. **未做任何 pin 修改**：candidate tip 仍指向 `0.1.44` 的 source-lock（`release_version: 0.1.44`），0.1.45 的 pin 冻结在第 06 阶段。
+10. 原风险 6/7（子模块未初始化、`next/config`/`next/protocols` 只有 patch 等价）已在 §12.1/§12.2 消解，不再作为遗留项。
 
-无外部阻塞：网络、GitHub 凭据、`gh` 均可用（`gh auth status`：`Piggy-Cat-bit-shadow`，scopes 含 `repo`/`workflow`）。
+无外部阻塞：网络、GitHub 凭据、`gh` 均可用（`gh auth status`：`Piggy-Cat-bit-shadow`，scopes 含 `repo`/`workflow`）；Go 工具链可用（§12.6）。
 
 ---
 
@@ -435,7 +464,90 @@ pin bca854425f4d
 | 依赖关系和分支差异矩阵完成 | ✅ §5/§6 |
 | 没有覆盖或丢失用户工作 | ✅ §4，7 个非干净工作区原样保留并备份 |
 | 输出 `01_AUDIT_AND_FREEZE.md` 与 `INTEGRATION-LOG.md` | ✅ 本文件 + `INTEGRATION-LOG.md` |
+| 收尾：子模块按 gitlink 初始化 | ✅ §12.1（仅 `vendor/iterm2-color-schemes` 例外） |
+| 收尾：被吸收分支内容级复核 | ✅ §12.2 |
+| 收尾：`pending` / `review` 本地分支判定 | ✅ §12.4 / §12.5 |
+| 收尾：工具链就绪与冒烟构建 | ✅ §12.6（平台构建 BLOCKED） |
 
-阶段 01 内容提交：`c30c63e8eadd02f2b4ad2e57c6e268fab6b3c866`（本报告与 `INTEGRATION-LOG.md` 的首次提交）；本行由紧随其后的回填提交补充。
+---
+
+## 12. 收尾补做（本轮追加，仍属阶段 01 范围）
+
+原始清单在 §7/§9 之后已经完成；本轮把"能证明但没证明"的项一次做实，避免把不确定性带进第 02 阶段。所有动作都在隔离工作区或临时 worktree 中完成，未改动用户既有工作区。证据文件在 `_int0145/audit-evidence/`。
+
+### 12.1 子模块初始化与新增依赖
+
+- 主仓库集成分支的 3 个客户端子模块、Desktop 内嵌 dashboard、Apple 内嵌 Runestone 均已按树中 gitlink 检出：
+  apple `7fce7117b33a`、android `c7837107dc01`、desktop `aa63764a61c3`、dashboard `fc1dbb4a48bb`、Runestone `baeb3cbf8332`。
+- 克隆使用本地对象库：`clients/apple` ← `IOS客户端/sing-box-for-apple`，`clients/android` ← `_dep_audit/sing-box-for-android`，
+  `clients/desktop` ← `.git/modules/clients/desktop`，`dashboard` ← `_int0145/dashboard`，`Runestone` ← `jiejiebox-docs/clients/apple/Frameworks/Runestone`；
+  用 `git -c protocol.file.allow=always` 绕过 Git 2.38+ 对本地路径子模块克隆的默认禁用（`fatal: transport 'file' not allowed`）。
+- 克隆后逐个 `git remote set-url origin <github url>` 并写回 `submodule.<name>.url`，`git submodule status --recursive`
+  不再出现 `-` 前缀（`vendor/iterm2-color-schemes` 与 `naiveproxy` 例外，见下）。
+- 两个**保持未初始化**的嵌套子模块及原因：
+  - `dashboard/vendor/iterm2-color-schemes`（`8c84dd1a859f`）：远端仓库 233 MB，且本机无 Node/pnpm，dashboard 构建本就 BLOCKED。
+  - `cronet-go/naiveproxy`（`0ca66a007655`）：三个本地 clone 都是 `remote.origin.promisor=true` 的 partial clone，
+    `git clone <local>` 直接报 `early EOF / invalid index-pack output`；从 GitHub 克隆 12 分钟无 pack 产出后中止（不是权限或连通性问题）。
+    它不参与 Go 依赖，第 02 阶段核对 cronet pin 不需要它；第 06 阶段若要重建 native，再按该 SHA 单独克隆。
+- 新发现的 4 个嵌套依赖已写入 §3.4；它们不在原任务清单内，但 `.gitmodules` 是事实来源，必须登记。
+
+### 12.2 被吸收分支的内容级复核
+
+`next/config`、`next/protocols` 此前只有 patch-id 等价证据。本轮对它们触及的每个文件做 blob 对比：
+
+| 分支 | 触及文件 | 与候选 blob 完全相同 | 不同 | 不同文件与方向 |
+|---|---:|---:|---:|---|
+| `next/config` | 23 | 22 | 1 | `route/rule/build_pressure_sample_test.go`：候选版把 `Elapsed` 拆成 `Queue/Fetch` 并加了采样器，是**更新的**测试仪器 |
+| `next/protocols` | 3 | 2 | 1 | `transport/trusttunnel/service_udp_idle_test.go`：候选版加入时钟粒度 margin 与 `-time.Second` 修正，是**更新的**测试 |
+
+结论：两个分支的产品代码与测试**已在基线中**，残余差异全部是基线后续改进，不存在"分支有、基线无"的内容。第 03 阶段无需移植，只需按需补测；此前的"patch 等价但语义未证"风险就此关闭。
+
+### 12.3 本地未推送分支的定性
+
+| 分支 | 定性 |
+|---|---|
+| `candidate-r6` / `candidate-r7` | 旧客户端 pin 快照（round 6/7），当前候选为 `candidate-r8`；只归档 |
+| `fix/task09-dual-stack` / `review/task09-dual-stack` / `review/task09-final` / `fix/task09-final` | task09 链上的历史快照；前三个内容已在 `fix/task09-repair` 中，仅 review 探针例外（§12.5） |
+| `trial/task08-h3-h2-merge` | 本地试合并（parents `4c5cca544b5` + `684ebf51676`）；只保留冲突解决结论，不作为提交来源 |
+| `wip/p0ab-stale-base` | 2026-10-14 的 release/CI 工具化改动（workflow、desktop overlay 移除、版本注入脚本、KNOWLEDGE 文档），不触碰产品 Go 代码；3 个 patch 已在基线，其余仅归档 |
+
+### 12.4 `pending/device-axis-reload-window-tests` 判定
+
+- `ne-hardening/p3A` 的 3 个未跟踪文件与该分支的 3 个文件**逐字节相同**（SHA-256 一致），确认不是额外本地工作。
+- 把这 3 个测试文件放进候选树（临时 worktree，不入库）后：
+  - `common/runtimecoord`：4 个 `TestPlatformMirror*` 测试 **4/4 PASS**；
+  - `experimental/libbox`：3 PASS / 4 FAIL（`TestDeviceAxisDirectWriterIsNotReconciled`、`TestDeviceAxisGovernorAgreesWithTheManager`、`TestWindowReconciliationClosesTheWindow`、`TestWindowReconciliationDoesNotManufactureASleepEdge`）。
+- 同样 3 个文件放到**该分支自己的 base** `4c7d96c0fbc` 上运行：结果**完全相同**（3 PASS / 4 FAIL）。
+- 因此 libbox 的 4 个失败**不是候选引入的回归**，而是分支在其 base 上就是红的。第 03 阶段：`runtimecoord` 测试可作为纯回归覆盖移植；libbox 测试需按当前实现重写或明确丢弃，不得按"候选缺陷"立案。
+
+### 12.5 `review/task09-dual-stack` 探针
+
+- 4 个探针文件在候选上**编译失败**（`undefined: newStreamOrderDialer`、`undefined: familyResults`），因为两个 helper 定义在 task09 线的测试文件里。
+- 在 `fix/task09-repair` 上放回这 4 个文件，`go vet ./common/dialer ./dns` **退出 0** → 探针可执行，只是依赖 task09 代码。
+- 第 04 阶段可随 task09 一起并入这 4 个测试文件（不改产品代码），也可明确归档；不再是"未知内容"。
+
+### 12.6 工具链与构建冒烟
+
+| 项 | 实测 |
+|---|---|
+| Go | `go1.25.5 windows/amd64`，位于 `C:\Deepseek\_gotool\go\bin`（不在 PATH） |
+| GOMODCACHE | `C:\Users\Jie\go\pkg\mod`，13.5 GB / 174 650 文件（预热） |
+| CGO | 默认 `CGO_ENABLED=0`；gcc 在 `C:\msys64\mingw64\bin\gcc.exe` |
+| 内核构建冒烟 | 集成基线 `go build ./constant ./log ./common/...` **退出 0**（7.8 s），工作区保持干净 |
+| Node/npm/pnpm | **全部缺失** |
+| JDK | 仅 `java 1.8.0_461`；无 JDK 17，无 Android Studio |
+| Android SDK | 存在（`C:\Deepseek\jiejiebox-work\android-sdk`），但缺 JDK 17 |
+| Apple | 无 macOS/Xcode；`Frameworks/Runestone` 已检出源码，但无法构建 |
+
+结论：内核 Go 侧可在本环境编译与测试；客户端平台构建在本环境 **BLOCKED**，第 05/06 阶段必须按 BLOCKED 记录。
+
+### 12.7 临时工作区清理
+
+本轮为验证建立了 3 个临时 detached worktree（`_probecheck`、`_probecheck2`、`_probecheck3`），验证完成后已 `git worktree remove --force` 删除；命令、退出码与完整输出保存在
+`_int0145/audit-evidence/{go-build-smoke,pending-tests-on-candidate,pending-tests-on-base,review-probes-vet}.txt`。用户既有 worktree 一个未动。
+
+---
+
+阶段 01 内容提交：`c30c63e8eadd02f2b4ad2e57c6e268fab6b3c866`（本报告与 `INTEGRATION-LOG.md` 的首次提交）；本行由紧随其后的回填提交补充；§12 的收尾补做在后续提交中追加（以 `git log --oneline` 为准）。
 
 **本阶段到此停止，不开始依赖合并。**
