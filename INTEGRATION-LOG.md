@@ -361,7 +361,7 @@
 ### 遗留
 
 1. Apple 语义融合需要 macOS + Xcode；trial merge 的 3 个冲突文件是入口。
-2. Desktop `engines.node=26.7.0`，本阶段用 Node 22 验证通过；正式 CI 用声明版本（或修 engines）。
+2. ~~Desktop `engines.node=26.7.0` vs Node 22~~：已在声明的 **26.7.0** 上重跑全部通过（见下方收尾补跑），无遗留。
 3. `pnpm generate` 产物不入库，CI/打包必须先 generate。
 4. `release/dependencies.json` 的客户端 intent 仍是 `branch: main`；第 06 阶段 freeze 以 gitlink 为准或先合并到 main，不能按 intent 解析出旧 tip。
 5. `source-lock.json` 仍是 0.1.44 快照；第 06 阶段统一生成。
