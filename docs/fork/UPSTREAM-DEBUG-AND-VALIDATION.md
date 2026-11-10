@@ -143,6 +143,7 @@ cd _deps/sing-quic
 go build ./...
 go test -count=1 ./...
 go test -count=1 -run 'TestSalamanderReadFromRunt' ./hysteria2
+go test -count=1 ./congestion_meta1 ./congestion_meta2 ./hysteria/congestion
 ```
 
 All pass. The Salamander test fails on the pre-merge `hysteria2/salamander.go`

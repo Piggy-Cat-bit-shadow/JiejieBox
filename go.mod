@@ -317,7 +317,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // hopping receive loop) plus the three packet-ceiling/owned-datagram commits that sing-box
 // already pinned. The default branch also resolves quic-go to the fork release line, so it
 // builds and tests on its own; sing-box keeps its own replace, which wins for this build.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261110231703-4a95023f3e26
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261110234451-aa6d98964049
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten

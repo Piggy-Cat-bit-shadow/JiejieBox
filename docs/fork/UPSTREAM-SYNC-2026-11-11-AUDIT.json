@@ -69,7 +69,7 @@
     {
       "name": "sing-quic",
       "fork_ref": "origin/main",
-      "fork_sha": "4a95023f3e26f74dcc9be6c189e30a5f1024e7ae",
+      "fork_sha": "aa6d98964049e4a7b1446e0758dd4a6ec2e225e6",
       "upstream_ref": "upstream/main",
       "upstream_sha": "5253224b67cf495b6faba0899a6e3155ee93ebb0",
       "ahead": 7,
@@ -78,7 +78,7 @@
       "unmatched": 4,
       "class": "DONE_STAGE_03",
       "merge_sha": "7075cd7",
-      "note": "Salamander runt reads, XPlus write length/vectorised removal, ACK-only pacing in CUBIC/BBR/Brutal; compare ahead_by=0"
+      "note": "Salamander runt reads, XPlus write length/vectorised removal, ACK-only pacing tests for CUBIC/BBR/Brutal; compare ahead_by=0"
     },
     {
       "name": "quic-go",
@@ -404,7 +404,7 @@
   "stage03": {
     "status": "DONE",
     "sing_quic": {
-      "merge": "4a95023f3e26f74dcc9be6c189e30a5f1024e7ae",
+      "merge": "aa6d98964049e4a7b1446e0758dd4a6ec2e225e6",
       "upstream": "5253224b67cf495b6faba0899a6e3155ee93ebb0",
       "compare_ahead_by": 0
     },
@@ -426,7 +426,7 @@
       "behind": 0
     },
     "kernel_pins": {
-      "sing-quic": "v0.7.2-0.20261110231703-4a95023f3e26",
+      "sing-quic": "v0.7.2-0.20261110234451-aa6d98964049",
       "quic-go": "v0.61.1-0.20261110231807-158445cdda77",
       "utls": "v1.8.8-0.20261110231903-e14b88879d80"
     },

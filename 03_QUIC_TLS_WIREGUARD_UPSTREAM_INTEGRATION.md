@@ -8,7 +8,7 @@
 
 | 对象 | 值 |
 |---|---|
-| sing-quic fork `main` | `4a95023f3e26f74dcc9be6c189e30a5f1024e7ae`（merge `7075cd7` + 测试 `4a95023`） |
+| sing-quic fork `main` | `aa6d98964049e4a7b1446e0758dd4a6ec2e225e6`（merge `7075cd7`、Salamander 测试 `4a95023`、pacing 测试 `8b53953`、go.sum `aa6d989`） |
 | sing-quic 上游 | `SagerNet/sing-quic:main` @ `5253224b67cf` |
 | quic-go 正式 `sagernet` | `f864f2f12006f053f22d577c90fdd8f3b45d4d47`（merge `7fde0eb4` + 测试 `f864f2f1`） |
 | quic-go 消费线 `integration/0.1.45` | `158445cdda77c05e4430fe40721709bf7bc2ffe2`（merge `sagernet`） |
@@ -30,7 +30,7 @@ GitHub Compare（base=fork, head=正确上游）：sing-quic `ahead_by=0 / behin
 | `a5639ae` | Salamander `ReadFrom`/`Read` 对 `n <= saltLen` 返回 0 长度，而不是裸 `return`（旧代码会把 salt 当 payload 暴露） | 新增 `hysteria2/salamander_test.go`：0、salt-1、salt、salt+1、完整 payload、短包后接有效包、错误包夹在中间；旧代码 7/8 字节用例失败，合并后全过 |
 | `fad401c` | Salamander 写入路径的同类修正 | 同上，写入/读取 round-trip |
 | `8aab71d` | XPlus `WriteTo` 返回明文长度；删除 vectorised XPlus 写入（它会原地 XOR 调用方 buffer，发送失败后调用方无法重试） | 上游代码本身；fork 没有 fork-only 的 vectorised XPlus，删除是上游意图 |
-| `5253224` | CUBIC / BBR / Brutal 的 `pacer.SentPacket` 移到 `isRetransmittable` 判断之后，ACK-only 包不再消耗 pacing 预算 | 三个 sender 均核对；上游无单测，依赖 quic-go 侧 CUBIC 回归测试 + 内核消费者 |
+| `5253224` | CUBIC / BBR / Brutal 的 `pacer.SentPacket` 移到 `isRetransmittable` 判断之后，ACK-only 包不再消耗 pacing 预算 | 新增三个 sender 的 pacer 预算/时间断言：ACK-only 不更新 last-sent、不消耗预算；retransmittable 仍更新。三个包全过 |
 
 保留：fork 的 `quic_ceiling_test.go`、`hysteria2/owned_datagram_test.go`、`tuic/owned_datagram_test.go` 全部通过；硬 packet ceiling 与 owned datagram 路径未改。
 
@@ -60,7 +60,7 @@ GitHub Compare（base=fork, head=正确上游）：sing-quic `ahead_by=0 / behin
 ## 6. 内核消费与验证
 
 - pin：
-  - `sing-quic => Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261110231703-4a95023f3e26`
+  - `sing-quic => Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261110234451-aa6d98964049`
   - `quic-go => Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77`
   - `utls => Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80`
   - WireGuard 保持 `a765d957`。
@@ -72,7 +72,7 @@ GitHub Compare（base=fork, head=正确上游）：sing-quic `ahead_by=0 / behin
 ## 7. 未解决/风险
 
 1. Darwin 的 `msgx`/`sendto`/`udp` socket 路径本轮无 macOS 主机，只能依赖上游与交叉编译；阶段 05 目标平台 CI 复跑。
-2. ACK-only pacing 的 sing-quic 三个 sender 没有独立单测（pacer 是包内具体类型），以 quic-go 回归测试 + 内核 Hysteria2/TUIC 消费者间接覆盖；阶段 05 若需要更细粒度，可在各 sender 包内加 pacer 预算断言。
+2. ~~ACK-only pacing 的 sing-quic 三个 sender 没有独立单测~~——已补 `congestion_meta1/cubic_pacing_test.go`、`congestion_meta2/bbr_pacing_test.go`、`hysteria/congestion/brutal_pacing_test.go`，三个包全过。
 3. 上游删除 vectorised XPlus/Salamander 写入是有意修正（原地修改调用方 buffer）；fork 的 owned-datagram/ceiling 路径未受影响，但若有外部调用方依赖这些类型，需在发布说明中标注（它们不是公开 API 稳定性承诺）。
 4. utls 的 fork helper 与上游直接写 `marshalResult` 的差异保留：fork 更严格（会 parse 参数并在失败时返回错误）；若未来上游参数包含 fork parser 不支持的类型，需要同步 parser。
 5. WireGuard 的 AWG 分支领先上游 22 个提交，未做逐提交与上游主线的语义对照；本轮确认 ancestry 与测试，阶段 05 不再改它。

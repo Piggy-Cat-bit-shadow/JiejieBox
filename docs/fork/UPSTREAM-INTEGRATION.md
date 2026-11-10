@@ -10,7 +10,7 @@ result is closed.
 |---|---|---|---|---|---|---|
 | sing | `SagerNet/sing:dev` | `dev` | behind 27 | **behind 0** | DONE (stage 02) | merge `4abfaed41727`, compare ahead_by 0 |
 | sing-tun | `SagerNet/sing-tun:dev` | `dev` | behind 42 | **behind 0** | DONE (stage 02) | merge `99abf3c27666`, compare ahead_by 0 |
-| sing-quic | `SagerNet/sing-quic:main` | `main` | behind 4 | **behind 0** | DONE (stage 03) | merge `4a95023f3e26`, compare ahead_by 0 |
+| sing-quic | `SagerNet/sing-quic:main` | `main` | behind 4 | **behind 0** | DONE (stage 03) | merge `aa6d98964049`, compare ahead_by 0 |
 | quic-go | `SagerNet/quic-go:dev` | `sagernet` / consumed `integration/0.1.45` | behind 1 | **behind 0** | DONE (stage 03) | `sagernet` `f864f2f1`, consumed `158445cd`, compare ahead_by 0 |
 | utls | `MetaCubeX/utls:v1.9.0-mod-meta` | `main` | behind 1 | **behind 0** | DONE (stage 03) | merge `e14b88879d80`, compare ahead_by 0 (1.9 line, not the v1.7 default) |
 | cronet-go | `SagerNet/cronet-go:main` | `main` | behind 0 | behind 0 | DONE (no work) | audit row |
@@ -42,7 +42,7 @@ result is closed.
 
 Stage 03 rows:
 
-- **sing-quic** `4a95023f3e26` (merge `7075cd7` + Salamander tests): Salamander
+- **sing-quic** `aa6d98964049` (merge `7075cd7`, Salamander + all-sender pacing tests): Salamander
   runt reads, XPlus plaintext write length / removal of the in-place
   vectorised writers, ACK-only pacing in CUBIC/BBR/Brutal. Compare ahead_by 0.
 - **quic-go** `sagernet` `f864f2f1` (merge `7fde0eb4` + CUBIC pacing test),
