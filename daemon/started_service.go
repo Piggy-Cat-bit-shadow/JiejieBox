@@ -404,7 +404,7 @@ func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent 
 		return report, err
 	}
 	targetRevision := configRevisionOf(profileContent)
-	plan := s.planServiceChange(&targetOptions, targetRevision)
+	plan := s.planServiceChange(&targetOptions, targetRevision, options)
 	var liveFallbackReason string
 	if plan.Started && plan.Unchanged && plan.Provider.LiveRefresh {
 		// The document is the running one and every input outside it is a remote provider. A
@@ -479,7 +479,7 @@ func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent 
 		s.resetLogs()
 	}
 	s.serviceAccess.Unlock()
-	instance, err := s.buildAndStart(ctx, targetOptions, targetRevision, oldInstance != nil, nil, s.persistedReferenceSnapshot())
+	instance, err := s.buildAndStart(ctx, targetOptions, targetRevision, oldInstance != nil, nil, s.persistedReferenceSnapshot(), options)
 	if err == nil && instance == nil {
 		// The start was interrupted; buildAndStart has already cleaned up, and the original
 		// path returned nil without touching the status, which this preserves. Nothing is left
@@ -547,8 +547,8 @@ func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent 
 //
 // It returns (nil, nil) when the start was interrupted and (nil, err) when it failed, having
 // closed the failed Box and cleared s.instance in both cases. The caller owns the status.
-func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option.Options, targetRevision string, reloading bool, pinnedReferences map[string]string, retainedReferences map[string]string) (*Instance, error) {
-	instance, err := s.newInstance(ctx, targetOptions, targetRevision, reloading, pinnedReferences, retainedReferences)
+func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option.Options, targetRevision string, reloading bool, pinnedReferences map[string]string, retainedReferences map[string]string, overrideOptions *OverrideOptions) (*Instance, error) {
+	instance, err := s.newInstance(ctx, targetOptions, targetRevision, reloading, pinnedReferences, retainedReferences, overrideOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +595,7 @@ func (s *StartedService) tryRecoverToLastGood(ctx context.Context, reloading boo
 	if err != nil {
 		return "", false
 	}
-	instance, err := s.buildAndStart(ctx, lastGoodOptions, lastGoodRevision, reloading, pinnedReferences, s.persistedReferenceSnapshot())
+	instance, err := s.buildAndStart(ctx, lastGoodOptions, lastGoodRevision, reloading, pinnedReferences, s.persistedReferenceSnapshot(), options)
 	if err != nil || instance == nil {
 		return "", false
 	}

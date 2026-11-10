@@ -33,8 +33,18 @@ type Instance struct {
 	// options is the document this Box was built from, and revision identifies the profile it was
 	// parsed out of. Together they are what a change plan compares against: the same document a
 	// start would build, not a second reading of the profile text.
-	options               option.Options
-	revision              string
+	options  option.Options
+	revision string
+	// overrideOptions are the run-only overrides this Box was actually built with (the platform's
+	// TUN patch and package selection), or nil when it was built without any.
+	//
+	// They are kept because they are part of the document above: `parseEffectiveOptions` has
+	// ALREADY merged them into `options`, so a plan that parses the candidate without them compares
+	// two documents that differ by the override - a difference the apply did not make and would not
+	// reproduce. The default input for a preview is therefore the overrides the running document
+	// was built from, not `nil`.
+	overrideOptions       OverrideOptions
+	hasOverrides          bool
 	connectionManager     adapter.ConnectionManager
 	clashMode             *clashmode.Manager
 	trafficManager        *trafficcontrol.Manager
@@ -202,7 +212,7 @@ func (s *StartedService) parseEffectiveOptions(ctx context.Context, profileConte
 	return options, nil
 }
 
-func (s *StartedService) newInstance(ctx context.Context, options option.Options, revision string, reloading bool, pinnedReferences map[string]string, retainedReferences map[string]string) (*Instance, error) {
+func (s *StartedService) newInstance(ctx context.Context, options option.Options, revision string, reloading bool, pinnedReferences map[string]string, retainedReferences map[string]string, overrideOptions *OverrideOptions) (*Instance, error) {
 	selectedLocale := locale.FromContext(ctx)
 	ctx, _ = locale.ContextWithLocale(s.ctx, selectedLocale.Locale)
 	ctx = service.ExtendContext(ctx)
@@ -224,6 +234,10 @@ func (s *StartedService) newInstance(ctx context.Context, options option.Options
 		revision:              revision,
 		urlTestHistoryStorage: urlTestHistoryStorage,
 		artifactRefs:          artifactReferences,
+	}
+	if overrideOptions != nil {
+		i.overrideOptions = *overrideOptions
+		i.hasOverrides = true
 	}
 	boxInstance, err := box.New(box.Options{
 		Context:           ctx,
