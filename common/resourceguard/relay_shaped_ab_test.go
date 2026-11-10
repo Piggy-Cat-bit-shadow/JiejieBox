@@ -22,7 +22,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,15 +108,20 @@ func runRelayABClient(t *testing.T) {
 	t.Logf("result: %s", summary)
 }
 
+type relayABObservation struct {
+	threshold int64
+	granted   bool
+	copied    int64
+	err       error
+}
+
 type relayABArm struct {
-	name      string
-	flows     int
-	threshold int64 // observed on the first permit; arms differ
-	wall      time.Duration
-	streams   int
-	bytes     int64
-	granted   uint64
-	refused   uint64
+	name    string
+	flows   int
+	wall    time.Duration
+	streams []relayABObservation
+	granted uint64
+	refused uint64
 }
 
 func runRelayABA(t *testing.T, addr string) string {
@@ -126,82 +130,125 @@ func runRelayABA(t *testing.T, addr string) string {
 		{name: "granted", flows: 64},
 		{name: "refused", flows: 0},
 	}
+	if os.Getenv("RELAY_AB_ORDER") == "refused-first" {
+		// Alternate the arm order between runs: a fixed order can hide a warm-up bias.
+		arms[0], arms[1] = arms[1], arms[0]
+	}
 	for index := range arms {
-		arm := &arms[index]
-		budget := NewGrowthBudget(GrowthConfig{Flows: arm.flows}, func() Level { return LevelNormal })
-		started := time.Now()
-		var waitGroup sync.WaitGroup
-		var failures atomic.Int64
-		var written atomic.Int64
-		for stream := 0; stream < relayABStreams; stream++ {
-			waitGroup.Add(1)
-			go func() {
-				defer waitGroup.Done()
-				conn, err := net.Dial("tcp", addr)
-				if err != nil {
-					failures.Add(1)
-					return
-				}
-				defer conn.Close()
-				threshold, permit := budget.Admit(trafficclass.ClassBulk, false)
-				if permit != nil {
-					defer permit.Release()
-				}
-				if arm.threshold == 0 {
-					arm.threshold = threshold
-				} else if arm.threshold != threshold {
-					t.Logf("%s: threshold varies %d vs %d", arm.name, arm.threshold, threshold)
-				}
-				go func() {
-					payload := make([]byte, relayABStreamBytes)
-					if _, writeErr := conn.Write(payload); writeErr != nil {
-						failures.Add(1)
-					}
-					if tcp, ok := conn.(*net.TCPConn); ok {
-						_ = tcp.CloseWrite()
-					}
-				}()
-				copied, copyErr := bufio.CopyWithIncreateBuffer(io.Discard, conn, threshold, bufio.DefaultBatchSize)
-				if copyErr != nil {
-					failures.Add(1)
-					return
-				}
-				written.Add(copied)
-			}()
+		runRelayABArm(t, addr, &arms[index])
+	}
+	var grantedArm, refusedArm *relayABArm
+	for index := range arms {
+		if arms[index].flows == 0 {
+			refusedArm = &arms[index]
+		} else {
+			grantedArm = &arms[index]
 		}
-		waitGroup.Wait()
-		arm.wall = time.Since(started)
-		arm.streams = relayABStreams
-		arm.bytes = written.Load()
-		stats := budget.Stats()
-		arm.granted = stats.Granted
-		arm.refused = stats.Refused
-		if arm.bytes != int64(relayABStreams*relayABStreamBytes) {
-			t.Fatalf("%s arm copied %d bytes, want %d", arm.name, arm.bytes, int64(relayABStreams*relayABStreamBytes))
+	}
+	if grantedArm == nil || refusedArm == nil {
+		t.Fatal("the A/B arms are incomplete")
+	}
+	if grantedArm.streams[0].threshold <= 0 {
+		t.Fatalf("the granted arm got threshold %d, want the engine's growth threshold", grantedArm.streams[0].threshold)
+	}
+	if refusedArm.streams[0].threshold != 0 {
+		t.Fatalf("the refused arm got threshold %d, want 0 (never grow)", refusedArm.streams[0].threshold)
+	}
+	if len(grantedArm.streams) != relayABStreams || len(refusedArm.streams) != relayABStreams {
+		t.Fatalf("arm stream counts: granted=%d refused=%d", len(grantedArm.streams), len(refusedArm.streams))
+	}
+	if grantedArm.granted != uint64(relayABStreams) || grantedArm.refused != 0 {
+		t.Fatalf("granted arm permits: granted=%d refused=%d", grantedArm.granted, grantedArm.refused)
+	}
+	if refusedArm.granted != 0 || refusedArm.refused != uint64(relayABStreams) {
+		t.Fatalf("refused arm permits: granted=%d refused=%d", refusedArm.granted, refusedArm.refused)
+	}
+	grantedBytes, refusedBytes := int64(0), int64(0)
+	for _, observation := range grantedArm.streams {
+		grantedBytes += observation.copied
+	}
+	for _, observation := range refusedArm.streams {
+		refusedBytes += observation.copied
+	}
+	if grantedBytes != refusedBytes || grantedBytes != int64(relayABStreams*relayABStreamBytes) {
+		t.Fatalf("copied bytes: granted=%d refused=%d want %d", grantedBytes, refusedBytes, int64(relayABStreams*relayABStreamBytes))
+	}
+	return fmt.Sprintf("order=%s granted_bytes=%d granted_wall_ms=%d granted_threshold=%d refused_bytes=%d refused_wall_ms=%d refused_threshold=%d\n",
+		os.Getenv("RELAY_AB_ORDER"), grantedBytes, grantedArm.wall.Milliseconds(), grantedArm.streams[0].threshold,
+		refusedBytes, refusedArm.wall.Milliseconds(), refusedArm.streams[0].threshold)
+}
+
+// runRelayABArm runs one arm's streams, keeping EVERY stream's observation separate until
+// the join: the per-stream threshold and permit are validated here, so an inconsistent
+// threshold fails immediately instead of being written into a shared field by a goroutine
+// (the former fixture's data race).
+func runRelayABArm(t *testing.T, addr string, arm *relayABArm) {
+	t.Helper()
+	budget := NewGrowthBudget(GrowthConfig{Flows: arm.flows}, func() Level { return LevelNormal })
+	observations := make(chan relayABObservation, relayABStreams)
+	started := time.Now()
+	var waitGroup sync.WaitGroup
+	for stream := 0; stream < relayABStreams; stream++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			observations <- runRelayABStream(addr, budget)
+		}()
+	}
+	waitGroup.Wait()
+	close(observations)
+	arm.wall = time.Since(started)
+	stats := budget.Stats()
+	arm.granted = stats.Granted
+	arm.refused = stats.Refused
+	for observation := range observations {
+		if observation.err != nil {
+			t.Fatalf("%s arm: %v", arm.name, observation.err)
 		}
-		if failures.Load() != 0 {
-			t.Fatalf("%s arm had %d failures", arm.name, failures.Load())
+		if observation.copied != int64(relayABStreamBytes) {
+			t.Fatalf("%s arm stream copied %d bytes, want %d", arm.name, observation.copied, int64(relayABStreamBytes))
 		}
 		if arm.flows == 0 {
-			if arm.granted != 0 || arm.refused != uint64(relayABStreams) {
-				t.Fatalf("%s arm permits: granted=%d refused=%d, want 0/%d", arm.name, arm.granted, arm.refused, relayABStreams)
+			if observation.threshold != 0 || observation.granted {
+				t.Fatalf("%s arm stream got threshold=%d granted=%v, want 0/false", arm.name, observation.threshold, observation.granted)
 			}
-		} else if arm.granted != uint64(relayABStreams) || arm.refused != 0 {
-			t.Fatalf("%s arm permits: granted=%d refused=%d, want %d/0", arm.name, arm.granted, arm.refused, relayABStreams)
+		} else if observation.threshold <= 0 || !observation.granted {
+			t.Fatalf("%s arm stream got threshold=%d granted=%v, want a growth threshold", arm.name, observation.threshold, observation.granted)
 		}
+		if len(arm.streams) > 0 && observation.threshold != arm.streams[0].threshold {
+			t.Fatalf("%s arm thresholds differ: %d vs %d", arm.name, arm.streams[0].threshold, observation.threshold)
+		}
+		arm.streams = append(arm.streams, observation)
 	}
-	if arms[0].threshold <= 0 {
-		t.Fatalf("the granted arm got threshold %d, want the engine's growth threshold", arms[0].threshold)
+	if len(arm.streams) != relayABStreams {
+		t.Fatalf("%s arm collected %d stream observations, want %d", arm.name, len(arm.streams), relayABStreams)
 	}
-	if arms[1].threshold != 0 {
-		t.Fatalf("the refused arm got threshold %d, want 0 (never grow)", arms[1].threshold)
+}
+
+// runRelayABStream is one direction through the real copy engine: it uploads the payload
+// and copies the echo back with the arm's threshold.
+func runRelayABStream(addr string, budget *GrowthBudget) relayABObservation {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return relayABObservation{err: err}
 	}
-	if arms[0].bytes != arms[1].bytes {
-		t.Fatalf("arms copied different bytes: %d vs %d", arms[0].bytes, arms[1].bytes)
+	defer conn.Close()
+	threshold, permit := budget.Admit(trafficclass.ClassBulk, false)
+	observation := relayABObservation{threshold: threshold, granted: permit != nil}
+	if permit != nil {
+		defer permit.Release()
 	}
-	return fmt.Sprintf("granted_bytes=%d granted_wall_ms=%d granted_threshold=%d refused_bytes=%d refused_wall_ms=%d refused_threshold=%d\n",
-		arms[0].bytes, arms[0].wall.Milliseconds(), arms[0].threshold,
-		arms[1].bytes, arms[1].wall.Milliseconds(), arms[1].threshold)
+	go func() {
+		payload := make([]byte, relayABStreamBytes)
+		_, _ = conn.Write(payload)
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+	}()
+	copied, copyErr := bufio.CopyWithIncreateBuffer(io.Discard, conn, threshold, bufio.DefaultBatchSize)
+	observation.copied = copied
+	observation.err = copyErr
+	return observation
 }
 
 func waitRelayABAddr(t *testing.T, path string) string {
