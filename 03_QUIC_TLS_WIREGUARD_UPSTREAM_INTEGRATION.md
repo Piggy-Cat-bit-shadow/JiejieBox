@@ -68,10 +68,13 @@ GitHub Compare（base=fork, head=正确上游）：sing-quic `ahead_by=0 / behin
   `transport/v2rayquic`、`transport/v2rayxhttp`、`transport/masque`、`protocol/masque`、`protocol/hysteria2`、`protocol/tuic`、`transport/wireguard`、`protocol/naive`。
 - `common/tls` 仍是既有基线失败（`unexpected EOF`），与本轮 pin 无关，阶段 05 统一记录。
 - 内核全量（新 pin，`-p 1`，Windows profile tags，含 DLL）：除 `common/tls`、`common/tlsspoof`、`common/windivert` 三个既有基线失败外全部 PASS；`kernel-windows-full-3.txt`。
+- Linux（WSL）：`go build -tags <profile> ./...` 与传输层消费者测试
+  （v2rayquic / masque / hysteria2 / tuic / wireguard）全部 PASS。
+  这一步发现并修复了一个只在 Linux/Darwin 编译的残留：`protocol/bridge` 的读循环仍调用旧的 `ReadRetry.Wait(err)`，导致 Linux 构建失败；已改为无参调用并显式保留 `ErrTooManySegments` 可恢复语义，提交 `8cc1dbcc63f`。
 
 ## 7. 未解决/风险
 
-1. Darwin 的 `msgx`/`sendto`/`udp` socket 路径本轮无 macOS 主机，只能依赖上游与交叉编译；阶段 05 目标平台 CI 复跑。
+1. Darwin 的 `msgx`/`sendto`/`udp` socket 路径本轮无 macOS 主机，只能依赖上游与交叉编译（bridge/device 已交叉编译通过）；阶段 05 目标平台 CI 复跑。
 2. ~~ACK-only pacing 的 sing-quic 三个 sender 没有独立单测~~——已补 `congestion_meta1/cubic_pacing_test.go`、`congestion_meta2/bbr_pacing_test.go`、`hysteria/congestion/brutal_pacing_test.go`，三个包全过。
 3. 上游删除 vectorised XPlus/Salamander 写入是有意修正（原地修改调用方 buffer）；fork 的 owned-datagram/ceiling 路径未受影响，但若有外部调用方依赖这些类型，需在发布说明中标注（它们不是公开 API 稳定性承诺）。
 4. utls 的 fork helper 与上游直接写 `marshalResult` 的差异保留：fork 更严格（会 parse 参数并在失败时返回错误）；若未来上游参数包含 fork parser 不支持的类型，需要同步 parser。

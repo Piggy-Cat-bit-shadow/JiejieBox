@@ -440,6 +440,11 @@
       "protocol/tuic",
       "transport/wireguard",
       "protocol/naive"
-    ]
+    ],
+    "linux": {
+      "kernel_build": "PASS",
+      "transport_tests": "PASS",
+      "bridge_api_fix": "8cc1dbcc63f80a732056a67934b4b6da03c8a025"
+    }
   }
 }

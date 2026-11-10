@@ -183,6 +183,18 @@ Ancestry passes; `device` tests pass. `go build ./...` at the repository root
 reports `function main is undeclared` by design (platform-specific main), so use
 `go test`/package builds instead.
 
+### Linux kernel transport sweep (stage 03)
+
+```sh
+# in WSL, from a synced kernel tree
+go build -tags <linux profile> ./...
+go test -vet=off -count=1 -tags <linux profile>   ./transport/v2rayquic ./transport/masque ./protocol/hysteria2   ./protocol/tuic ./transport/wireguard ./protocol/masque
+```
+
+Both pass. This sweep caught the Linux-only bridge backend still calling
+`ReadRetry.Wait(err)` after the stage-02 sing-tun bump; the fix (`8cc1dbcc63f`)
+also keeps `ErrTooManySegments` recoverable and skips its backoff.
+
 ### Kernel consumers
 
 ```sh

@@ -69,7 +69,7 @@ GitHub Compare（base=fork:dev, head=upstream:dev）：sing `ahead_by=0`、`behi
 
 ## 6. 风险与遗留
 
-1. Linux 已在 WSL 实际执行（sing 全套、sing-tun `unshare -Urn` 全套）；Darwin 的 msgx/sendto/redirect 路径仍只做编译/类型检查，阶段 05 需在 darwin CI 复跑。
+1. Linux 已在 WSL 实际执行（sing 全套、sing-tun `unshare -Urn` 全套）；Darwin 的 msgx/sendto/redirect 路径仍只做编译/类型检查，阶段 05 需在 darwin CI 复跑。阶段 03 的 Linux 全构建发现 `protocol/bridge` 仍调用旧 `ReadRetry.Wait(err)`，已在 `8cc1dbcc63f` 修复并补回 `ErrTooManySegments` 可恢复语义。
 2. `common/artifact` 的 `TestTwoStoresOnOneDirectoryShareLeases` 在全量并发下偶发“旧版本未回收”，单独连跑 3 次全过；与 sing/sing-tun 改动无调用关系，记为既有测试隔离问题，阶段 05 全量时复跑确认。
 3. 上游语义变化已消费但需观察：batch 写遇 `EMSGSIZE` 现在“跳过该报文并最终返回一次错误”，不再是立即中止；`NewServerPacketConn` 增加 peer 参数；`AssociatePacketConn.RemoteAddr` 返回 `M.Socksaddr`；空地址并行拨号由 panic/递归改为显式错误。
 4. sing-tun 的 `NewForwardDispatcher` MTU 参数、`portNAT.routed`/returns 结构未采纳，fork 继续用 `RoutedPort`/`PortMTU`；这是有意的结构差异，不是遗漏。
