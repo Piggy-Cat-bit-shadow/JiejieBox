@@ -197,7 +197,7 @@
 | `next/network` | `b9bc2bc25981e4f4606eaa5298ded56fde8d312d`（36 独有） |
 | `closeout/resources` | `aafc4c11f022a32de82e065ad03450183b716d97`（21 独有） |
 | `next/resources` | `b00dfe1f0e08`，closeout 的祖先 |
-| 结果 | 内容提交 42 个（依赖基线与文档提交另计），45 文件 +7980/−111 |
+| 结果 | 内容提交 42 个（依赖基线与文档提交另计），代码与测试文件 45 个（+7980/−111） |
 
 ### 本阶段动作
 
@@ -228,19 +228,29 @@
 | daemon selector | 0 | 6/6 PASS |
 | runtimecoord（pending 移植） | 0 | 全部 PASS |
 | 广域回归 `./common/... ./config/... ./provider/... ./option/... ./constant/...` | 1 | 32 包 ok；`common/tls`、`common/tlsspoof`、`common/windivert` 失败 |
+| 根包 `github.com/sagernet/sing-box`（全量） | 0 | 通过（69.4 s，测试 22.6 s）——修好 control-plane wrapper 后 |
+| Windows 全量 `./...` | 1 | 106 包 ok；仅 `common/tls`、`tlsspoof`、`windivert` 三个既有/权限失败 |
+| Linux 构建（WSL，Go 1.25.5） | 0 | `go build ./...` 与 `-tags <others>` 均通过 |
+| Linux FD ledger `-race` | 0 | PASS（账本 = `/proc/self/fd`） |
+| Linux 真实 TUN（`unshare -Urn`） | 0 | 3/3 PASS（dead-flow release 实测 5 ms） |
+| Linux route 全量 / race batch / e2e | 0 / 0 / 0 | 通过（443.5 s / 4 包 / 15.5 s） |
+| Linux 全量 `./...` | 1 | 113 包 ok；`common/netns TestUnshareNamespace` 为 WSL 环境限制（基线同样失败） |
 
 失败归因：`tlsspoof`/`windivert` 是 WinDivert 驱动的 SCM 权限拒绝（BLOCKED_BY_ENVIRONMENT）；`common/tls` 的 Windows TLS1.3 客户端失败在阶段依赖基线 `ea5651f2b5b` 上**同样复现**，属既有问题，非本阶段引入。
 
-未执行：Linux-only `route/disposal_fd_linux_test.go`、真实 TUN 设备/管理员测试、全量 `go test ./...`、全树 `-race`、平台构建（均记录为 BLOCKED/NOT RUN）。
+未执行：Windows 管理员用例（`TestGoKernel*`、WinDivert/tlsspoof）与平台构建保持 BLOCKED/NOT RUN；Linux-only 用例已在本机 WSL 补跑（见上表）。
 
 ### 提交
 
 - 主仓库：本阶段内容提交 42 个（34 个 network cherry-pick + 1 个 TrustTunnel hunk + 6 个资源测试 + 1 个 pending runtimecoord），另有 1 个依赖基线提交与文档提交，见 `git log --oneline`。
+- 集成回归修复：`a51c3dac340` `fix(dns): keep the control-plane wrapper transparent to the detour preflight`。
+  `controlPlaneDialer` 缺少 `Upstream()`，隐藏了 `DetourDialer`：detour 不在 Start 初始化，"does not carry" 警告被静默丢弃。用 `git bisect` 定位到 `412ad7742a1` 的 cherry-pick（`d93ea4e63f5`），补 `Upstream()` 并加 `dns/transport_dialer_test.go` 链契约测试；根包全量恢复通过。证据：`audit-evidence/stage03/12-integration-regression.txt`。
 - 依赖仓库：无新增提交（阶段 02 已完成）。
 
 ### 遗留 / 下一阶段注意
 
 1. `go.mod` 的两个 replace 是预览 pin，`release/source-lock.json` 仍是 0.1.44 快照；第 06 阶段必须用 release-freeze 生成，不得手改。
-2. Linux 真实 FD/E2E 与管理员权限测试未跑，第 06 阶段需在 Linux/有权限环境补跑。
+2. Linux 用例已在本机 WSL 补跑（FD ledger、真实 TUN、route 全量、race batch、e2e）；第 06 阶段仍应在目标 Linux runner 复跑。Windows 管理员用例仍需有权限环境。
 3. backup 的 route diagnose、process-cache reset epoch、客户端流控未集成；若 0.1.45 需要，需单独立项。
 4. 第 04 阶段把 H3/H2 回退并入后，要复核监听器 deadline 预算；不要用旧分支文件覆盖 `route/conn.go`、`transport/v2rayxhttp/client.go` 中候选已有的 GrowthBudget / sharedUplinkBudget。
+5. 根包 `github.com/sagernet/sing-box` 的测试已列入常规矩阵；它曾在按包 sweep 之外，导致 `dns/transport_dialer.go` 的 wrapper 回归漏检。后续阶段每次改 `common/dialer`、`dns`、`route` 接口都要跑根包。

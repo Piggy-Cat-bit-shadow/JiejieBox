@@ -25,7 +25,7 @@
 - 用构建、包级测试、`-race`、e2e 覆盖行为矩阵；
 - 输出状态转移/所有权说明 `03_STATE_AND_OWNERSHIP.md`。
 
-未执行：任何 pin 的最终冻结（第 06 阶段）、Linux 真实 FD/E2E 测试（本机是 Windows）、Apple/Android/Desktop 平台构建（环境缺失）、管理员权限测试（WinDivert/GoKernel/TUN 设备）。
+未执行：任何 pin 的最终冻结（第 06 阶段）、Apple/Android/Desktop 平台构建（环境缺失）、Windows 管理员权限测试（WinDivert/GO 内核级用例）。Linux-only 用例（FD ledger、真实 TUN 设备、Linux 全量）已在本机 WSL 中补跑，见 §7.4。
 
 ---
 
@@ -39,7 +39,7 @@
 | `next/resources` | `b00dfe1f0e08`，`closeout/resources` 的祖先，未单独处理 |
 | `backup/02-ecfffe7d0` | `ecfffe7d0691`，只审查不集成 |
 | `pending/device-axis-reload-window-tests` | `0477e327e5daa6a6fc757820154b13a628f1ed74`，选择性移植 runtimecoord |
-| 集成结果 | `integration/0.1.45-final`，内容提交 42 个（34 network + 1 TrustTunnel hunk + 6 resources + 1 pending；依赖基线与文档提交另计），45 个文件 +7980/−111 |
+| 集成结果 | `integration/0.1.45-final`，内容提交 42 个（34 network + 1 TrustTunnel hunk + 6 resources + 1 pending；依赖基线与文档提交另计），代码与测试文件 45 个（+7980/−111，文档提交另计） |
 
 ---
 
@@ -125,7 +125,7 @@
 
 ## 6. 文件变更与行为变化
 
-- 45 个文件（32 新增、13 修改），+7980/−111；内容提交 42 个（34 network + 1 TrustTunnel hunk + 6 resources + 1 pending），依赖基线与文档提交另计。
+- 代码与测试文件 45 个（32 新增、13 修改），+7980/−111；内容提交 42 个（34 network + 1 TrustTunnel hunk + 6 resources + 1 pending），依赖基线与文档提交另计。
 - 13 个生产文件：`adapter/connection_admission.go`（新）、`common/dialer/default.go`、`dns/transport_dialer.go`、`protocol/{vless,vmess,trojan}/outbound.go`、`route/{conn,conn_reclaim,network,network_environment}.go`、`transport/v2rayquic/client.go`、`transport/v2rayxhttp/client.go`、`transport/v2rayquic/run_dualpath_migration.sh`。
 - 行为变化（用户可见）：
   - 网络切换不再把所有流当停机处理：旧 generation 按 reason 回收，空闲超过 20s 的连接才被 drain 清扫；正在传输的流保留，直到它自己结束或转为空闲。
@@ -148,6 +148,14 @@
 | 构建（无 tag） | `go build ./...` | 0 | 通过 |
 | route 全量 | `go test -vet=off -tags <win> ./route` | 0 | **700 个测试函数**全量通过（447.9 s） |
 | 网络相关包 | `./route/rule ./common/dialer ./adapter/... ./dns/... ./daemon ./transport/...` | 0 | 24 个包全部 ok（75.8 s） |
+| 根包全量 | `go test -vet=off -tags <win profile> .` | 0 | 通过（69.4 s；含 7.5 修复后的静态校验与上传预算测试） |
+| **Windows 全量** | `go test -vet=off -tags <win profile> -timeout 40m ./...` | 1 | **106 个包 ok**；仅 `common/tls`（Windows TLS1.3，既有）、`common/tlsspoof` 与 `common/windivert`（WinDivert 权限）失败 |
+| **Linux 构建** | WSL 内 `go build ./...` 与 `go build -tags <others> ./...` | 0 / 0 | 通过（Go 1.25.5 linux/amd64） |
+| **Linux FD ledger** | `-race ./route -run TestTheDisposalLedgerMatchesTheOpenFileDescriptors` | 0 | **PASS**（0.04 s，账本与 /proc/self/fd 一致） |
+| **Linux 真实 TUN** | `unshare -Urn` + `SINGBOX_REAL_TUN_DEVICE=1`，3 个 `TestRealTunDevice*` | 0 | **3/3 PASS**（含 dead-flow release 实测 5 ms） |
+| **Linux route 全量** | `./route`（Linux，无 race） | 0 | 通过（443.5 s） |
+| **Linux race batch** | `-race ./transport/v2rayquic ./transport/v2rayxhttp ./common/dialer ./common/resourceguard` | 0 | 4 包全部 ok |
+| **Linux e2e** | `./e2e`（Linux） | 0 | 通过（15.5 s） |
 | 新生命周期测试（race） | `go test -race -run <28 个新测试> ./route` | 0 | 28/28 PASS |
 | 传输/拨号 race | `-race ./transport/v2rayquic ./transport/v2rayxhttp ./common/dialer ./common/resourceguard` | 0 | 4 包全部 ok |
 | 协议 carrier | 12 个 protocol 包（含 tuic/hysteria2/anytls/ssh/trusttunnel/naive/masque/wireguard/tun/vless/vmess/trojan） | 0 | 全部 ok（naive 需把 pin 的 `libcronet.dll` 所在目录加入 PATH，已记录） |
@@ -163,10 +171,44 @@
 
 未执行/受限：
 
-- `route/disposal_fd_linux_test.go`：Linux-only，Windows 上 **NOT RUN / BLOCKED**；真实 FD 计数属于第 06 阶段的 Linux 验收。
-- `TestGoKernel*`、真实 TUN 设备测试：需要管理员/TUN 设备，**BLOCKED_BY_ENVIRONMENT**。
-- 全量 `go test ./...`（含所有包的一次性执行）：NOT RUN；本阶段按上层包分类执行（route 全量 + 网络相关包 + 广域回归）。
+- `route/disposal_fd_linux_test.go`：已在 WSL Linux 上跑通（§7.4）；Windows 上不适用。
+- `TestGoKernel*`（Windows Go 栈、需要管理员）：**BLOCKED_BY_ENVIRONMENT**；Linux 真实 TUN 设备用例已在 WSL 中跑通。
+- Windows 全量 `go test ./...`：NOT RUN（按上层包分类执行：route 全量 + 网络相关包 + 广域回归 + 12 个协议包 + e2e）；Linux 全量在本轮收尾中补跑（结果见 §7.4）。
 - `-race` 全树：NOT RUN（只对新生命周期与传输/拨号/资源模块执行，见上）。
+
+---
+
+### 7.4 Linux 补跑（本机 WSL，收尾）
+
+Windows 上无法执行的 Linux-only 用例，本轮在 **WSL2 Ubuntu 24.04（kernel 6.18，16 vCPU）** 内补跑。做法：
+
+1. WSL 内安装官方 Go 1.25.5 linux/amd64（`~/go1.25.5`），`GOMODCACHE` 独立（不混用 Windows 缓存）。
+2. `rsync -a --exclude .git` 把集成树复制到 Linux 文件系统（避免 9p 开销），在副本上构建/测试；Windows 工作区不受影响。
+3. 真实 TUN 用例需要 `SINGBOX_REAL_TUN_DEVICE=1` 且在 `unshare -Urn` 的 user+net 命名空间内创建 `/dev/net/tun`。
+
+| 项 | 命令 | 退出码 | 结果 |
+|---|---|---|---|
+| Linux 构建 | `go build ./...` / `go build -tags <others> ./...` | 0 / 0 | 通过 |
+| FD ledger（Linux-only） | `go test -race ./route -run TestTheDisposalLedgerMatchesTheOpenFileDescriptors` | 0 | **PASS**（账本与 `/proc/self/fd` 一致） |
+| 真实 TUN 设备 | `unshare -Urn env SINGBOX_REAL_TUN_DEVICE=1 go test ./protocol/tun -run TestRealTunDevice -v` | 0 | **3/3 PASS**；`TestRealTunDeviceReleasesAFlowWhosePeerIsGone` 实测 dead-flow release **5 ms** |
+| Linux route 全量 | `go test ./route` | 0 | 通过（443.5 s） |
+| Linux race batch | `-race ./transport/v2rayquic ./transport/v2rayxhttp ./common/dialer ./common/resourceguard` | 0 | 4 包全部 ok |
+| Linux e2e | `go test ./e2e` | 0 | 通过（15.5 s） |
+| **Linux 全量** | `go test -vet=off -tags <others> -timeout 40m ./...` | 1 | **113 个包 ok**；唯一失败是 `common/netns` 的 `TestUnshareNamespace`（WSL 拒绝在命名空间内 fork `/proc/self/exe`：`operation not permitted`），该用例在阶段基线上同样失败，属环境限制 |
+
+局限：WSL 的内核/命名空间与目标 Linux runner、真实设备不同；第 06 阶段仍应在目标 runner 上复跑这些用例。Windows 的 `TestGoKernel*`、WinDivert/tlsspoof 仍需管理员权限，保持 BLOCKED。
+
+证据：`_int0145/audit-evidence/stage03/linux/`。
+
+---
+
+### 7.5 集成回归：control-plane wrapper 隐藏 detour（已修复）
+
+- 现象：根包 `github.com/sagernet/sing-box` 的 `TestADNSTransportDetourMustCarryTheQuery` 与 `TestConsumerDemandContractIsProvableOnly/dns_transport` 在集成后失败（warning 为空），而在阶段依赖基线 `ea5651f2` 上通过；Windows 与 Linux 同样复现。
+- 定位：在独立 worktree 对 `ea5651f2..integration` 做 `git bisect run`，第一个 bad 提交是 `d93ea4e63f5`，即 `412ad7742a1`（admission tickets / control-plane DNS）的 cherry-pick。
+- 根因：`dns/transport_dialer.go` 新增的 `controlPlaneDialer` 只嵌入 `N.Dialer`，没有实现 `Upstream() any`。而 `dialer.InitializeDetour`（`common.Cast`）与 `dialer.DetourOf`（`resolvedDetour`）都依赖 `WithUpstream` 链遍历；wrapper 把 `DetourDialer` 藏住后，detour 不在 Start 初始化，"does not carry" 能力警告被静默跳过——一个会拒绝所有查询的 DNS 传输就这样静默启动。
+- 修复（`a51c3dac340`）：`controlPlaneDialer.Upstream() any { return d.Dialer }`，并新增 `dns/transport_dialer_test.go` 钉住"wrapper 对 common.Cast 透明"的契约。修复后根包全量通过（Windows tag profile，69.4 s，其中测试 22.6 s），两个根包静态校验测试恢复 PASS。
+- 教训：此前的按包矩阵没有把根包 `github.com/sagernet/sing-box` 本身列入 sweep，这个回归因此漏到 Linux 全量才暴露；本轮把它加入常规矩阵（下表）。
 
 ---
 
@@ -174,8 +216,8 @@
 
 1. **预 pin**：`go.mod`/`test/go.mod` 已指向阶段 02 的两个集成 SHA，但 `release/source-lock.json` 仍是 0.1.44 快照。这是刻意的中间态：第 06 阶段用 release-freeze 重新生成，禁止手改锁文件。
 2. **backup 的三项独有内容未集成**（route diagnose、process-cache reset epoch、客户端流控）。它们不属于本阶段边界；第 05/06 阶段若要 0.1.45 包含 route 诊断或该缓存修复，需要单独立项并按其自身测试补齐。
-3. **Linux 真实 FD/E2E 未跑**：Windows 上无法验证 `disposal_fd_linux_test.go` 与真实 `/dev/net/tun` 路径；第 06 阶段必须在 Linux runner 上补跑，不能以 Windows 单元测试替代。
-4. **管理员权限测试未跑**：TUN/Kernel/WinDivert 相关用例在本机 blocked；平台验收时需在有权限的环境执行。
+3. **Linux 用例已补跑（收尾）**：`disposal_fd_linux_test.go`、`protocol/tun` 的真实 TUN 用例、Linux 全量 `./...`（113 包 ok）已在本机 WSL（Ubuntu 24.04 / `unshare -Urn`）跑通；唯一失败是 `common/netns` 的 `TestUnshareNamespace`（WSL 不允许在命名空间内 fork）——目标 Linux runner 上应可执行，第 06 阶段复跑时确认。
+4. **Windows 管理员权限测试未跑**：`TestGoKernel*`、WinDivert/tlsspoof 在本机 blocked；平台验收时需在有权限的环境执行。
 5. **网络切换的延迟预算**：监听器阶段有统一 deadline（`networkChangeListenerBudget`）与并发上限；第 04 阶段把 H3/H2 回退并入后，需要重新确认该预算对新增监听器的余量。
 6. **候选基线的两处"更新内容"被保留**（`GrowthBudget`、`sharedUplinkBudget`），分支没有；后续阶段不要用旧分支文件覆盖这两个文件，否则会回退候选已有功能。
 7. **`common/tls` 的 Windows TLS1.3 失败**是既有问题，不属本阶段；若第 06 阶段全平台验收复现，应单独立项修复，不能标 PASS。
@@ -190,7 +232,7 @@
 | `closeout/resources` 与 `next/resources` 已去重并融合 | ✅ closeout 取 6 个内容提交、3 个测试文件与分支逐字节一致；next/resources 为祖先，不单独处理 |
 | 旧备份与 pending 测试已审查 | ✅ backup 逐项结论见 §3.4；pending 移植 runtimecoord 4 测试、拒绝 libbox 2 文件并给出原因 |
 | 网络生命周期和资源所有权有清晰说明 | ✅ `03_STATE_AND_OWNERSHIP.md` |
-| 关键测试、race、E2E 已运行或标记阻塞 | ✅ §7；Linux FD / 管理员 / 平台构建标记 BLOCKED |
+| 关键测试、race、E2E 已运行或标记阻塞 | ✅ §7（含 §7.4 Linux 补跑）；Windows 管理员用例与平台构建标记 BLOCKED |
 | 无未解释的 go.mod/source-lock 旧 pin 被带入 | ✅ 只把两个 replace 提升到阶段 02 SHA，并在首个提交说明；source-lock 未手改 |
 
 阶段 03 内容提交见 `INTEGRATION-LOG.md` 的 Stage 03 记录与 `git log --oneline`。
