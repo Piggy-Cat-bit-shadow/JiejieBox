@@ -1,5 +1,25 @@
 # 知识索引：按任务查找文档（Knowledge index — route first, read narrowly）
 
+
+## 2026-11-11 归档：0.1.45 集成（最终）
+
+`reports/0.1.45/` 汇总五个阶段的报告；目录名沿用交接指定，实际交付是 **0.1.45 RC**。最终 pin 以 `release/source-lock.json` 为准，阶段结论以 `INTEGRATION-LOG.md` 与各阶段报告为准。
+
+| 任务 / 关键符号 | 直接入口 |
+| --- | --- |
+| 配置恢复入口、两端 `started` 预览、A/B/C 夹具、损坏存储 | [结果报告](reports/0.1.45/CONFIG-RECOVERY-AND-PREVIEW-2026-11-10.md) |
+| 反例、负向对照、假绿排查与已修缺陷 | [定向自审](reports/0.1.45/DEBUG-SELF-REVIEW-2026-11-10.md) |
+| 产品 A/B/C、独占窗口、Apple 运行期的环境与通过标准 | [验收交接](reports/0.1.45/HANDOFF-ACCEPTANCE.md) |
+| 采样/判定工具的重建方式与原始数据位置 | [证据工具包](reports/0.1.45/EVIDENCE-KIT.md) |
+| 双栈 DNS 来源、字面恢复与候选 provenance | [双栈报告](reports/0.1.45/DUAL-STACK-SOURCE-AND-RECOVERY-2026-11-10.md) |
+| 资源治理、共享探测与 waiters | [资源报告](reports/0.1.45/RESOURCE-GOVERNANCE-WAITERS-2026-11-10.md) |
+| H3→H2 回退、请求拒绝与 body 生命周期 | [H3/H2 收尾](reports/0.1.45/任务08_H3到H2回退_收尾报告.md) |
+| 02 测速、DNS 与诊断交付 | [02 收尾](reports/0.1.45/02_测速DNS与诊断_交付收尾报告_2026-11-10.md) |
+| Apple NE 命令目标、正文提交与回执归属 | [Apple NE 说明](reports/0.1.45/TASK10-APPLE-NE-README.md) / [裁定](reports/0.1.45/TASK10-APPLE-NE-VERDICT.md) / [交接](reports/0.1.45/TASK10-APPLE-NE-HANDOFF.md) |
+| 本轮集成阶段报告、契约与清理记录 | `01_`…`06_` 报告、`05_CLIENT_RUNTIME_CONTRACT.md`、`FINAL_*.md`（仓库根） |
+
+**证据等级**：报告记录的是各自轮次的检查结果；未在 0.1.45 RC 上重跑的项按报告内标注的 PASS/BLOCKED/NOT RUN 对待，不因归档而升级。
+
 ## v0.1.44 专题入口（Released delta）
 
 | 任务 / 路径 / 关键符号 | 直接入口 |
