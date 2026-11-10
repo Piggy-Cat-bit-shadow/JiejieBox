@@ -185,7 +185,17 @@ func TestUDPIdleExpiryRechecksActivity(t *testing.T) {
 	session.flows[key] = flow
 	// The sweeper snapshotted here: the association looked idle.
 	flow.lastActivity.Store(time.Now().Add(-time.Minute).UnixNano())
-	deadline := time.Now().UnixNano()
+	//
+	// The deadline sits a margin BELOW the datagram's timestamp rather than at "now".
+	//
+	// MEASURED on Windows: two consecutive time.Now().UnixNano() readings are EQUAL, because the
+	// host clock ticks at 0.5-15 ms. With `deadline := time.Now()` the scenario therefore depended
+	// on where a tick fell between the snapshot and the push: run alone this test passed, while
+	// selected together with the close test it failed 3/3, because the extra work moved the push
+	// across a tick boundary and `lastActivity > deadline` became false. The product is right in
+	// both cases - a tie means "nothing was admitted after the deadline" - but a one-second margin
+	// is what makes the interleaving this test intends independent of clock granularity.
+	deadline := time.Now().Add(-time.Second).UnixNano()
 	// A datagram is admitted after the snapshot.
 	payload := buf.NewSize(8)
 	_, _ = payload.Write([]byte("active"))
