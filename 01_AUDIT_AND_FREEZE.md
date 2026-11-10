@@ -220,7 +220,7 @@
 | `task08/knowledge-0.1.45` | `99cc3b514327` | `e9f48e225fe1` | 42 | 6 | 15 | +876/0 | 0 | 文档；与 `integration/next-round` 互有 3/2 提交差异，需去重 |
 | `kb/0.1.45-02` | `8405d1bbb986` | `ce362dbde084` | 206 | 3 | 6 | +348/0 | 0 | 基于 `testing` 的文档分支，含 §2 的 2 个提交 |
 | `next/client-consumption-candidate` | `09fa790dfb35` | `c46a523659f1` | 31 | 6 | 3 | +19/−3 | 0 | 客户端 pin 候选（本地 `candidate-r8`），第 05 阶段 |
-| `pending/device-axis-reload-window-tests` | `0477e327e5da` | `4c7d96c0fbca` | 1906 | 1 | 3 | +891/0 | 0 | 极度陈旧；3 个测试文件，本地 `p3A` 有同名未跟踪副本；第 03 阶段审查意图 |
+| `pending/device-axis-reload-window-tests` | `0477e327e5da` | `4c7d96c0fbca` | 1906 | 1 | 3 | +891/0 | 0 | 极度陈旧；3 个测试文件；已在 §12.4 定案（runtimecoord 测试可移植，libbox 测试在其自身 base 上即失败） |
 | `backup/02-ecfffe7d0` | `ecfffe7d0691` | `b4e128907be6` | 176 | 44 | 94 | +15092/−906 | 7 | **不是旧归档**：活跃并行线（见 §5.2） |
 
 本地分支（未推送）：
