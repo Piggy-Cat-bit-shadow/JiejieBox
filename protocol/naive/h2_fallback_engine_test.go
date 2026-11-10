@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sagernet/cronet-go"
 	"github.com/sagernet/sing/common/logger"
@@ -185,4 +186,106 @@ func TestFallbackPathWithoutEngineKeepsThePerRequestChoice(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 	require.Equal(t, []bool{true, false}, primary.recorded())
+}
+
+// TestDialNaiveH2ClosedFallbackTerminatesWithoutPrimary is the review's P1: a
+// closed owner must terminate the retry, never dispatch a CONNECT on the primary
+// engine just because the second engine is gone.
+func TestDialNaiveH2ClosedFallbackTerminatesWithoutPrimary(t *testing.T) {
+	primary := newScriptedClient()
+	fallback := newH2FallbackClient(func() (naiveH2Client, error) {
+		return &fakeH2Client{}, nil
+	})
+	require.NoError(t, fallback.Close())
+
+	conn, err := dialNaiveH2(context.Background(), primary, fallback, logger.NOP(), M.ParseSocksaddr("example.com:443"))
+	if conn != nil {
+		_ = conn.Close()
+	}
+	require.ErrorIs(t, err, errH2FallbackClosed)
+	require.Empty(t, primary.recorded(), "shutdown must not dispatch a CONNECT on the primary engine")
+}
+
+// TestCanceledWaiterLeavesTheCreationWait is the review's P2: the first request
+// starts the native engine, a second CONNECT waits for it and is cancelled. The
+// waiter must leave on its own context, not after the engine start finishes.
+func TestCanceledWaiterLeavesTheCreationWait(t *testing.T) {
+	primary := newScriptedClient()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	fallback := newH2FallbackClient(func() (naiveH2Client, error) {
+		close(entered)
+		<-release
+		return &fakeH2Client{}, nil
+	})
+	t.Cleanup(func() { _ = fallback.Close() })
+
+	owner := make(chan struct{})
+	go func() {
+		defer close(owner)
+		_, _ = fallback.get()
+	}()
+	<-entered
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		conn, err := dialNaiveH2(ctx, primary, fallback, logger.NOP(), M.ParseSocksaddr("example.com:443"))
+		if conn != nil {
+			_ = conn.Close()
+		}
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(200 * time.Millisecond):
+		unblock()
+		<-owner
+		<-done
+		t.Fatal("a cancelled fallback waiter could not leave the lazy-engine initialization")
+	}
+	require.Empty(t, primary.recorded(), "a cancelled fallback must not dispatch on the primary engine")
+
+	unblock()
+	<-owner
+	require.NotNil(t, fallback.peek(), "the owner's creation still publishes its engine")
+}
+
+// TestCloseDuringCreationReleasesTheLateEngine: the owner closes while the engine
+// is being built. The result is retired - never published, closed exactly once -
+// and every later caller gets the terminating error.
+func TestCloseDuringCreationReleasesTheLateEngine(t *testing.T) {
+	primary := newScriptedClient()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	engine := &fakeH2Client{}
+	fallback := newH2FallbackClient(func() (naiveH2Client, error) {
+		close(entered)
+		<-release
+		return engine, nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := fallback.get()
+		done <- err
+	}()
+	<-entered
+	require.NoError(t, fallback.Close(), "Close returns while the engine is still starting")
+	close(release)
+	require.ErrorIs(t, <-done, errH2FallbackClosed)
+	require.Equal(t, 1, engine.closed, "the late engine is released exactly once")
+	require.Nil(t, fallback.peek(), "a retired engine is never published")
+	require.NoError(t, fallback.Close(), "Close stays idempotent")
+
+	conn, err := dialNaiveH2(context.Background(), primary, fallback, logger.NOP(), M.ParseSocksaddr("example.com:443"))
+	if conn != nil {
+		_ = conn.Close()
+	}
+	require.ErrorIs(t, err, errH2FallbackClosed)
+	require.Empty(t, primary.recorded())
 }
