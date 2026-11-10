@@ -82,18 +82,30 @@ func TestHTTP3BrokenBackoffCap(t *testing.T) {
 	}
 }
 
-func TestHTTP3BrokenClearDeletesEntry(t *testing.T) {
+func TestHTTP3BrokenClearDisarmsWithoutForgettingTheOutcome(t *testing.T) {
 	transport := newVerdictTransport()
 
 	transport.markH3Broken("a.example:443", transport.beginH3Attempt())
 	transport.markH3Broken("b.example:443", transport.beginH3Attempt())
-	transport.clearH3Broken("a.example:443", transport.beginH3Attempt())
+	stale := transport.beginH3Attempt()
+	cleared := transport.beginH3Attempt()
+	transport.clearH3Broken("a.example:443", cleared)
 
-	if _, found := transport.broken["a.example:443"]; found {
-		t.Fatal("clearH3Broken must delete the entry: a success disarms the window AND the ladder")
+	if transport.h3Broken("a.example:443") {
+		t.Fatal("a success must disarm the authority's window")
+	}
+	if entry, found := transport.broken["a.example:443"]; !found || entry.backoff != 0 || !entry.until.IsZero() {
+		t.Fatalf("the cleared entry must keep the success's outcome but no window/backoff, got %+v", entry)
 	}
 	if !transport.h3Broken("b.example:443") {
 		t.Fatal("clearing a.example must not affect b.example")
+	}
+
+	// A failure that started BEFORE the success must not re-arm the authority, even though the
+	// entry that records the success is still there.
+	transport.markH3Broken("a.example:443", stale)
+	if transport.h3Broken("a.example:443") {
+		t.Fatal("a failure older than the success must not re-arm the window")
 	}
 }
 
@@ -182,8 +194,8 @@ func TestHTTP3BrokenStaleFailureCannotArmAfterNewerSuccess(t *testing.T) {
 	if transport.h3Broken("a.example:443") {
 		t.Fatal("a failure from an older attempt must not arm the window after a newer success")
 	}
-	if _, found := transport.broken["a.example:443"]; found {
-		t.Fatal("and it must not even create the entry")
+	if entry := transport.broken["a.example:443"]; entry.backoff != 0 || !entry.until.IsZero() {
+		t.Fatalf("and it must not move the cleared entry's window/backoff, got %+v", entry)
 	}
 
 	// The mirror: a stale success must not clear a newer failure.

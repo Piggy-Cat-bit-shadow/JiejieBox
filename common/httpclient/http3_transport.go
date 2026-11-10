@@ -32,6 +32,15 @@ type http3Transport struct {
 type http3BrokenEntry struct {
 	until   time.Time
 	backoff time.Duration
+	// outcome is the highest attempt id whose outcome was claimed FOR THIS AUTHORITY, and
+	// updatedAt is when it last changed (the ladder/prune clock).
+	//
+	// The ordering state is per authority on purpose: attempt ids come from one global sequence so
+	// they stay comparable, but a success on authority B says nothing about authority A. A shared
+	// outcome counter made B's newer success refuse A's older failure, so A's verdict silently
+	// disappeared.
+	outcome   uint64
+	updatedAt time.Time
 }
 
 // h3EstablishBudget bounds how long ONE cold HTTP/3 attempt may spend becoming usable. It is the
@@ -44,16 +53,14 @@ type http3FallbackTransport struct {
 	h3Transport   *http3.Transport
 	h2Fallback    innerTransport
 	fallbackDelay time.Duration
-	// verdictAccess makes the attempt sequence number, the newest outcome and the per-authority
-	// memory one state, so a claim and its effect cannot interleave with each other.
+	// verdictAccess makes the attempt sequence number, the per-authority outcome and the memory
+	// one state, so a claim and its effect cannot interleave with each other.
 	verdictAccess sync.Mutex
 	broken        map[string]http3BrokenEntry
-	// attempt issues the sequence number that stamps one HTTP/3 attempt, and outcome is the
-	// highest sequence whose outcome has already been recorded. Together they make the memory a
-	// record of the NEWEST attempt rather than of whichever attempt happened to report last: an
-	// outcome is taken BEFORE the attempt, so "newer" means "started later".
+	// attempt issues the sequence number stamped on each attempt. It is global so ids stay
+	// comparable across authorities; the ORDERING state lives per authority (see
+	// http3BrokenEntry.outcome), because an outcome for one authority says nothing about another.
 	attempt uint64
-	outcome uint64
 }
 
 func newHTTP3RoundTripper(
@@ -295,7 +302,9 @@ var errH3CacheProbeWindow = E.New("HTTP/3 cache probe exceeded its window while 
 func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool) h3Issue {
 	hasBody := request.Body != nil && request.Body != http.NoBody
 	attemptRequest := request
+	var owner *requestBodyOwner
 	if hasBody {
+		owner = &requestBodyOwner{body: request.Body}
 		attemptRequest = request.Clone(request.Context())
 		attemptRequest.Body = &shieldedRequestBody{ReadCloser: request.Body}
 	}
@@ -363,11 +372,54 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 			issue.err = E.Cause(issue.err, "HTTP/3 attempt exceeded ", h3EstablishBudget)
 		}
 	}
-	if hasBody && issue.err != nil && issue.sent {
-		// The body may have been consumed by the failed attempt, so it cannot carry a retry.
-		request.Body.Close()
+	if owner != nil {
+		switch {
+		case issue.err == nil:
+			// The request was accepted and answered. quic-go does not close a request body on
+			// success, and the upload may still be streaming; the body's owner is therefore tied
+			// to the RESPONSE: when the caller releases the response, the request is over.
+			issue.response.Body = &responseBodyWithOwner{ReadCloser: issue.response.Body, owner: owner}
+		case issue.sent:
+			// The body may have been consumed by the failed attempt, so it cannot carry a retry.
+			owner.Close()
+		}
+		// !sent: the body is untouched and still owned by the request, which the fallback will
+		// hand to HTTP/2.
 	}
 	return issue
+}
+
+// requestBodyOwner owns one request body and closes it exactly once.
+//
+// # Why an owner object instead of a direct Close
+//
+// The same body can be reached from two directions - the attempt that started it and the response
+// the caller releases - and the HTTP/3 transport deliberately does not close it on success. A
+// single owner makes "closed once" a property of the object rather than of every caller remembering
+// the rule, which is what the review measured: an upload body closed zero times after a successful
+// H3 request, or closed twice when both a race leg and the cleanup reached it.
+type requestBodyOwner struct {
+	body io.ReadCloser
+	once sync.Once
+}
+
+func (o *requestBodyOwner) Close() {
+	o.once.Do(func() {
+		_ = o.body.Close()
+	})
+}
+
+// responseBodyWithOwner releases the request body when the caller releases the response.
+type responseBodyWithOwner struct {
+	io.ReadCloser
+	owner *requestBodyOwner
+	once  sync.Once
+}
+
+func (b *responseBodyWithOwner) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(b.owner.Close)
+	return err
 }
 
 // shieldedRequestBody absorbs the HTTP/3 transport's error-path Close while an attempt still owns
@@ -391,6 +443,21 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 		cancels  []context.CancelFunc
 		received int
 	)
+	// Each leg gets its own shielded request body and an owner for it: the HTTP/3 transport does
+	// not close a request body on success and the HTTP/2 transport's Close is shielded here, so the
+	// race itself is the only party that can close both copies exactly once - including the copy of
+	// a leg that never started.
+	legRequest := func(base *http.Request) (*http.Request, *requestBodyOwner) {
+		if base.Body == nil || base.Body == http.NoBody {
+			return base, nil
+		}
+		owner := &requestBodyOwner{body: base.Body}
+		clone := base.Clone(base.Context())
+		clone.Body = &shieldedRequestBody{ReadCloser: base.Body}
+		return clone, owner
+	}
+	h3Leg, h3Owner := legRequest(h3Request)
+	h2Leg, h2Owner := legRequest(h2Request)
 	startRoundTrip := func(useH3 bool, base *http.Request) {
 		ctx, cancel := context.WithCancel(request.Context())
 		cancels = append(cancels, cancel)
@@ -414,6 +481,12 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 				cancel()
 			}
 		}
+		if h3Owner != nil {
+			h3Owner.Close()
+		}
+		if h2Owner != nil {
+			h2Owner.Close()
+		}
 		for range len(cancels) - received {
 			go func() {
 				loser := <-results
@@ -423,7 +496,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 			}()
 		}
 	}
-	startRoundTrip(true, h3Request)
+	startRoundTrip(true, h3Leg)
 	timer := time.NewTimer(t.fallbackDelay)
 	defer timer.Stop()
 	var (
@@ -434,7 +507,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 		select {
 		case <-timer.C:
 			if len(cancels) == 1 {
-				startRoundTrip(false, h2Request)
+				startRoundTrip(false, h2Leg)
 			}
 		case raceResult := <-results:
 			received++
@@ -458,7 +531,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 						default:
 						}
 					}
-					startRoundTrip(false, h2Request)
+					startRoundTrip(false, h2Leg)
 				}
 			} else {
 				fallbackErr = raceResult.err
@@ -518,10 +591,9 @@ func (t *http3FallbackTransport) h3Broken(authority string) bool {
 		return false
 	}
 	if entry.until.IsZero() || !time.Now().Before(entry.until) {
-		// The window is over, so HTTP/3 may be tried again. The entry is NOT deleted: its
-		// backoff is the memory of how often this authority failed, and deleting it here
-		// restarted the ladder at five minutes on every probe, so a permanently broken
-		// authority was retried at the first rung for the life of the transport.
+		// The window is over, so HTTP/3 may be tried again. The entry is NOT deleted: it carries
+		// the ladder rung and the outcome ordering, and deleting it here restarted the ladder at
+		// five minutes on every probe and let an older failure re-arm a newer success's authority.
 		return false
 	}
 	return true
@@ -536,29 +608,27 @@ func (t *http3FallbackTransport) beginH3Attempt() uint64 {
 	return t.attempt
 }
 
-// claimH3OutcomeLocked reports whether this attempt is the newest observation and records it if
-// so. The caller must hold verdictAccess, which is what makes the claim and its effect one
-// transaction: an outcome that passes the ordering check and then stores its effect in a separate
-// critical section can still lose against a newer attempt (transport/http measured exactly that
-// interleaving, 1896/200000).
-func (t *http3FallbackTransport) claimH3OutcomeLocked(attempt uint64) bool {
-	if attempt <= t.outcome {
-		return false
-	}
-	t.outcome = attempt
-	return true
-}
-
+// clearH3Broken records a successful attempt for the authority and disarms its window.
+//
+// The entry is KEPT, with the success's attempt id as its outcome: a failure from an older attempt
+// that reports afterwards must be refused, and deleting the entry would forget that this authority
+// has already been observed at that sequence number.
 func (t *http3FallbackTransport) clearH3Broken(authority string, attempt uint64) {
-	t.verdictAccess.Lock()
-	defer t.verdictAccess.Unlock()
-	if !t.claimH3OutcomeLocked(attempt) {
-		return
-	}
 	if authority == "" {
 		return
 	}
-	delete(t.broken, authority)
+	t.verdictAccess.Lock()
+	defer t.verdictAccess.Unlock()
+	now := time.Now()
+	entry := t.broken[authority]
+	if attempt <= entry.outcome {
+		return
+	}
+	entry.outcome = attempt
+	entry.until = time.Time{}
+	entry.backoff = 0
+	entry.updatedAt = now
+	t.broken[authority] = entry
 }
 
 // recordH3AttemptFailure arms the per-authority verdict for an attempt that failed, and does
@@ -619,21 +689,25 @@ func (t *http3FallbackTransport) recordH3AttemptFailure(request *http.Request, a
 // when the previous window has actually expired - which is also what makes the ladder mean
 // something: 5m, 10m, 20m ... is a record of episodes, not of goroutines.
 //
-// `attempt` orders the outcome against every other attempt: a failure that started before a newer
-// success cannot arm the memory after it, and a failure whose episode was already superseded by a
-// newer attempt is refused outright.
+// `attempt` orders the outcome against the other attempts FOR THIS AUTHORITY. Attempt ids come
+// from one global sequence (that is what makes them globally comparable), but the ordering state
+// is per authority: authority B's newer success must not suppress authority A's older failure.
 func (t *http3FallbackTransport) markH3Broken(authority string, attempt uint64) {
-	t.verdictAccess.Lock()
-	defer t.verdictAccess.Unlock()
-	if !t.claimH3OutcomeLocked(attempt) {
-		return
-	}
 	if authority == "" {
 		return
 	}
+	t.verdictAccess.Lock()
+	defer t.verdictAccess.Unlock()
 	now := time.Now()
 	entry := t.broken[authority]
+	if attempt <= entry.outcome {
+		// A newer observation for this authority has already been recorded.
+		return
+	}
+	entry.outcome = attempt
+	entry.updatedAt = now
 	if !entry.until.IsZero() && now.Before(entry.until) {
+		t.broken[authority] = entry
 		return
 	}
 	next := 5 * time.Minute
@@ -648,14 +722,14 @@ func (t *http3FallbackTransport) markH3Broken(authority string, attempt uint64) 
 	}
 }
 
-// h3BrokenPruneAge is how long an expired entry is kept before it is forgotten. The entry has to
-// outlive its own window (that is the ladder memory), but not forever: an authority that has been
-// silent for a day starts again at the first rung.
+// h3BrokenPruneAge is how long an entry is kept after its last update. The entry has to outlive
+// its own window (that is the ladder memory), but not forever: an authority that has been silent
+// for a day starts again at the first rung.
 const h3BrokenPruneAge = 24 * time.Hour
 
 func (t *http3FallbackTransport) pruneH3BrokenLocked(now time.Time) {
 	for authority, entry := range t.broken {
-		if !entry.until.IsZero() && now.Sub(entry.until) > h3BrokenPruneAge {
+		if now.Sub(entry.updatedAt) > h3BrokenPruneAge {
 			delete(t.broken, authority)
 		}
 	}
