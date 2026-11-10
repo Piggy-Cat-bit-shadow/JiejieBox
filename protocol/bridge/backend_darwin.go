@@ -261,13 +261,15 @@ func (b *backendDarwin) batchReadLoop() {
 			if E.IsClosed(err) || errors.Is(err, syscall.EBADF) {
 				return
 			}
-			if !tun.IsRecoverableReadError(err) {
+			if !tun.IsRecoverableReadError(err) && !errors.Is(err, tun.ErrTooManySegments) {
 				// A permanent error: end the loop once rather than spinning on it.
 				b.logger.Error(E.Cause(err, "bridge tun read"))
 				return
 			}
 			b.logger.Debug(E.Cause(err, "bridge tun read"))
-			readRetry.Wait(err)
+			if !errors.Is(err, tun.ErrTooManySegments) {
+				readRetry.Wait()
+			}
 			continue
 		}
 		readRetry.Reset()

@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"sync"
 
@@ -326,10 +327,12 @@ func (b *backendLinux) batchReadLoop() {
 			default:
 			}
 			b.logger.Debug(E.Cause(err, "bridge tun read"))
-			if !tun.IsRecoverableReadError(err) {
+			if !tun.IsRecoverableReadError(err) && !errors.Is(err, tun.ErrTooManySegments) {
 				return
 			}
-			readRetry.Wait(err)
+			if !errors.Is(err, tun.ErrTooManySegments) {
+				readRetry.Wait()
+			}
 		} else {
 			readRetry.Reset()
 		}
