@@ -94,6 +94,13 @@ func TestTheRealQueryPathReachesTheHistory(t *testing.T) {
 	}
 	require.True(t, named)
 
+	// The output budget is a promise about the bytes the platform receives, and the real path is
+	// the one that matters: a tighter budget than any earlier query must still be honoured.
+	budgeted, err := server.DNSHistoryQuery(`{"limit":8,"maxBytes":1024}`)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(budgeted.Value), 1024,
+		"the production path must honour the output budget too")
+
 	// Disabling detaches: the same query path keeps working but is no longer recorded.
 	require.NoError(t, server.DNSHistoryDisable())
 	_, err = server.DNSHistoryQuery("")
