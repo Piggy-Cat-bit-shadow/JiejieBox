@@ -4,9 +4,11 @@ package dialer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -103,4 +105,50 @@ func netnsDeviceDialer(netns string) *DefaultDialer {
 		dialer4: tfo.Dialer{Dialer: net.Dialer{Timeout: 3 * time.Second}, DisableTFO: true},
 		dialer6: tfo.Dialer{Dialer: net.Dialer{Timeout: 3 * time.Second}, DisableTFO: true},
 	}
+}
+
+// TestNetnsDeviceMirrorHostReachableNamespaceNot is the reverse reachability direction.
+//
+// The forward direction (above) proves a namespace can reach what the host cannot. This one proves
+// the failure in the other direction comes from the NAMESPACE's own routing, not from the host
+// policy: the host completes a real connection to the target, and the same target from a namespace
+// without a route fails with a socket routing error (ENETUNREACH/EHOSTUNREACH).
+//
+//	T09_HOST_TARGET   host-reachable address:port (e.g. 10.98.0.1:9001)
+//	T09_NETNS_MIRROR  a namespace with no route to it (e.g. t09rmirror)
+func TestNetnsDeviceMirrorHostReachableNamespaceNot(t *testing.T) {
+	hostTarget := os.Getenv("T09_HOST_TARGET")
+	mirrorNetns := os.Getenv("T09_NETNS_MIRROR")
+	if hostTarget == "" || mirrorNetns == "" {
+		t.Skip("set T09_HOST_TARGET and T09_NETNS_MIRROR (recipe in the test header)")
+	}
+	destination := M.ParseSocksaddr(hostTarget)
+	require.True(t, destination.IsValid(), "invalid target %q", hostTarget)
+
+	// 1. The host reaches the target and completes business: the target is genuinely live.
+	host := netnsDeviceDialer("")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	hostConn, err := host.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err, "the host must reach the mirror target")
+	t.Logf("host connected %s -> %s", hostConn.LocalAddr(), hostConn.RemoteAddr())
+	_, err = hostConn.Write([]byte("ping"))
+	require.NoError(t, err)
+	buffer := make([]byte, 4)
+	require.NoError(t, hostConn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err = io.ReadFull(hostConn, buffer)
+	require.NoError(t, err)
+	require.Equal(t, "pong", string(buffer))
+	require.NoError(t, hostConn.Close())
+
+	// 2. The same target from a namespace with no route must fail at the socket.
+	mirrored := netnsDeviceDialer(mirrorNetns)
+	_, err = mirrored.DialContext(ctx, N.NetworkTCP, destination)
+	require.Error(t, err, "the mirror namespace must not reach the host target")
+	var operationError *net.OpError
+	require.ErrorAs(t, err, &operationError)
+	require.True(t, errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH),
+		"the failure must be the namespace's routing, got %v", err)
+	require.NotErrorIs(t, err, errLocalIPv6EgressUnavailable,
+		"the refusal must come from the socket, not from the host family verdict")
 }
