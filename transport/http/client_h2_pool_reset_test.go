@@ -32,6 +32,11 @@ type blockingTLSDialer struct {
 	release    chan struct{}
 	once       sync.Once
 	releaseErr error
+	// calls counts EVERY dial, so a test can prove the new generation entered its own dial while
+	// the first one is still blocked. secondErr is what calls after the first return, which lets a
+	// test observe "the new dial started" without a real handshake.
+	calls     atomic.Int32
+	secondErr error
 }
 
 func newBlockingTLSDialer() *blockingTLSDialer {
@@ -39,6 +44,12 @@ func newBlockingTLSDialer() *blockingTLSDialer {
 }
 
 func (d *blockingTLSDialer) DialTLSContext(ctx context.Context, _ M.Socksaddr) (aTLS.Conn, error) {
+	if d.calls.Add(1) > 1 {
+		if d.secondErr != nil {
+			return nil, d.secondErr
+		}
+		return newStubTLSConn(), nil
+	}
 	d.once.Do(func() { close(d.entered) })
 	select {
 	case <-d.release:
@@ -169,8 +180,9 @@ func TestAuditH2DialCannotPublishAfterClose(t *testing.T) {
 	require.Empty(t, client.http2Conns)
 }
 
-func TestAuditNewNetworkH2DoesNotWaitForRetiredDial(t *testing.T) {
+func TestNewNetworkH2StartsItsOwnDialWhileTheOldOneIsRunning(t *testing.T) {
 	dialer := newBlockingTLSDialer()
+	dialer.secondErr = errors.New("new network dial entered")
 	client := &Client{tlsDialer: dialer, http2Transport: &http2.Transport{}}
 	done := make(chan error, 1)
 	go func() {
@@ -179,10 +191,48 @@ func TestAuditNewNetworkH2DoesNotWaitForRetiredDial(t *testing.T) {
 	}()
 	<-dialer.entered
 	client.ResetConnections()
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	// The new generation must not wait for the retired dial: it reaches its OWN dial while the
+	// old one is still blocked. The old test only asserted "not deadline exceeded", which an
+	// immediate superseded error also satisfies - that is what let the regression through.
 	_, _, err := client.acquireHTTP2(ctx)
+	require.ErrorContains(t, err, "new network dial entered",
+		"the new network must reach its own dial even while the old dial is stuck")
+	require.EqualValues(t, 2, dialer.calls.Load())
 	close(dialer.release)
-	require.ErrorIs(t, <-done, errHTTP2DialSuperseded)
-	require.NotErrorIs(t, err, context.DeadlineExceeded, "new network dial consumed its entire deadline at the old network gate")
+	require.ErrorIs(t, <-done, errHTTP2DialSuperseded,
+		"the retired dial must still be discarded")
+	require.Empty(t, client.http2Conns)
+}
+
+// TestH2PublishAfterCloseLeavesNoConnection is the interleaving the review held open: a publisher
+// that is already past its "is the client open?" check when Close runs. The check, the epoch
+// comparison and the append are one critical section now, so a publish that loses to Close must
+// refuse AND close its socket, and a publish that wins is removed by Close's clear. Either way the
+// pool is empty once Close has returned and no socket is left open.
+func TestH2PublishAfterCloseLeavesNoConnection(t *testing.T) {
+	clientConn, err := newHTTP2ClientConn(&http2.Transport{}, newStubTLSConn())
+	require.NoError(t, err)
+	conn := &stubNetConn{}
+	client := &Client{http2Transport: &http2.Transport{}}
+
+	// Hold the pool lock, then let Close start: it sets closed BEFORE waiting for the lock, which
+	// is exactly the moment the old code's check had already passed.
+	client.http2Access.Lock()
+	published := make(chan bool, 1)
+	go func() {
+		published <- client.publishHTTP2Conn(client.networkEpoch.Load(), clientConn, conn)
+	}()
+	closed := make(chan struct{})
+	go func() {
+		_ = client.Close()
+		close(closed)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	client.http2Access.Unlock()
+	require.False(t, <-published, "a publish that lost to Close must refuse")
+	<-closed
+	require.True(t, conn.closed.Load(), "the refused socket must be closed, not leaked")
+	require.Empty(t, client.http2Conns)
 }
