@@ -13,7 +13,12 @@
 | [`DEBUG-SELF-REVIEW-2026-11-10.md`](DEBUG-SELF-REVIEW-2026-11-10.md) | 定向自审：10 条反例/发现、负向对照、“绿了但没生效”排查与证伪记录 |
 | [`HANDOFF-ACCEPTANCE.md`](HANDOFF-ACCEPTANCE.md) | 三项外部条件验收交接：环境、责任窗口、下一条命令、通过标准、产物与 SHA 映射 |
 | [`EVIDENCE-KIT.md`](EVIDENCE-KIT.md) | 采样/判定工具的接口、源码 SHA256、重建命令与原始数据位置（工具不入库） |
+| [`RESOURCE-GOVERNANCE-WAITERS-2026-11-10.md`](RESOURCE-GOVERNANCE-WAITERS-2026-11-10.md) | 资源治理最终报告：等待者归属三 P1 与队列关闭全量清理的红绿、relay 夹具纠偏与单方向 A/B 口径、Box UDP detour（含窄 MTU 配置）e2e、未完成项与证据等级 |
 
 ## 一句话状态
 
 本窗口能做的验证已完成：配置恢复的真实入口回归（含损坏存储与重启重放）、两端预览语义修复与回归、Windows 安装包与运行时审计、Apple iOS/macOS 无签名构建与包标识核对、D 的采样协议与判定器自证。仍缺三件**外部条件**：提权+认证客户端的 Windows 产品进程 A/B/C、可证明独占的采样窗口、可安装的 Apple 设备/签名环境。详见交接文件。
+
+## 资源治理归档（2026-11-10，后并入本目录）
+
+资源治理窗口的最终报告以归档时集成分支 HEAD `a635ded940a` 为基线（本目录上方的 `edbfe8e0b2b` 记录的是配置恢复窗口归档时的 HEAD）。报告只保留结论、提交标识与证据等级；原始日志未入库。其未完成项与外部条件与配置恢复窗口相互独立，详见 [`RESOURCE-GOVERNANCE-WAITERS-2026-11-10.md`](RESOURCE-GOVERNANCE-WAITERS-2026-11-10.md)。
