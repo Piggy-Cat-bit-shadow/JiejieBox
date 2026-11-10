@@ -472,3 +472,53 @@ func TestAuditH3VerdictsDoNotCrossAuthorities(t *testing.T) {
 	transport.markH3Broken("a.example:443", a)
 	require.True(t, transport.h3Broken("a.example:443"), "B's unrelated success suppressed A's failure verdict")
 }
+
+// TestHotH3PostAfterTheServerProcessedItIsNotResent is the A2 boundary on a WARM connection.
+//
+// The POST reaches the server and the server reads it; then the exchange dies (here the caller
+// gives up, which has the same proof shape as a reset: the client cannot show the peer did not
+// process it). A second POST over HTTP/2 would be a duplicate side effect, so the request must
+// fail instead of being re-sent.
+func TestHotH3PostAfterTheServerProcessedItIsNotResent(t *testing.T) {
+	processed := make(chan struct{})
+	var abortCount atomic.Int32
+
+	h3Server := startRetrySafetyH3Server(t, func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/abort" {
+			abortCount.Add(1)
+			_, _ = io.ReadAll(request.Body)
+			close(processed)
+			<-request.Context().Done()
+			return
+		}
+		okHandler(writer, request)
+	})
+	h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+	transport := newRetrySafetyTransport(h2Transport, dialRetrySafetyH3(h3Server.address), 20*time.Millisecond)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	// Warm the pool with a POST: a non-idempotent cold request is sequential, so this establishes
+	// the HTTP/3 connection without racing anything.
+	prime, err := http.NewRequest(http.MethodPost, "https://"+h3Server.address+"/prime", strings.NewReader("prime"))
+	require.NoError(t, err)
+	primeResponse, err := transport.RoundTrip(prime)
+	require.NoError(t, err)
+	require.Equal(t, "HTTP/3.0", primeResponse.Proto)
+	require.NoError(t, primeResponse.Body.Close())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+h3Server.address+"/abort", strings.NewReader(`{"nonce":"abort"}`))
+	require.NoError(t, err)
+	go func() {
+		<-processed
+		cancel()
+	}()
+
+	response, err := transport.RoundTrip(request)
+	require.Error(t, err, "the exchange died after the peer processed it")
+	require.Nil(t, response)
+	require.Equal(t, int32(1), abortCount.Load(), "the server saw exactly one POST")
+	require.Zero(t, h2Server.executed(),
+		"a POST the peer may already have processed must not be re-sent over HTTP/2")
+}
