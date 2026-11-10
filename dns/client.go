@@ -1498,9 +1498,8 @@ func (c *Client) lookupToExchangeWithSource(ctx context.Context, transport adapt
 
 	disableCache := c.disableCache || options.DisableCache
 	if !disableCache {
-		cachedAddresses, err := c.questionCache(ctx, transport, &message, options, responseChecker)
+		cachedAddresses, generation, known, err := c.questionCache(ctx, transport, &message, options, responseChecker)
 		if !errors.Is(err, ErrNotCached) {
-			generation, known := c.currentGeneration()
 			return cachedAddresses, generation, known, err
 		}
 	}
@@ -1522,36 +1521,41 @@ func (c *Client) currentGeneration() (uint64, bool) {
 	return c.networkGeneration(), true
 }
 
-func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
+func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, uint64, bool, error) {
 	question := message.Question[0]
 	cacheKey := c.newCacheKey(transport, question, message, options)
+	// Read immediately after the key is fixed and BEFORE the entry is selected (C2). The checker
+	// below can advance the environment; reading the stamp after it relabelled the old answer with
+	// the new generation. Capturing here also keeps an advance during key construction (a transport
+	// hook) attributed to the environment the key was actually built on.
+	sourceGeneration, sourceKnown := c.currentGeneration()
 	response, _, isStale := c.loadResponse(cacheKey)
 	if response == nil {
 		// The name-wide NXDOMAIN lookup lives in beginExchange, which is the single
 		// cache entry point for both Exchange and ExchangeAsync. Doing it here as well
 		// would be a second site to keep in step for no additional coverage.
-		return nil, ErrNotCached
+		return nil, sourceGeneration, sourceKnown, ErrNotCached
 	}
 	// This is a second read path onto the same entries, so it owes the caller the same
 	// caller-appropriate answer the Exchange path produces. See cachedResponseForQuery.
 	response = cachedResponseForQuery(question, response, options)
 	if isStale {
 		if options.DisableOptimisticCache {
-			return nil, ErrNotCached
+			return nil, sourceGeneration, sourceKnown, ErrNotCached
 		}
 		c.backgroundRefreshDNS(transport, cacheKey, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
 	}
 	if responseChecker != nil && !responseChecker(response) {
 		logRejectedResponse(c.logger, ctx, response)
-		return nil, ErrResponseRejectedCached
+		return nil, sourceGeneration, sourceKnown, ErrResponseRejectedCached
 	}
 	if isStale {
 		logOptimisticResponse(c.logger, ctx, response)
 	}
 	if response.Rcode != dns.RcodeSuccess {
-		return nil, RcodeError(response.Rcode)
+		return nil, sourceGeneration, sourceKnown, RcodeError(response.Rcode)
 	}
-	return MessageToAddresses(response), nil
+	return MessageToAddresses(response), sourceGeneration, sourceKnown, nil
 }
 
 func (c *Client) loadResponse(key dnsCacheKey) (*dns.Msg, int, bool) {
