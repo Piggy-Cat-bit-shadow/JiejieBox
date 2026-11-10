@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -129,4 +130,65 @@ func TestPlainConnectPreSendTimeoutFallsBack(t *testing.T) {
 	_, err := client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.org:443"))
 	require.ErrorContains(t, err, "tcp fallback reached")
 	require.Zero(t, client.http3Broken.Load())
+}
+
+// TestOldNetworkPendingCannotArmTheAmbiguityWindow pins the epoch and ordering rules of the window.
+func TestOldNetworkPendingCannotArmTheAmbiguityWindow(t *testing.T) {
+	client := &Client{}
+	oldEpoch := client.networkEpoch.Load()
+	client.ResetConnections()
+	// A pending result that STARTED on the network being left cannot reopen the window.
+	client.noteHTTP3TunnelAmbiguous(oldEpoch, 7)
+	require.Zero(t, client.http3TunnelAmbiguousUntil.Load(),
+		"an old-network result must not arm the new network's window")
+
+	epoch := client.networkEpoch.Load()
+	client.noteHTTP3TunnelAmbiguous(epoch, 10)
+	require.True(t, client.http3TunnelAmbiguous(time.Now()), "a current pending result arms the window")
+	// A newer success disproves it, and an OLDER pending reported afterwards cannot re-arm it.
+	client.clearHTTP3TunnelAmbiguous(epoch, 12)
+	client.noteHTTP3TunnelAmbiguous(epoch, 11)
+	require.False(t, client.http3TunnelAmbiguous(time.Now()),
+		"a pending result older than the success must not re-open the window")
+	// A newer pending after the success is new evidence and arms it again.
+	client.noteHTTP3TunnelAmbiguous(epoch, 13)
+	require.True(t, client.http3TunnelAmbiguous(time.Now()))
+}
+
+// TestAmbiguityWindowExpiryRestoresH3 is the recovery half: the window is a delay, not a verdict.
+func TestAmbiguityWindowExpiryRestoresH3(t *testing.T) {
+	client := &Client{}
+	client.noteHTTP3TunnelAmbiguous(client.networkEpoch.Load(), 1)
+	require.True(t, client.http3TunnelAmbiguous(time.Now()))
+	client.http3TunnelAmbiguousUntil.Store(time.Now().Add(-time.Second).UnixNano())
+	require.False(t, client.http3TunnelAmbiguous(time.Now()),
+		"an expired window must let the next setup try HTTP/3 again")
+}
+
+// TestStrictModeNeverArmsTheAmbiguityWindow: strict mode does not fall back at all, so remembering
+// an ambiguity would only change which error the NEXT attempt reports.
+func TestStrictModeNeverArmsTheAmbiguityWindow(t *testing.T) {
+	h3 := &boundaryHTTP3Client{openTunnelErr: newHTTP3ResponsePendingError(context.DeadlineExceeded)}
+	tcp := &recordingDialer{err: E.New("tcp fallback reached")}
+	client := newStageBoundaryClient(h3, tcp)
+	client.disableVersionFallback = true
+
+	_, err := client.OpenTunnel(context.Background(), "connect-ip", "/")
+	require.Error(t, err)
+	require.Zero(t, tcp.calls)
+	require.Zero(t, client.http3TunnelAmbiguousUntil.Load(),
+		"strict mode must not record a fallback trigger")
+}
+
+// TestPlainConnectDoesNotArmTheTunnelWindow: the window belongs to CONNECT-IP setup, and the plain
+// CONNECT path has its own, stricter rule (no retry at all after the header may have been sent).
+func TestPlainConnectDoesNotArmTheTunnelWindow(t *testing.T) {
+	h3 := &boundaryHTTP3Client{dialErr: newHTTP3ResponsePendingError(context.DeadlineExceeded)}
+	tcp := &recordingDialer{err: E.New("tcp fallback reached")}
+	client := newStageBoundaryClient(h3, tcp)
+
+	_, err := client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.org:443"))
+	require.Error(t, err)
+	require.Zero(t, client.http3TunnelAmbiguousUntil.Load(),
+		"the ordinary CONNECT path must not touch the tunnel window")
 }
