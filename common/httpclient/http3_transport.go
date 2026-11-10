@@ -199,6 +199,12 @@ func (t *http3FallbackTransport) roundTripHTTP3(request *http.Request) (*http.Re
 		// still-running dial is left alone.
 		return t.h2FallbackRoundTrip(request)
 	case errors.Is(probe.err, http3.ErrNoCachedConn):
+		if probe.sent {
+			// The request reached a connection and only THEN did the cache entry disappear (the
+			// dependency's own retry can end on this sentinel). The original body may already be
+			// consumed, so this is not an initial miss: do not retry cold with that body.
+			return nil, E.Cause(probe.err, "the HTTP/3 cache entry disappeared after the request was dispatched")
+		}
 		return t.roundTripHTTP3Cold(request, authority, attempt)
 	default:
 		// A cached connection existed and failed this request.
@@ -332,10 +338,19 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 		attemptRequest = attemptRequest.WithContext(httptrace.WithClientTrace(probeCtx, &httptrace.ClientTrace{
 			GotConn: func(httptrace.GotConnInfo) { established.Store(true) },
 		}))
+		// The probe must not let the dependency perform its own retry: on a peer rejection it
+		// removes the cached client, rebuilds the request through GetBody, re-enters with the same
+		// OnlyCachedConn option and finally reports ErrNoCachedConn - the rejection is gone and the
+		// rebuilt body has been consumed. Hiding GetBody makes that retry stop with an error that
+		// still carries the rejection (*http3.Error in the chain), so the evidence reaches this
+		// layer. The caller's own GetBody stays on the original request for the cross-version retry.
+		attemptRequest.GetBody = nil
 		issue.response, issue.err = t.h3Transport.RoundTripOpt(attemptRequest, http3.RoundTripOpt{OnlyCachedConn: true})
-		// ErrNoCachedConn is decided before a connection or stream exists; every other outcome
-		// here had a cached connection to fail on.
-		issue.sent = issue.err == nil || !errors.Is(issue.err, http3.ErrNoCachedConn)
+		// GotConn is the proof that this request reached a connection. ErrNoCachedConn alone is
+		// NOT that proof: the dependency can end on the sentinel AFTER dispatching (its internal
+		// retry loses the cache entry), and treating that as an initial miss reused a body the
+		// transport had already consumed and closed.
+		issue.sent = established.Load() || issue.err == nil
 		if timedOut.Load() && !established.Load() {
 			// The probe was a WAIT on somebody else's dial, not an attempt of this request.
 			issue.cacheProbeTimedOut = true

@@ -1,3 +1,5 @@
+//go:build with_quic
+
 package httpclient
 
 import (
@@ -125,4 +127,161 @@ func TestRejectedOnceOnlyPostFailsWithoutAResend(t *testing.T) {
 	transport.verdictAccess.Unlock()
 	require.Zero(t, broken)
 	require.False(t, transport.h3Broken(requestAuthority(request)))
+}
+
+// A warm peer that serves the first request, consumes the second request's body and then rejects
+// it with H3_REQUEST_REJECTED, and serves anything after that. This is the sequence the review
+// reproduced: the rejection arrives AFTER the request was dispatched on a cached connection.
+func startWarmRejectingH3Peer(t *testing.T) (address string, streams *atomic.Int32) {
+	t.Helper()
+	tlsConfig := &stdTLS.Config{
+		Certificates: []stdTLS.Certificate{retrySafetyCertificate(t)},
+		NextProtos:   []string{http3.NextProtoH3},
+	}
+	packetConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	listener, err := quic.ListenEarly(packetConn, tlsConfig, &quic.Config{HandshakeIdleTimeout: 5 * time.Second})
+	require.NoError(t, err)
+	streams = &atomic.Int32{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		_ = listener.Close()
+		_ = packetConn.Close()
+	})
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept(ctx)
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer conn.CloseWithError(0, "")
+				control, streamErr := conn.OpenUniStream()
+				if streamErr != nil {
+					return
+				}
+				_, _ = control.Write([]byte{0x00, 0x04, 0x02, 0x08, 0x01})
+				for {
+					stream, acceptErr := conn.AcceptStream(ctx)
+					if acceptErr != nil {
+						return
+					}
+					index := streams.Add(1)
+					_, readErr := io.ReadAll(stream)
+					if readErr != nil {
+						stream.CancelWrite(quic.StreamErrorCode(0x10c))
+						continue
+					}
+					if index == 2 {
+						// The request was read, then explicitly not processed.
+						stream.CancelWrite(quic.StreamErrorCode(0x10b))
+						continue
+					}
+					// HEADERS frame carrying QPACK static-table :status = 200, then FIN.
+					_, _ = stream.Write([]byte{0x01, 0x03, 0x00, 0x00, 0xd9})
+					_ = stream.Close()
+				}
+			}()
+		}
+	}()
+	return packetConn.LocalAddr().String(), streams
+}
+
+type warmTrackedBody struct {
+	reader          io.Reader
+	closes          atomic.Int32
+	readsAfterClose atomic.Int32
+}
+
+func (b *warmTrackedBody) Read(p []byte) (int, error) {
+	if b.closes.Load() > 0 {
+		b.readsAfterClose.Add(1)
+		return 0, io.ErrClosedPipe
+	}
+	return b.reader.Read(p)
+}
+
+func (b *warmTrackedBody) Close() error { b.closes.Add(1); return nil }
+
+// TestWarmRejectedReplayablePostFallsBackWithAFreshBody: the warm H3 stream consumed and closed the
+// original body; the rejection must reach this layer (so the fallback is allowed) and the fallback
+// must use a rebuilt body, never the closed original.
+func TestWarmRejectedReplayablePostFallsBackWithAFreshBody(t *testing.T) {
+	address, streams := startWarmRejectingH3Peer(t)
+	h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+	transport := newRetrySafetyTransport(h2Transport, dialRetrySafetyH3(address), time.Hour)
+	t.Cleanup(func() { _ = transport.h3Transport.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	warm, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+address+"/warm", nil)
+	require.NoError(t, err)
+	warmResponse, err := transport.RoundTrip(warm)
+	require.NoError(t, err)
+	require.Equal(t, "HTTP/3.0", warmResponse.Proto)
+	require.NoError(t, warmResponse.Body.Close())
+	require.EqualValues(t, 1, streams.Load())
+
+	original := &warmTrackedBody{reader: strings.NewReader("payload")}
+	var copies []*warmTrackedBody
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+address+"/reject", original)
+	require.NoError(t, err)
+	request.GetBody = func() (io.ReadCloser, error) {
+		copy := &warmTrackedBody{reader: strings.NewReader("payload")}
+		copies = append(copies, copy)
+		return copy, nil
+	}
+	response, err := transport.RoundTrip(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, "HTTP/2.0", response.Proto,
+		"an explicitly unprocessed request may be retried on another version")
+	require.Equal(t, 1, h2Server.executed())
+	require.Equal(t, []string{"payload"}, h2Server.receivedBodies())
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(body))
+
+	require.EqualValues(t, 2, streams.Load(),
+		"the warm GET and one rejected POST; the repository must not re-send on H3")
+	require.Equal(t, int32(1), original.closes.Load(), "the original body is closed exactly once")
+	require.Zero(t, original.readsAfterClose.Load(),
+		"the original body must never be read after the warm attempt closed it")
+	require.Len(t, copies, 1, "exactly one rebuilt body is used for the fallback")
+	require.Equal(t, int32(1), copies[0].closes.Load(), "the rebuilt body is closed by the fallback")
+}
+
+// TestWarmRejectedOnceOnlyPostFailsWithoutReuse: the same warm rejection with a body that cannot be
+// rebuilt. Nothing may be re-sent and the original must not be read after its single close.
+func TestWarmRejectedOnceOnlyPostFailsWithoutReuse(t *testing.T) {
+	address, streams := startWarmRejectingH3Peer(t)
+	h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+	transport := newRetrySafetyTransport(h2Transport, dialRetrySafetyH3(address), time.Hour)
+	t.Cleanup(func() { _ = transport.h3Transport.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	warm, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+address+"/warm", nil)
+	require.NoError(t, err)
+	warmResponse, err := transport.RoundTrip(warm)
+	require.NoError(t, err)
+	require.NoError(t, warmResponse.Body.Close())
+
+	original := &warmTrackedBody{reader: strings.NewReader("payload")}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+address+"/reject", original)
+	require.NoError(t, err)
+	response, err := transport.RoundTrip(request)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	require.Error(t, err)
+	require.ErrorIs(t, err, errH3RequestRejected)
+	require.Zero(t, h2Server.executed(), "a body that cannot be rebuilt must not be re-sent")
+	require.EqualValues(t, 2, streams.Load())
+	require.Equal(t, int32(1), original.closes.Load())
+	require.Zero(t, original.readsAfterClose.Load())
+
+	require.False(t, transport.h3Broken(requestAuthority(request)),
+		"an explicit rejection must not arm the H3 verdict")
 }
