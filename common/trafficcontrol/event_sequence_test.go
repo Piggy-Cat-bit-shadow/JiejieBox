@@ -25,7 +25,7 @@ func TestEveryEmissionAdvancesTheSequence(t *testing.T) {
 	require.NotNil(t, subscription)
 
 	for index := 0; index < 4; index++ {
-		subscriber.Emit(ConnectionEvent{Sequence: manager.nextSequence()})
+		manager.publish(ConnectionEvent{})
 	}
 	var observed []uint64
 	for index := 0; index < 4; index++ {

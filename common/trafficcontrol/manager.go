@@ -53,11 +53,26 @@ type Manager struct {
 	eventSubscriber *observable.Subscriber[ConnectionEvent]
 	eventObserver   *observable.Observer[ConnectionEvent]
 	eventSequence   atomic.Uint64
+	// publishAccess makes "take the next number AND enqueue it" one step.
+	//
+	// The stamp used to be taken on the caller goroutine and the enqueue attempted right after, so
+	// two producers could take 23 and 24 and then race for the channel: a consumer that counts gaps
+	// saw 24 first and reported a permanent loss of 23, which a later 23 cannot retract. MEASURED
+	// before the fix: 128 concurrent joins produced 22 -> 24 in the first round. The critical
+	// section stays short - Emit is a non-blocking send - so a slow consumer still cannot couple
+	// back to the data path.
+	publishAccess sync.Mutex
 }
 
-// nextSequence stamps one event with the manager's emission order.
-func (m *Manager) nextSequence() uint64 {
-	return m.eventSequence.Add(1)
+// publish stamps one event and enqueues it under the same lock, so number order IS delivery order.
+//
+// A full queue still drops (that is Subscriber.Emit's contract), but the number is already spent,
+// so the next delivered event names the gap.
+func (m *Manager) publish(event ConnectionEvent) {
+	m.publishAccess.Lock()
+	event.Sequence = m.eventSequence.Add(1)
+	m.eventSubscriber.Emit(event)
+	m.publishAccess.Unlock()
 }
 
 func NewManager() *Manager {
@@ -94,11 +109,10 @@ func (m *Manager) UnSubscribeEvents(subscription observable.Subscription[Connect
 func (m *Manager) join(tracker Tracker) {
 	metadata := tracker.Metadata()
 	m.connections.Store(metadata.ID, tracker)
-	m.eventSubscriber.Emit(ConnectionEvent{
+	m.publish(ConnectionEvent{
 		Type:     ConnectionEventNew,
 		ID:       metadata.ID,
 		Metadata: metadata,
-		Sequence: m.nextSequence(),
 	})
 }
 
@@ -127,12 +141,11 @@ func (m *Manager) leave(tracker Tracker) {
 	}
 	m.closedConnections.PushBack(metadataCopy)
 	m.closedConnectionsAccess.Unlock()
-	m.eventSubscriber.Emit(ConnectionEvent{
+	m.publish(ConnectionEvent{
 		Type:     ConnectionEventClosed,
 		ID:       metadata.ID,
 		Metadata: &metadataCopy,
 		ClosedAt: closedAt,
-		Sequence: m.nextSequence(),
 	})
 }
 
