@@ -741,11 +741,30 @@ func dnsRefusedResponse(message *mDNS.Msg) *mDNS.Msg {
 	}
 }
 
-func (r *Router) finalizeExchangeOptions(options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
-	if options.Strategy == C.DomainStrategyAsIS {
+// applyDefaultDomainStrategy fills the router's configured default into a query that expressed no
+// preference of its own.
+//
+// # Why a caller's forced family suppresses the fill
+//
+// LookupStrategy is how a caller - and the dual-stack probe - forces ONE family for a work item.
+// Writing the router's default into Strategy on top of that creates a disagreement between two
+// fields that describe the same decision, and the client resolves a disagreement between two strict
+// families as a forbidden item and issues nothing. A complete Lookup from service/resolved
+// returned `empty result` with zero queries whenever the default was the opposite family.
+//
+// The default is a DEFAULT: it may fill an empty Strategy, it may not overrule a decision the caller
+// already made. The rule's own strict strategy is unaffected - a rule writes Strategy during the
+// walk, after this fill, so a genuine disagreement with the caller's forced family is still reported
+// as a forbidden item and still stops the query before the cache and before the wire.
+func (r *Router) applyDefaultDomainStrategy(options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
+	if options.Strategy == C.DomainStrategyAsIS && options.LookupStrategy == C.DomainStrategyAsIS {
 		options.Strategy = r.defaultDomainStrategy
 	}
 	return options
+}
+
+func (r *Router) finalizeExchangeOptions(options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
+	return r.applyDefaultDomainStrategy(options)
 }
 
 func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, message *mDNS.Msg, state *dnsRuleWalkState, allowFakeIP bool) (exchangeWithRulesResult, *dnsWalkSuspension) {
@@ -2131,9 +2150,7 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 				" is a fakeip server: a fakeip server answers with a synthetic address that is only ",
 				"meaningful inside this process, so it cannot resolve a destination that will be dialled")
 		}
-		if options.Strategy == C.DomainStrategyAsIS {
-			options.Strategy = r.defaultDomainStrategy
-		}
+		options = r.applyDefaultDomainStrategy(options)
 		responseAddrs, err = r.client.Lookup(ctx, transport, domain, options, nil)
 	} else if !legacyDNSMode {
 		responseAddrs, err = r.lookupWithRules(ctx, rules, domain, options)
@@ -2183,9 +2200,7 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 				}
 			}
 			responseCheck := addressLimitResponseCheck(rule, metadata)
-			if dnsOptions.Strategy == C.DomainStrategyAsIS {
-				dnsOptions.Strategy = r.defaultDomainStrategy
-			}
+			dnsOptions = r.applyDefaultDomainStrategy(dnsOptions)
 			responseAddrs, err = r.client.Lookup(dnsCtx, transport, domain, dnsOptions, responseCheck)
 			if responseCheck == nil || err == nil {
 				break
