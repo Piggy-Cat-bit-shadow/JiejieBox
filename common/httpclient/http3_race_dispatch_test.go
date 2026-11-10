@@ -179,3 +179,55 @@ func TestRaceDispatchesBothLegsAndH2Wins(t *testing.T) {
 	transport.verdictAccess.Unlock()
 	require.Zero(t, broken, "a race-cancelled H3 leg must not arm the verdict")
 }
+
+// TestRaceSimultaneousCompletionsDeliverExactlyOneResponse: both legs are released together and
+// both servers answer immediately, so the winner is whichever result the race loop sees first.
+// Exactly one response may be delivered, the other leg's body must be released, and no cancellation
+// may be remembered as a transport verdict.
+func TestRaceSimultaneousCompletionsDeliverExactlyOneResponse(t *testing.T) {
+	h3Server := startRetrySafetyH3Server(t, okHandler)
+	h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+	_ = h2Server
+	dial, h3Entered, releaseH3 := barrierH3Dial(h3Server.address)
+	h2Barrier := newBarrierTransport(h2Transport)
+	transport := newRetrySafetyTransport(h2Barrier, dial, 0)
+	t.Cleanup(func() { _ = transport.h3Transport.Close() })
+
+	h3Body := &auditTrackedBody{Reader: strings.NewReader("payload")}
+	h2Body := &auditTrackedBody{Reader: strings.NewReader("payload")}
+	request := raceRequestForTest(t, h3Server.address, h3Body, h2Body)
+
+	type result struct {
+		response *http.Response
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		response, err := transport.RoundTrip(request)
+		done <- result{response: response, err: err}
+	}()
+	waitFor(t, h3Entered, "the H3 leg never reached its transport")
+	waitFor(t, h2Barrier.entered, "the H2 leg never reached its transport")
+	close(releaseH3)
+	close(h2Barrier.release)
+
+	var raceResult result
+	select {
+	case raceResult = <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the race did not return")
+	}
+	require.NoError(t, raceResult.err)
+	require.Contains(t, []string{"HTTP/2.0", "HTTP/3.0"}, raceResult.response.Proto)
+	body, err := io.ReadAll(raceResult.response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(body))
+	_ = raceResult.response.Body.Close()
+
+	require.Eventually(t, func() bool { return h3Body.closes.Load() == 1 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return h2Body.closes.Load() == 1 }, time.Second, time.Millisecond)
+	transport.verdictAccess.Lock()
+	broken := len(transport.broken)
+	transport.verdictAccess.Unlock()
+	require.Zero(t, broken)
+}
