@@ -117,3 +117,60 @@
 2. `backup/02-ecfffe7d0` 按并行工作线处理，不得整支 merge，也不得当旧备份忽略。
 3. cronet-go 的 29 个原生模块保持 controlled；本地 `feat/per-dial-quic` 携带的重建归档来源待查证。
 4. 平台构建在本机 **BLOCKED**（无 Xcode/JDK 17/Node），第 05/06 阶段不得标 PASS。
+
+---
+
+## Stage 02 — 底层依赖仓库收敛
+
+- 执行日期：2026-11-11（Asia/Shanghai）
+- 阶段报告：`02_DEPENDENCY_INTEGRATION.md`；机器可读清单：`release/dependency-final-shas.json`
+- 阶段目标：把 sing-tun、quic-go、wireguard-go/AWG、cronet-go 与其余依赖收敛到可验证 SHA；**不改主仓库 pin**（留第 06 阶段）。
+
+### 基线与结果
+
+| 仓库 | 施工前 pin | 最终 SHA | 动作 |
+|---|---|---|---|
+| sing-tun | `9c3dcb2b1edf` | `57e9d17fa852eafbc6849ae508c8b772e9fa1a66` | fast-forward（13 提交） |
+| quic-go | `bca854425f4d` | `ca9992bc795e8699db2b22ad6459216e6f13649d` | ff 到 path-length-fix + cherry-pick `0b8709eb` |
+| wireguard-go | `a765d957fd81` | `a765d957fd81` | 不集成（awg-base/awg-graft 已被 pin 覆盖） |
+| sing / sing-quic / uTLS / Android | 各自 pin | 不变（= 远端 tip） | 仅复核 |
+| cronet-go | root `362e63b14ce2` / all `7ce9c49b464a` / 29 native `362e63b14ce2` | 不变 | controlled，未动 |
+| satelite-one | 独立产品仓库 | `c9a07350e4c7` | 只登记 |
+
+主仓库 `go.mod`、`test/go.mod`、gitlink、`source-lock.json` **未改**。
+
+### 关键判断
+
+- sing-tun 13 个提交是同一条 tun-memory/UDP-NAT 修复线（close 清理 waiter、跨队列字节预算唤醒、detach 归还 quota、caller queue 记账、单帧超预算错误、UDP NAT 出队归还），5 生产文件 +379/−48、13 个测试文件；没有夹带实验，因此整体接受。
+- quic-go 两条分支共享 2 个提交、各 1 个独有提交且文件不重叠：ff 带入共享部分，cherry-pick task08 的 http3 引用计数修复；融合后内核 `transport/v2rayquic` 的迁移/关闭 race 套件（26 测试）全通过。
+- wireguard-go：内核确实使用 `Device.InputPackets` / `Peer.WritePackets`，但 pin `awg3-inject` 已包含 awg-base 的两个独有提交（PSK 懒建 peer、阻塞注入）与 awg-graft 的全部 `obf_*.go`，且更完整；两分支标记 superseded，待第 06 阶段归档。
+- cronet-go：root/all 顺序与 29 个 native 模块一致；本地 `feat/per-dial-quic` 的原生归档与 `release/cronet-provenance.txt` 字节不同，controlled 策略下不得采纳。
+
+### 验证
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| sing-tun 定向 tun-memory/UDP-NAT 测试 | 0 | 49 PASS / 0 FAIL |
+| sing-tun `./...` minus admin-only | 0 | 4 包 ok |
+| sing-tun `-race ./...` minus admin-only | 0 | 4 包 ok |
+| sing-tun `./...`（含 admin-only） | 1 | `TestGoKernel*`（Access denied）与 winipcfg 系统变更测试 —— BLOCKED_BY_ENVIRONMENT |
+| quic-go `go test -vet=off ./...` | 0 | root/http3/handshake/utils/tree 全 ok |
+| 内核全量构建（Windows tag profile，新依赖） | 0 | 35.5 s，整棵树通过 |
+| 内核 `protocol/tun` | 0 | 含 `TestPinnedSourceIsTheReplacedFork` |
+| 内核 `common/httpclient` | 0 | ok |
+| 内核 `transport/v2rayquic -race` | 0 | 26 测试全过 |
+| 内核 AWG 相关测试 | 0 | 8 PASS |
+
+### 提交
+
+- 主仓库：本阶段报告 + `release/dependency-final-shas.json` 的文档提交（见 `git log --oneline`）。
+- sing-tun：分支 = `dev` tip，无额外提交（最终 pin 直接使用已推送的 `57e9d17fa852`）。
+- quic-go：`ca9992bc795e`（本地，**未推送**）。
+- 其他依赖：无提交。
+
+### 遗留 / 下一阶段注意
+
+1. **第 06 阶段冻结前必须推送 quic-go `integration/0.1.45`（`ca9992bc795e`）**，否则 `v0.61.1-0.20261110165647-ca9992bc795e` 无法解析；sing-tun 已在 `origin/dev`，无需推送。
+2. 第 03/04 阶段使用新依赖时：sing-tun 用真实 pseudo-version；quic-go 在推送前只能用本地路径 replace（官方 provenance 测试只检查 sing-tun，不受影响）。
+3. `awg-base`/`awg-graft`、cronet 的 `feat/per-dial-quic` 保持原样，交给第 06 阶段按证明流程处理。
+4. 平台构建（Apple/Android/Desktop/Dashboard）仍 BLOCKED（缺 Xcode/JDK 17/Node），本阶段未执行、未标 PASS。
