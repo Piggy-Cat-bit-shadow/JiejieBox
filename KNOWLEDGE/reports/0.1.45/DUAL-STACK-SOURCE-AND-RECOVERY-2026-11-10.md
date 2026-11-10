@@ -59,12 +59,12 @@ TestAuditRecoveryReconfirmationAfterActualFlip attempts=[2001:db8::2c 2001:db8::
 ```text
 go build ./...                                                     exit 0
 go test -count=1 ./dns ./common/dialer ./adapter ./protocol/direct ./protocol/group ./daemon
-  ok 8.6s / 22.0s / 2.1s / 0.1s / 9.0s / 26.2s                     exit 0（合并后同候选再跑，全套通过）
+  ok 10.0s / 23.0s / 2.3s / 0.3s / 17.6s / 45.1s                   exit 0（最终 SHA 复跑）
 CGO_ENABLED=1 CC=gcc go test -race -count=1 ./common/dialer ./dns ./adapter
-  ok 23.3s / 9.7s / 6.3s                                           exit 0
-go test -count=1 ./route/...                                       ok 460.7s + 3.2s，另两次 492.3s / 456.2s
+  ok 23.4s / 9.7s / 7.0s                                           exit 0（最终 SHA）
+go test -count=1 ./route/...                                       ok 457.2s + 4.1s（最终 SHA）
 GOOS=windows GOARCH=amd64 go build -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ./cmd/sing-box
-  exit 0，54s；sing-box version unknown / go1.25.5 windows/amd64
+  exit 0，35s（最终 SHA）；sing-box version unknown / go1.25.5 windows/amd64
 go version -m <binary>：四个替换 pin 与 release/source-lock.json 一致
 ```
 
