@@ -281,7 +281,22 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 #
 # Apple client runs 42378674288 (iOS) and 42380110079 (macOS) selected e3283104 explicitly
 # and compiled the unsigned apps. The release candidate must still pass its own pinned-source gate.
-VERIFIED_APPLE_SHA="e3283104c984d60cdf2a0250b47b7fc446e71ba6"
+#
+# Moved to 7fce7117 on 2026-11-10: the client-consumption line's configuration-report work. The
+# range e3283104..7fce7117 is Swift client code only (the reporting entry, the download-failure
+# report, the preview verdict, and the compile fixes the iOS job found in three rounds); it changes
+# no Go surface in experimental/libbox. Layer 4 was re-run against the exact new tree rather than
+# inherited:
+#
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <sing-box-for-apple @ 7fce7117>
+#   {"scanned": 433, "violations": [], "interface_methods": 3, "error": ""}
+#
+# The compile half: Apple client run 42740100569 resolved explicit input 7fce7117, its libbox job
+# ran this same layer-4 scan against that checkout and succeeded, and the iOS app target compiled
+# (unsigned IPA step success). macOS was skipped in that dispatch (build_macos=false); the macOS
+# product is built separately and its result is recorded with the candidate, not assumed here.
+VERIFIED_APPLE_SHA="7fce7117b33a38ef4c73c81db67c49f0be7a7dad"
 
 client_root=""
 skip_client=0
