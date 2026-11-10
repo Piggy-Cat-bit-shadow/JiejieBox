@@ -39,7 +39,7 @@
 | `next/resources` | `b00dfe1f0e08`，`closeout/resources` 的祖先，未单独处理 |
 | `backup/02-ecfffe7d0` | `ecfffe7d0691`，只审查不集成 |
 | `pending/device-axis-reload-window-tests` | `0477e327e5daa6a6fc757820154b13a628f1ed74`，选择性移植 runtimecoord |
-| 集成结果 | `integration/0.1.45-final`，42 个提交高于依赖基线，45 个文件 +7980/−111 |
+| 集成结果 | `integration/0.1.45-final`，内容提交 42 个（34 network + 1 TrustTunnel hunk + 6 resources + 1 pending；依赖基线与文档提交另计），45 个文件 +7980/−111 |
 
 ---
 
@@ -125,7 +125,7 @@
 
 ## 6. 文件变更与行为变化
 
-- 45 个文件（32 新增、13 修改），+7980/−111；相对来源基线共 42 个提交（含 1 个依赖基线与文档提交）。
+- 45 个文件（32 新增、13 修改），+7980/−111；内容提交 42 个（34 network + 1 TrustTunnel hunk + 6 resources + 1 pending），依赖基线与文档提交另计。
 - 13 个生产文件：`adapter/connection_admission.go`（新）、`common/dialer/default.go`、`dns/transport_dialer.go`、`protocol/{vless,vmess,trojan}/outbound.go`、`route/{conn,conn_reclaim,network,network_environment}.go`、`transport/v2rayquic/client.go`、`transport/v2rayxhttp/client.go`、`transport/v2rayquic/run_dualpath_migration.sh`。
 - 行为变化（用户可见）：
   - 网络切换不再把所有流当停机处理：旧 generation 按 reason 回收，空闲超过 20s 的连接才被 drain 清扫；正在传输的流保留，直到它自己结束或转为空闲。

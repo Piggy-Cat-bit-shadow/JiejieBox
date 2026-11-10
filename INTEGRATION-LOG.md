@@ -197,7 +197,7 @@
 | `next/network` | `b9bc2bc25981e4f4606eaa5298ded56fde8d312d`（36 独有） |
 | `closeout/resources` | `aafc4c11f022a32de82e065ad03450183b716d97`（21 独有） |
 | `next/resources` | `b00dfe1f0e08`，closeout 的祖先 |
-| 结果 | 42 个提交高于依赖基线，45 文件 +7980/−111 |
+| 结果 | 内容提交 42 个（依赖基线与文档提交另计），45 文件 +7980/−111 |
 
 ### 本阶段动作
 
@@ -235,7 +235,7 @@
 
 ### 提交
 
-- 主仓库：本阶段 42 个提交（1 个依赖基线 + 34 个 network cherry-pick + 1 个 TrustTunnel hunk + 6 个资源测试 + 1 个 pending runtimecoord + 文档提交），见 `git log --oneline`。
+- 主仓库：本阶段内容提交 42 个（34 个 network cherry-pick + 1 个 TrustTunnel hunk + 6 个资源测试 + 1 个 pending runtimecoord），另有 1 个依赖基线提交与文档提交，见 `git log --oneline`。
 - 依赖仓库：无新增提交（阶段 02 已完成）。
 
 ### 遗留 / 下一阶段注意
