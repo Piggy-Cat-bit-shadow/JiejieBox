@@ -12,6 +12,7 @@
 - `quic-go`
 - `cronet-go`
 - `utls`
+- `wireguard-go`（AWG 线 `awg3-inject`，经 replace 消费；动态审计于 2026-11-11 确认）
 
 ## 3. Git 子模块 / 客户端仓库（3）
 

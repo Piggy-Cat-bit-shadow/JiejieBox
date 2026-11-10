@@ -80,6 +80,23 @@ satelite-one 不是主仓 gitlink、也没有上游 fork 关系；不纳入“�
 
 依赖侧的“命中”同样只代表 commit subject 存在；patch-id 全部不同，stages 02–04 必须逐项比对内容和测试，不能按 subject 判等价。
 
+### 3.1 试合并规模（实际执行，未提交）
+
+用临时 worktree / `git merge-tree` 做无提交试合并，只统计真实冲突文件数，作为阶段 02–05 的工作量上界：
+
+| 仓库 | 试合并 | 冲突文件 |
+|---|---|---|
+| sing | `origin/dev` + `upstream/dev` | **13** |
+| sing-tun | `origin/dev` + `upstream/dev` | **31** |
+| sing-quic | `origin/main` + `upstream/main` | **0**（可直接 merge） |
+| quic-go | `origin/sagernet` + `upstream/dev` | **0**（可直接 merge） |
+| utls | `origin/main` + `upstream/v1.9.0-mod-meta` | **1** |
+| android | `origin/main` + `upstream/dev` | **0** |
+| dashboard | `origin/main` + `upstream/main`（`--allow-unrelated-histories`） | **13** |
+| 主内核 | `integration/0.1.45-final` + `upstream/testing`（merge-tree） | **108**（protocol 28、transport 24、common 12、route 7、dns 5） |
+
+dashboard 的树差异只有 22 个文件（+20/−2098），并不是“95 个提交无法融合”：无共同祖先只是历史被重写；实际代码非常接近。阶段 04 建议用 **`git merge --allow-unrelated-histories`** 融合这 13 个冲突（保留 JieJiebox 品牌与自定义页面），得到真实双祖先的零 Behind，而不是 `replace`/graft 伪造祖先。试合并证据：`audit-evidence/upstream/trial-merge-*.txt`。
+
 ## 4. 队列分类统计（本阶段）
 
 | 分类 | 数量 | 说明 |

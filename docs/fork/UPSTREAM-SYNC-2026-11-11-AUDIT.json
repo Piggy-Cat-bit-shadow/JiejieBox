@@ -341,5 +341,23 @@
       "behind_by": 64
     },
     "dashboard": "no common ancestor"
-  }
+  },
+  "trial_merges": {
+    "sing": 13,
+    "sing-tun": 31,
+    "sing-quic": 0,
+    "quic-go": 0,
+    "utls": 1,
+    "android": 0,
+    "dashboard_unrelated": 13,
+    "main_merge_tree": 108,
+    "main_conflict_areas": {
+      "protocol": 28,
+      "transport": 24,
+      "common": 12,
+      "route": 7,
+      "dns": 5
+    }
+  },
+  "dashboard_strategy": "merge --allow-unrelated-histories; 22-file tree delta, 13 conflicts, preserve JieJiebox branding; no replace/graft"
 }
