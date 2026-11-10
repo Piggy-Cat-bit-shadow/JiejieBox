@@ -168,9 +168,16 @@
 - quic-go：`ca9992bc795e`（本地，**未推送**）。
 - 其他依赖：无提交。
 
+### 收尾补做（同日追加，详见报告 §8）
+
+- quic-go `integration/0.1.45`（`ca9992bc795e`）已推送到 `Piggy-Cat-bit-shadow/quic-go`，推送后核对远端 SHA 一致；canonical pseudo-version `v0.61.1-0.20261110165647-ca9992bc795e` 已从 GitHub 解析成功。
+- 清除了早先由本地 partial clone 造成的 `GOMODCACHE/cache/vcs/058385…` 损坏缓存；重新从 GitHub 克隆后解析正常（该目录只是缓存）。
+- 用两个**真实 pseudo-version** 重跑了主仓库验证：全量 Windows-profile 构建 exit 0、`protocol/tun` exit 0、`common/httpclient` exit 0、`transport/v2rayquic -race` 26 测试 exit 0。
+- 证据更新在 `_int0145/audit-evidence/stage02/06a..06d`。
+
 ### 遗留 / 下一阶段注意
 
-1. **第 06 阶段冻结前必须推送 quic-go `integration/0.1.45`（`ca9992bc795e`）**，否则 `v0.61.1-0.20261110165647-ca9992bc795e` 无法解析；sing-tun 已在 `origin/dev`，无需推送。
-2. 第 03/04 阶段使用新依赖时：sing-tun 用真实 pseudo-version；quic-go 在推送前只能用本地路径 replace（官方 provenance 测试只检查 sing-tun，不受影响）。
+1. quic-go 的推送已完成，第 06 阶段冻结 pin 时无需再推送；sing-tun 的 `57e9d17fa852` 本来就在 `origin/dev` 上。
+2. 第 03/04 阶段可以直接用两个真实 pseudo-version（`v0.0.0-20261110141903-57e9d17fa852`、`v0.61.1-0.20261110165647-ca9992bc795e`），预览构建不再需要本地 replace。
 3. `awg-base`/`awg-graft`、cronet 的 `feat/per-dial-quic` 保持原样，交给第 06 阶段按证明流程处理。
 4. 平台构建（Apple/Android/Desktop/Dashboard）仍 BLOCKED（缺 Xcode/JDK 17/Node），本阶段未执行、未标 PASS。

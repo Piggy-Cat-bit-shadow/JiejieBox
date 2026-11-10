@@ -8,7 +8,7 @@
   2. **quic-go 融合完成**：`bca85442` → 2 个共享提交 → `0e7c69da`（connID 互斥）→ cherry-pick `0b8709eb`（http3 引用计数），融合 tip `ca9992bc795e`。
   3. **wireguard-go 不需要新提交**：pin `a765d95`（awg3-inject）已经包含 `awg-base`/`awg-graft` 的全部内容（阻塞式注入、懒建 peer 的 PSK、全部 `obf_*.go`），两者标记为 superseded，待第 06 阶段归档。
   4. **sing / sing-quic / uTLS / Android 未变**，pin 仍等于远端 tip；cronet-go 保持 controlled，29 个原生模块不动。
-  5. 唯一未决的工程动作：quic-go 的融合提交目前只在本地，第 06 阶段冻结 pin 前必须推送（否则 `go mod download` 无法解析该 SHA）。
+  5. quic-go 的融合提交已推送到 `Piggy-Cat-bit-shadow/quic-go` 的 `integration/0.1.45`（`ca9992bc795e`，推送后核对远端 SHA 一致），canonical pseudo-version `v0.61.1-0.20261110165647-ca9992bc795e` 已从 GitHub 解析并跑通内核构建与 race 回归。
 
 ---
 
@@ -185,7 +185,7 @@ bca85442 fix(path): a failing send on a path being left must not end the connect
 | `go test -race -tags with_quic ./transport/v2rayquic` | 0 | 26 个测试全部通过（含 `TestCloseDuringAMigrationReleasesTheCandidateAndPublishesNothing`） |
 | `go test ... ./option ./transport/wireguard -run 'AWG\|Amnezia\|Reserved\|Framing\|Owner'` | 0 | 8 PASS / 0 FAIL |
 
-说明：临时 worktree 里 sing-tun 用真实 pseudo-version `v0.0.0-20261110141903-57e9d17fa852`（可解析、已验证），quic-go 用本地路径 replace（因为融合提交尚未推送）。这不是最终 pin，只是接口验证手段。
+说明：临时 worktree 里两个依赖都使用**真实 pseudo-version**（sing-tun `v0.0.0-20261110141903-57e9d17fa852`、quic-go `v0.61.1-0.20261110165647-ca9992bc795e`），从 GitHub 解析后构建与测试；主仓库 `go.mod` 仍未提交任何改动。
 
 ### 7.4 未执行
 
@@ -197,9 +197,9 @@ bca85442 fix(path): a failing send on a path being left must not end the connect
 
 ## 8. 风险、遗留与接口约束
 
-1. **quic-go 融合提交只在本地**：`ca9992bc795e` 未推送。第 06 阶段冻结 pin 前必须推送 `integration/0.1.45`（或该提交），否则 `go mod download` 无法解析 `v0.61.1-0.20261110165647-ca9992bc795e`。预期 pseudo-version 里的时间戳是提交的 UTC 提交时间 `2026-11-10T16:56:47Z`。
+1. **quic-go 融合提交已推送（收尾补做）**：`integration/0.1.45` = `ca9992bc795e`，远端 SHA 已核对；canonical pseudo-version `v0.61.1-0.20261110165647-ca9992bc795e` 已在干净解析路径上验证（内核全量构建 exit 0、`transport/v2rayquic -race` 26 测试通过）。第 06 阶段可直接使用该版本，无需再推送。
 2. **sing-tun 的最终 SHA 已推送**（在 `origin/dev`），不需要额外动作。
-3. **本机 VCS 缓存是 partial clone**：尝试用 canonical `v0.61.1-...` 从本地 `insteadOf` 解析时，git 报 `lazy fetching disabled ... promisor remote`。这是本机缓存/克隆形态问题，不是提交或版本字符串问题；第 06 阶段在推送后用真实远端解析即可。
+3. **本机 VCS 缓存曾损坏**：早先用本地 partial clone 做 `insteadOf` 解析，在 `GOMODCACHE/cache/vcs/058385…` 留下 promisor 型缓存，导致 canonical 版本首次解析报 `lazy fetching disabled`。收尾时删除了该缓存条目，solver 重新从 GitHub 克隆后解析成功；该目录只是缓存，删除无副作用。
 4. **wireguard-go 的 `awg-base`/`awg-graft` 仍在**（本地与远端）。第 06 阶段可按"已被 pin 覆盖"的证据归档后删除；删除前仍要按第 06 阶段的证明流程打 archive tag。
 5. **cronet-go 的本地 `feat/per-dial-quic`**：含 2 个未推送提交与一套与 provenance 不同的原生归档（`darwin_arm64/libcronet.a` 48 110 296 B / sha256 `f680ff96…`，provenance 记录 48 112 336 B / `dae99ed2…`）。在 controlled 策略下**不得**进入任何 pin；如第 05 阶段要它，需要先给出 Chromium 工具链重建与验证证据。
 6. **主仓库 pin 仍是 0.1.44 的一套**：本阶段不更新，第 06 阶段统一；在那之前主仓库构建/测试仍使用旧 pin（与第 01 阶段一致）。
@@ -217,6 +217,6 @@ bca85442 fix(path): a failing send on a path being left must not end the connect
   - sing / sing-quic / uTLS / Android / Cronet pin 复核：✅（全部等于远端 tip 或维持 controlled）
   - 依赖集成分支提交：sing-tun（ff，无新提交，理由见 §6）、quic-go（`ca9992bc`）；其余无需提交
   - 测试结果与 SHA 清单：✅ 本文件 + `release/dependency-final-shas.json`
-- 下一阶段（03）可直接使用：sing-tun `57e9d17fa852`、quic-go `ca9992bc795e`（本地 replace 或推送后使用）。
+- 下一阶段（03）可直接使用：sing-tun `v0.0.0-20261110141903-57e9d17fa852`、quic-go `v0.61.1-0.20261110165647-ca9992bc795e`（两者均可从远端解析，无需本地 replace）。
 
 阶段 02 内容提交见 `INTEGRATION-LOG.md` 的 Stage 02 记录与 `git log --oneline`。

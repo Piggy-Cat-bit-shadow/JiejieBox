@@ -10,7 +10,23 @@
     "pins_changed_this_stage": false,
     "note": "go.mod / test/go.mod / gitlinks / source-lock are untouched in stage 02; this file is the only input for the stage-06 freeze."
   },
-  "dependencies": [
+  "closing_pass": {
+    "performed_at": "2026-11-11T01:13:54+08:00",
+    "pushed": [
+      "Piggy-Cat-bit-shadow/quic-go refs/heads/integration/0.1.45 = ca9992bc795e8699db2b22ad6459216e6f13649d"
+    ],
+    "verified": [
+      "remote SHA equals local SHA after push",
+      "canonical pseudo-version v0.61.1-0.20261110165647-ca9992bc795e resolved from GitHub (fresh VCS cache)",
+      "kernel full Windows-profile build against both real pins: exit 0",
+      "kernel protocol/tun and common/httpclient tests: exit 0",
+      "kernel transport/v2rayquic -race suite: 26 tests, exit 0"
+    ],
+    "not_pushed": [
+      "sing-tun integration/0.1.45 (its final SHA 57e9d17fa852 is already reachable from origin/dev; a branch ref would add no resolvability)",
+      "main repo integration/0.1.45-final (stage 06 owns that push)"
+    ]
+  },  "dependencies": [
     {
       "repo": "Piggy-Cat-bit-shadow/sing",
       "module": "github.com/sagernet/sing",
@@ -76,14 +92,16 @@
       },
       "final_sha": "ca9992bc795e8699db2b22ad6459216e6f13649d",
       "final_pseudo_version": "v0.61.1-0.20261110165647-ca9992bc795e",
-      "final_pseudo_version_status": "expected; must be generated/verified after the commit is pushed",
+      "final_pseudo_version_status": "verified from GitHub after push (2026-11-11T01:13:54+08:00)",
       "action": "fast-forward (path-length-fix) + cherry-pick (0b8709eb)",
       "integration_branch": "integration/0.1.45",
       "new_commits_above_pin": 4,
       "diff_above_pin": "6 files +167/-21",
       "verification": "go test -vet=off ./... exit 0; http3 usecount test PASS; kernel full build exit 0; kernel transport/v2rayquic -race suite 26/26 PASS incl. TestCloseDuringAMigrationReleasesTheCandidateAndPublishesNothing",
-      "push_required_for_pin": true,
-      "note": "the fusion commit exists only locally; stage 06 must push integration/0.1.45 to Piggy-Cat-bit-shadow/quic-go before freezing this pin."
+      "push_required_for_pin": false,
+      "remote_ref": "refs/heads/integration/0.1.45",
+      "remote_sha_verified": "ca9992bc795e8699db2b22ad6459216e6f13649d",
+      "note": "the fusion commit is pushed and verified; the canonical pseudo-version resolves from GitHub and the kernel was built/tested against it."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/utls",
@@ -272,8 +290,7 @@
     }
   ],
   "stage06_prerequisites": [
-    "Push quic-go integration/0.1.45 (ca9992bc795e) to origin before freezing its pin; then generate/verify the canonical pseudo-version v0.61.1-0.20261110165647-ca9992bc795e.",
-    "Update go.mod / test/go.mod replaces to: sing-tun v0.0.0-20261110141903-57e9d17fa852 and quic-go v0.61.1-0.20261110165647-ca9992bc795e (all other pins unchanged).",
+    "Update go.mod / test/go.mod replaces to: sing-tun v0.0.0-20261110141903-57e9d17fa852 and quic-go v0.61.1-0.20261110165647-ca9992bc795e (all other pins unchanged; both versions resolve from the pushed remote).",
     "Regenerate release/source-lock.json from the real tree (never hand-write SHAs) and run scripts/ci/release-freeze.py resolve/check/snapshot/verify.",
     "Resolve the Apple client branch inconsistency (pin on next/client-consumption vs declared main) before writing client gitlinks.",
     "Keep the 29 cronet native modules at 362e63b14ce2 unless rebuilt archives with proven provenance exist.",
