@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	E "github.com/sagernet/sing/common/exceptions"
+	M "github.com/sagernet/sing/common/metadata"
 
 	"github.com/stretchr/testify/require"
 )
@@ -109,4 +110,21 @@ func TestExplicitRejectKeepsItsVerdictWhenTheWindowExpires(t *testing.T) {
 	require.EqualValues(t, 1, requestStreams.Load())
 	require.Zero(t, client.http3Broken.Load(),
 		"the setup window expiring after a peer rejection must not arm the H3 backoff")
+}
+
+// TestPlainConnectRejectedFallsBack is the ordinary CONNECT entry with the same peer rejection:
+// the plain CONNECT path must also recognise H3_REQUEST_REJECTED, fall back to TCP for THIS call,
+// and keep the HTTP/3 verdict clear so the next call can still pick HTTP/3.
+func TestPlainConnectRejectedFallsBack(t *testing.T) {
+	address, requestStreams := startRequestRejectingH3Server(t)
+	tcp := &recordingDialer{err: E.New("tcp fallback reached")}
+	client := newNoExtendedConnectClient(t, address, tcp)
+	t.Cleanup(func() { _ = client.Close() })
+
+	_, err := client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.org:443"))
+	require.ErrorContains(t, err, "tcp fallback reached",
+		"an explicitly unprocessed plain CONNECT must be retried on the fallback")
+	require.EqualValues(t, 1, requestStreams.Load())
+	require.Zero(t, client.http3Broken.Load(), "a rejection is not a transport verdict")
+	require.True(t, client.http3Available(), "the next call must still be allowed to try HTTP/3")
 }
