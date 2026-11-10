@@ -38,7 +38,7 @@
 | Desktop 测试 | `pnpm test` | **PASS 59/59** |
 | Desktop 构建 | `pnpm build` | **PASS** |
 | Apple iOS/macOS 构建 + Swift tests | `xcodebuild` / Swift tests | **BLOCKED**（无 macOS/Xcode） |
-| Apple 语义融合 | next + NE trial merge | **NOT RUN**（3 个冲突已定位，未解决） |
+| Apple 语义融合 | `integration/0.1.45-ne-fusion` @ `9330d90`（next + NE） | 16 个冲突按所有权/回执语义融合；44 个 Swift 文件；`swiftc -parse` 44/44 PASS；Foundation 子集 `-typecheck` PASS；14 场景探针 PASS；**Xcode 构建与 XCTest NOT RUN**（无 macOS） |
 | Android core AAR | `go run ./cmd/internal/build_libbox -target android -android-variant main/legacy`（JDK17 + NDK 28） | **PASS**（arm64/arm/x86/x86_64；provenance commit=`b810d0c`，version=SHA） |
 | satelite-one 单元测试/assembleDebug | `./gradlew :app:testDebugUnitTest :app:assembleDebug`（Node 无关，JDK17+SDK+真实 AAR） | **PASS**（unit tests BUILD SUCCESSFUL；`verifyCoreProvenance: OK`；assembleDebug BUILD SUCCESSFUL） |
 | Android 客户端构建 | `clients/android`（pin `c783710`）+ 同一对 AAR，`./gradlew :app:assembleDebug` | **PASS**（BUILD SUCCESSFUL，universal/arm64/armv7/x86/x86_64 debug APK；8m10s） |

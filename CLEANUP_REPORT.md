@@ -52,12 +52,17 @@ git push <url> refs/tags/archive/0.1.45/<repo>/<branch>:refs/heads/<branch>
 | `candidate/w07-2026-11-10` | 基线参照 |
 | `backup/02-ecfffe7d0` | 备份；含 route diagnose/process-cache 等未纳入内容，保留到 RC 稳定后人工决定 |
 | `next/client-consumption-candidate` | 客户端候选，独有工作未证明已被吸收，保留 |
-| Apple `next/client-consumption`、`fix/task10-apple-ne-runtime-final` | 未合并（无 Xcode），只归档 |
+| Apple `next/client-consumption`、`fix/task10-apple-ne-runtime-final` | 未合并（无 Xcode），只归档；语义融合分支 `integration/0.1.45-ne-fusion` @ `9330d90` 已推送（syntax/typecheck/探针通过，Xcode 构建未执行） |
 | satelite-one `next/subscription-refresh` | 已在其仓库 fast-forward 到 `integration/0.1.45`（`9cdf782`），远端分支保留为产品分支；tag 已推送 |
 | wireguard-go `awg-base`、`awg-graft` | 延期；被 pin `a765d957` 取代，保留 refs |
 | quic-go `integration/0.1.45` | 依赖 pin 所在分支，保留 |
 | Desktop/Dashboard `main` | 产品主线 |
 
+## 3b. 收尾补充（2026-11-11 05:55）
+
+- 主仓库 `origin` 已从误指向的 `sing-box-for-desktop` 修正为 `https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git`；`jiejiebox` remote 保留为显式别名。修正前所有推送均使用显式 URL，未受影响。
+- satelite-one `integration/0.1.45`（`9cdf782`）已推送到其 origin 并核对，产品交付分支不再只存在于本地。
+- `next/client-consumption-candidate` 审计结论：6 个提交只是客户端 gitlink 提案（Apple `7e2f5c4`、Desktop `28dc4a9`）与 `check-libbox-abi.sh` 的 `VERIFIED_APPLE_SHA` 更新；其中 Apple 部分依赖尚未完成的 Xcode 验证，Desktop 部分已由阶段 05 以 `28dc4a9` 落地。为避免把未验证的 Apple pin 写入 ABI 门禁，该分支不吸收、保留归档。
 ## 4. 恢复入口
 
 - 主仓库 tag 前缀：`archive/0.1.45/jiejiebox/`

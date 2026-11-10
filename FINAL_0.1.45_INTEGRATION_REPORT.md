@@ -126,3 +126,6 @@ cd dashboard && pnpm install --frozen-lockfile && pnpm generate && pnpm test && 
 - **satelite-one 已实测**：`next/subscription-refresh` 的 `:app:testDebugUnitTest` **BUILD SUCCESSFUL**；`verifyCoreProvenance: OK`；`:app:assembleDebug` **BUILD SUCCESSFUL**（debug APK 产出）。其 `integration/0.1.45` 已 fast-forward 到 `9cdf782b8c8c`。
 - **官方 Android 客户端**：`clients/android`（pin `c783710`）使用同一对 AAR 构建 debug APK（结果见 `FINAL_TEST_MATRIX.md` 与 `android-client-build.log`）。
 - Apple 仍 BLOCKED（无 macOS/Xcode），未做未经验证的合并。
+- 主仓库 `origin` 已修正为 JiejieBox（原误指向 desktop）；satelite-one `integration/0.1.45`（`9cdf782`）已推送并核对。
+- `next/client-consumption-candidate` 经审计为客户端 pin 提案（Apple `7e2f5c4` + ABI 脚本），依赖未完成的 Xcode 验证，未吸收、保留分支。
+- Apple：已准备 `integration/0.1.45-ne-fusion` 语义融合分支（next + NE 的 16 个冲突按所有权/回执语义融合），仅通过 Swift 语法解析；**未构建、未测试**，因此内核 Apple pin 保持 `7fce711`，不冒充已验证。
