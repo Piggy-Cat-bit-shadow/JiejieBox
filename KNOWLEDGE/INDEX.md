@@ -281,3 +281,15 @@
 `modules/README.md` 提供任务到模块的总览，本文件进一步索引具体章节、别名、源码路径和符号。两者应保持各自职责。
 
 新增或重命名模块章节时，请同步检查本索引中的章节名称和链接；刷新时还应按 `REFRESH.md` 检查模块结构、跨文件一致性和基线记录。
+
+## 2026-11-10 归档：Apple NE / Libbox 接口（0.1.45 目录）
+
+目录名 `0.1.45` 由交接指定；实际构建/发布版本是 `0.1.44`，归档时不存在 `0.1.45` 的构建记录。
+
+| 任务 / 关键符号 | 直接入口 |
+| --- | --- |
+| 命令目标归属、`targetChanged`、本地正文边界 | [归档说明](reports/0.1.45/TASK10-APPLE-NE-README.md) |
+| 正文一次提交、编辑器与刷新共用锁、回执四要素归属 | [裁定表](reports/0.1.45/TASK10-APPLE-NE-VERDICT.md) |
+| NE 启动记录、内存候选恢复、接收端选中准入 | [裁定表](reports/0.1.45/TASK10-APPLE-NE-VERDICT.md) |
+| Provider 发布边界、刷新策略、旧 daemon 能力缺口 | [复审判定](reports/0.1.45/TASK10-APPLE-NE-VERDICT.md) |
+| 跨进程正文与 NE 会话代次两项未闭环限制 | [已知限制](reports/0.1.45/TASK10-APPLE-NE-README.md) |
