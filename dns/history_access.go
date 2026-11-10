@@ -95,11 +95,23 @@ func (r *Router) DNSHistory() *History {
 // as such rather than as an empty result: an empty list would be indistinguishable from a quiet
 // window, and a caller trying to diagnose a query storm would draw the wrong conclusion.
 func (r *Router) QueryHistory(query HistoryQuery) ([]HistoryRecord, error) {
+	page, err := r.QueryHistoryPage(query)
+	if err != nil {
+		return nil, err
+	}
+	return page.Records, nil
+}
+
+// QueryHistoryPage is QueryHistory plus the pagination signal and the accounting, read together.
+//
+// A consumer that pages cannot use QueryHistory: "the limit was reached" and "the window ended" are
+// the same slice length, and only the history itself knows which happened.
+func (r *Router) QueryHistoryPage(query HistoryQuery) (HistoryPage, error) {
 	history := r.DNSHistory()
 	if history == nil {
-		return nil, ErrHistoryNotEnabled
+		return HistoryPage{}, ErrHistoryNotEnabled
 	}
-	return history.Query(query)
+	return history.QueryPage(query)
 }
 
 // HistoryTopK aggregates the live history.

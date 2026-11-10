@@ -181,16 +181,50 @@ func (h *History) Record(event QueryEvent) {
 // The output is bounded twice: by the record count (Limit, capped at maxHistoryQueryLimit) and by
 // the total size of the records copied (MaxBytes). One lock serialises every reader and the writer,
 // so N concurrent readers cannot multiply the scan.
+//
+// It is the shape the first callers were written against. `QueryPage` is the same read plus the two
+// facts this signature cannot carry - whether more matching records exist, and the accounting at the
+// same instant - so a paginated consumer must use that one.
 func (h *History) Query(query HistoryQuery) ([]HistoryRecord, error) {
+	page, err := h.QueryPage(query)
+	if err != nil {
+		return nil, err
+	}
+	return page.Records, nil
+}
+
+// HistoryPage is one bounded read plus the facts a caller cannot derive from the records.
+type HistoryPage struct {
+	// Records are the matching records this page carries, oldest first.
+	Records []HistoryRecord
+	// HasMore reports that ANOTHER record matching the same filters exists after the last sequence
+	// this page carries. It is the pagination signal: a page that stopped because of the limit or
+	// the byte budget is distinguishable from a page that reached the end of the window, which no
+	// property of Records alone can express.
+	HasMore bool
+	// Stats is the ring's accounting at the same instant as Records. Reading it separately would
+	// describe a different window whenever a record is written between the two calls.
+	Stats HistoryStats
+}
+
+// QueryPage returns matching records after the caller's cursor plus the pagination signal and the
+// accounting, all read under the same lock.
+//
+// Bounds are unchanged from Query: Limit (0 = 32, capped at maxHistoryQueryLimit, above which it is
+// an error rather than a silent clamp) and MaxBytes (the retained-size budget of the copied
+// records). The first matching record is still returned even when it alone exceeds MaxBytes, because
+// a budget that made a record unreadable would hide the event being diagnosed; the binding crops
+// its FIELDS to the response budget instead.
+func (h *History) QueryPage(query HistoryQuery) (HistoryPage, error) {
 	if h == nil {
-		return nil, nil
+		return HistoryPage{}, nil
 	}
 	limit := query.Limit
 	if limit <= 0 {
 		limit = 32
 	}
 	if limit > maxHistoryQueryLimit {
-		return nil, ErrHistoryQueryTooLarge
+		return HistoryPage{}, ErrHistoryQueryTooLarge
 	}
 	budget := query.MaxBytes
 	if budget <= 0 {
@@ -199,32 +233,55 @@ func (h *History) Query(query HistoryQuery) ([]HistoryRecord, error) {
 	h.access.Lock()
 	defer h.access.Unlock()
 	h.queries++
-	h.expireLocked(time.Now())
-	matched := make([]HistoryRecord, 0, limit)
+	now := time.Now()
+	h.expireLocked(now)
+	page := HistoryPage{
+		Records: make([]HistoryRecord, 0, limit),
+		Stats:   h.statsLocked(),
+	}
 	used := 0
-	for _, record := range h.records {
-		if record.Sequence <= query.Since {
-			continue
-		}
-		if query.Transport != "" && record.Event.TransportTag != query.Transport {
-			continue
-		}
-		if query.Source != "" && record.Event.Source != query.Source {
+	// resume is the index the forward scan below must start at when the loop stopped early, and -1
+	// while the loop has not stopped (so reaching the end means "nothing more").
+	resume := -1
+	for index, record := range h.records {
+		if !historyRecordMatches(record, query) {
 			continue
 		}
 		size := historyRecordSize(record.Event)
-		// The first matching record is always returned, even when it alone exceeds the budget: a
-		// budget that made a record unreadable would hide the very event being diagnosed.
-		if len(matched) > 0 && used+size > budget {
+		if len(page.Records) > 0 && used+size > budget {
+			resume = index
 			break
 		}
-		matched = append(matched, record)
+		page.Records = append(page.Records, record)
 		used += size
-		if len(matched) == limit {
+		if len(page.Records) == limit {
+			resume = index + 1
 			break
 		}
 	}
-	return matched, nil
+	if resume >= 0 {
+		for _, record := range h.records[resume:] {
+			if historyRecordMatches(record, query) {
+				page.HasMore = true
+				break
+			}
+		}
+	}
+	return page, nil
+}
+
+// historyRecordMatches applies the query's filters to one retained record.
+func historyRecordMatches(record HistoryRecord, query HistoryQuery) bool {
+	if record.Sequence <= query.Since {
+		return false
+	}
+	if query.Transport != "" && record.Event.TransportTag != query.Transport {
+		return false
+	}
+	if query.Source != "" && record.Event.Source != query.Source {
+		return false
+	}
+	return true
 }
 
 // Clear empties the ring and reports how many records it dropped.
@@ -301,6 +358,11 @@ func (h *History) Stats() HistoryStats {
 	}
 	h.access.Lock()
 	defer h.access.Unlock()
+	return h.statsLocked()
+}
+
+// statsLocked is Stats' body; the caller holds the access lock.
+func (h *History) statsLocked() HistoryStats {
 	stats := HistoryStats{
 		Entries:  len(h.records),
 		Bytes:    h.bytes,

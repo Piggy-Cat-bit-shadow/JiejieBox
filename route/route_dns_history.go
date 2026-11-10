@@ -26,6 +26,7 @@ type dnsHistoryManager interface {
 	DisableHistory()
 	DNSHistory() *dns.History
 	QueryHistory(query dns.HistoryQuery) ([]dns.HistoryRecord, error)
+	QueryHistoryPage(query dns.HistoryQuery) (dns.HistoryPage, error)
 	HistoryTopK(field dns.TopField, k int) ([]dns.TopEntry, error)
 	HistoryStats() (dns.HistoryStats, uint64, error)
 	ClearHistory() (int, error)
@@ -75,6 +76,18 @@ func (r *Router) QueryDNSHistory(query dns.HistoryQuery) ([]dns.HistoryRecord, e
 		return nil, ErrDNSHistoryUnsupported
 	}
 	return manager.QueryHistory(query)
+}
+
+// QueryDNSHistoryPage reads the live history and reports whether more matching records exist.
+//
+// The pagination signal lives in the history, not in this forwarding: this method exists so a
+// consumer above the route layer can ask for it without reaching through the DNS router.
+func (r *Router) QueryDNSHistoryPage(query dns.HistoryQuery) (dns.HistoryPage, error) {
+	manager, supported := r.dnsHistoryRouter()
+	if !supported {
+		return dns.HistoryPage{}, ErrDNSHistoryUnsupported
+	}
+	return manager.QueryHistoryPage(query)
 }
 
 // DNSHistoryTopK aggregates the live history.
