@@ -140,11 +140,34 @@ type LocalFamilyDialer interface {
 //
 // A manager that cannot report a capability yields the zero value, which restricts nothing: the dialer
 // keeps its previous behaviour exactly rather than losing a family because a struct was left empty.
+//
+// # Why a named namespace discards the verdict
+//
+// The observation is machine-wide: it is built from the interfaces and routes THIS PROCESS can see
+// (route/network_family_capability.go). A dial with netns set leaves that environment and enters the
+// target namespace before creating the socket (`ListenNetworkNamespace`), so the sample describes a
+// different network from the one the socket is made in. Trusting it hard-refuses the wrong
+// destinations: a host without global IPv6 egress refuses an IPv6 destination the namespace can
+// reach, and a host whose sample says a family is fine refuses nothing while the namespace cannot
+// dial it.
+//
+// The verdict is therefore DROPPED rather than inverted. Zero FamilyCapability is netcap's "no
+// opinion", so every gate (hardUndialable, restrictsNothing, the scheduler's plan filter, the ICMP
+// and packet paths, and the native-bypass LocalFamilyBlocked) agrees to restrict nothing and the real
+// socket decides - which is the required degradation for an environment this process never sampled.
+//
+// Ownership is deliberately KEPT: the hand-over checks in DefaultDialer thread it into
+// `stillCurrentEpoch`, and dropping it would remove a protection rather than a guess. Only the
+// verdict, which is about the wrong network, is discarded.
 func (d *DefaultDialer) captureLocalFamilyPolicy() localFamilyPolicy {
 	observation := d.network.observe()
+	capability := observation.family.Capability
+	if d.netns != "" {
+		capability = netcap.FamilyCapability{}
+	}
 	return localFamilyPolicy{
 		ownership:  d.network.ownership(observation),
-		capability: observation.family.Capability,
+		capability: capability,
 	}
 }
 
