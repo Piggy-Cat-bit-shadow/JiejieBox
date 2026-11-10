@@ -1,16 +1,20 @@
 package libbox
 
 // The gomobile registration of the DNS history management surface: a real CommandServer, a real
-// Box, a real query, and the JSON the binding hands the platform.
+// Box, and the JSON the binding hands the platform.
+//
+// # What this test does NOT do, and why
+//
+// It does not issue a DNS query through the Box. The only in-tree way to drive one from a test is
+// `Router.LookupDomain`, which arrives with the unmerged diagnostic change; taking it here would
+// drag that feature in just to get a test vehicle. The behaviour WITH records is covered where the
+// history lives - `dns/history_management_test.go` drives real queries, pagination, budgets and
+// TTL through the history's own entry points. What is only testable here is the binding: the JSON
+// envelopes, the lifecycle, and the fact that "disabled" is an error rather than an empty window.
 
 import (
-	"context"
 	stdjson "encoding/json"
 	"testing"
-	"time"
-
-	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/route"
 
 	"github.com/stretchr/testify/require"
 )
@@ -18,17 +22,6 @@ import (
 const dnsHistoryBindingConfig = `{"log":{"level":"error"},
 	"dns":{"servers":[{"type":"hosts","tag":"local","predefined":{"history.test":["127.0.0.9"]}}],"final":"local"},
 	"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}`
-
-func dnsHistoryLookup(t *testing.T, server *CommandServer, name string) {
-	t.Helper()
-	instance := server.Instance()
-	require.NotNil(t, instance)
-	routeRouter, isRouteRouter := instance.Box().Router().(*route.Router)
-	require.True(t, isRouteRouter)
-	addresses, err := routeRouter.LookupDomain(context.Background(), name, adapter.DNSQueryOptions{})
-	require.NoError(t, err)
-	require.NotEmpty(t, addresses)
-}
 
 type dnsHistoryQueryResult struct {
 	Records []struct {
@@ -46,10 +39,17 @@ type dnsHistoryQueryResult struct {
 	} `json:"stats"`
 }
 
+func decodeDNSHistoryQuery(t *testing.T, encoded string) dnsHistoryQueryResult {
+	t.Helper()
+	var result dnsHistoryQueryResult
+	require.NoError(t, stdjson.Unmarshal([]byte(encoded), &result), "query envelope: %s", encoded)
+	return result
+}
+
 // TestTheCommandServerExposesTheDNSHistory drives enable → query → top-k → stats → clear → disable
 // through the binding entry points.
 func TestTheCommandServerExposesTheDNSHistory(t *testing.T) {
-	server := startDiagnoseTestCommandServer(t, dnsHistoryBindingConfig)
+	server := startBoxTestCommandServer(t, dnsHistoryBindingConfig)
 
 	// Disabled is reported as "not enabled", not as an empty window.
 	_, err := server.DNSHistoryQuery("")
@@ -59,58 +59,34 @@ func TestTheCommandServerExposesTheDNSHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, enabled.Value, `"enabled":true`)
 
-	dnsHistoryLookup(t, server, "history.test")
+	// An enabled history with no traffic answers with a well-formed empty envelope; the error
+	// above must not leak into the enabled state.
+	encoded, err := server.DNSHistoryQuery("")
+	require.NoError(t, err)
+	result := decodeDNSHistoryQuery(t, encoded.Value)
+	require.Empty(t, result.Records)
+	require.Equal(t, 0, result.Stats.Entries)
 
-	var result dnsHistoryQueryResult
-	require.Eventually(t, func() bool {
-		encoded, queryErr := server.DNSHistoryQuery("")
-		if queryErr != nil {
-			return false
-		}
-		var candidate dnsHistoryQueryResult
-		if jsonErr := stdjson.Unmarshal([]byte(encoded.Value), &candidate); jsonErr != nil {
-			return false
-		}
-		result = candidate
-		return len(candidate.Records) >= 1
-	}, 5*time.Second, time.Millisecond, "the real query must appear in the history")
-
-	found := false
-	for _, record := range result.Records {
-		if record.Name == "history.test." || record.Name == "history.test" {
-			found = true
-			require.Equal(t, "local", record.Transport)
-			require.NotEmpty(t, record.Source)
-			require.NotZero(t, record.Sequence)
-		}
-	}
-	require.True(t, found, "the record names the queried host: %+v", result.Records)
+	// A paginated read is the same window with a budget.
+	encoded, err = server.DNSHistoryQuery(`{"limit":4,"maxBytes":1024}`)
+	require.NoError(t, err)
+	require.Empty(t, decodeDNSHistoryQuery(t, encoded.Value).Records)
 
 	stats, err := server.DNSHistoryStats()
 	require.NoError(t, err)
-	require.Contains(t, stats.Value, `"entries":`)
+	require.Contains(t, stats.Value, `"entries":0`)
+	require.Contains(t, stats.Value, `"bytes":`)
 
 	top, err := server.DNSHistoryTopK("transport", 3)
 	require.NoError(t, err)
-	require.Contains(t, top.Value, `"local"`)
+	require.True(t, stdjson.Valid([]byte(top.Value)), "top-k envelope is JSON: %s", top.Value)
+	require.Contains(t, top.Value, `"field":"transport"`)
 	_, err = server.DNSHistoryTopK("bogus", 3)
-	require.Error(t, err)
+	require.Error(t, err, "an unknown aggregation field is refused")
 
 	cleared, err := server.DNSHistoryClear()
 	require.NoError(t, err)
 	require.Contains(t, cleared.Value, `"cleared":`)
-
-	require.Eventually(t, func() bool {
-		encoded, queryErr := server.DNSHistoryQuery("")
-		if queryErr != nil {
-			return false
-		}
-		var candidate dnsHistoryQueryResult
-		if jsonErr := stdjson.Unmarshal([]byte(encoded.Value), &candidate); jsonErr != nil {
-			return false
-		}
-		return len(candidate.Records) == 0 && candidate.Stats.Entries == 0
-	}, 5*time.Second, time.Millisecond, "clearing empties the window")
 
 	require.NoError(t, server.DNSHistoryDisable())
 	_, err = server.DNSHistoryQuery("")
@@ -119,11 +95,9 @@ func TestTheCommandServerExposesTheDNSHistory(t *testing.T) {
 	// Re-enabling starts a fresh window rather than resurrecting the old records.
 	_, err = server.DNSHistoryEnable("")
 	require.NoError(t, err)
-	encoded, err := server.DNSHistoryQuery("")
+	encoded, err = server.DNSHistoryQuery("")
 	require.NoError(t, err)
-	var restarted dnsHistoryQueryResult
-	require.NoError(t, stdjson.Unmarshal([]byte(encoded.Value), &restarted))
-	require.Empty(t, restarted.Records)
+	require.Empty(t, decodeDNSHistoryQuery(t, encoded.Value).Records)
 }
 
 // TestADisabledCommandServerIsAnError keeps the binding's nil/stopped path honest.
