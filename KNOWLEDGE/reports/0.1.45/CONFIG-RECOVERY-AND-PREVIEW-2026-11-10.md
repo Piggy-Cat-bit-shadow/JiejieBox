@@ -39,6 +39,8 @@
 - 序列：A 保存 → B 在线但磁盘失败（`degraded`）→ C_parse 拒绝保留 B → C_build 恢复 A → 同目录新对象重放。
 - 负向对照：关恢复 → C_build 步骤失败；selector 换 `direct` → 标记断言失败；损坏存储 → 不得报恢复。
 
+**竞态检查（`VERIFIED_UNIT`）**：在 MSYS2 mingw gcc 16.2.0 + `CGO_ENABLED=1` 下对本轮三条恢复用例运行 `go test -race`（产品序列、重启重放、损坏存储），通过（4.9 s）。其余路径的 `-race` 不在本轮范围。
+
 **产品进程（`BLOCKED_BY_ENVIRONMENT`）**：`DesktopService.StartService` 要求 Windows peer 身份；console 模式要求工作目录由 SYSTEM 拥有（原始错误：`daemon working directory is not owned by SYSTEM`），`--listen` 开发传输不提供身份，命名管道需要管理员安装隔离服务。步骤与断言见 `HANDOFF-ACCEPTANCE.md`。
 
 ## 3｜两端 `started` 预览语义（P1）
