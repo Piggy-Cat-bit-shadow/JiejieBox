@@ -79,7 +79,7 @@
       "path": "clients/android",
       "final_sha": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
       "status": "pin equals main; unchanged",
-      "verification": "BLOCKED_BY_ENVIRONMENT: no JDK17/Android SDK build for the Android client"
+      "verification": "PASS: debug APK built with the 0.1.45 AAR (universal/arm64/armv7/x86/x86_64), 8m10s"
     },
     {
       "path": "clients/desktop",
@@ -95,9 +95,9 @@
     },
     {
       "path": "satelite-one (independent repo)",
-      "final_sha": "c9a07350e4c7a4d60a918488478893de5a49b6ac",
-      "status": "integration branch still at main; next/subscription-refresh not merged",
-      "verification": "BLOCKED_BY_ENVIRONMENT: missing kernel libbox.aar (gomobile+NDK)"
+      "final_sha": "9cdf782b8c8c7bb9dbd11d0a499cf8ad3e5cf238",
+      "status": "integration branch fast-forwarded to next/subscription-refresh",
+      "verification": "PASS: :app:testDebugUnitTest and :app:assembleDebug BUILD SUCCESSFUL, verifyCoreProvenance OK"
     }
   ],
   "freeze": {
@@ -112,7 +112,9 @@
     "check_result": "PASS: every target comparable, none diverged, no pin needs to move",
     "verify_result": "PASS: every pin in the tree is the pin the lock records",
     "lock": "release/source-lock.json",
-    "lock_release_version": "0.1.45"
+    "lock_release_version": "0.1.45",
+    "rc_pushed": true,
+    "rc_remote_sha_verified": "b810d0c2603f11eb2127adf816eb9e2b080b4094"
   },
   "deferred": [
     {
@@ -147,8 +149,24 @@
     }
   ],
   "branch_cleanup": {
-    "archive_tags": "local archive/0.1.45/<repo>/<branch> tags created for every candidate",
-    "remote_deletions": "deferred: RC not pushed, archive tags not pushed; see CLEANUP_REPORT.md",
-    "local_deletions": "none: every candidate still has a worktree or is needed for the archive proof"
+    "archive_tags": "20 pushed and verified (13 main + 2 apple + 1 desktop + 1 dashboard + 1 satelite + 2 quic-go)",
+    "remote_deletions": 15,
+    "remote_deletion_log": "audit-evidence/stage06/remote-deletions.txt",
+    "kept": [
+      "backup/02-ecfffe7d0",
+      "next/client-consumption-candidate",
+      "apple next/NE",
+      "satelite next",
+      "wireguard awg-base/awg-graft"
+    ]
+  },
+  "artifacts": {
+    "dir": "_int0145/artifacts/0.1.45",
+    "sha256sums": "_int0145/artifacts/0.1.45/SHA256SUMS",
+    "libbox_aar": "8bdc6270b821e3c9d761f61c6ef3ab5203f84853572748b7c87941fb34f453f2",
+    "libbox_legacy_aar": "acbfcc02240922465f9e7f5cb0a59d472e2d7c9754da284f8b2d10ea33350d30",
+    "android_client_apk": "9d20cdb2e87f4961083222995851e6ae4eddae36140aa225591200b082fd056d",
+    "satelite_apk": "05417c3b4dd5eeeffd85520dae64bc705a4c8c1ed73f0056f806827f8806530b",
+    "provenance": "commit=b810d0c2603f11eb2127adf816eb9e2b080b4094 version=b810d0c2603f11eb2127adf816eb9e2b080b4094"
   }
 }

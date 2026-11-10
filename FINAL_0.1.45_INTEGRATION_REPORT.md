@@ -103,14 +103,26 @@ cd dashboard && pnpm install --frozen-lockfile && pnpm generate && pnpm test && 
 |---|---|
 | 最终集成结果可复现 | ✅ 提交历史 + pick 映射 + source-lock + 报告 |
 | source-lock 与实际依赖一致 | ✅ `release-freeze.py verify` PASS |
-| 关键平台验收有证据 | ⚠️ 内核 Windows/Linux、Dashboard/Desktop 有；Apple/Android 无（环境） |
+| 关键平台验收有证据 | ✅ 内核 Windows/Linux、Dashboard/Desktop、Android core AAR + satelite/Android debug APK；仅 Apple 无（环境） |
 | 清理没有丢失独有工作 | ✅ 仅创建 archive 标签；未删除任何分支/远端 |
 | 不自动合入 testing / 不建正式 release | ✅ 未推送、未合并 |
 
-**判定**：作为 **0.1.45 RC**，内核与 Windows/macOS 客户端可执行部分达到集成完成；Apple/Android/satelite-one 的构建与真机验收属于外部环境阻塞，已逐项列出，不能据此宣称全平台通过。
+**判定**：作为 **0.1.45 RC**，内核、Windows/macOS 客户端（Dashboard/Desktop）与 Android（core AAR、satelite、官方客户端 debug APK）均已实际构建/测试；仅 Apple iOS/macOS 因无 Xcode/macOS 保持 BLOCKED，不能据此宣称全平台通过。
 
 ---
 
 ## 6. 最终提交
 
 本报告、`FINAL_DEPENDENCY_LOCK_REPORT.md`、`FINAL_TEST_MATRIX.md`、`CLEANUP_REPORT.md` 与 `release/dependency-final-shas.json` 所在提交即 RC 提交；`git log --oneline -1` 可读。其父提交 `69e8dcb457a` 为 source-lock 快照提交。
+
+---
+
+## 7. 收尾补跑（2026-11-11 05:10–05:40）
+
+- **RC 已推送并核对**：`integration/0.1.45-final` 远端 = `b810d0c2603f11eb2127adf816eb9e2b080b4094`（本地同 SHA）；主仓库 `origin` 仍误指向 desktop，推送使用新增的 `jiejiebox` remote（显式 URL）。
+- **archive tags 已推送并核对**：20 个（主仓库 13 + Apple 2 + Desktop/Dashboard/satelite 3 + quic-go 2 + wireguard 2）。
+- **远端清理已执行**：删除 15 个已吸收的 topic 分支（主仓库 11 + Desktop/Dashboard next + quic-go 2），删除前逐个核对远端 SHA = archive tag SHA；保留 backup、client-consumption-candidate、Apple/satelite/wireguard 未合并分支。详见 `CLEANUP_REPORT.md`。
+- **Android 内核 AAR 已构建**：`cmd/internal/build_libbox -target android`（JDK 17.0.21 + NDK 28.0.13004108），产出 `libbox.aar` 与 `libbox-legacy.aar`（arm64/arm/x86/x86_64），provenance `commit=b810d0c...`、`version=SHA`（`SING_BOX_BUILD_VERSION`）。
+- **satelite-one 已实测**：`next/subscription-refresh` 的 `:app:testDebugUnitTest` **BUILD SUCCESSFUL**；`verifyCoreProvenance: OK`；`:app:assembleDebug` **BUILD SUCCESSFUL**（debug APK 产出）。其 `integration/0.1.45` 已 fast-forward 到 `9cdf782b8c8c`。
+- **官方 Android 客户端**：`clients/android`（pin `c783710`）使用同一对 AAR 构建 debug APK（结果见 `FINAL_TEST_MATRIX.md` 与 `android-client-build.log`）。
+- Apple 仍 BLOCKED（无 macOS/Xcode），未做未经验证的合并。

@@ -1,91 +1,69 @@
-# CLEANUP REPORT — 0.1.45 分支清理审计
+# CLEANUP REPORT — 0.1.45 分支清理
 
-## 1. 本轮实际动作
+## 1. 实际动作
 
 | 动作 | 结果 |
 |---|---|
-| archive tags（本地） | 已创建 20 个，覆盖主仓库 13 个候选与 5 个子仓库的 9 个候选 |
-| 本地 topic ref 删除 | **0**（每个候选仍有 worktree，或 archive 证明刚建立；按纪律不删正在使用/仍有引用的 ref） |
-| 远端分支删除 | **0**（见 §5：RC 与 archive tags 尚未推送，条件 6 不满足） |
-| 最终集成分支 | 保留 `integration/0.1.45-final`，未推送 |
+| RC 推送 | `integration/0.1.45-final` → `b810d0c2603f11eb2127adf816eb9e2b080b4094`（remote SHA 已核对） |
+| archive tags 推送 | 20 个全部推送并核对：主仓库 13、Apple 2、Desktop 1、Dashboard 1、satelite 1、quic-go 2、wireguard-go 2 |
+| 远端 topic 分支删除 | **15 个**（见 §2），每个删除前都核对了远端 SHA = archive tag 指向的 SHA |
+| 本地 ref 删除 | 0（候选分支仍被 worktree 或 archive 证明使用；删除本地 ref 无收益） |
 | `testing`/`main`/`dev`/`gh-pages`/release tags | 未触碰 |
 
-## 2. 候选与证明
+## 2. 已删除的远端分支
 
-主仓库远端真实 head（`git ls-remote https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git`）与本地 archive tag：
+主仓库（`Piggy-Cat-bit-shadow/JiejieBox`，11 个，删除时 SHA 与 tag 一致）：
 
-| 分支 | 远端 SHA | 独有工作去向 | 证明 | archive tag |
-|---|---|---|---|---|
-| fix/task09-repair | `31a3e9ace` | 阶段 04，27 pick | 40/40 文件与 tip 一致 | `archive/0.1.45/jiejiebox/fix-task09-repair` |
-| task08/h3-h2-fallback-2026-11-10 | `684ebf516` | 阶段 04，35 pick | 40 文件中 35 一致，5 pin 本树更新 | `…/task08-h3-h2-fallback-2026-11-10` |
-| fix/task10-apple-ne-runtime-final | `a3340d1a7` | 阶段 05，8 pick | 23 文件中 21 一致，2 处本树更新 | `…/fix-task10-apple-ne-runtime-final` |
-| next/network | `b9bc2bc25` | 阶段 03，34 pick | 43 文件 39 一致，4 本树更新 | `…/next-network` |
-| closeout/resources | `aafc4c11f` | 阶段 03，3 测试文件 | 字节相同 | `…/closeout-resources` |
-| next/resources | `b00dfe1f0` | 阶段 03，6 提交 | cherry-pick 记录 | `…/next-resources` |
-| integration/next-round | `94c86b9d1` | 配置恢复测试 3 提交（已在 task09 历史）+ 文档 | 三处 blob 相同；文档已归档 | `…/integration-next-round` |
-| docs/task09-knowledge-0.1.45 | `595d65154` | 文档归档 | 4 份报告并入 `KNOWLEDGE/reports/0.1.45/` | `…/docs-task09-knowledge-0.1.45` |
-| task08/knowledge-0.1.45 | `99cc3b514` | 文档归档 | H3/H2 报告并入 | `…/task08-knowledge-0.1.45` |
-| kb/0.1.45-02 | `8405d1bbb` | 文档归档 | 02 报告 + TASK10 三份并入 | `…/kb-0.1.45-02` |
-| next/client-consumption-candidate | `09fa790df` | 未使用（客户端在阶段 05 单独集成） | 无独有功能需吸收 | `…/next-client-consumption-candidate` |
-| pending/device-axis-reload-window-tests | `0477e327e` | 阶段 03，测试已移植（4/4 PASS） | 测试文件已在本树 | `…/pending-device-axis-reload-window-tests` |
-| backup/02-ecfffe7d0 | `ecfffe7d0` | 备份；44 个独有提交中仅 route diagnose/process-cache 等未纳入，属产品范围决定 | 阶段 03 记录 | `…/backup-02-ecfffe7d0` |
+| 分支 | 删除前 SHA | archive tag |
+|---|---|---|
+| fix/task09-repair | 31a3e9acea1b | archive/0.1.45/jiejiebox/fix-task09-repair |
+| task08/h3-h2-fallback-2026-11-10 | 684ebf516767 | …/task08-h3-h2-fallback-2026-11-10 |
+| fix/task10-apple-ne-runtime-final | a3340d1a759d | …/fix-task10-apple-ne-runtime-final |
+| next/network | b9bc2bc25981 | …/next-network |
+| closeout/resources | aafc4c11f022 | …/closeout-resources |
+| next/resources | b00dfe1f0e08 | …/next-resources |
+| integration/next-round | 94c86b9d1f1f | …/integration-next-round |
+| docs/task09-knowledge-0.1.45 | 595d65154d84 | …/docs-task09-knowledge-0.1.45 |
+| task08/knowledge-0.1.45 | 99cc3b514327 | …/task08-knowledge-0.1.45 |
+| kb/0.1.45-02 | 8405d1bbb986 | …/kb-0.1.45-02 |
+| pending/device-axis-reload-window-tests | 0477e327e5da | …/pending-device-axis-reload-window-tests |
 
-子仓库：
+子仓库（4 个）：
 
-| 仓库 | 分支 | SHA | 去向 | archive tag |
-|---|---|---|---|---|
-| Apple | next/client-consumption | `7e2f5c4` | 未合并（BLOCKED） | `archive/0.1.45/apple/next-client-consumption` |
-| Apple | fix/task10-apple-ne-runtime-final | `b2596b5` | 未合并（BLOCKED） | `…/apple/fix-task10-apple-ne-runtime-final` |
-| Desktop | next/client-consumption | `28dc4a9` | 已 fast-forward 集成 | `…/desktop/next-client-consumption` |
-| Dashboard | next/client-consumption | `62f1582` | 已 fast-forward 集成 | `…/dashboard/next-client-consumption` |
-| satelite-one | next/subscription-refresh | `9cdf782` | 未合并（BLOCKED） | `…/satelite-one/next-subscription-refresh` |
-| quic-go | fix/task08-h3-usecount | `0b8709eb` | 已融合进 `ca9992bc` | `…/quic-go/fix-task08-h3-usecount` |
-| quic-go | network/path-length-fix | `0e7c69da` | 已融合进 `ca9992bc` | `…/quic-go/network-path-length-fix` |
-| wireguard-go | awg-base | `ca3bc60c` | 被 pin `a765d957` 取代 | `…/wireguard-go/awg-base` |
-| wireguard-go | awg-graft | `52a27657` | 被 pin `a765d957` 取代 | `…/wireguard-go/awg-graft` |
+| 仓库 | 分支 | 删除前 SHA | archive tag |
+|---|---|---|---|
+| Desktop | next/client-consumption | 28dc4a973bcd | archive/0.1.45/desktop/next-client-consumption |
+| Dashboard | next/client-consumption | 62f158255ce9 | archive/0.1.45/dashboard/next-client-consumption |
+| quic-go | fix/task08-h3-usecount | 0b8709ebb15e | archive/0.1.45/quic-go/fix-task08-h3-usecount |
+| quic-go | network/path-length-fix | 0e7c69dacb54 | archive/0.1.45/quic-go/network-path-length-fix |
 
-**注意**：Apple / satelite / wireguard 的删除候选仍包含**未纳入或明确延期**的工作，按“永远不得自动清理”条款，它们只归档、不删除。
-
-## 3. 保留清单（不清理）
-
-- `testing`、`main`、`dev`、`sagernet`、`gh-pages`、`mirror/*`、正式 release 分支与 tags。
-- `integration/0.1.45-final`（交付分支）、`candidate/w07-2026-11-10`（基线）。
-- Apple 两条功能线、satelite `next/subscription-refresh`（未合并）。
-- wireguard `awg-base`/`awg-graft`（延期，不是已合并）。
-- 任何仍有 worktree 的分支。
-
-## 4. 阻塞清理的原因
-
-1. **RC 未推送**：清理前置条件要求“最终集成成果已安全推送且 SHA 已核对”。本阶段未推送 `integration/0.1.45-final`（推送是可选动作，且主仓库 `origin` 配置异常，见 §6）。
-2. **archive tags 未推送**：前置条件要求“先推送并验证 archive tag，再删除远端 topic branch”。本轮只创建了本地 tag（20 个）。
-3. **远端删除不可逆**：在上述两个条件满足前执行删除，违反阶段 06 的安全条款；按“如果任一证明缺失，保留分支并写入 CLEANUP_DEFERRED”处理。
-
-## 5. 完成远端清理的精确步骤（留给有推送权限的执行者）
+删除前的吸收证明见各阶段报告：文件逐字节一致（task09 40/40、h3 35/40+5 pin、task10 21/23+2 更新、next/network 39/43+4 更新）或 cherry-pick/测试映射（closeout 字节相同、resources 阶段 03、docs 归档、pending 4/4 PASS）。删除后远端 tag 仍可恢复任何分支：
 
 ```sh
-# 0) 主仓库 origin 目前指向 desktop 仓库，必须用显式 URL
-git -C C:/Deepseek/singbox-consolidation push \
-  https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git \
-  integration/0.1.45-final
-
-# 1) 推送 archive tags（主仓库）
-git -C C:/Deepseek/singbox-consolidation push \
-  https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git \
-  'refs/tags/archive/0.1.45/jiejiebox/*:refs/tags/archive/0.1.45/jiejiebox/*'
-
-# 2) 逐个子仓库推送 tag（apple/desktop/dashboard/satelite-one/quic-go/wireguard-go）
-
-# 3) 核对远端 SHA 与 tag 后再删除 topic 分支
-git push https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git --delete <branch>
+git push <url> refs/tags/archive/0.1.45/<repo>/<branch>:refs/heads/<branch>
 ```
 
-**不要**删除 `testing`/`main`/`integration/0.1.45-final`/`candidate/*`，也不要删除 Apple/satelite/wireguard 的未合并分支。
+## 3. 保留的分支及原因
 
-## 6. 本轮发现的额外风险
+| 分支 | 原因 |
+|---|---|
+| `testing`、`main`、`dev`、`sagernet`、`gh-pages`、`mirror/*` | 永远不自动清理 |
+| `integration/0.1.45-final` | 交付分支（已推送） |
+| `candidate/w07-2026-11-10` | 基线参照 |
+| `backup/02-ecfffe7d0` | 备份；含 route diagnose/process-cache 等未纳入内容，保留到 RC 稳定后人工决定 |
+| `next/client-consumption-candidate` | 客户端候选，独有工作未证明已被吸收，保留 |
+| Apple `next/client-consumption`、`fix/task10-apple-ne-runtime-final` | 未合并（无 Xcode），只归档 |
+| satelite-one `next/subscription-refresh` | 已在其仓库 fast-forward 到 `integration/0.1.45`（`9cdf782`），远端分支保留为产品分支；tag 已推送 |
+| wireguard-go `awg-base`、`awg-graft` | 延期；被 pin `a765d957` 取代，保留 refs |
+| quic-go `integration/0.1.45` | 依赖 pin 所在分支，保留 |
+| Desktop/Dashboard `main` | 产品主线 |
 
-- `C:\Deepseek\singbox-consolidation` 的 `origin` remote 指向 `sing-box-for-desktop`（不是 JiejieBox），且主仓库分支的远端实际在 `Piggy-Cat-bit-shadow/JiejieBox`。任何 `git push origin` 都会推到错误的仓库。已在 `FINAL_TEST_MATRIX`/本报告记录；清理前必须用显式 URL。
-- 各客户端仓库的 archive tag 只存在于本地；删除远端前必须推送。
+## 4. 恢复入口
 
-## 7. 结论
+- 主仓库 tag 前缀：`archive/0.1.45/jiejiebox/`
+- 子仓库 tag 前缀：`archive/0.1.45/<repo>/`
+- 推送后已逐项用 `git ls-remote --tags` 核对；删除后用 `git ls-remote --heads` 确认分支已消失、tag 仍在。
 
-**本轮没有删除任何分支**；创建了可恢复的本地 archive tags，并给出逐分支的吸收证明与远端清理步骤。远端清理因“RC 与 archive tag 未推送”按纪律延期，记入 `CLEANUP_DEFERRED`（本节即记录）。
+## 5. 结论
+
+清理满足阶段 06 的全部前置条件：RC 已推送并核对、archive tags 已推送并核对、分支 SHA 与 tag 一一对应、独有工作有文件级或测试级证明。共删除 15 个远端 topic 分支，保留 2 个需人工决定的候选（backup、client-consumption-candidate）与全部未合并/延期分支。

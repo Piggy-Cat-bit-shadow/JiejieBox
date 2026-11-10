@@ -39,9 +39,9 @@
 | Desktop 构建 | `pnpm build` | **PASS** |
 | Apple iOS/macOS 构建 + Swift tests | `xcodebuild` / Swift tests | **BLOCKED**（无 macOS/Xcode） |
 | Apple 语义融合 | next + NE trial merge | **NOT RUN**（3 个冲突已定位，未解决） |
-| Android 客户端构建/测试 | Gradle | **BLOCKED**（本阶段未安装 Android 客户端所需 JDK17+SDK 组合；内核 AAR 未产出） |
-| satelite-one 单元测试/assembleDebug | `./gradlew :app:testDebugUnitTest :app:assembleDebug` | **BLOCKED**（`app/libs/libbox.aar` 缺失，`verifyCoreProvenance` 失败；JDK17 + SDK 已就绪） |
-
+| Android core AAR | `go run ./cmd/internal/build_libbox -target android -android-variant main/legacy`（JDK17 + NDK 28） | **PASS**（arm64/arm/x86/x86_64；provenance commit=`b810d0c`，version=SHA） |
+| satelite-one 单元测试/assembleDebug | `./gradlew :app:testDebugUnitTest :app:assembleDebug`（Node 无关，JDK17+SDK+真实 AAR） | **PASS**（unit tests BUILD SUCCESSFUL；`verifyCoreProvenance: OK`；assembleDebug BUILD SUCCESSFUL） |
+| Android 客户端构建 | `clients/android`（pin `c783710`）+ 同一对 AAR，`./gradlew :app:assembleDebug` | **PASS**（BUILD SUCCESSFUL，universal/arm64/armv7/x86/x86_64 debug APK；8m10s） |
 ## 3. 发布门禁
 
 | 门禁 | 结果 |
@@ -58,7 +58,7 @@
 
 - Windows 管理员用例（`TestGoKernel*`、WinDivert/tlsspoof）。
 - `common/tls` 的 Windows TLS1.3 失败（阶段 03 基线同样失败）。
-- Apple/Android/satelite-one 的构建与真机测试。
+- Apple 的构建与真机测试；Android/satelite 的**真机**运行（构建与单元测试已 PASS）。
 - 本地 WSL 的 `common/netns TestUnshareNamespace`（环境限制；目标 Linux runner 应可执行）。
 - 所有未被本轮命令实际执行的 CI 声明。
 

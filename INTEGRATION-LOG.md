@@ -406,3 +406,12 @@
 
 - source-lock 快照 `69e8dcb457a`；最终报告与 `dependency-final-shas.json` 所在提交为 RC 提交（见 `git log`）。
 - 未推送、未合入 `testing`、未创建正式 release。
+
+### Stage 06 收尾补跑（2026-11-11 05:40）
+
+- RC 推送：`integration/0.1.45-final` → `b810d0c2603f11eb2127adf816eb9e2b080b4094`，远端 SHA 已核对（`jiejiebox` remote，显式 URL）。
+- 20 个 archive tag 推送并核对；删除 15 个已吸收远端 topic 分支（详见 `CLEANUP_REPORT.md`），保留 backup/client-candidate/Apple/satelite/wireguard。
+- Android core AAR：`build_libbox -target android`（JDK17 + NDK 28）产出 `libbox.aar` / `libbox-legacy.aar`，provenance `b810d0c`（version=SHA）。
+- satelite-one：unit tests + assembleDebug **BUILD SUCCESSFUL**，`verifyCoreProvenance: OK`，integration ff 到 `9cdf782`。
+- 官方 Android 客户端：`:app:assembleDebug` **BUILD SUCCESSFUL**（8m10s，universal/arm64/armv7/x86/x86_64）。
+- 产物：`_int0145/artifacts/0.1.45/`（AAR ×2、APK ×2、provenance、SHA256SUMS）。
