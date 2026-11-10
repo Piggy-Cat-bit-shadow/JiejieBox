@@ -251,13 +251,13 @@ replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun
 // module does not inherit the root's replaces, so a test binary built from this module would
 // otherwise exercise a different QUIC stack than the one that ships. The revision adds
 // InitialPacketSizeCeiling, the hard packet-size ceiling applied after the ChromeParrot override.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110165647-ca9992bc795e
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77
 
 // sing-quic carries that ceiling through qtls.QUICOptions. This module does not import it today,
 // so the replace is here to keep the two modules pinned to the same revision: the guard in
 // scripts/ci/check-go-module-integrity.sh fails when a fork the root builds drifts here, which is
 // how the test module was once found resolving a different sing-tun than the product ships.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261110231703-4a95023f3e26
 
 // The cronet-go pin is a tree of modules, not one: see the root module for why every path the
 // repository publishes is pinned. A nested module does not inherit the root's replaces.
@@ -323,6 +323,6 @@ replace github.com/sagernet/cronet-go/lib/windows_amd64 => github.com/Piggy-Cat-
 
 replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261105062326-362e63b14ce2
 
-replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261028133436-b63a2e9a7b1e
+replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80
 
 replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109042158-a765d957fd81

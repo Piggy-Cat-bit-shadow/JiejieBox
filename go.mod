@@ -308,7 +308,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // projects (connect-ip-go, jiejie-masque-unified). The two lines have different module paths
 // and a second, incompatible owned-DATAGRAM API; they must not be merged. The release line is
 // the only one that can satisfy this `github.com/sagernet/quic-go` require.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110165647-ca9992bc795e
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
 // owned-DATAGRAM send path for Hysteria2 and TUIC.
@@ -317,7 +317,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // hopping receive loop) plus the three packet-ceiling/owned-datagram commits that sing-box
 // already pinned. The default branch also resolves quic-go to the fork release line, so it
 // builds and tests on its own; sing-box keeps its own replace, which wins for this build.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261110231703-4a95023f3e26
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
@@ -398,4 +398,4 @@ replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun
 //
 // See docs/fork/lx-stability-audit-phase1.md (048) and docs/fork/upstream-sync-2026-10.md.
 
-replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261028133436-b63a2e9a7b1e
+replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80
