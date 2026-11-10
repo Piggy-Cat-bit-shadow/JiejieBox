@@ -335,17 +335,28 @@ func TestTheFinalEnvelopeFitsWhenALaterRecordDoesNot(t *testing.T) {
 	require.True(t, full.Truncated, "one record with more behind it must say so")
 	require.Equal(t, full.Records[0].Sequence, full.NextSequence)
 
-	// One byte budget away from the envelope that carries the flag: the second record cannot fit,
-	// so the page carries the first record and the flag - which is what was NOT accounted for.
-	budget := fullBytes - 1
-	page, pageBytes := queryBinding(t, server, fmt.Sprintf(`{"limit":8,"maxBytes":%d}`, budget))
-	require.LessOrEqual(t, pageBytes, budget,
-		"the bytes that leave the server must fit the requested budget (requested %d, got %d)", budget, pageBytes)
-	require.Len(t, page.Records, 1, "the first record still rides so the cursor advances")
-	require.Equal(t, full.Records[0].Sequence, page.NextSequence)
-	require.True(t, page.Truncated, "there is still a second record behind this page")
+	// The threshold is the envelope that carries the flag. Walk across it: below it the one-record
+	// page no longer fits and the first record must be CROPPED; at and above it the whole first
+	// record rides. Every point must respect the bytes the caller asked for.
+	for _, delta := range []int{-18, -17, -1, 0, 1} {
+		budget := fullBytes + delta
+		page, pageBytes := queryBinding(t, server, fmt.Sprintf(`{"limit":8,"maxBytes":%d}`, budget))
+		require.LessOrEqual(t, pageBytes, budget,
+			"delta %d: the bytes that leave the server must fit the requested budget (%d > %d)", delta, pageBytes, budget)
+		require.Len(t, page.Records, 1, "delta %d: the first record still rides so the cursor advances", delta)
+		require.Equal(t, full.Records[0].Sequence, page.NextSequence, "delta %d: the cursor is the record carried", delta)
+		require.True(t, page.Truncated, "delta %d: there is still a second record behind this page", delta)
+		if delta < 0 {
+			require.NotEmpty(t, page.Records[0].Rule, "delta %d: cropping keeps the field, it does not drop it", delta)
+			require.Less(t, len(page.Records[0].Rule), len(strings.Repeat("<", 360)),
+				"delta %d: below the flag threshold the first record must be cropped to fit", delta)
+		} else {
+			require.Equal(t, strings.Repeat("<", 360), page.Records[0].Rule,
+				"delta %d: at or above the threshold the first record rides whole", delta)
+		}
 
-	rest, _ := queryBinding(t, server, fmt.Sprintf(`{"since":%d}`, page.NextSequence))
-	require.Len(t, rest.Records, 1, "the second record is still reachable through the cursor")
-	require.Greater(t, rest.Records[0].Sequence, full.Records[0].Sequence)
+		rest, _ := queryBinding(t, server, fmt.Sprintf(`{"since":%d}`, page.NextSequence))
+		require.Len(t, rest.Records, 1, "delta %d: the second record is still reachable through the cursor", delta)
+		require.Greater(t, rest.Records[0].Sequence, full.Records[0].Sequence)
+	}
 }

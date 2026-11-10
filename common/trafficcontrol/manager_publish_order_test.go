@@ -88,3 +88,42 @@ func TestADroppedEventStillConsumesItsSequence(t *testing.T) {
 	require.EqualValues(t, 6, next.Sequence)
 	require.EqualValues(t, 3, next.Sequence-2-1)
 }
+
+// TestConcurrentJoinsAndLeavesKeepTheEmissionOrder includes the OTHER producer: `leave` publishes a
+// closed event through the same path. If ordering held only for join, a mixed workload would still
+// invert - and closed events are exactly the ones a client cannot re-derive.
+func TestConcurrentJoinsAndLeavesKeepTheEmissionOrder(t *testing.T) {
+	const (
+		rounds      = 10
+		producer    = 64
+		perProducer = 2 // one join + one leave
+	)
+	for round := 0; round < rounds; round++ {
+		manager, subscription := publishOrderManager(t)
+		var waitGroup sync.WaitGroup
+		for index := 0; index < producer; index++ {
+			waitGroup.Add(1)
+			go func() {
+				defer waitGroup.Done()
+				tracker := newRaceTestTracker(manager)
+				manager.join(tracker)
+				manager.leave(tracker)
+			}()
+		}
+		waitGroup.Wait()
+
+		total := producer * perProducer
+		var previous uint64
+		for index := 0; index < total; index++ {
+			select {
+			case event := <-subscription:
+				require.Greater(t, event.Sequence, previous,
+					"round %d: event %d arrived as sequence %d after %d", round, index+1, event.Sequence, previous)
+				previous = event.Sequence
+			default:
+				t.Fatalf("round %d: only %d of %d events arrived", round, index, total)
+			}
+		}
+		require.EqualValues(t, total, previous, "the numbers are exactly 1..N with nothing missing")
+	}
+}

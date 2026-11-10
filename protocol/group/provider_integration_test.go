@@ -318,3 +318,31 @@ func TestURLTestProviderMembershipFollowsUpdates(t *testing.T) {
 	require.Empty(t, urlTest.All())
 	require.Nil(t, urlTest.Selected("tcp"))
 }
+
+// TestAProviderPublicationThatMovesTheSelectionAdvancesTheRevision is the other half of the
+// review's "provider update path" question: a republication can change the selected member without
+// any SelectOutbound call, and if the revision does not move with it a caller cannot tell that the
+// member it stored is gone.
+func TestAProviderPublicationThatMovesTheSelectionAdvancesTheRevision(t *testing.T) {
+	provider := &stubProvider{tag: "prov"}
+	world, selector := newProviderWorld(t, provider)
+	world.start(selector)
+	require.NoError(t, provider.publish(newEdgeLeaf("prov/a", "tcp", "udp"), newEdgeLeaf("prov/b", "tcp", "udp")))
+
+	snapshot, ok := selector.SelectOutboundSnapshot("prov/a")
+	require.True(t, ok)
+	require.Equal(t, "prov/a", snapshot.AppliedTag)
+	require.EqualValues(t, 1, snapshot.Revision, "the first change of the selection is revision 1")
+
+	// This publication removes the selected member: the group falls back to the configured default,
+	// which is a selection change the caller must be able to observe through the revision.
+	require.NoError(t, provider.publish(newEdgeLeaf("prov/b", "tcp", "udp")))
+	require.Equal(t, "self", selector.Selected("tcp").Tag())
+	require.Greater(t, selector.Revision(), snapshot.Revision,
+		"the provider moved the selection, so the revision must advance with it")
+
+	next, ok := selector.SelectOutboundSnapshot("prov/b")
+	require.True(t, ok)
+	require.Equal(t, "prov/b", next.AppliedTag)
+	require.Equal(t, selector.Revision(), next.Revision)
+}
