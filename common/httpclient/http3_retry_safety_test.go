@@ -412,3 +412,63 @@ func TestGetBodyFailureIsAnErrorNotAPanic(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, []string{payload}, h2Server.receivedBodies())
 }
+
+type auditTrackedBody struct {
+	io.Reader
+	closes atomic.Int32
+}
+
+func (b *auditTrackedBody) Close() error { b.closes.Add(1); return nil }
+
+func TestAuditH3SuccessfulRequestClosesOriginalBody(t *testing.T) {
+	server := startRetrySafetyH3Server(t, okHandler)
+	transport := newRetrySafetyTransport(nil, dialRetrySafetyH3(server.address), time.Second)
+	t.Cleanup(func() { _ = transport.h3Transport.Close() })
+	body := &auditTrackedBody{Reader: strings.NewReader("payload")}
+	request, err := http.NewRequest(http.MethodPost, "https://"+server.address, body)
+	require.NoError(t, err)
+	response, err := transport.RoundTrip(request)
+	require.NoError(t, err)
+	require.Equal(t, "HTTP/3.0", response.Proto)
+	_, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, []string{"payload"}, server.receivedBodies())
+	require.Eventually(t, func() bool { return body.closes.Load() == 1 }, 250*time.Millisecond, time.Millisecond,
+		"H3 succeeded but the transport never closed the original upload body")
+}
+
+func TestAuditH3WinClosesUnstartedH2Body(t *testing.T) {
+	server := startRetrySafetyH3Server(t, okHandler)
+	transport := newRetrySafetyTransport(nil, dialRetrySafetyH3(server.address), time.Second)
+	t.Cleanup(func() { _ = transport.h3Transport.Close() })
+	first := &auditTrackedBody{Reader: strings.NewReader("payload")}
+	second := &auditTrackedBody{Reader: strings.NewReader("payload")}
+	clones := 0
+	request, err := http.NewRequest(http.MethodPut, "https://"+server.address, strings.NewReader("payload"))
+	require.NoError(t, err)
+	request.Header.Set("Idempotency-Key", "task08-audit")
+	request.GetBody = func() (io.ReadCloser, error) {
+		clones++
+		if clones == 1 {
+			return first, nil
+		}
+		return second, nil
+	}
+	response, err := transport.RoundTrip(request)
+	require.NoError(t, err)
+	require.Equal(t, "HTTP/3.0", response.Proto)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, 2, clones)
+	require.Eventually(t, func() bool { return first.closes.Load() == 1 }, 250*time.Millisecond, time.Millisecond)
+	require.Equal(t, int32(1), second.closes.Load(), "unused H2 clone was never closed")
+}
+
+func TestAuditH3VerdictsDoNotCrossAuthorities(t *testing.T) {
+	transport := &http3FallbackTransport{broken: make(map[string]http3BrokenEntry)}
+	a := transport.beginH3Attempt()
+	b := transport.beginH3Attempt()
+	transport.clearH3Broken("b.example:443", b)
+	transport.markH3Broken("a.example:443", a)
+	require.True(t, transport.h3Broken("a.example:443"), "B's unrelated success suppressed A's failure verdict")
+}
