@@ -80,34 +80,39 @@ func (s recoveryStream) ready() bool {
 	return s.batches != nil
 }
 
-// recoveredStamp is what the recovery producer remembers about an address it has already published.
+// recoveredStamp is the SOURCE the recovery producer first published an address under.
 //
-// It is the provenance, not a bare presence flag: a later answer that confirms the same address
-// under the CURRENT environment must reach the scheduler even though the address is already known,
-// which is what lets the ordering rule replace a superseded queued entry.
+// # Why a comparable source, and not a verdict
+//
+// This used to store "was this superseded when it arrived", a judgment about one instant. A batch
+// that was genuinely current when it was accepted became stale later, and the stored `false` then
+// made every later confirmation of the same address look like a redundant repeat: the confirmations
+// were dropped here, the queued entry stayed marked with the old generation, and the scheduler -
+// which evaluates provenance at dequeue - demoted it. The address the CURRENT environment had
+// re-confirmed lost the slot to one only the previous environment had ever named.
+//
+// The producer never needs to know what "now" is. The scheduler re-evaluates provenance at dequeue
+// and upgrades queued entries; what it cannot do is invent information the producer threw away. So
+// the producer keeps the source itself and answers one question on a repeat: does this repeat carry a
+// NEWER source than the one already published?
 type recoveredStamp struct {
 	known      bool
-	superseded bool
+	generation uint64
 }
 
-// resultSuperseded reports whether a family answer was requested under a DNS environment that is no
-// longer in force.
+// newerThan reports whether this source carries information the previously published one did not.
 //
-// Unknown provenance is never superseded, and a chain that cannot report "now" leaves the comparison
-// unavailable: both keep the previous behaviour, which is to dial.
-func (d *resolveDialer) resultSuperseded(result adapter.DNSFamilyResult) bool {
-	if !result.HasSourceGeneration {
+// Unknown carries nothing, so it never replaces a known source; a known source replaces an unknown
+// one; a newer generation replaces an older one. An equal or older generation is the same information
+// or less, and the address is already queued.
+func (s recoveredStamp) newerThan(previous recoveredStamp) bool {
+	if !s.known {
 		return false
 	}
-	reader := d.dnsGenerationReader()
-	if reader == nil {
-		return false
+	if !previous.known {
+		return true
 	}
-	current, available := reader()
-	if !available {
-		return false
-	}
-	return current != result.SourceGeneration
+	return s.generation > previous.generation
 }
 
 // recoveryDomain returns the sniffed domain recovery may use, and whether recovery applies at all.
@@ -232,7 +237,10 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 			// afterwards would let a refused family consume the whole answer and leave the admitted
 			// one unread.
 			admitted := d.admittedRecoveredCandidates(addresses, admission)
-			superseded := d.resultSuperseded(result)
+			source := recoveredStamp{
+				known:      result.HasSourceGeneration,
+				generation: result.SourceGeneration,
+			}
 			batch := make([]dualStackCandidate, 0, len(admitted))
 			for _, address := range admitted {
 				canonical := unmapAddress(address)
@@ -241,19 +249,14 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 					continue
 				}
 				previous, duplicate := seen[canonical]
-				if duplicate {
-					// A repeat only carries new information when it is a CURRENT confirmation of an
-					// address previously offered under a superseded (or unknown) source. A stale or
-					// unknown repeat is dropped, and a repeat of an already-current entry changes
-					// nothing.
-					if superseded || (previous.known && !previous.superseded) {
-						continue
-					}
+				if duplicate && !source.newerThan(previous) {
+					// A repeat only carries new information when its SOURCE is newer than the one
+					// already published. An unknown, equal or older repeat is dropped; the address
+					// is already queued, and the scheduler is the one that decides what its source
+					// is worth at launch time.
+					continue
 				}
-				seen[canonical] = recoveredStamp{
-					known:      result.HasSourceGeneration,
-					superseded: superseded,
-				}
+				seen[canonical] = source
 				batch = append(batch, dualStackCandidate{
 					address:          canonical,
 					family:           classifyAddress(canonical),

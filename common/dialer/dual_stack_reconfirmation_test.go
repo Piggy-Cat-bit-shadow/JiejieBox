@@ -3,6 +3,7 @@ package dialer
 import (
 	"context"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -160,6 +161,15 @@ type recoveryBatchRouter struct {
 	adapter.DNSRouter
 	generation atomic.Uint64
 	steps      []recoveryBatchStep
+	// publishedGeneration and publishedAt record the environment and instant each batch became
+	// visible, so a test can prove "the old batch was current when it was accepted" and "the
+	// confirmation was already queued before anything was launched from that family".
+	//
+	// Guarded because the lookup goroutine writes them and the test reads them after the dial, and
+	// the mutex is what gives that read a happens-before edge rather than a wall-clock assumption.
+	access              sync.Mutex
+	publishedGeneration []uint64
+	publishedAt         []time.Time
 }
 
 type recoveryBatchStep struct {
@@ -167,6 +177,10 @@ type recoveryBatchStep struct {
 	ipv6       bool
 	addresses  []netip.Addr
 	generation uint64
+	// advanceTo, when non-zero, moves the router's generation BEFORE this batch is published. It is
+	// how a test builds the exact sequence the defect needs: an old batch accepted while its
+	// environment is still current, then the environment moves, then the confirmation arrives.
+	advanceTo uint64
 }
 
 func (r *recoveryBatchRouter) LookupFamilies(ctx context.Context, domain string, options adapter.DNSQueryOptions, publish func(adapter.DNSFamilyResult)) error {
@@ -178,6 +192,13 @@ func (r *recoveryBatchRouter) LookupFamilies(ctx context.Context, domain string,
 				return ctx.Err()
 			}
 		}
+		if step.advanceTo != 0 {
+			r.generation.Store(step.advanceTo)
+		}
+		r.access.Lock()
+		r.publishedGeneration = append(r.publishedGeneration, r.generation.Load())
+		r.publishedAt = append(r.publishedAt, time.Now())
+		r.access.Unlock()
 		publish(adapter.DNSFamilyResult{
 			IPv6:                step.ipv6,
 			Addresses:           step.addresses,
@@ -186,6 +207,13 @@ func (r *recoveryBatchRouter) LookupFamilies(ctx context.Context, domain string,
 		})
 	}
 	return nil
+}
+
+// publication returns the environment each batch was published under, and when.
+func (r *recoveryBatchRouter) publication() ([]uint64, []time.Time) {
+	r.access.Lock()
+	defer r.access.Unlock()
+	return append([]uint64(nil), r.publishedGeneration...), append([]time.Time(nil), r.publishedAt...)
 }
 
 func (r *recoveryBatchRouter) DNSGeneration() uint64 {
@@ -240,6 +268,127 @@ func TestLiteralRecoveryCurrentReconfirmationUpgradesTheQueuedAddress(t *testing
 	}
 	require.Equal(t, oldSecond, firstIPv4,
 		"the confirmed address must lead the recovered race; attempts: %v", attempts)
+	requireBusinessData(t, conn)
+	require.NoError(t, conn.Close())
+}
+
+// TestLiteralRecoveryCrossGenerationConfirmationKeepsTheCurrentAddress is C1: the old batch was
+// CURRENT when the producer accepted it, and only later did the environment move and re-confirm one
+// of its addresses.
+//
+// # The defect this pins
+//
+// The producer remembered "was this superseded when it arrived". For this sequence the answer was
+// no, and the stored `false` was never re-evaluated, so the later confirmation looked like a
+// redundant repeat and was dropped. The queued entry kept generation 1, the scheduler - which does
+// evaluate provenance at dequeue - saw it as superseded and launched the address only the old
+// environment had named. Both IPv4 addresses were healthy, so the stale one won.
+//
+// The producer now keeps the SOURCE and forwards a repeat whose source is newer. The scheduler
+// upgrades the queued entry and the current confirmation leads its family.
+func TestLiteralRecoveryCrossGenerationConfirmationKeepsTheCurrentAddress(t *testing.T) {
+	const fallbackDelay = 200 * time.Millisecond
+
+	original := netip.MustParseAddr("2001:db8::2c")
+	blackhole6 := netip.MustParseAddr("2001:db8::30")
+	oldFirst := netip.MustParseAddr("192.0.2.1")
+	oldSecond := netip.MustParseAddr("192.0.2.2")
+
+	router := &recoveryBatchRouter{steps: []recoveryBatchStep{
+		// The recovered race starts on IPv6, so the IPv4 family is not the first launch.
+		{ipv6: true, addresses: []netip.Addr{blackhole6}, generation: 1},
+		// The IPv4 batch is accepted while generation 1 is STILL current. This is the event the old
+		// producer recorded as "not superseded" and then never re-evaluated.
+		{delay: 5 * time.Millisecond, ipv6: false, addresses: []netip.Addr{oldFirst, oldSecond}, generation: 1},
+		// The environment moves and re-confirms .2 before the IPv4 family's launch slot.
+		{delay: 10 * time.Millisecond, ipv6: false, addresses: []netip.Addr{oldSecond}, generation: 2, advanceTo: 2},
+	}}
+	router.generation.Store(1)
+
+	inner := newStreamOrderDialer(original, blackhole6)
+	dialer := &resolveDialer{
+		router:        router,
+		dialer:        inner,
+		parallel:      true,
+		fallbackDelay: fallbackDelay,
+		queryOptions:  adapter.DNSQueryOptions{Strategy: C.DomainStrategyPreferIPv4},
+	}
+
+	ctx, cancel := context.WithTimeout(recoveryContext(), 3*time.Second)
+	defer cancel()
+
+	conn, err := dialer.DialContext(ctx, "tcp", M.SocksaddrFrom(original, 443))
+	require.NoError(t, err, "attempts: %v", inner.attempts())
+	require.NotNil(t, conn)
+
+	attempts := inner.attempts()
+	publishedGeneration, publishedAt := router.publication()
+	require.Equal(t, []uint64{1, 1, 2}, publishedGeneration,
+		"the old batch must have been published while generation 1 was current")
+	startedAt, started := inner.startedAt(oldSecond)
+	require.True(t, started, "the confirmed address must be dialled; attempts: %v", attempts)
+	require.False(t, startedAt.Before(publishedAt[len(publishedAt)-1]),
+		"the confirmation must be queued before the address it confirms is launched")
+
+	firstIPv4 := netip.Addr{}
+	for _, address := range attempts {
+		if classifyAddress(address) == familyIPv4 {
+			firstIPv4 = address
+			break
+		}
+	}
+	require.Equal(t, oldSecond, firstIPv4,
+		"the address the current environment confirmed must lead its family; attempts: %v", attempts)
+	require.Equal(t, 1, countAttempts(attempts, oldSecond), "one attempt per address")
+	require.LessOrEqual(t, countAttempts(attempts, oldFirst), 1)
+	requireBusinessData(t, conn)
+	require.NoError(t, conn.Close())
+}
+
+// TestLiteralRecoveryLateOldConfirmationDoesNotDowngrade is the reverse source order through the
+// same producer: the newer source is accepted first and an older repeat must not replace it.
+func TestLiteralRecoveryLateOldConfirmationDoesNotDowngrade(t *testing.T) {
+	const fallbackDelay = 120 * time.Millisecond
+
+	original := netip.MustParseAddr("2001:db8::2c")
+	blackhole6 := netip.MustParseAddr("2001:db8::30")
+	current := netip.MustParseAddr("192.0.2.2")
+	older := netip.MustParseAddr("192.0.2.1")
+
+	router := &recoveryBatchRouter{steps: []recoveryBatchStep{
+		{ipv6: true, addresses: []netip.Addr{blackhole6}, generation: 2},
+		{delay: 5 * time.Millisecond, ipv6: false, addresses: []netip.Addr{current}, generation: 2},
+		{delay: 5 * time.Millisecond, ipv6: false, addresses: []netip.Addr{current}, generation: 1},
+		{delay: 5 * time.Millisecond, ipv6: false, addresses: []netip.Addr{older}, generation: 1},
+	}}
+	router.generation.Store(2)
+
+	inner := newStreamOrderDialer(original, blackhole6)
+	dialer := &resolveDialer{
+		router:        router,
+		dialer:        inner,
+		parallel:      true,
+		fallbackDelay: fallbackDelay,
+		queryOptions:  adapter.DNSQueryOptions{Strategy: C.DomainStrategyPreferIPv4},
+	}
+
+	ctx, cancel := context.WithTimeout(recoveryContext(), 3*time.Second)
+	defer cancel()
+
+	conn, err := dialer.DialContext(ctx, "tcp", M.SocksaddrFrom(original, 443))
+	require.NoError(t, err, "attempts: %v", inner.attempts())
+	require.NotNil(t, conn)
+	attempts := inner.attempts()
+	firstIPv4 := netip.Addr{}
+	for _, address := range attempts {
+		if classifyAddress(address) == familyIPv4 {
+			firstIPv4 = address
+			break
+		}
+	}
+	require.Equal(t, current, firstIPv4,
+		"an older repeat must not displace the current confirmation; attempts: %v", attempts)
+	require.Equal(t, 1, countAttempts(attempts, current))
 	requireBusinessData(t, conn)
 	require.NoError(t, conn.Close())
 }
