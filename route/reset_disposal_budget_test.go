@@ -25,6 +25,7 @@ package route
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -205,5 +206,69 @@ func TestConsecutiveOverBudgetTransitionsKeepSettling(t *testing.T) {
 	}
 	for index, conn := range second {
 		require.EqualValues(t, 1, conn.closes.Load(), "second batch socket %d must close exactly once", index)
+	}
+}
+
+// TestTheBudgetThresholdIsWhereNewConnectionsStop is the review's threshold check: 63 (below), 64
+// (equal) and 65 (above) real UDP sockets in one transition. The queue is capped at the budget in
+// every case, the excess is condemned, and admission flips exactly at the boundary: below it a new
+// generation still carries a first byte while the old Close is blocked, at and above it a new dial
+// is refused with the caller's context.
+func TestTheBudgetThresholdIsWhereNewConnectionsStop(t *testing.T) {
+	budget := disposalBacklogBudget
+	for _, total := range []int{budget - 1, budget, budget + 1} {
+		t.Run(fmt.Sprintf("%d-sockets", total), func(t *testing.T) {
+			harness, router, connectionManager, conns, target := newBulkBlockedCloseHarness(t, total)
+			nextPin := router.watchNextPin()
+			dnsProbe := newTimelineDNS(t, harness.manager)
+			realDialer := newGenerationDialer(t, harness.manager, connectionManager)
+
+			resetDone := make(chan struct{})
+			go func() {
+				defer close(resetDone)
+				harness.manager.ResetNetwork(context.Background())
+			}()
+			select {
+			case <-conns[0].entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the first old socket never entered Close")
+			}
+			awaitPin(t, router, nextPin)
+			require.True(t, harness.manager.NetworkTransitionStable())
+			_ = dnsProbe.requireAnswer(t)
+
+			queued := total
+			if queued > budget {
+				queued = budget
+			}
+			require.Equal(t, queued, connectionManager.pendingDisposals(),
+				"the queue must hold exactly the budget's worth")
+			require.Equal(t, total-queued, connectionManager.condemnedDisposals(),
+				"the excess must be condemned, not queued")
+
+			if total < budget {
+				// Below the boundary the new generation is still served while the old Close is stuck.
+				firstByte := requireFirstByte(t, realDialer, target)
+				proxyFirstByte := requireProxyFirstByte(t, realDialer, startConnectProxy(t), target)
+				t.Logf("THRESHOLD total=%d admitted first-byte=%s proxy-first-byte=%s",
+					total, firstByte.Round(time.Microsecond), proxyFirstByte.Round(time.Microsecond))
+			} else {
+				refusedAfter := requireDialRefused(t, realDialer, target, 250*time.Millisecond)
+				t.Logf("THRESHOLD total=%d refused-after=%s", total, refusedAfter.Round(time.Millisecond))
+			}
+
+			select {
+			case <-resetDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the reset did not return while the old Close was blocked")
+			}
+			releaseAllBlocked(conns)
+			require.Eventually(t, func() bool {
+				return connectionManager.pendingDisposals() == 0 && connectionManager.condemnedDisposals() == 0
+			}, 10*time.Second, 5*time.Millisecond, "the ledger never emptied")
+			for index, conn := range conns {
+				require.EqualValues(t, 1, conn.closes.Load(), "socket %d must close exactly once", index)
+			}
+		})
 	}
 }
