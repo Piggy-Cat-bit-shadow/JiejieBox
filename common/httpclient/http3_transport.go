@@ -248,7 +248,12 @@ func (t *http3FallbackTransport) roundTripHTTP3Cold(request *http.Request, autho
 // rebuildable. When either is missing the caller gets the HTTP/3 error, because a duplicated side
 // effect cannot be undone and a half-read body would be a different request.
 func (t *http3FallbackTransport) retryOverH2AfterSentAttempt(request *http.Request, h3Err error) (*http.Response, error) {
-	if !requestIdempotent(request) || !requestReplayable(request) {
+	if !requestReplayable(request) {
+		return nil, h3Err
+	}
+	// RFC 9114: an explicitly UNPROCESSED request may be retried regardless of method - it
+	// cannot duplicate an effect - while every other failed attempt keeps the idempotency rule.
+	if !isH3RequestRejected(h3Err) && !requestIdempotent(request) {
 		return nil, h3Err
 	}
 	cloned, err := cloneRequestForRetry(request)
@@ -373,6 +378,11 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 			// package produced, and the caller must not read it as its own deadline.
 			issue.err = E.Cause(issue.err, "HTTP/3 attempt exceeded ", h3EstablishBudget)
 		}
+	}
+	if issue.err != nil && isH3RequestRejected(issue.err) {
+		// Name the explicit non-processing answer, so every layer above can tell it apart from a
+		// transport failure and from a possibly-sent attempt.
+		issue.err = E.Cause(errH3RequestRejected, issue.err)
 	}
 	if owner != nil {
 		switch {
@@ -764,6 +774,11 @@ func (t *http3FallbackTransport) recordH3AttemptFailure(request *http.Request, a
 		return
 	}
 	if errors.Is(err, context.Canceled) {
+		return
+	}
+	if isH3RequestRejected(err) {
+		// The peer explicitly did not process the request: a retry may be safe, but the
+		// transport itself is not known to be broken.
 		return
 	}
 	t.markH3Broken(authority, attempt)
