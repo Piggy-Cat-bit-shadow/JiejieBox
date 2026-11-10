@@ -12,6 +12,7 @@
 | [`CONFIG-RECOVERY-AND-PREVIEW-2026-11-10.md`](CONFIG-RECOVERY-AND-PREVIEW-2026-11-10.md) | 结果报告：Windows 配置恢复入口回归与产品夹具、两端 `started` 预览修复、消费构建、D 采样、Apple 构建与包标识 |
 | [`DEBUG-SELF-REVIEW-2026-11-10.md`](DEBUG-SELF-REVIEW-2026-11-10.md) | 定向自审：10 条反例/发现、负向对照、“绿了但没生效”排查与证伪记录 |
 | [`HANDOFF-ACCEPTANCE.md`](HANDOFF-ACCEPTANCE.md) | 三项外部条件验收交接：环境、责任窗口、下一条命令、通过标准、产物与 SHA 映射 |
+| [`EVIDENCE-KIT.md`](EVIDENCE-KIT.md) | 采样/判定工具的接口、源码 SHA256、重建命令与原始数据位置（工具不入库） |
 
 ## 一句话状态
 

@@ -19,6 +19,7 @@
 | 两端 `started` 预览语义、真实内核 fixture、消费构建与产物 SHA | [结果报告](reports/0.1.45/CONFIG-RECOVERY-AND-PREVIEW-2026-11-10.md) |
 | 反例、负向对照、假绿排查与已修缺陷 | [定向自审](reports/0.1.45/DEBUG-SELF-REVIEW-2026-11-10.md) |
 | 产品 A/B/C、独占窗口、Apple 运行期的环境与通过标准 | [验收交接](reports/0.1.45/HANDOFF-ACCEPTANCE.md) |
+| 采样/判定工具的重建方式与原始数据位置 | [证据工具包](reports/0.1.45/EVIDENCE-KIT.md) |
 
 ## 2026-11-05 新增导航（New routes）
 
