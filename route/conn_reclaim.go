@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
 )
 
 // ReclaimReason says WHY managed connections are being reclaimed. The reason is not cosmetic: the
@@ -489,7 +490,13 @@ func (m *ConnectionManager) WaitForConnectionRoom(ctx context.Context) error {
 		}
 		d.mu.Lock()
 	}
+	shutdown := d.shutdown
 	d.mu.Unlock()
+	if shutdown {
+		// A wake-up from shutdown is not room. Admitting here would track a connection
+		// into a manager whose CloseAll has already drained the list.
+		return E.New("connection manager is closed")
+	}
 	return nil
 }
 
@@ -556,6 +563,21 @@ func (m *ConnectionManager) stageDisposals(closers []managedConn) {
 	d := &m.disposal
 	d.mu.Lock()
 	m.initDisposalLocked()
+	if d.shutdown {
+		// Shutdown owns the remainder: queue everything (the worker still drains after
+		// shutdown) so Close's pending wait covers it. Nothing may be condemned after the
+		// flag is set, or CloseAll could take an empty condemned set and still return.
+		d.queue = append(d.queue, closers...)
+		d.pending += len(closers)
+		if !d.worker {
+			d.worker = true
+			go m.disposalWorker()
+		}
+		m.signalRoomLocked()
+		d.cond.Broadcast()
+		d.mu.Unlock()
+		return
+	}
 	room := m.disposalBudget() - d.pending
 	if room > len(closers) {
 		room = len(closers)

@@ -211,3 +211,148 @@ func TestTheDisposalBacklogStopsAdmissionAndRecovers(t *testing.T) {
 		require.EqualValues(t, 1, conn.closes.Load(), "socket %d must close exactly once", index)
 	}
 }
+
+// TestAdmissionDoesNotOutliveTheManager is the attack this design invited: admission waits on a
+// ledger signal, and shutdown also signals that channel. If the wake-up is treated as "room
+// available", a dial admitted after CloseAll has run would be tracked into a manager nobody will
+// close again. Shutdown must turn admission into an error the dialer can propagate.
+func TestAdmissionDoesNotOutliveTheManager(t *testing.T) {
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	manager.disposalBudgetOverride = 1
+	blocked := newBlockedPacketClose(t)
+	manager.TrackPacketConn(blocked)
+	manager.Reclaim(ReclaimNetworkTransition)
+	require.Equal(t, 1, manager.pendingDisposals())
+	t.Cleanup(blocked.releaseClose)
+
+	admitted := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		admitted <- manager.WaitForConnectionRoom(ctx)
+	}()
+	// Let the waiter park on the ledger signal.
+	time.Sleep(50 * time.Millisecond)
+
+	closeDone := make(chan struct{})
+	go func() {
+		defer close(closeDone)
+		_ = manager.Close()
+	}()
+
+	select {
+	case err := <-admitted:
+		require.Error(t, err, "admission returned success after shutdown began: the dial would be "+
+			"tracked into a manager that CloseAll has already drained")
+	case <-time.After(2 * time.Second):
+		t.Fatal("admission did not return when shutdown began")
+	}
+
+	blocked.releaseClose()
+	select {
+	case <-closeDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after the blocked socket was released")
+	}
+}
+
+// TestCloseAllClosesTheCondemnedSetSynchronously covers the deferred state in the synchronous
+// promise: a condemned object is owned but untracked, so CloseAll must take it and close it, and
+// must still wait for the queue's in-flight close.
+func TestCloseAllClosesTheCondemnedSetSynchronously(t *testing.T) {
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	manager.disposalBudgetOverride = 1
+	t.Cleanup(func() { _ = manager.Close() })
+
+	conns := make([]*blockedPacketClose, 0, 2)
+	for index := 0; index < 2; index++ {
+		conn := newBlockedPacketClose(t)
+		conns = append(conns, conn)
+		manager.TrackPacketConn(conn)
+	}
+	manager.Reclaim(ReclaimNetworkTransition)
+	require.Equal(t, 1, manager.pendingDisposals(), "one socket is in the queue")
+	require.Equal(t, 1, manager.condemnedDisposals(), "the other is condemned")
+
+	closeAllDone := make(chan struct{})
+	go func() {
+		defer close(closeAllDone)
+		manager.CloseAll()
+	}()
+	require.Eventually(t, func() bool { return conns[1].closes.Load() == 1 }, 5*time.Second, 5*time.Millisecond,
+		"CloseAll did not close the condemned socket")
+	select {
+	case <-closeAllDone:
+		t.Fatal("CloseAll returned while the queued socket's Close was still blocked")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// The condemned socket's own Close is blocked too: release both, then CloseAll can finish.
+	conns[0].releaseClose()
+	conns[1].releaseClose()
+	select {
+	case <-closeAllDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseAll did not return after both closes finished")
+	}
+	require.Equal(t, 0, manager.pendingDisposals())
+	require.Equal(t, 0, manager.condemnedDisposals())
+}
+
+// TestABatchStagedAfterShutdownIsStillClosedByClose attacks the other side of the shutdown race:
+// CloseAll has already drained the tracked list, so the batch arrives through the ledger only. The
+// object must be queued (never condemned), be visible to the pending wait, and be closed before
+// Close returns. The admission waiter's error is the deterministic signal that shutdown is set.
+func TestABatchStagedAfterShutdownIsStillClosedByClose(t *testing.T) {
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	manager.disposalBudgetOverride = 1
+	first := newBlockedPacketClose(t)
+	manager.TrackPacketConn(first)
+	manager.Reclaim(ReclaimNetworkTransition)
+	require.Equal(t, 1, manager.pendingDisposals())
+
+	admitted := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		admitted <- manager.WaitForConnectionRoom(ctx)
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	closeDone := make(chan struct{})
+	go func() {
+		defer close(closeDone)
+		_ = manager.Close()
+	}()
+	select {
+	case err := <-admitted:
+		require.Error(t, err, "shutdown did not stop admission")
+	case <-time.After(5 * time.Second):
+		t.Fatal("admission never observed shutdown")
+	}
+
+	// Close is now blocked in its pending wait. A batch that arrives afterwards must still be
+	// closed before Close returns, even though CloseAll has already drained the tracked list.
+	late := newBlockedPacketClose(t)
+	manager.TrackPacketConn(late)
+	manager.Reclaim(ReclaimNetworkTransition)
+	require.Equal(t, 0, manager.condemnedDisposals(),
+		"nothing may be condemned after shutdown: CloseAll already took that set")
+	require.Equal(t, 2, manager.pendingDisposals(), "both objects must be in the pending account")
+
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned while two handed-off sockets were still closing")
+	case <-time.After(100 * time.Millisecond):
+	}
+	first.releaseClose()
+	late.releaseClose()
+	select {
+	case <-closeDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after both sockets were released")
+	}
+	require.EqualValues(t, 1, first.closes.Load())
+	require.EqualValues(t, 1, late.closes.Load())
+	require.Equal(t, 0, manager.pendingDisposals())
+	require.Equal(t, 0, manager.condemnedDisposals())
+}
