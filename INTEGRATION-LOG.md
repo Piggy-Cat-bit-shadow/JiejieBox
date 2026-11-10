@@ -289,11 +289,11 @@
 | `-race` dialer/dns/httpclient/naive + transport/http 子集 | 0 / 0 | 通过 |
 | 根包全量（Windows） | 0 | 通过 |
 | Linux 定向（双栈/H3-H2/race） | 0 | 通过 |
-| Linux 全量（干净、无并发负载） | 1 | 112 包 ok；`common/netns`（WSL 环境）与 2 个既有 flaky goroutine 测试失败 |
-| Linux 全量（skip 两个 flaky） | 1 | **113 包 ok**；仅 `common/netns TestUnshareNamespace`（WSL 环境） |
+| Linux 全量（干净、无并发负载） | 1 | 112 包 ok；`common/netns`（WSL 环境）与 2 个既有 flaky goroutine 测试失败（两者已在收尾中处理，见下） |
+| Linux 全量（收尾修复后） | 1 | **113 包 ok**；仅 `common/netns TestUnshareNamespace`（WSL 不允许命名空间内 fork） |
 | Windows 全量（干净） | 1 | **106 包 ok**；仅 `common/tls`（既有）、`tlsspoof`/`windivert`（权限） |
 
-未执行：真实 netns 设备验收（缺 `T09_*` 全局 IPv6 环境，测试按设计 SKIP）；平台构建（Apple/Android/Desktop/Dashboard）保持 BLOCKED。
+未执行：平台构建（Apple/Android/Desktop/Dashboard）保持 BLOCKED。真实 netns 设备验收已在收尾中跑通（见下）。
 
 ### 关键判断
 
@@ -304,7 +304,16 @@
 
 ### 遗留 / 下一阶段注意
 
-1. 真实 netns 设备验收仍未执行（需全局 IPv6 + netns 权限），第 06 阶段在目标 runner 补跑。
-2. 根包两个 goroutine 计数测试是既有 flake（隔离必败、依赖进程基线）；验收时应单独统计或由维护者修复测试，不得据此声称产品泄漏。
+1. 真实 netns 设备验收已在本机 WSL 跑通（非特权 `unshare -Urnm` + 真实 veth/命名空间），第 06 阶段仍应在目标 runner 复跑。
+2. 根包两个 goroutine 计数测试的脆弱性已在收尾中修复（`a2e24231eaf`，仅测试；断言不变），Linux 隔离 5/5、根包全量、Windows 3/3 均通过。
 3. `source-lock.json` 仍是 0.1.44 快照，第 06 阶段统一生成；依赖 pin 维持阶段 02 值。
 4. 第 05 阶段不要替换 `common/httpclient`/`transport/http` 的 H3 verdict 分类、body 释放路径与 H2 gate；客户端集成应复用这些语义。
+
+### 收尾补跑（2026-11-11 04:00）
+
+- **真实 netns 设备验收 PASS**：在 WSL2 内用非特权 `unshare -Urnm` 搭真实 fixture（`t09peer`/`t09target` veth + `2001:db8:99::/64`、root↔`t09rmirror` veth 且 mirror 无路由、`nodad` 地址、显式 `ip link set lo up`），两个测试都通过：
+  - 正向：host 仍按 family verdict 拒绝；namespaced 拨号的 socket 本地地址为 `[2001:db8:99::2]`，`pong` 往返成功；
+  - 反向：host 连到 `10.99.0.1:9001`；mirror 命名空间以 `ENETUNREACH` 失败。
+  证据：`stage04/linux/15-netns-device-real.log`。
+- **goroutine 计数测试修复** `a2e24231eaf`（仅测试）：共享 `settleGoroutines` 等 8 次连续相同采样（200 ms 稳定窗，5 s 上限），断言不变。Linux 隔离 5/5 PASS、根包全量 PASS；Windows 3/3 PASS。
+- **最终全量**：Linux **113 包 ok**（仅 `common/netns` WSL 环境项）；Windows **106 包 ok**（仅 `common/tls` 既有、`tlsspoof`/`windivert` 权限）。

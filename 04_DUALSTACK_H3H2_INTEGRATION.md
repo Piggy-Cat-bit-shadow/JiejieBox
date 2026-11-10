@@ -1,6 +1,6 @@
 # 04｜双栈 DNS、拨号恢复与 H3/H2 回退集成
 
-- 执行时间：2026-11-11 03:00–03:40（Asia/Shanghai）。
+- 执行时间：2026-11-11 03:00–04:05（Asia/Shanghai）。
 - 施工基线：`integration/0.1.45-final` @ `e8a473447c3`（阶段 03 收尾）。
 - 来源：`fix/task09-repair` @ `31a3e9acea1b`（31 个独有提交）、`task08/h3-h2-fallback-2026-11-10` @ `684ebf516767`（39 个独有提交）。
 - 依赖：sing-tun `57e9d17fa852`、quic-go `ca9992bc795e`（阶段 02 收敛，未变）。
@@ -8,7 +8,7 @@
   1. task09 的 **27 个非 merge 提交全部 cherry-pick（0 冲突）**；4 个 merge 提交按"内容由非 merge 提交与合并分支携带"跳过，随后 40 个分支文件与 `fix/task09-repair` tip **逐字节一致**，没有丢失合并解决内容。
   2. task08 的 **35 个内容提交全部 cherry-pick（0 冲突）**；40 个分支文件中 35 个与分支 tip 一致，5 个是 pin 文件（`go.mod`/`go.sum`/`source-lock`/test 模块）——我们的 pin 已是阶段 02 的更新版本。
   3. 配置恢复测试去重完成：`integration/next-round`、`docs/task09-knowledge-0.1.45` 与本树的 `daemon/config_recovery_*`、`daemon/testdata/product-abc/**` 是**同一批 blob**，保留唯一版本；两个分支的差异只有报告文档（归第 06 阶段）。
-  4. 双栈与 H3/H2 的定向测试、`-race`、根包、Linux 全量/Windows 全量均通过（Linux 全量见 §7.4）；两处"疑似回归"经重复测量证明是**既有测试脆弱性**，与本次集成无关（§7.5）。
+  4. 双栈与 H3/H2 的定向测试、`-race`、根包、Linux/Windows 全量均通过（§7.4）；一处疑似回归经重复测量证明是既有测试脆弱性，并在收尾中修好测试（§7.5）。
 
 ---
 
@@ -24,7 +24,7 @@
 - 双栈、H3/H2、联合回归、race、Windows/Linux 全量；
 - 输出本报告。
 
-未执行：平台构建（Apple/Android/Desktop/Dashboard，环境缺失）、`T09_*` 环境变量下的真实 netns 设备验收（见 §7.3）、第 06 阶段的 pin 冻结与 source-lock 生成。
+未执行：平台构建（Apple/Android/Desktop/Dashboard，环境缺失）、第 06 阶段的 pin 冻结与 source-lock 生成。真实 netns 设备验收已在本机 WSL 跑通（§7.3）。
 
 ---
 
@@ -141,10 +141,18 @@
 
 ### 7.3 真实 netns 设备验收（Linux-only）
 
-`common/dialer/netns_device_linux_test.go` 的两个测试需要 `T09_TARGET`/`T09_NETNS_TARGET`/`T09_NETNS_EMPTY`（或 `T09_HOST_TARGET`/`T09_NETNS_MIRROR`）与真实 IPv6 命名空间。WSL 环境没有可路由的全局 IPv6 目标，测试按设计 **SKIP**（`set T09_*` 提示）。因此：
+`common/dialer/netns_device_linux_test.go` 的两个测试需要真实命名空间与全局 IPv6 目标。本轮收尾在 WSL2 内用**非特权 user+net+mount namespace**（`unshare -Urnm`）搭出真实 fixture：
 
-- 共享的单元测试（决策层）已跑：`TestNetnsDevice*` 之外的双栈决策测试全部通过；
-- 真实设备验收 **NOT RUN / BLOCKED_BY_ENVIRONMENT**，留给有全局 IPv6 与 netns 权限的 runner，不得以单测替代后声称等价。
+- `t09peer`（`2001:db8:99::1/64`）与 `t09target`（`2001:db8:99::2/64`）经 veth 相连，target 的默认路由指向 peer；`t09empty` 只有 loopback。
+- IPv4 方向：root 侧 veth `10.99.0.1/24`，`t09rmirror` 只有对端接口、**没有任何路由**；监听器在 peer（IPv6）与 root（IPv4）回答 `pong`。
+- 关键细节：IPv6 地址必须 `nodad`（否则地址保持 tentative，监听器无法 bind）；`unshare -n` 的 root 命名空间要显式 `ip link set lo up`。
+
+| 测试 | 结果 |
+|---|---|
+| `TestNetnsDeviceDialsAGlobalIPv6OnlyTheNamespaceHas` | **PASS**：host 路径仍按 family verdict 拒绝；namespaced 拨号成功的 socket 本地地址是 `[2001:db8:99::2]`，业务数据 `pong` |
+| `TestNetnsDeviceMirrorHostReachableNamespaceNot` | **PASS**：host 连到 `10.99.0.1:9001`；mirror 命名空间以 `ENETUNREACH` 失败 |
+
+证据：`stage04/linux/15-netns-device-real.log`（脚本 `stage04_netns_real.sh`）。原 BLOCKED 项关闭。
 
 ### 7.4 全量结果
 
@@ -153,27 +161,25 @@
 | 平台 | 命令 | 结果 |
 |---|---|---|
 | Windows | `go test -vet=off -tags <win profile> -timeout 40m ./...` | **106 包 ok**；仅 `common/tls`（Windows TLS1.3，既有）、`common/tlsspoof` / `common/windivert`（WinDivert 权限）失败；e2e 通过 |
-| Linux | `go test -vet=off -tags <others> -timeout 40m ./...` | **112 包 ok**；`common/netns TestUnshareNamespace`（WSL 环境）与根包两个既有 flaky goroutine 测试失败（见 §7.5）；其余全部 ok |
-| Linux（排除两个已知 flaky 测试） | 同上 + `-skip "Test(Started|Refused)NetworkRequirementBoxesLeaveNoGoroutines"` | **113 包 ok**；唯一失败 `common/netns TestUnshareNamespace`（WSL 不允许命名空间内 fork），属环境限制 |
+| Linux | `go test -vet=off -tags <others> -timeout 40m ./...` | **113 包 ok**；唯一失败 `common/netns TestUnshareNamespace`（WSL 不允许命名空间内 fork），属环境限制 |
 
 Linux 与 Windows 的差异仅限上述已归因项，没有出现新的产品缺陷。
 
 ### 7.5 疑似回归的排除
 
-1. `TestStartedNetworkRequirementBoxesLeaveNoGoroutines` / `TestRefusedNetworkRequirementBoxesLeaveNoGoroutines`（根包，Linux）在全量中失败（`6 > 4`）。定位过程：
-   - `git bisect`（Linux 单测）指向 `52594fe8ae2`（`aeace38ae29` 的 pick），但**父提交 `05ff5a4c779` 同样 3/5 失败**，阶段 03 tip `e8a473` **5/5 失败（单测隔离运行）**；
-   - 该测试的断言依赖进程内 goroutine 基线（`before+2`），隔离运行与全量运行的基线不同，属**既有测试脆弱性**，不是本阶段引入的泄漏；
-   - 在 `settle` 采样点抓取堆栈：`runtime.NumGoroutine()==6` 时 `runtime.Stack(all)` 只列出 2 个 goroutine（测试自身与 main），说明多出的计数是正在退出/运行时内部的瞬时值，不是存活泄漏；
-   - 断言把"进程内 goroutine 基线 +2"当上限，基线随测试顺序与进程状态变化，属**既有测试脆弱性**，与本阶段改动无关；
-   - 结论：不改产品代码，记录为既有 flake；第 06 阶段全量验收时不要单独运行该测试，或由维护者单独修复测试。
-2. `TestTunUDPDetourChain/without_detour`（e2e，Linux）在并发跑 Windows 全量时失败；同一测试在空闲环境 **5/5 PASS**，属负载下超时，非功能回归。
+1. `TestStartedNetworkRequirementBoxesLeaveNoGoroutines` / `TestRefusedNetworkRequirementBoxesLeaveNoGoroutines`（根包，Linux）曾失败（`6 > 4`）。诊断：
+   - bisect 曾指向 `52594fe8ae2`，但父提交 `05ff5a4c779` 同样 3/5 失败、阶段 03 tip `e8a473` 5/5 失败（隔离运行），说明与本次集成无关；
+   - `NumGoroutine()==6` 时 `runtime.Stack(all)` 只列出 2 个 goroutine，计数里含正在退出的瞬时值；
+   - 修复（`a2e24231eaf`，**仅测试**）：共享 `settleGoroutines`，等 8 次连续相同采样（200 ms 稳定窗，5 s 上限）再返回；断言不变；
+   - 修复后：两个测试在 Linux 隔离运行 **5/5 PASS**，根包全量 PASS；Windows 3/3 PASS。
+2. `TestTunUDPDetourChain/without_detour`（e2e，Linux）在并发跑 Windows 全量时失败；空闲环境 **5/5 PASS**，属负载下超时，非功能回归。
 
 ---
 
 ## 8. 风险、遗留与接口约束
 
-1. **真实 netns 设备验收未执行**（缺全局 IPv6/netns 环境）；第 06 阶段在有权限的 runner 上补跑。
-2. **根包 goroutine 计数测试是既有 flake**（隔离运行必败、全量运行依赖顺序）；不属于本阶段缺陷，但会干扰未来验收，建议单独修测试（不弱化断言的前提下改为测量增量而非绝对值）。
+1. **真实 netns 设备验收已在本机 WSL 跑通**（§7.3）；第 06 阶段仍应在目标 runner 复跑，因为 WSL 内核/命名空间与真实设备不同。
+2. **goroutine 计数测试已修复**（`a2e24231eaf`，仅测试）；断言未变，真实泄漏仍会失败。
 3. **platform builds 仍 BLOCKED**（Apple/Android/Desktop/Dashboard）。
 4. **`source-lock.json` 仍是 0.1.44 快照**：本阶段未手改；第 06 阶段用 release-freeze 生成，并把 quic-go `ca9992bc` 与 sing-tun `57e9d17` 写进去。
 5. **第 05 阶段注意**：H3 verdict 与 H2 gate 依赖 `common/httpclient`/`transport/http` 的接口；客户端集成时不要替换这两处的错误分类与 body 释放路径。
@@ -189,6 +195,6 @@ Linux 与 Windows 的差异仅限上述已归因项，没有出现新的产品�
 | H3/H2 回退满足重试安全 | ✅ 35 个提交集成；rejected/body/非幂等路径测试通过 |
 | quic-go usecount/path 修复与内核调用一致 | ✅ 使用阶段 02 `ca9992bc`（含 `0b8709eb`/`0e7c69da`） |
 | 联合回归已执行 | ✅ Windows/Linux 定向 + 根包 + 全量（见 §7.4） |
-| 所有未执行的测试明确列出原因 | ✅ §7.3/§8 |
+| 所有未执行的测试明确列出原因 | ✅ 真实 netns 验收已 PASS（§7.3）；Windows 管理员用例与平台构建仍为环境限制 |
 
 阶段 04 内容提交见 `INTEGRATION-LOG.md` 的 Stage 04 记录与 `git log --oneline`。
