@@ -80,6 +80,36 @@ func (s recoveryStream) ready() bool {
 	return s.batches != nil
 }
 
+// recoveredStamp is what the recovery producer remembers about an address it has already published.
+//
+// It is the provenance, not a bare presence flag: a later answer that confirms the same address
+// under the CURRENT environment must reach the scheduler even though the address is already known,
+// which is what lets the ordering rule replace a superseded queued entry.
+type recoveredStamp struct {
+	known      bool
+	superseded bool
+}
+
+// resultSuperseded reports whether a family answer was requested under a DNS environment that is no
+// longer in force.
+//
+// Unknown provenance is never superseded, and a chain that cannot report "now" leaves the comparison
+// unavailable: both keep the previous behaviour, which is to dial.
+func (d *resolveDialer) resultSuperseded(result adapter.DNSFamilyResult) bool {
+	if !result.HasSourceGeneration {
+		return false
+	}
+	reader := d.dnsGenerationReader()
+	if reader == nil {
+		return false
+	}
+	current, available := reader()
+	if !available {
+		return false
+	}
+	return current != result.SourceGeneration
+}
+
 // recoveryDomain returns the sniffed domain recovery may use, and whether recovery applies at all.
 //
 // Every condition is a refusal, so an unusual situation degrades to the previous single-candidate
@@ -156,10 +186,15 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 	inner := make(chan []dualStackCandidate, 2)
 
 	// seen is the identity set for this lookup: the application's own literal, which has its own
-	// attempt and its own owner, plus every address already published. It is touched only by the
-	// lookup goroutine.
-	seen := make(map[netip.Addr]struct{}, 4)
-	seen[unmapAddress(destination.Addr)] = struct{}{}
+	// attempt and its own owner, plus every address already published, with the provenance it was
+	// published under. It is touched only by the lookup goroutine.
+	//
+	// The provenance is kept rather than a bare set because a repeat is not always redundant: the
+	// same destination can be confirmed by the CURRENT environment after an older batch named it,
+	// and that confirmation has to reach the scheduler so it can upgrade the queued entry. Dropping
+	// every repeat here discarded the confirmation before the ordering rule could see it.
+	seen := make(map[netip.Addr]recoveredStamp, 4)
+	original := unmapAddress(destination.Addr)
 
 	var producers sync.WaitGroup
 	producers.Add(1)
@@ -197,13 +232,28 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 			// afterwards would let a refused family consume the whole answer and leave the admitted
 			// one unread.
 			admitted := d.admittedRecoveredCandidates(addresses, admission)
+			superseded := d.resultSuperseded(result)
 			batch := make([]dualStackCandidate, 0, len(admitted))
 			for _, address := range admitted {
 				canonical := unmapAddress(address)
-				if _, duplicate := seen[canonical]; duplicate {
+				if canonical == original {
+					// The literal has its own attempt and its own owner; it is never re-fed.
 					continue
 				}
-				seen[canonical] = struct{}{}
+				previous, duplicate := seen[canonical]
+				if duplicate {
+					// A repeat only carries new information when it is a CURRENT confirmation of an
+					// address previously offered under a superseded (or unknown) source. A stale or
+					// unknown repeat is dropped, and a repeat of an already-current entry changes
+					// nothing.
+					if superseded || (previous.known && !previous.superseded) {
+						continue
+					}
+				}
+				seen[canonical] = recoveredStamp{
+					known:      result.HasSourceGeneration,
+					superseded: superseded,
+				}
 				batch = append(batch, dualStackCandidate{
 					address:          canonical,
 					family:           classifyAddress(canonical),

@@ -396,6 +396,47 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 		return false
 	}
 
+	// upgradePendingProvenance lets a queued candidate absorb a BETTER source stamp for the same
+	// destination.
+	//
+	// # Why deduplication alone was wrong
+	//
+	// `seen` is keyed by canonical address, and a duplicate used to be dropped outright. A resolver
+	// can answer the same address twice under different environments - the old batch names it, and
+	// the current environment confirms it before anything is dequeued. Dropping the confirmation kept
+	// the entry marked as superseded, so when the time came the scheduler launched an address that
+	// ONLY the old environment had named, ahead of the one the current environment had confirmed. The
+	// address is the same endpoint either way; what changed is which environment vouched for it, and
+	// that is exactly what the ordering rule needs to know.
+	//
+	// Three things are deliberately NOT upgraded:
+	//
+	//	- a candidate that is not itself current (a late old stamp, or an unknown one) never overwrites
+	//	  a known current confirmation;
+	//	- a candidate that has already been launched is no longer in a queue, so it is never re-ordered
+	//	  or re-dialled - the upgrade only touches the not-yet-started segment;
+	//	- the application's own literal is never in the pending queues for this purpose, so its single
+	//	  attempt is unchanged.
+	upgradePendingProvenance := func(candidate dualStackCandidate) {
+		if !candidate.sourceKnown || s.candidateSuperseded(candidate) {
+			return
+		}
+		for _, family := range [...]addressFamily{familyIPv4, familyIPv6, familyInvalid} {
+			queue := pendingByFamily[family]
+			for index := range queue {
+				if queue[index].address != candidate.address {
+					continue
+				}
+				if queue[index].sourceKnown && !s.candidateSuperseded(queue[index]) {
+					return
+				}
+				queue[index].sourceGeneration = candidate.sourceGeneration
+				queue[index].sourceKnown = true
+				return
+			}
+		}
+	}
+
 	// nextFamily chooses which family launches next: the other family first, then the family that
 	// just ran, then anything still queued. The first two terms are what make the stream behave
 	// like an interleaved plan; the last one covers a producer that offers an unclassifiable
@@ -570,6 +611,12 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 				// Already known, whether from the initial plan, an earlier late arrival, or
 				// the original literal destination. Deduplication is by canonical address, so
 				// an IPv4-mapped form and its IPv4 form count as one.
+				//
+				// A repeat is not always information-free: the same destination can be confirmed by
+				// the CURRENT environment after an older batch named it. That confirmation upgrades
+				// the queued entry's provenance (see upgradePendingProvenance) instead of being
+				// discarded; a repeat of an already-started or already-current entry changes nothing.
+				upgradePendingProvenance(candidate)
 				continue
 			}
 			seen[candidate.address] = struct{}{}
