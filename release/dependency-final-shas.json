@@ -11,11 +11,13 @@
     "default_branch": "testing",
     "head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
-    "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
     "ahead": 3735,
     "behind": 0,
     "merge_commit": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
-    "pushed": true
+    "pushed": true,
+    "pre_merge_merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
+    "upstream_merged_sha": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "final_merge_base_at_observation": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6"
   },
   "go_modules": [
     {
