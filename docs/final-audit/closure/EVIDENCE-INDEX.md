@@ -10,6 +10,8 @@
 | Lab gates | `evidence/final/lab-gate.log` (gofmt/vet/test) |
 | UDP instrument | `drain_test.go`, `pacer_test.go`, `udp_integration_test.go`, `udp_record_test.go`; `load_parameters` in run JSON |
 | B8 final | `results/b8-final/` (manifest, raw runs, `diag/` qdisc+nstat, `recheck.md`) |
+| B8 rate curve | `results/b8-rate/` (15 runs, `curve.md`, manifest) |
+| Mieru upstream package | `MIERU-UPSTREAM-ISSUE.md` (issue body + patch outline, not filed) |
 | Legacy B8 superseded | `UDP-RETEST.md`, raw `results/b8/`; 7/18 drain-incomplete |
 | Provenance implementation | `internal/source/buildinfo.go`, `cache_test.go`, `PROVENANCE-AND-SCHEMA.md` |
 | Mieru S3-9 | `MIERU-S3-9.md` (SDK TOCTOU, upstream status, rejected retry) |

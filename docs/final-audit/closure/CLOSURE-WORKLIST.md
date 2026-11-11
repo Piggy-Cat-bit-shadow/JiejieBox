@@ -14,7 +14,7 @@ acceptance evidence.
 | Provenance cache | HEAD-only stale warning | module view refreshed from go.mod on every cache use + warning; tests | FIXED_AND_VERIFIED (warn-only) | `PROVENANCE-AND-SCHEMA.md`, `cache_test.go` |
 | UDP instrument | paced/seq/drain implemented | drain completeness made explicit and testable; invocation parameters recorded | FIXED_AND_VERIFIED | `drain_test.go`, `load_parameters` in run JSON |
 | Legacy B8 runs | reported 50-60 % loss | 7/18 reps fail the final drain rule; the flagged pacer record actually satisfies `scheduled=attempts+skipped` (attempts 2489, skipped 11); all old B8 reps are SUPERSEDED for acceptance | SUPERSEDED | `UDP-RETEST.md` |
-| B8 final | UNRESOLVED | rerun at fixed 500 pps with 2 s drain, both cells × 0/0.1/1 %, plus 50 pps control at 1 %; qdisc/socket/target diagnostics | pending (see report) | `results/b8-final/` |
+| B8 final | UNRESOLVED | 500 pps with 4 s MASQUE drain, 0/0.1/1 %, 50 pps control, qdisc/socket/target diagnostics; rate ladder 100-500 pps | UNRESOLVED: MASQUE 40-48 % at 500 pps, transition 300-350 pps; TT 500 pps is a 5.5-10 s queue, not path loss; exact queue NOT_AVAILABLE | `results/b8-final/`, `results/b8-rate/curve.md` |
 | Mieru S3-9 | 1/20 race | upstream investigation only; no retry semantics change | UNRESOLVED | `MIERU-S3-9.md` |
 | Platform runtime | NOT_RUN | unchanged | NOT_RUN | report |
 | Earlier F-01/F-05/F-06/F-07b/F-10/F-13/F-14/F-15/S3-7 | deferred decisions | unchanged | DEFERRED | master ledger |

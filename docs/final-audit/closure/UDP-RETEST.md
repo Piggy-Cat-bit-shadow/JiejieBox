@@ -56,3 +56,24 @@ instrumentation, so the root cause is bounded, not proven.
 Next diagnostic step (not this round): instrument the MASQUE device/CONNECT-IP
 queue and the TrustTunnel H2 stream queue for drop counts and blocking time, and
 repeat the 1 % cells; do not change production transport semantics first.
+
+## Rate curve (follow-up at 1 %, 80 ms RTT)
+
+A measured ladder (`results/b8-rate/`, `curve.md`, 15 runs) removes the "it is
+just 1 % loss" ambiguity:
+
+- MASQUE is near the ~2 % path budget at 100 pps (0.6-2.6 %) and 250 pps
+  (1.7-3.0 %), then transitions at 300 pps (1.9-25.4 %) and collapses at
+  350-500 pps (10-48 %). The 4 s drain was authoritative; the 2 s drain
+  truncated the tail at 250-500 pps.
+- TrustTunnel is clean at 100 and 250 pps (0 %), but at 500 pps it develops a
+  multi-second queue: the same cell returns all 2500 datagrams 5.5-7.8 s late in
+  some reps, loses 77 % with the tail beyond 8 s in another, and is incomplete at
+  a 4 s drain. That is a latency/queue collapse, not steady path loss.
+- The transition starts at 2.4-2.9 Mbit/s payload on a 1 Gbit/s link, so this is
+  not bandwidth exhaustion. qdisc drops stay at the configured ~1 %, socket error
+  counters are zero, and the client qdisc sends 40-54 % fewer packets at 500 pps.
+
+Bound: the exact queue (MASQUE device/CONNECT-IP vs QUIC send buffer;
+TrustTunnel H2 stream queue/flow control) still needs in-process counters and
+remains `NOT_AVAILABLE`. No transport semantics were changed.

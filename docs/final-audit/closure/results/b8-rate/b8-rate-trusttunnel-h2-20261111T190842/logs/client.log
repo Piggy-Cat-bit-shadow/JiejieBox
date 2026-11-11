@@ -1,0 +1,25 @@
++0800 2026-11-11 19:09:01 [36mINFO[0m inbound/socks[socks-in]: tcp server started at 10.213.0.1:37618
++0800 2026-11-11 19:09:01 [31mERROR[0m network: missing default interface
++0800 2026-11-11 19:09:01 [36mINFO[0m sing-box started (0.00s)
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;151m3425002119[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:42128
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;112m254997600[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:42144
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;112m254997600[0m 0ms] inbound/socks[socks-in]: inbound connection to 10.213.0.2:38237
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;112m254997600[0m 0ms] outbound/trusttunnel[proxy]: outbound connection to 10.213.0.2:38237
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;40m3510118127[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:42154
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;40m3510118127[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;40m3510118127[0m 0ms] outbound/trusttunnel[proxy]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:06 [36mINFO[0m [[38;5;184m4220522408[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:47534
++0800 2026-11-11 19:09:06 [36mINFO[0m [[38;5;184m4220522408[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:06 [36mINFO[0m [[38;5;184m4220522408[0m 0ms] outbound/trusttunnel[proxy]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:13 [36mINFO[0m [[38;5;48m479669495[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:47546
++0800 2026-11-11 19:09:13 [36mINFO[0m [[38;5;48m479669495[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:13 [36mINFO[0m [[38;5;48m479669495[0m 0ms] outbound/trusttunnel[proxy]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:17 [36mINFO[0m [[38;5;195m2112296955[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:44812
++0800 2026-11-11 19:09:17 [36mINFO[0m [[38;5;195m2112296955[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:17 [36mINFO[0m [[38;5;195m2112296955[0m 0ms] outbound/trusttunnel[proxy]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:24 [36mINFO[0m [[38;5;225m3464103377[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:47542
++0800 2026-11-11 19:09:24 [36mINFO[0m [[38;5;225m3464103377[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:24 [36mINFO[0m [[38;5;225m3464103377[0m 0ms] outbound/trusttunnel[proxy]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:29 [36mINFO[0m [[38;5;159m4272117903[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:47556
++0800 2026-11-11 19:09:29 [36mINFO[0m [[38;5;159m4272117903[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:29 [36mINFO[0m [[38;5;159m4272117903[0m 0ms] outbound/trusttunnel[proxy]: outbound packet connection to 10.213.0.2:32258
