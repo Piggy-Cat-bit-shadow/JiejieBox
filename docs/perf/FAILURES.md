@@ -97,10 +97,15 @@ stage 2 to bisect, not a lab configuration that can be tuned around.
 same process fail". Sequential one-stream repetitions all succeed in one process,
 and a new test drives four *concurrent* SOCKS flows through the same topology in
 one process successfully (`test/wireguard_concurrent_flows_test.go`). The failure
-needs the two-process shape and overlapping flows; the in-process userspace stack
-is not the trigger by itself. Stage 2 records the mechanism candidates (silent
-drops in the memory-tun queue, peer-side 4-tuple reuse, device pause) and the
-discriminating experiments in `docs/coupling/STAGE-2-REPORT.md` §16.
+needs the two-process shape *and* simultaneous handshakes: with the same binary
+and cell, `perflab -stagger 0s` and `-stagger 200ms` fail 2/2 each, while
+`-stagger 1s` passes 2/2 (51.7 and 12.0 MiB/s). The trigger is therefore the
+overlapping TCP handshakes, not the transfer path or queue saturation. Stage 2
+records the mechanism candidates and the discriminating experiments in
+`docs/coupling/STAGE-2-REPORT.md` §16; the drop-point instrumentation attempted
+here used the newest sing-tun in the module cache rather than the version
+`go.mod` pins, so its result is not evidence and must be redone against the
+pinned module.
 
 ### B8 — UDP over the tunnel collapses at 1% uniform loss
 

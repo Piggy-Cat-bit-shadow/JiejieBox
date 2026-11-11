@@ -160,8 +160,8 @@
 | F-03 | Medium-High | XHTTP 池在 Close 后仍可新建连接 | **fixed** |
 | F-04 | Medium | 准入限速把队列等待算成创建时间 | **fixed** |
 | F-06 | Medium | AnyTLS 纯复用被计费/可被拒 | documented |
-| F-07 | Medium | Mieru 无创建 singleflight；cleaner×AddSession 竞态；非 fallback 不回查 generation | documented |
-| F-08 | Medium | REALITY 验证失败 fallback 在已关闭连接上跑 | documented |
+| F-07 | Medium | Mieru 无创建 singleflight；cleaner×AddSession 竞态；非 fallback 不回查 generation | **generation 部分已修**；SDK 部分 documented |
+| F-08 | Medium | REALITY 验证失败 fallback 在已关闭连接上跑 | **fixed** |
 | F-10 | Medium | QUIC/H3 创建不受准入 | documented |
 | F-11/12/13/14/15/16 | Low–Medium | 释放契约措辞、reclaim 异步、Stale 死代码、引用图事件源、6s 过渡窗口、DNS 旁路 | documented |
 
@@ -169,13 +169,22 @@
 
 - `992087a57bb` — `fix(coupling): keep the XHTTP pool closed and time admission from the permit`
   （F-03、F-04 与三个回归测试；`test/wireguard_concurrent_flows_test.go` 收窄 B7）。
-- 本报告与 `docs/coupling/` 的其余文档在紧随其后的 `docs(coupling)` 提交中；分支保持独立，不合并。
+- `47288906810` — `docs(coupling): record the stage-2 runtime ownership audit`（本目录）。
+- `cde28636176` — `fix(coupling): hand REALITY's fallback its socket and reject stale Mieru dials`
+  （F-08、F-07 的 generation 部分与两组回归测试；`perflab -stagger` 诊断）。
+- 本报告所在提交 — `docs(coupling): close the REALITY and Mieru findings and record the B7 stagger`
+  （F-08/F-07 状态、B7 判别结果与 Mieru 复测）。
+- 分支保持独立，不合并。
 
-两处修复都遵循“先证据、最小改动、回归测试”：
+四处修复都遵循“先证据、最小改动、回归测试”：
 
 1. **F-03**：`xmuxManager` 增加 `closed`（与池交换同锁）；`get` 关闭后拒绝新建；
-   `getContext` 把空结果映射为错误而不是等到 deadline。改动 3 处、约 20 行。
-2. **F-04**：四个 seam 的 `started` 移到 `Acquire` 之后。改动 4 文件、语义只影响限速分类。
+   `getContext` 把空结果映射为错误而不是等到 deadline。
+2. **F-04**：四个 seam 的 `started` 移到 `Acquire` 之后；只影响限速分类。
+3. **F-08**：验证失败改为带 `ConnectionHandedOff` 标记的错误；共享 TLS dialer 不再关闭
+   该连接，由 fallback 持有并在 `C.TCPTimeout` 内关闭。
+4. **F-07（generation 部分）**：Mieru 单传输路径复用 `acceptGeneratedConn`，跨代连接关闭并
+   返回 `errFallbackStale`。
 
 没有做的事，以及为什么，写在 [`DECISIONS.md`](DECISIONS.md)：不新增通用 QUIC 准入、
 不把 epoch 穿进每个池、不抽象共享 Session 池、不改变 on-demand 挂起策略、不给释放契约加完成确认。
@@ -187,7 +196,9 @@
 | `TestAQueuedFastFailureStillArmsTheRateLimit` | `common/tls/handshake_rate_window_test.go` | 排队超过 fast-fail 窗口后的瞬失败仍计数并武装限速 |
 | `TestXmuxDoesNotOpenAConnectionAfterClose` | `transport/v2rayxhttp/xmux_close_boundary_test.go` | Close 之后不再新建池化连接 |
 | `TestXmuxCloseRacingDialsLeavesNoConnectionUnclosed` | 同上 | Close×并发拨号后每条已建连接恰好关闭一次 |
-| `TestWireGuardConcurrentFlowsInOneProcess` | `test/wireguard_concurrent_flows_test.go` | 同一进程内用户态栈承载 6 条并发 TCP/UDP 流（收窄 B7） |
+| `TestDialerLeavesAHandedOffConnectionOpen` 等三项 | `common/tls/reality_fallback_ownership_test.go` | REALITY fallback 持有连接；普通失败恰好关闭一次；标记穿透错误包装 |
+| `TestSingleTransportDialRejectsAConnectionFromAnotherGeneration` 等两项 | `protocol/mieru/generation_boundary_test.go` | 跨代连接关闭并失败；同代连接原样返回 |
+| `TestWireGuardConcurrentFlowsInOneProcess` | `test/wireguard_concurrent_flows_test.go` | 同一进程内用户态栈承载 4 条并发 TCP 流（收窄 B7） |
 
 全量回归（修复前基线，13 个包全绿）：`common/resourceguard`、`common/runtimecoord`、
 `common/tls`、`route`(454s)、`protocol/{anytls,mieru,trusttunnel,masque,naive,wireguard}`、
@@ -223,6 +234,11 @@ loopback 的轮间波动范围内，且方向不成体系；需要更严格对�
 修复后受影响包的复跑：`common/tls`、`protocol/{anytls,mieru,trusttunnel}`、
 `transport/{trusttunnel,v2rayxhttp}` 全绿；三个新测试在 `-race` 下通过。
 
+修复后只重跑了 Mieru（唯一落在拨号路径上的改动：F-07 给单传输拨号加了一次
+`TryRLock` 与代际比较）：upload s=1 122.7 / s=4 478.9 MiB/s，download s=1 104.2 /
+s=4 694.0 MiB/s（3 次中位数），相对本阶段表里的 121.9/453.3 与 103.8/664.5 没有回归。
+F-08 只改变验证失败后的路径；F-03/F-04 不在数据面热路径上（实验室 guard 为 nil）。
+
 ## 15. 未解决风险
 
 1. **F-01 是唯一可能直接切断用户流量的条目**，且需要产品决策；第三阶段应先用实验证明，再决定挂起是否延迟到隧道空闲。
@@ -236,18 +252,20 @@ loopback 的轮间波动范围内，且方向不成体系；需要更严格对�
 
 按价值排序：
 
-1. **B7：两进程用户态 WireGuard/AWG 并发流**。判别实验（成本从低到高）：
-   (a) 第一条流结束后 sleep > keepalive 再开第二条 —— 若成功则是队列/预算压力（H1），失败则是进程级状态；
-   (b) 在客户端记录每条流的源端口，并用 peer 侧 `HasEndpoint` 检查新 4 元组 —— 若 peer 已见同端口且未回 SYN-ACK，
-       指向 `handleTCPSyn` 的 4 元组复用分支（H2，`stack_go_tcp_input.go:100-121`）；
-   (c) 在 `MemoryTun.writePackets` / `OutboundQueue.enqueue` 的丢弃点加计数器（需要本地 replace sing-tun）——
-       确认 H1 的静默丢弃是否发生。任一假设成立都应先补一个失败测试，再改。
+1. **B7：两进程用户态 WireGuard/AWG 并发流**。已完成：`-stagger` 判别（`perflab run -stagger`）——
+   同一二进制、同一 cell，`streams=2` 在 0s 与 200ms 间隔下 2/2 失败，在 1s 间隔下 2/2 通过
+   （51.7 / 12.0 MiB/s）。所以触发条件是**握手重叠**，不是传输路径或队列饱和。
+   下一步（按成本）：(a) 在客户端记录每条流的源端口，并用 peer 侧 `HasEndpoint` 检查新 4 元组，
+   看 peer 是否已见同端口而未回 SYN-ACK（指向 `handleTCPSyn` 的 4 元组复用分支，
+   `stack_go_tcp_input.go:100-121`）；(b) 给 sing-tun 的丢弃点加计数器——**必须用 `go.mod`
+   钉住的版本**（`v0.9.7-0.20261109145802-79ed0653fdc6`）；本阶段曾误用 module cache 里更新的
+   版本，结果不算证据，已从 B7 记录中撤回。任一假设成立都应先补失败测试，再改。
 2. **F-01：设备暂停 × 活跃隧道**。用一个 fake pause manager + 真实 MASQUE/WG endpoint 承载一条流，
    观察挂起是否切断它；这是唯一能把“策略正确”与“数据面正确”分开的实验。
-3. **F-08：REALITY fallback 的关闭时序**。用记录 Close/Write 的 fake conn，验证 fallback 是否在
-   caller 关闭后仍写同一 socket；这是最容易在真实网络下变成“偶发 RST/双写”的一类缺陷。
+3. **F-08：REALITY fallback 的关闭时序**（本阶段已修，待真实网络复核）。fake conn 测试已固定
+   “fallback 持有连接、普通失败只关一次”；真机上仍应观察验证失败后的 camouflage 请求是否完整。
 4. **F-06/F-07 的外部池语义**。若决定 fork `sing-anytls`，先用一个复用饱和测试固定
    “reuse 不计费”的期望，再改模块；Mieru 的 singleflight 可以先在 fork 适配层做。
 5. **F-10 的 QUIC 准入设计**。只有在 §5 的四个前置条件被满足后才动手；否则只保留实验与文档。
 
-不合并主分支；本报告、`docs/coupling/` 与两个修复提交即本阶段交付。
+不合并主分支；本报告、`docs/coupling/` 与三个修复提交即本阶段交付。

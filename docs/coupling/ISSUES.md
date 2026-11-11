@@ -11,7 +11,6 @@ code is. **Status** is one of:
 ## Fixed
 
 ### F-03 — XHTTP pool opens a connection after Close (Medium-High)
-
 `xmuxManager.Close` emptied the pool and closed the transport, but a dial that
 raced or followed it found an empty pool and opened a replacement
 (`transport/v2rayxhttp/xmux.go:get`). Nothing owned that connection afterwards:
@@ -40,6 +39,41 @@ Fix: the clock starts after the permit in `common/tls/client.go`,
 Test: `common/tls/handshake_rate_window_test.go` — four dials queue longer than
 the fast-fail window and then fail instantly; the test requires
 `Rate.FastFailures >= 4` and a rate window to arm.
+
+### F-08 — REALITY fallback ran on a connection the caller had closed (Medium)
+
+On a REALITY verification failure the client launches the camouflage exchange on
+the same connection after reporting the error, but the shared TLS dialer closed
+that connection immediately (`common/tls/client.go`'s error path), so the request
+raced a dead socket. A prober saw an abrupt close — the signature the fallback
+exists to avoid — and two goroutines could use one socket.
+
+Fix: the failure is now a `realityFallbackError` implementing a handoff marker
+(`ConnectionHandedOff`); the dialer leaves the connection open when the error
+carries it, and the fallback owns the close. The fallback also runs under
+`C.TCPTimeout` and binds the request context, so a stalled camouflage site cannot
+hold the socket or the goroutine forever.
+Tests: `common/tls/reality_fallback_ownership_test.go` — the handoff connection is
+not closed by the dialer, an ordinary handshake failure is closed exactly once,
+and the marker survives error wrapping.
+
+### F-07 (generation half) — Mieru single-transport dial published across a generation change (Medium)
+
+`InterfaceUpdated` drains in-flight dials before stopping a generation, but the
+drain is bounded; a dial that outlives it could return a connection created for
+the network that was just left. The fallback path already re-checked the
+generation, the single-transport path returned the connection unchanged.
+
+Fix: the single-transport path goes through the same `acceptGeneratedConn` check
+(`protocol/mieru/outbound.go`), closing the stale connection and returning
+`errFallbackStale`.
+Tests: `protocol/mieru/generation_boundary_test.go` — a generation change during
+the dial closes the connection exactly once and fails; an unchanged generation
+returns the connection untouched.
+
+The other half of F-07 (no creation single-flight for Mieru underlays; the SDK's
+idle cleaner racing `AddSession`) lives inside the SDK and is recorded below
+unchanged.
 
 ## Documented — defects with a concrete next step
 
@@ -72,31 +106,18 @@ dial reuse"; `sing-anytls` is not replaced in `go.mod`, so this is a fork patch 
 an upstream API request, not an in-tree edit. TrustTunnel's shared-offer
 admission is the reference semantics.
 
-### F-07 — Mieru has no creation single-flight and can drop a dial on an idle-clean race (Medium, documented)
+### F-07 (remaining) — Mieru has no creation single-flight and can lose a dial on an idle-clean race (Medium, documented)
 
 Every concurrent cold dial calls the SDK's `newUnderlay`; there is no waiter join,
 so a burst creates N sockets up to the admission limit. In the SDK, the idle
 cleaner can close an underlay between `Mux.DialContext` picking it and
-`AddSession`, and the fork's dial returns that failure without a retry. The
-non-fallback path also returns an SDK connection without a generation recheck,
-so a dial that outlives a `InterfaceUpdated` drain can deliver a connection from
-the stopped runtime.
+`AddSession`, and the fork's dial returns that failure without a retry. Both
+live inside the SDK; the generation half of this finding is fixed above.
 
 Next step: a single-flight wrapper around `newUnderlay` and a retry on
-`AddSession` failure are both local to the fork's adapter; the generation recheck
-needs the runtime to keep its counter accessible after the swap.
-
-### F-08 — REALITY verification-failure fallback runs on a connection the caller closed (Medium, documented)
-
-On a REALITY authentication failure the client launches
-`go realityClientFallback` against the same `uConn` after the dial path has
-already closed `conn` (`common/tls/reality_client.go:242-245,339-369`), with no
-timeout and no synchronisation. Two writers on one socket and a goroutine that
-outlives the caller's error.
-
-Next step: run the fallback before closing, under the handshake context, or drop
-the fallback when the caller has already returned. A test can use a fake
-`net.Conn` that records closes and writes.
+`AddSession` failure are local to the fork's adapter but change the SDK's
+connection-count semantics, so they need a measurement of the burst they are
+meant to damp first.
 
 ### F-10 — QUIC/H3 creations are outside the admission budget (Medium, documented)
 
@@ -135,7 +156,11 @@ should be removed so the next reader does not assume a check that never runs.
   stack limitation: the in-repo dataplane test passes six concurrent flows, and
   `test/wireguard_concurrent_flows_test.go` drives four concurrent flows through
   the laboratory's SOCKS → route → endpoint topology in one process. The failure
-  requires the two-process shape. See the stage report for the narrowed
-  hypotheses.
+  requires the two-process shape. The stagger experiment narrows it further: two
+  streams started together fail (0 and 200 ms spacing, 2/2 each), while 1 s
+  spacing passes (2/2) — the trigger is *simultaneous handshakes*, not the
+  transfer path. `perflab -stagger` is the diagnostic that produced this.
+  Instrumenting the pinned sing-tun drop points is the next step; it must use the
+  module version `go.mod` pins, not the newest in the module cache.
 - `TestWireGuardEndpointDataPlane/system=true` fails unprivileged by design
   (TUNSETIFF); this is an environment failure, not a regression.
