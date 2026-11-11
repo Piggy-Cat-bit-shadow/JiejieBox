@@ -21,7 +21,7 @@ NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 | A12 | sequence truncation degrades | `drain_test.go` truncation; `sequence_tracking_complete=false`, loss null | PASS |
 | A13 | schema covers new state | v1.2; 48/48 historical; 4 valid + 3 invalid fixtures; 27 new reps validate | PASS |
 | A14 | B8 report from raw JSON | `report-b8.py`; tables generated for both sets; deterministic check | PASS |
-| A15 | monotonic local timing | all offsets from phase start (mono()); no UnixNano in latency/last-write/send-end paths; epoch is an identifier only | PASS |
+| A15 | monotonic local timing | all offsets from phase start (`mono()`); no UnixNano in latency/last-write/send-end paths; epoch is an identifier only | PASS |
 | A16 | unknown binary provenance | `binaryProvenance` returns nil changed when before-hash is missing; warning `binary_hash_before_unavailable`; test covers nil/equal/changed | PASS |
 
 ## Round B 鈥?negative / edge / fault injection
@@ -29,7 +29,7 @@ NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 | ID | check | evidence | status |
 |---|---|---|---|
 | B01 | no replies must not fake network loss | `drainStateFor` no-reply case returns complete_quiet; loss is labelled deadline-based, not network | PASS |
-| B02 | replies at 2/4/8/12 s | TT 500: 8 s tail-active for 2 reps, 12 s complete with 7-9 s last reply | PASS |
+| B02 | replies at 2/4/8/12 s | TT 500: 8 s leaves 1/3 tail-active, 12 s complete with 5.5-8.3 s last reply | PASS |
 | B03 | reply at window edge | `drain_test.go` tail-at-edge 鈫?`window_elapsed_tail_active` | PASS |
 | B04 | cancel/target timeout degrade | cancel unit; quiesce timeout status; target unavailable 鈫?null | PASS |
 | B05 | delayed warmup cannot pollute | epoch map test; measured epoch read only | PASS |

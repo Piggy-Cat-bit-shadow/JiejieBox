@@ -20,6 +20,8 @@
    unattributed replies separately and forbids a loss percentage.
 7. B8 reports are generated from raw JSON and checked; the TrustTunnel 500/2 s
    row is corrected to `legacy_incomplete` (no 77.2 % loss).
+8. All local timing uses monotonic offsets from phase start; a MASQUE 250 pps calibration run validates the path and old latency/jitter are labelled legacy_timing.
+
 
 ## B8 result under the fixed instrument
 

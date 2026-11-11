@@ -11,6 +11,8 @@
   parameters (TrustTunnel panicked on a nil map; found by the first new run).
 - The evidence commit(s) for this report and the regenerated tables follow.
 
+Final pass: `a64719f7839` monotonic timing, independent observation completeness and unknown binary provenance; `7cc152fc059` timing calibration evidence. `quiesce_test.go` closes A05. The final gate and race logs are in `evidence/`.
+
 ## What each fix addresses
 
 | review item | fix | test |
