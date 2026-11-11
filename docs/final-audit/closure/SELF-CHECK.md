@@ -28,7 +28,7 @@ happened, and the log/evidence. `UNRESOLVED` and `NOT_RUN` are not PASS.
 | E1 | UDP instrument tests | `go test ./internal/...` | all packages ok | loadgen/runner/target/source ok | `lab-gate.log` | PASS |
 | E2 | drain definition | `go test -run TestDrainCompleteDefinition` | 7 cases pass | pass | `drain_test.go` | PASS |
 | E3 | B8 0 % calibration | 2 cells × 3 reps | 2500/2500/2500, loss 0 | 7500/7500/7500 both | `results/b8-final/` | PASS |
-| E4 | B8 1 % and control | 500 pps and 50 pps, 3 reps | measured, not assumed | MASQUE 40.4-47.9 % (4 s drain), TT 75.2-81.6 %; 50 pps: 0.8-2.0 % / 0 % | `recheck.md` | measured; B8 remains UNRESOLVED |
+| E4 | B8 1 % and control | 500 and 50 pps, 3 reps; rate ladder 100-500 pps | measured, not assumed | MASQUE 40.4-47.9 % (4 s drain), TT 75.2-81.6 %; 50 pps: 0.8-2.0 % / 0 %; 100-250 pps near budget, MASQUE collapses at 350-500, TT at 500 is a multi-second queue | `recheck.md`, `results/b8-rate/curve.md` | measured; B8 remains UNRESOLVED |
 | E5 | legacy B8 re-read | raw JSON, final rule | count incomplete reps | 7/18 incomplete; flagged pacer row actually consistent | `UDP-RETEST.md` | PASS (superseded) |
 | E6 | qdisc/socket diagnostics | before/after `tc -s -d qdisc`, `nstat` | counters saved | saved; veth drops ~1 %, socket errors 0; exact tunnel queue NOT_AVAILABLE | `results/b8-final/diag/` | PASS with stated gap |
 | F1 | buildinfo reading | `go test ./internal/source` | ok | ok | `lab-gate.log` | PASS |

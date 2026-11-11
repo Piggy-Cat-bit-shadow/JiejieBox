@@ -89,6 +89,12 @@ both namespaces. The client qdisc sees 40-54 % fewer packets at 1 % than at 0 %
 dropped inside the client/tunnel queue path before the veth. MASQUE target 鈮?unique means upstream loss dominates; TrustTunnel target > unique means both
 directions are queue-limited. The exact queue (device queue vs transport send
 buffer) is `NOT_AVAILABLE` without in-process instrumentation. No production
+A follow-up ladder (`results/b8-rate/`, `curve.md`) localises the transition:
+MASQUE is near the ~2 % budget at 100-250 pps, variable at 300 pps and
+loses 10-48 % at 350-500 pps; TrustTunnel is clean at 100-250 pps but at
+500 pps either delivers all 2500 datagrams 5.5-7.8 s late or loses ~77 %
+with the tail beyond an 8 s drain. The threshold is 2.4-2.9 Mbit/s payload
+on a 1 Gbit/s link, so it is queueing, not bandwidth.
 transport code was changed. Legacy B8 data (7/18 reps failing the final drain
 rule) is `SUPERSEDED`; the archived legacy `b8` runs are not acceptance evidence.
 
