@@ -1,5 +1,7 @@
 # Round 1 审计闭环（06）
 
+> 历史阶段快照：本文件记录 06 审计结果；最终状态、清理更正（backup/02 已恢复）和 Apple release authority 风险以 `ROUND1-FINAL-CLOSURE.md` + `ROUND1-FINAL-FACTS.json` 为准。
+
 执行时间：2026-11-11
 对象：第一轮上游合并完成后的验收与收口；**不启动第二轮追新**，不重做 01–05 施工。
 

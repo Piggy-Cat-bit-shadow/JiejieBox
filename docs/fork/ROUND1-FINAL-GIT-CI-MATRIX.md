@@ -1,5 +1,7 @@
 # Round 1 最终 Git / CI / 依赖矩阵
 
+> 历史阶段快照：本文件记录 06/07 交接时的矩阵；当前单一结构化事实源为 `ROUND1-FINAL-FACTS.json`，最终结论为 `ROUND1-FINAL-CLOSURE.md`。
+
 观测时间：2026-11-11T11:34:50+08:00（GitHub Compare 查询时间；本地 `git fetch` 后同一窗口）。
 比较方向：`upstream...fork`，第一个数 = upstream 独有（behind），第二个 = Fork 独有（ahead）。表中 `behind` 为第一个数。
 

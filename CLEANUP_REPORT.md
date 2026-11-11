@@ -1,5 +1,7 @@
 # CLEANUP REPORT — 0.1.45 分支清理
 
+> 历史阶段快照：本文件记录旧一轮清理；最终远端分支/恢复/archive tag 以 `docs/fork/CLEANUP-REPORT-ROUND1.md` 为准。
+
 ## 1. 实际动作
 
 | 动作 | 结果 |
