@@ -1,0 +1,11 @@
+$ validate_runs.py --self-test; validate_runs.py
+ok   valid/failure-record.json expected=valid got=valid
+ok   valid/full-tcp.json expected=valid got=valid
+ok   valid/full-udp.json expected=valid got=valid
+ok   valid/minimal.json expected=valid got=valid
+ok   invalid/missing-source.json expected=invalid got=invalid
+ok   invalid/type-goodput-string.json expected=invalid got=invalid
+ok   invalid/unit-summary.json expected=invalid got=invalid
+self-test: 4 valid + 3 invalid fixtures, 0 wrong
+validated 48 file(s), 0 failed, schema=perf-run.v1.1.schema.json
+exit=0

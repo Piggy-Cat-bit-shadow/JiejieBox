@@ -4,10 +4,16 @@
 
 ```
 go test -race -count=20 -run TestMieruClientObservesServerClosingAnIdleUnderlay ./protocol/mieru
-# 19 pass, 1 fail (5 %); broader runs: 2 failures in 48 executions (~4 %)
+# 19 pass / 1 fail in the first sample; 15 pass / 5 fail in the final gate sample
+# (failure rate 5-25 % depending on host load; aggregate 34/40 pass = 6 failures)
 go test -count=20 -run TestMieruClientObservesServerClosingAnIdleUnderlay ./protocol/mieru
 # 20/20 pass
 ```
+
+The final gate log is `evidence/final/mieru-race.log` (15 PASS, 5 FAIL, all the
+same `socks5 connection response ... EOF` at `idle_underlay_test.go:140`). The
+wider earlier sample was 2 failures in 48 executions. The rate is load-sensitive,
+which is consistent with a timing window rather than a deterministic bug.
 
 Failure is the new dial after the idle close (`idle_underlay_test.go:140`), not
 the blocked read the test was written for:

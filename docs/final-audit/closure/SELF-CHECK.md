@@ -34,7 +34,7 @@ happened, and the log/evidence. `UNRESOLVED` and `NOT_RUN` are not PASS.
 | F1 | buildinfo reading | `go test ./internal/source` | ok | ok | `lab-gate.log` | PASS |
 | F2 | cache same-HEAD go.mod | `go test -run TestCachedSource...` | refresh + warning | pass | `cache_test.go` | PASS |
 | F3 | warn-only boundary | code/doc read | no strict gate claimed | warnings only; strict not implemented | `PROVENANCE-AND-SCHEMA.md` | PASS |
-| G1 | Mieru race repro | `-race -count=20`, plain `-count=20` | reproduce ~5 %, plain clean | 19/20, 20/20; aggregate 2/48 | `MIERU-S3-9.md` | PASS (reproduced) |
+| G1 | Mieru race repro | `-race -count=20`, plain `-count=20` | reproduce, plain clean | 19/20 first sample, 15/20 final gate (same EOF); plain 20/20; rate load-sensitive | `MIERU-S3-9.md`, `evidence/final/mieru-race.log` | PASS (reproduced, rate 5-25 %) |
 | G2 | upstream investigation | source + web | identify window and status | TOCTOU proven, no upstream issue/fix, patch validated in throwaway | `MIERU-S3-9.md` | PASS |
 | G3 | no retry change | `git diff` | none | none | report §9 | PASS |
 
@@ -49,7 +49,7 @@ happened, and the log/evidence. `UNRESOLVED` and `NOT_RUN` are not PASS.
 | B-N5 | pacer invariant | all 27 B8 reps | `scheduled == attempts + skipped` | holds | `recheck.md` | PASS |
 | B-N6 | same-HEAD go.mod change | `cache_test.go` changed view | refresh + warning | pass | `cache_test.go` | PASS |
 | B-N7 | non-Go binary / missing file | `buildinfo_test.go` | no panic, warning/error | pass | `lab-gate.log` | PASS |
-| B-N8 | Mieru race | `-race -count=20` | intermittent failure reproduced | 1/20, same EOF | `MIERU-S3-9.md` | PASS (reproduced) |
+| B-N8 | Mieru race | `-race -count=20` | intermittent failure reproduced | 5/20 in the final gate, same EOF | `MIERU-S3-9.md` | PASS (reproduced) |
 | B-N9 | B7 simultaneous start | 0 ms stagger, 2/4 streams | no stall | 18/18 pass | `results/b7-final/` | PASS |
 
 ## Round C — independent acceptance
