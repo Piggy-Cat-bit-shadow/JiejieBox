@@ -167,7 +167,7 @@
     {
       "name": "desktop",
       "fork_ref": "origin/main",
-      "fork_sha": "aa63764a61c312562a348e174522d1dc1c86d954",
+      "fork_sha": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
       "upstream_ref": "upstream/main",
       "upstream_sha": "8aab8eab022366e1032e952d499c9252b833e6c3",
       "ahead": 42,
@@ -175,7 +175,7 @@
       "subject_matched": null,
       "unmatched": 0,
       "class": "DONE_STAGE_04",
-      "note": "0 behind; 59/59 tests + build pass"
+      "note": "0 behind; dashboard bump to 9bde90e; 59/59 tests + build"
     },
     {
       "name": "dashboard",
@@ -468,10 +468,11 @@
       "merge": "b592c65618e13e2c7ea24a06e758db72c71f65be",
       "integration": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
     },
-    "desktop": "0 behind, 59/59",
+    "desktop": "0 behind; product line e8b48be with dashboard 9bde90e; 59/59 tests + build",
     "apple": "0 behind, NOT_VERIFIED_ON_DEVICE",
     "gitlink_targets": {
       "clients/android": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "clients/desktop": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
       "desktop/dashboard": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
     }
   }

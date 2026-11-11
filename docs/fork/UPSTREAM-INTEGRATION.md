@@ -17,7 +17,7 @@ result is closed.
 | wireguard-go | `sagernet/wireguard-go:main` | `awg3-inject` | behind 0 | behind 0 | DONE (no work, stage 03 re-verified) | ancestry + `go test ./...` device ok |
 | apple | `SagerNet/sing-box-for-apple:dev` | `main` | behind 0 | behind 0 | DONE (pin still blocked on Xcode) | stage 04 re-verified 0 behind, NOT_VERIFIED_ON_DEVICE |
 | android | `SagerNet/sing-box-for-android:dev` | `main` | behind 5 | **behind 0** | DONE (stage 04) | merge `ba5c6b161827`, compare ahead_by 0 |
-| desktop | `SagerNet/sing-box-for-desktop:main` | `main` | behind 0 | behind 0 | DONE (stage 04 re-verified) | 59/59 tests, build PASS |
+| desktop | `SagerNet/sing-box-for-desktop:main` | `main` / `integration/0.1.45` | behind 0 | behind 0 | DONE (stage 04) | product line `e8b48be` with dashboard `9bde90e`; 59/59 tests + build |
 | dashboard | `SagerNet/sing-box-dashboard:main` | `main` | behind 95 (no merge base) | **behind 0** | DONE (stage 04) | two-parent merge `b592c65618e`, integration `9bde90e1cd55`, compare ahead_by 0 |
 | sing-box (main) | `SagerNet/sing-box:testing` | `integration/0.1.45-final` | behind 85 | behind 85 | TODO (stage 05, 108 trial conflicts) | audit row |
 
@@ -72,7 +72,7 @@ See `02_SING_SINGTUN_UPSTREAM_INTEGRATION.md` and
   `3e4bf08`; 13 conflicts resolved hunk by hunk, tree remains the fork superset;
   97/97 tests and build pass; the consumed line `9bde90e1cd55` adds the fork's
   extra commit and passes 98/98.
-- **Desktop** 0 behind, 59/59 tests and build pass. **Apple** 0 behind, but
+- **Desktop** 0 behind; product line `e8b48beadd7d` bumps the dashboard gitlink to `9bde90e1cd55`; 59/59 tests and build pass. **Apple** 0 behind, but
   Xcode remains unavailable.
 
 See `04_NAIVE_CRONET_XHTTP_MIERU_CLIENTS_UPSTREAM_INTEGRATION.md`.

@@ -71,8 +71,9 @@
 
 ### Desktop
 
-- fork `main`/origin tip `aa63764`，**0 behind**；产品 pin `28dc4a9`（next/client-consumption）不变。
-- `pnpm test`：**59/59 PASS**；`pnpm build`：**PASS**（4.56 s，renderer dist 生成）。
+- fork `main`/origin tip `aa63764`，**0 behind**；产品线 `integration/0.1.45` 已推送（此前只在本地）。
+- dashboard 子模块 `62f1582` → **`9bde90e1cd55`**（含上游合并 + 原 fork 提交），桌面产品线提交 **`e8b48beadd7d`** 已推送。
+- 升级后 `pnpm test`：**59/59 PASS**；`pnpm build`：**PASS**（4.19 s）。
 
 ### Apple
 
@@ -85,8 +86,8 @@
 |---|---|---|
 | `.gitmodules`/gitlink `clients/android` | `c7837107dc01` | `ba5c6b161827a830cb7343850bf547156fbfdfee` |
 | `clients/apple` | `7fce7117b33a` | 不变（无 Xcode 验证，不升级） |
-| `clients/desktop` | `28dc4a973bcd` | 不变（desktop main 已 0 behind；其 dashboard 子模块可在 desktop 侧 bump） |
-| desktop 内 `dashboard` gitlink | `62f1582`（产品线） | `9bde90e1cd55`（已含上游合并 + 原 fork 提交） |
+| `clients/desktop` | `28dc4a973bcd` | **`e8b48beadd7d11a9bce46f62e12820f3e3773518`**（dashboard 子模块已 bump 到 `9bde90e1cd55`） |
+| desktop 内 `dashboard` gitlink | `62f1582` | **`9bde90e1cd55`（已完成并推送）** |
 | 其余 Go module pins | 见 02/03 报告 | sing/sing-tun/sing-quic/quic-go/utls 见对应报告；cronet/wireguard/mieru 不变 |
 
 ## 8. 未合并内容及理由
