@@ -11,6 +11,7 @@
 | item | value |
 |---|---|
 | kernel under test | `4ec0decd9f2dd7e3116ab130b3af56291f73988b` (integration/0.1.45-final) |
+| remote during the work | advanced by three docs/audit commits (`2528511d90a`, `40dfed27474`, `7712bbe236c`); zero `.go` files changed, so the measured code is still current |
 | lab tooling | `bf0e0bec560` (`scripts/perf`); the worktree HEAD differs from the kernel commit only by lab and docs files |
 | binary | `go build -tags "<DEFAULT_BUILD_TAGS_OTHERS>,with_trusttunnel,with_awg,with_naive_outbound,with_purego"`, `CGO_ENABLED=0` |
 | load model | 1 s warmup, 5 s measured window, 5 repetitions per cell, 1 and 4 concurrent streams |
