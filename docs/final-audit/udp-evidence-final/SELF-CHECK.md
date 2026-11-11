@@ -1,9 +1,9 @@
-# Self-check (UDP evidence final closure)
+﻿# Self-check (UDP evidence final closure)
 
 Statuses: PASS = test/evidence ran; FAIL = defect found; BLOCKED = environment;
 NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 
-## Round A — function and normal path
+## Round A 鈥?function and normal path
 
 | ID | check | evidence | status |
 |---|---|---|---|
@@ -11,7 +11,7 @@ NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 | A02 | observation vs quiesce separated | `observation_*`, `quiet_period_ms`, `tail_active`, `drain_status`; `QuiesceResult` | PASS |
 | A03 | loss null when not estimable | `udp_record_test.go` tail-active/truncated; new TT 8 s rows show null loss | PASS |
 | A04 | target epoch isolates warmup | `target/epoch_test.go`; new runs `target_epoch_isolated=true`, per-epoch count | PASS |
-| A05 | quiesce timeout explicit | `QuiesceResult{Status:"timeout",TimedOut:true}`; no dedicated timing test (code path only) | PASS (code), timing test NOT_RUN |
+| A05 | quiesce timeout explicit | `quiesce_test.go`: growing counter times out at ~2 s with status timeout; stable counter confirms; missing handle unavailable | PASS |
 | A06 | pacer split counters | new run: configured 250, scheduled 249.99, attempt 249.99, completion 249.99; fields in JSON | PASS |
 | A07 | achieved PPS uses completion time | `write_completion_pps` from last write end; `send_phase_ms`; `pacer_slow_test.go` | PASS |
 | A08 | effective parameters | `load_parameters` resolved; `params_test.go`; new runs show duration 5/reps 3/drain 8000 | PASS |
@@ -22,14 +22,14 @@ NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 | A13 | schema covers new state | v1.2; 48/48 historical; 4 valid + 3 invalid fixtures; 27 new reps validate | PASS |
 | A14 | B8 report from raw JSON | `report-b8.py`; tables generated for both sets; deterministic check | PASS |
 
-## Round B — negative / edge / fault injection
+## Round B 鈥?negative / edge / fault injection
 
 | ID | check | evidence | status |
 |---|---|---|---|
 | B01 | no replies must not fake network loss | `drainStateFor` no-reply case returns complete_quiet; loss is labelled deadline-based, not network | PASS |
 | B02 | replies at 2/4/8/12 s | TT 500: 8 s tail-active for 2 reps, 12 s complete with 7-9 s last reply | PASS |
-| B03 | reply at window edge | `drain_test.go` tail-at-edge → `window_elapsed_tail_active` | PASS |
-| B04 | cancel/target timeout degrade | cancel unit; quiesce timeout status; target unavailable → null | PASS |
+| B03 | reply at window edge | `drain_test.go` tail-at-edge 鈫?`window_elapsed_tail_active` | PASS |
+| B04 | cancel/target timeout degrade | cancel unit; quiesce timeout status; target unavailable 鈫?null | PASS |
 | B05 | delayed warmup cannot pollute | epoch map test; measured epoch read only | PASS |
 | B06 | mismatched epoch isolated | `epoch_test.go` (42/43; headerless not epoch 0) | PASS |
 | B07 | blocking write lowers completion | `pacer_slow_test.go` slow callback skips slots, invariant holds | PASS |
@@ -41,7 +41,7 @@ NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 | B13 | invalid JSON blocked | schema fixtures; validator gate; report refuses on schema error | PASS |
 | B14 | report cannot disagree with JSON | generator output; old TT 2 s row now legacy_incomplete, no 77.2 | PASS |
 
-## Round C — independent acceptance and scope
+## Round C 鈥?independent acceptance and scope
 
 | ID | check | evidence | status |
 |---|---|---|---|
