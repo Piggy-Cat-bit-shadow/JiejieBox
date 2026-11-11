@@ -225,9 +225,11 @@ type OutboundGroup interface {
 //
 // # What reads it
 //
-// The daemon's group listing only (daemon.StartedService.readGroups, which feeds both the group
-// stream and the unary snapshot). It is deliberately NOT read by the router, the outbound manager,
-// the provider path, the Clash API or the outbound list, because none of those is a group DISPLAY.
+// The daemon's group listing only: daemon.StartedService.readGroups builds the payload that the
+// existing SubscribeGroups stream pushes, and the daemon tests call that builder directly. There is
+// no other group RPC - no unary GetGroups exists - so that one builder is the whole display surface.
+// It is deliberately NOT read by the router, the outbound manager, the provider path, the Clash API
+// or the outbound list, because none of those is a group DISPLAY.
 //
 // # Why it is a capability and not a method on OutboundGroup
 //

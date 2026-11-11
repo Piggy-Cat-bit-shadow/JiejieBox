@@ -119,9 +119,10 @@ configuration field.
 | `detour` pointing at a hidden group | `direct` refuses `detour` outright, so a `socks` outbound dials its server through the hidden group and the group's default member receives the connection |
 | hidden URLTest | it measures its members at start with nothing touching it; `URLTest.Selected` is a pure preview and deliberately does not start the ticker, a real flow through it does, and the history timestamp then keeps advancing; the `URLTest` RPC resolves it by tag and re-measures |
 | hidden LoadBalance | candidate set unchanged; six round-robin flows over three members reach all three |
-| hidden LoadBalance with a health URL | with the probe target reachable through one member and refused through the other, every flow after the verdict lands on the healthy member; the control profile (same group, no `url`) hands a flow to the failed one, which is what makes the first result mean the filter ran |
+| hidden LoadBalance with a health URL | the filter's own predicate is reproduced from configuration (`ParseMeasurementTarget` + `ParseExpectedStatus`, the helpers the group itself calls): the test waits until the reachable member holds a successful measurement for THAT target and asserts the always-failing member holds none - absence is the unhealthy verdict, because a failed probe writes no entry. Only then do four flows run, and all land on the healthy member; the control profile (same group, no `url`) hands a flow to the failed one, which is what makes the first result mean the filter ran |
 | a group whose own `exclude` drops every provider node (a durable EMPTY group) | the visible one is listed with no members, the hidden one is not listed at all, and its parent still lists it. An empty provider DOCUMENT is refused by the platform ("an empty node set must not wipe the published nodes"), so this is the only way to build a group that stays empty |
 | inline provider feeding a hidden selector | both nodes publish with `<provider>/<node>` tags and join the hidden group, are registered outbounds, and the parent's flow leaves through one of them; the group stays unlisted |
+| a real provider republication, through the daemon's `RefreshRemoteProviders` RPC | the wrapper object is the SAME object afterwards (`require.Same`), `Hidden()` still answers true, the group is still unlisted and its parent still names it; the newly published node joins the group and is measured by the group's own probe path. This is the regression for storing the flag on the wrapper rather than on the inner group a publication replaces |
 | expand cache | `SetGroupExpand` stores for a hidden group, and the value survives a reload |
 | `hidden: null` | decodes as unset (visible) - the same as every non-pointer field in this tree |
 | `"true"`, `1`, `{}`, `[true]` | refused with the field named (`cannot unmarshal ... into Go struct field ... of type bool`); no silent coercion |
@@ -151,3 +152,14 @@ filter for themselves - all three take the stream as it arrives:
   client submodules are not checked out in the kernel worktree. What is established is that each one
   converts or renders the stream without removing entries, and that the daemon exposes exactly one
   group RPC - so there is no second place for the decision to be made or forgotten.
+
+## Not caused by this feature: a pure provider REPLACEMENT can leave a group stale
+
+Measured here while building the republication test, and recorded so the next reader does not blame
+`hidden` for it: a remote provider refresh that ADDS a node applies fully, while a refresh that
+REMOVES the old set and introduces a different one leaves a provider-fed `urltest` group holding a
+stale member (`[pool/node-1]` after publishing `{node-3}`), while the RPC correctly reports
+`published`. A VISIBLE urltest group behaves exactly the same way, and `hidden` is never read on that
+path, so the behaviour is pre-existing and outside this feature's boundary. The republication test
+therefore asserts the whole sequence for an additive update, and only the parts this feature owns
+(the wrapper, the flag, the display) after a replacement.

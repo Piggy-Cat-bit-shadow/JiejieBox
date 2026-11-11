@@ -18,11 +18,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/urltest"
 	protocolgroup "github.com/sagernet/sing-box/protocol/group"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -490,25 +490,25 @@ func TestHiddenGroupWithAllProviderNodesFilteredOutStillStarts(t *testing.T) {
 // TestHiddenLoadBalanceHealthFilterStillApplies pins the half of section 4.6 the distribution test
 // cannot reach: `hidden` must not disable the group's health-aware candidate filtering.
 //
-// One member can serve the probe target (a loopback HTTP server); the other dials a closed port, so
-// every probe through it fails. Once the health checker has a verdict, a flow must never be handed
-// to the failed member - which is observable as "every dial succeeds", because a flow through the
-// failed member could only error, plus the server seeing the connection.
+// # The authoritative state
+//
+// LoadBalance filters a member by one predicate (`healthy` in protocol/group/loadbalance.go): a member
+// is a candidate only while the shared store holds a SUCCESSFUL measurement for THIS group's target
+// and expected status. A failed probe writes no entry, and a member that was healthy has its entry
+// removed, so "no entry" IS the unhealthy verdict - a test must not wait for a failure record that the
+// design never writes.
+//
+// This test therefore rebuilds the group's own measurement identity from configuration, using the same
+// public helpers the group calls (`ParseMeasurementTarget`, `ParseExpectedStatus`), waits for the
+// healthy member's entry, asserts the broken member has none, and only then asserts distribution. That
+// removes the old race where "some history exists" was taken as "the verdict is in".
 func TestHiddenLoadBalanceHealthFilterStillApplies(t *testing.T) {
-	var served atomic.Int32
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.WriteHeader(http.StatusNoContent)
-	}))
-	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateNew {
-			served.Add(1)
-		}
-	}
-	server.Start()
-	t.Cleanup(server.Close)
-	serverPort := server.Listener.Addr().(*net.TCPAddr).Port
+	server := startCountingServer(t)
+	serverPort := server.server.Listener.Addr().(*net.TCPAddr).Port
+	probeURL := fmt.Sprintf("http://127.0.0.1:%d/", serverPort)
 
-	// A port with nothing behind it: probes through that member are refused.
+	// A port with nothing behind it: probes through that member are refused, and because a failed
+	// probe writes no entry, the member never becomes a candidate.
 	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	deadPort := deadListener.Addr().(*net.TCPAddr).Port
@@ -520,24 +520,42 @@ func TestHiddenLoadBalanceHealthFilterStillApplies(t *testing.T) {
     {"type": "probe-member", "tag": "healthy", "destination": "127.0.0.1:%d"},
     {"type": "probe-member", "tag": "broken", "destination": "127.0.0.1:%d"},
     {"type": "loadbalance", "tag": "hidden-pool", "outbounds": ["healthy", "broken"],
-     "url": "http://127.0.0.1:%d/", "expected_status": "204", "interval": "1s", "hidden": true}
+     "url": "%s", "expected_status": "204", "interval": "1s", "hidden": true}
   ]
-}`, serverPort, deadPort, serverPort)
+}`, serverPort, deadPort, probeURL)
 	started := newHiddenGroupService(t, profile)
-	require.Empty(t, reportedGroupTags(t, started))
+	require.Empty(t, reportedGroupTags(t, started), "the balancing group is hidden")
 
 	instance := started.Instance()
-	require.Eventually(t, func() bool {
-		return instance.urlTestHistoryStorage.HealthEntryCount() > 0
-	}, 20*time.Second, 25*time.Millisecond,
-		"a hidden balancing group must still run its health checker")
-
 	pool, isLoaded := instance.outboundManager.Outbound("hidden-pool")
 	require.True(t, isLoaded)
 	poolDialer, isDialer := pool.(N.Dialer)
 	require.True(t, isDialer)
 
-	before := served.Load()
+	// The identity the filter uses, rebuilt from configuration with the production helpers.
+	target, err := urltest.ParseMeasurementTarget(probeURL)
+	require.NoError(t, err)
+	expected, err := urltest.ParseExpectedStatus("204")
+	require.NoError(t, err)
+	scope := urltest.MeasurementScope{URL: target.ScopeURL, Expected: expected.Canonical()}
+
+	healthyOutbound, isLoaded := instance.outboundManager.Outbound("healthy")
+	require.True(t, isLoaded)
+	brokenOutbound, isLoaded := instance.outboundManager.Outbound("broken")
+	require.True(t, isLoaded)
+	healthyTag := protocolgroup.RealTag(healthyOutbound, N.NetworkTCP)
+	brokenTag := protocolgroup.RealTag(brokenOutbound, N.NetworkTCP)
+
+	require.Eventually(t, func() bool {
+		return instance.urlTestHistoryStorage.LoadURLTestHistoryFor(healthyTag, scope) != nil
+	}, 20*time.Second, 10*time.Millisecond,
+		"the reachable member must hold a successful measurement for the group's own target")
+	require.Nil(t, instance.urlTestHistoryStorage.LoadURLTestHistoryFor(brokenTag, scope),
+		"an always-failing member never gets a health entry: absence is the verdict, not a failure record")
+
+	// With the verdict in, the failed member cannot be a candidate. Dial more times than there are
+	// members: a still-eligible broken member would be picked by round-robin and would error.
+	before := server.count.Load()
 	for range 4 {
 		dialContext, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, dialErr := poolDialer.DialContext(dialContext, N.NetworkTCP, M.ParseSocksaddr("origin.test:443"))
@@ -548,18 +566,12 @@ func TestHiddenLoadBalanceHealthFilterStillApplies(t *testing.T) {
 			_ = conn.Close()
 		}
 	}
-	// The server's accept can land just after the dial returns, so this is a wait rather than an
-	// immediate compare; the require.NoError above is already the primary evidence, because a flow
-	// handed to the failed member could only have returned a connection error.
-	require.Eventually(t, func() bool {
-		return served.Load()-before >= 4
-	}, 5*time.Second, 5*time.Millisecond,
+	require.Eventually(t, func() bool { return server.count.Load()-before >= 4 },
+		5*time.Second, 5*time.Millisecond,
 		"all four flows must have reached the healthy member's destination")
 
-	// Negative control, built from CONFIGURATION only: the same group without the health URL has no
-	// candidate filter at all, so its round-robin must hand a flow to the failed member and that
-	// dial must fail. Without this, "four dials succeeded" could also be explained by the cursor
-	// never reaching the broken member, and the test would pass for the wrong reason.
+	// Negative control from CONFIGURATION only: without the health URL the group has no candidate
+	// filter, so its round-robin must hand a flow to the failed member and that dial must fail.
 	controlProfile := fmt.Sprintf(`{
   "log": {"level": "error"},
   "outbounds": [
