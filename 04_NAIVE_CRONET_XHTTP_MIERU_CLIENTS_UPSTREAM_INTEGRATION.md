@@ -82,7 +82,7 @@
 
 ## 7. 主仓需要在阶段 05 更新的精确值
 
-| 项 | 当前 | 目标 |
+| 项 | 当前 | 目标（已应用到内核 98097189116） |
 |---|---|---|
 | `.gitmodules`/gitlink `clients/android` | `c7837107dc01` | `ba5c6b161827a830cb7343850bf547156fbfdfee` |
 | `clients/apple` | `7fce7117b33a` | 不变（无 Xcode 验证，不升级） |
