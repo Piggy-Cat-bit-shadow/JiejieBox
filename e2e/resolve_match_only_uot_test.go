@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -93,10 +94,8 @@ func (r *udpPayloadRecorder) waitFor(t *testing.T, payload string, timeout time.
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		for _, seen := range r.snapshot() {
-			if seen == payload {
-				return
-			}
+		if slices.Contains(r.snapshot(), payload) {
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out after %s waiting for UDP payload %q, saw %v", timeout, payload, r.snapshot())
