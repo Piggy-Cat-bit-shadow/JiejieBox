@@ -1,0 +1,10 @@
+[  0.28s] provenance: vcs_unavailable: the binary carries no vcs.revision (linked worktree cannot be stamped by buildvcs)
+[  1.29s] server started in 0s
+[  1.55s] server ready in 262ms
+[  1.65s] client ready in 101ms
+[  2.14s] readiness probe succeeded in 487ms
+[ 13.61s] rep 0 udp streams=1: payload=2 MiB goodput=0.6 MiB/s (took 11.469s)
+[ 24.67s] rep 1 udp streams=1: payload=2 MiB goodput=0.6 MiB/s (took 11.059s)
+[ 35.74s] rep 2 udp streams=1: payload=2 MiB goodput=0.6 MiB/s (took 11.065s)
+[ 35.74s] measurement loop finished after 35.73s
+run dir: /home/jie/perf/b8-final/trusttunnel-h2-20261111T182523 (35.753s)

@@ -1,20 +1,20 @@
-# Closure worklist
+# Closure worklist (reconciled)
 
-Only the A/B items this round touched. The 31-item master ledger remains the
-single source for everything else; this file records the closure-round state.
+Status vocabulary: `FIXED_AND_VERIFIED`, `UNRESOLVED`, `BLOCKED`, `NOT_RUN`,
+`DEFERRED`, `SUPERSEDED`. Superseded data stays on disk but is no longer
+acceptance evidence.
 
-| item | prior | this round | status | evidence |
+| item | state at start | this round | status | evidence |
 |---|---|---|---|---|
-| B7 WG/AWG stall | DEFERRED, root cause located | fork wake fix, pin bumped, 36-cell matrix | FIXED_AND_VERIFIED | `WG-AWG-B7.md`, `results/b7/` |
-| Schema vs 48 runs | unreported | v1.1 + validator + fixtures + matrix hook | FIXED_AND_VERIFIED | `PROVENANCE-AND-SCHEMA.md` |
-| Binary provenance | parser only; `cgo_enabled` null, tags from sidecar | BuildInfo extraction, sha256, tags/cgo/deps, drift warnings, stale-cache warning | FIXED_AND_VERIFIED (warn-only gate) | `PROVENANCE-AND-SCHEMA.md`, `internal/source/buildinfo_test.go` |
-| UDP instrument | could not measure loss | paced mode, 20-byte sequence header, drain, target/echo counters, quiesce, new schema block | FIXED_AND_VERIFIED | `UDP-RETEST.md`, `internal/loadgen/udp_test.go` |
-| B8 conclusion | CONFIRMED_NOT_A_BUG | measured with the new instrument at fixed offered load + low-rate control | see `UDP-RETEST.md` | `results/b8/`, `results/b8-low/` |
-| S3-9 Mieru | 1/3 under race | 20 runs: 1/20 race, 0/20 normal | UNRESOLVED | `MIERU-S3-9.md` |
-| Earlier fixes F-03/F-04/F-07/F-08 | FIXED | regression tests rerun | PREVIOUSLY_FIXED_AND_REVERIFIED | commit history + tests |
-| Release pin consistency | source-lock stale after pin bump | lock/final-shas moved to the new SHA | FIXED_AND_VERIFIED | `git diff release/` |
-| Perf comparison | stage-1/2 matrices | B7 rerun; UDP B8 rerun; no other data-path change | measured scope only | `PERF-COMPARISON.md` |
-
-Not started, on purpose: F-01/F-05/F-06/F-07b/F-10/F-13/F-14/F-15/S3-7 (product,
-SDK or design decisions documented in the master ledger), and platform runtime
-cells (NOT_RUN).
+| B7 WG/AWG stall | fork fix on a branch, 36/36 reported | fork default `awg3-inject` fast-forwarded to `7ece3d66d79d`; matrix rerun from a clean final HEAD and new binary | FIXED_AND_VERIFIED (pending final rerun commit) | `WG-AWG-B7.md`, `results/b7-final/` |
+| B7 raw provenance | old runs lacked binary SHA / pin / params | new runs record `source.binary`, `binary_sha256`, commit, dirty, tags, cgo, wireguard pin, and `load_parameters` (incl. stagger) | FIXED_AND_VERIFIED (after rerun) | `results/b7-final/*/run.json` |
+| Release locks | SHA updated, pseudo-version timestamp stale | `source-lock.json` regenerated with `release-freeze.py snapshot`; `dependency-final-shas.json` version corrected; verify PASS | FIXED_AND_VERIFIED | `evidence/final/release-verify.log` |
+| Root/test go.mod, go.sum | new pin present | `go mod verify` clean; test module compiles | FIXED_AND_VERIFIED | `go-mod-verify.log` |
+| Schema | v1.1 + fixtures + hook | re-verified at this HEAD | FIXED_AND_VERIFIED | 48/48, fixtures 0 wrong |
+| Provenance cache | HEAD-only stale warning | module view refreshed from go.mod on every cache use + warning; tests | FIXED_AND_VERIFIED (warn-only) | `PROVENANCE-AND-SCHEMA.md`, `cache_test.go` |
+| UDP instrument | paced/seq/drain implemented | drain completeness made explicit and testable; invocation parameters recorded | FIXED_AND_VERIFIED | `drain_test.go`, `load_parameters` in run JSON |
+| Legacy B8 runs | reported 50-60 % loss | 7/18 reps fail the final drain rule; the flagged pacer record actually satisfies `scheduled=attempts+skipped` (attempts 2489, skipped 11); all old B8 reps are SUPERSEDED for acceptance | SUPERSEDED | `UDP-RETEST.md` |
+| B8 final | UNRESOLVED | rerun at fixed 500 pps with 2 s drain, both cells × 0/0.1/1 %, plus 50 pps control at 1 %; qdisc/socket/target diagnostics | pending (see report) | `results/b8-final/` |
+| Mieru S3-9 | 1/20 race | upstream investigation only; no retry semantics change | UNRESOLVED | `MIERU-S3-9.md` |
+| Platform runtime | NOT_RUN | unchanged | NOT_RUN | report |
+| Earlier F-01/F-05/F-06/F-07b/F-10/F-13/F-14/F-15/S3-7 | deferred decisions | unchanged | DEFERRED | master ledger |

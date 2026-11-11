@@ -1,93 +1,58 @@
-# UDP retest and B8
+# UDP instrument and B8 (reconciled 2026-11-11)
 
-## Verdict of this round
+## Instrument: FIXED_AND_VERIFIED
 
-The old UDP cell could not measure loss; a paced, sequenced, drained mode now
-does, and the question was re-asked. B8 stays `UNRESOLVED`, but the old
-`CONFIRMED_NOT_A_BUG` ("UDP has no retransmission") is withdrawn: under a
-calibrated 500 pps offered load, 1 % per-direction netem loss loses about
-**50-60 % of datagrams end to end**, and roughly the same amount already at
-target ingress, i.e. far beyond the ~2 % the configured loss predicts. That is a
-real data-path finding, not a test artifact, and needs transport-level work.
+The lab's UDP cell now measures rather than assumes:
 
-## Measured with the new instrument (80 ms RTT, 500 pps, 1200 B, 3 reps)
+- paced `-udp-rate` (0 = historical unpaced), absolute schedule, skip-never-burst;
+- 20-byte header: magic, epoch, sequence, sent_ns; one sequence counter per phase;
+- reader parses the SOCKS5 UDP header and the payload header; unique, duplicate,
+  out-of-order, foreign and stale are distinct; a bounded sequence window;
+- full `-udp-drain` window after the last write (default 500 ms paced, `-1`
+  disables, 0 selects the default); `drainCompleteFor` is the single definition:
+  live context, a real window when replies are missing, and a tail not within
+  50 ms of the edge; otherwise `lost`/`loss_percent` are null;
+- target `Echoed` counted only after a successful write; `target_received` and
+  `echoed` are separate; runner quiesces the target before the measured phase;
+- run JSON records `load_parameters` including stagger/rate/drain; schema v1.1
+  accepts the new counters and null loss.
 
-| cell | configured loss/direction | writes | unique returned | target received | reported loss |
-|---|---|---|---|---|---|
-| MASQUE DATAGRAM | 0 % | 2500 ×3 | 2500 ×3 | 2500 ×3 | 0 % |
-| TrustTunnel H2 UDP2 | 0 % | 2500 ×3 | 2500 ×3 | 2500 ×3 | 0 % |
-| MASQUE DATAGRAM | 0.1 % | 2500,2500,2489 | 2498,2496,2484 | 2499,2498,2487 | 0.08-0.20 % |
-| TrustTunnel H2 UDP2 | 0.1 % | 2500 ×3 | 2500,2500,2491 | 2500,2500,2491 | 0-0.36 % |
-| MASQUE DATAGRAM | 1 % | 2500 ×3 | 869-1138 | 915-1234 | 54-65 % |
-| TrustTunnel H2 UDP2 | 1 % | 2500 ×3 | 1044-1248 | 1072-1606 | 50-58 % |
+Tests: `pacer_test.go`, `udp_integration_test.go`, `udp_record_test.go`,
+`drain_test.go`; all pass. Calibration at 0 % loss returns 2500/2500/2500 in both
+MASQUE and TrustTunnel H2.
 
-All cells: `skipped=0`, `drain_complete=true`, no duplicates (MASQUE: two
-out-of-order in one 0.1 % rep), achieved pps 497-500 except two scheduler-short
-reps (348/366 pps). Configured q is per direction, so the expected e2e loss is
-~2q-p² (0.2 % and 1.99 %); the 1 % rows are 25-30× that, and the loss is already
-present at the target, so it is upstream of the return path and not the drain
-(0 % rows prove the instrument). MASQUE and TrustTunnel are not ranked against
-each other (different reliability models), but both show the amplification.
+## Legacy B8 data: SUPERSEDED
 
-## Status
+The 18 reps collected earlier (drain 500 ms) were re-read from raw JSON under the
+final rule: **7/18 are drain-incomplete** (MASQUE 1 % 3/3, TrustTunnel 0.1 % 1/3,
+TrustTunnel 1 % 3/3), so their `drain_complete=true` is not acceptable evidence.
+The record once flagged as a pacer violation (`scheduled=2500, attempts=2500,
+skipped=11`) actually has `attempts=2489` and satisfies the invariant. Old rows
+remain on disk under `results/b8/` for context but are **SUPERSEDED** and are not
+used for the conclusion.
 
-- Instrument: `FIXED_AND_VERIFIED` (paced mode, sequence header, drain, target
-  and echo counters, quiesce; smoke and the 0 % rows above).
-- B8: `UNRESOLVED` with the table above and raw runs in `results/b8/`. Next step
-  is transport-level: qdisc stats vs client queue vs server queue for the 1 %
-  cells, starting with the client-side drop counters; no protocol conclusion is
-  drawn yet.
+## Final B8: UNRESOLVED, with a narrowed locus
 
-## Why the old cell is not a loss experiment
+`results/b8-final/` (manifest, raw runs, qdisc/socket diagnostics, recheck) uses
+the final instrument: 80 ms RTT, 500 pps, 1200 B, 5 s, 3 reps, drain 2 s, plus a
+50 pps control at 1 %.
 
-Audited in `scripts/perf/internal/loadgen` and `runner`:
+- 0 % and 0.1 % per direction: 2500/2500/2500 and ~0.1-0.2 % loss, instrument
+  calibrated.
+- 1 % at 500 pps: MASQUE returns 1302-1491 unique (target 1315-1510), loss
+  40.4-47.9 %, drain complete with a 4 s window (the 2 s attempt was incomplete
+  and is superseded); TrustTunnel returns 459-621 (target 1145-1571), loss
+  75-82 %, drain complete.
+- 1 % at 50 pps: MASQUE 0.8-2 %, TrustTunnel 0 %, both drain-complete.
 
-1. No pacing: a goroutine writes back-to-back until the wall deadline.
-2. No sequence/token: every datagram is the same PatternPage; the reader counts
-   any `n >= 3` reply, so duplicates, reorder and foreign packets are identical.
-3. `DatagramsSent` is "the local socket accepted it" (SOCKS write success), not
-   client/tunnel emission.
-4. The reader stops at the send deadline; there is no drain. At 80 ms RTT a 5 s
-   phase loses ≈1.6 % of replies to teardown alone.
-5. `streams=4` shares one SOCKS UDP association, so a "4-stream" UDP cell is one
-   4-tuple with four writers.
-6. The target's ingress counter is fetched and discarded; warmup backlog can
-   pollute it, and there is no quiesce before reset.
-7. A 100 %-loss cell is recorded as a failure, not as data.
-8. MTU is a literal 1200 in the runner; MASQUE's outer packet is inner MTU + 51,
-   which blackholes below a 1500 path MTU.
-9. `elapsed` is the configured duration, not the actual send window.
-10. UDP latency is allocated but never filled; jitter is sender inter-arrival.
+Why it is not path loss: the veth qdisc drops only the expected ~1 % of wire
+packets (60-96 packets), there are no overlimits/requeues, and every UDP socket
+counter (`UdpRcvbufErrors`, `UdpSndbufErrors`, `UdpInErrors`) is zero in both
+namespaces. The missing datagrams are lost inside the client/tunnel application
+queues, only at the high offered rate; at 50 pps the same 1 % configuration is
+clean. Per-queue counters inside QUIC/H2 are **NOT_AVAILABLE** without code
+instrumentation, so the root cause is bounded, not proven.
 
-Consequence: `lost = sent - received` blends sender saturation, socket buffers,
-SOCKS relay, tunnel backpressure, queue policy, real link loss and teardown. The
-1 %-loss collapse that stage 1 reported could be dominated by any of (1)-(4).
-
-## Designed fix (not implemented)
-
-- Mode by `--udp-rate`: 0 = `unpaced` (historical, labelled stress), >0 = paced.
-- 20-byte header in the fixed packet: magic, epoch, seq, sent_ns.
-- Pacer: absolute schedule, timer reuse, skip-never-burst, per-write deadline,
-  ctx honoured; `scheduled == attempts + skipped`.
-- Reader parses the SOCKS header + payload header; seq window yields unique,
-  duplicate, out-of-order, foreign, stale; `lost = writes - unique`.
-- Drain always runs `--udp-drain` (default 500 ms, auto mode) after the last
-  write; drain is reported separately and never enters goodput.
-- Target counts `Echoed` only after a successful write; runner quiesces the
-  target before reset and reports `target_received`, separating upstream loss
-  from return loss.
-- Schema gets the new counters and `mode`; summary emits UDP rows.
-
-Tests named in the audit: payload layout/magic, seq window (duplicate, reorder,
-bounded memory), pacer rate/skip/deadline/ctx, loopback paced round trip,
-duplicate/reorder/stale/foreign injection, drain capture and bound, target count
-match, runner loss derivation and null-when-unavailable.
-
-## B8 rerun matrix (ready to execute)
-
-Calibrate rate at 0 % loss on profile `normal` (20 ms RTT), ladder
-200→500→1000→2000→4000 pps, accept the last rung where `skipped=0`,
-`drain_complete=true`, `loss=0`; use half of it for 0 / 0.1 / 1 % loss on
-MASQUE DATAGRAM and TrustTunnel H2 UDP2, 5 reps × 5 s, 1200 B, drain 500 ms.
-Note netem applies per direction, so configured p is ≈2p−p² end to end; the
-report must compare against that, not against p.
+Next diagnostic step (not this round): instrument the MASQUE device/CONNECT-IP
+queue and the TrustTunnel H2 stream queue for drop counts and blocking time, and
+repeat the 1 % cells; do not change production transport semantics first.

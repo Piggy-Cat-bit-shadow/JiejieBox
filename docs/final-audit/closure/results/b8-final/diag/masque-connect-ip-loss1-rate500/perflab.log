@@ -1,0 +1,10 @@
+[  0.36s] provenance: vcs_unavailable: the binary carries no vcs.revision (linked worktree cannot be stamped by buildvcs)
+[  1.38s] server started in 0s
+[  2.18s] server ready in 801ms
+[  2.28s] client ready in 101ms
+[  3.43s] readiness probe succeeded in 1.153s
+[ 19.96s] rep 0 udp streams=1: payload=1 MiB goodput=0.3 MiB/s (took 16.523s)
+[ 34.96s] rep 1 udp streams=1: payload=1 MiB goodput=0.3 MiB/s (took 14.999s)
+[ 49.98s] rep 2 udp streams=1: payload=1 MiB goodput=0.3 MiB/s (took 15.019s)
+[ 49.98s] measurement loop finished after 49.97s
+run dir: /home/jie/perf/b8-final-drain4/masque-connect-ip-20261111T182959 (50.011s)

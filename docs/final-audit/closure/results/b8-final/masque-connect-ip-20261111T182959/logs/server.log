@@ -1,0 +1,25 @@
++0800 2026-11-11 18:30:00 [36mINFO[0m endpoint/masque-server[masque]: udp server started at 10.213.0.2:32272
++0800 2026-11-11 18:30:00 [31mERROR[0m network: missing default interface
++0800 2026-11-11 18:30:00 [36mINFO[0m sing-box started (0.00s)
++0800 2026-11-11 18:30:01 [36mINFO[0m [[38;5;182m4203487654[0m 0ms] endpoint/masque-server[masque]: [bench] inbound tunnel from 10.213.0.1:39631 assigned 10.8.0.2
++0800 2026-11-11 18:30:01 [36mINFO[0m endpoint/masque-server[masque]: inbound connection from 10.8.0.2:44643
++0800 2026-11-11 18:30:01 [36mINFO[0m endpoint/masque-server[masque]: inbound connection to 10.213.0.2:34407
++0800 2026-11-11 18:30:01 [36mINFO[0m outbound/direct[direct]: outbound connection to 10.213.0.2:34407
++0800 2026-11-11 18:30:02 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:41756
++0800 2026-11-11 18:30:02 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:02 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:11 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:33744
++0800 2026-11-11 18:30:11 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:11 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:21 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:33174
++0800 2026-11-11 18:30:21 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:21 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:26 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:57250
++0800 2026-11-11 18:30:26 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:26 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:36 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:36086
++0800 2026-11-11 18:30:36 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:36 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:43 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:40662
++0800 2026-11-11 18:30:43 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:37688
++0800 2026-11-11 18:30:43 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:37688
