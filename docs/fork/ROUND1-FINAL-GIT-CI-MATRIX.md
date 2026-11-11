@@ -1,5 +1,7 @@
 # Round 1 最终 Git / CI / 依赖矩阵
 
+> 历史阶段快照：本文件记录 06/07 交接时的矩阵；当前单一结构化事实源为 `ROUND1-FINAL-FACTS.json`，最终结论为 `ROUND1-FINAL-CLOSURE.md`。
+
 观测时间：2026-11-11T11:34:50+08:00（GitHub Compare 查询时间；本地 `git fetch` 后同一窗口）。
 比较方向：`upstream...fork`，第一个数 = upstream 独有（behind），第二个 = Fork 独有（ahead）。表中 `behind` 为第一个数。
 
@@ -8,12 +10,12 @@
 | 项 | 值 |
 |---|---|
 | repo | `Piggy-Cat-bit-shadow/JiejieBox` |
-| canonical/default | `testing` = `integration/0.1.45-final` = **`4ec0decd9f2dd7e3116ab130b3af56291f73988b`** |
+| canonical/default | `testing` = `integration/0.1.45-final` = **`2528511d90ab876c6c853f23d6ae1deee083027e`** |
 | upstream | `SagerNet/sing-box:testing` @ **`a13dbe1f785f66c86acbf3985c33fdafea0cbfd6`** |
 | pre-merge merge-base | `8eb4395a391b775ad240433a7009f39357c1eba0` |
 | final merge-base | `a13dbe1f785f66c86acbf3985c33fdafea0cbfd6`（merge 的第二父，已在 HEAD 中） |
 | merge commit | `303fbb47dfdca4520dd201fea8bd48b3db1f1010`（parents `48103716845e` + `a13dbe1f785f`） |
-| behind / ahead | **0 / 3736** |
+| behind / ahead | **0 / 3737** |
 | local ancestry | `git merge-base --is-ancestor upstream/testing HEAD` = 0 |
 | GitHub Compare | `https://api.github.com/repos/SagerNet/sing-box/compare/Piggy-Cat-bit-shadow:testing...SagerNet:testing`；`ahead_by=0`, `behind_by=3736` |
 
@@ -21,6 +23,8 @@
 
 | 仓库 | Fork 正式分支 | 正确 upstream | Fork SHA | Upstream SHA | behind/ahead | GitHub Compare（head=真实 SHA） |
 |---|---|---|---|---|---|---|
+| Verify | 42953972668 | success | 2528511 | 最终审计文档/脚本提交 |
+| Android Core ARM64 | 42953972663 | success | 2528511 | 同一审计提交 |
 | sing | `dev` | `SagerNet/sing:dev` | `4abfaed41727e43d1d98f36385a86114925f8484` | `27b73774b240c645099704ba533d2615727c3410` | 0/65 | ahead_by=0 |
 | sing-tun | `dev` | `SagerNet/sing-tun:dev` | `99abf3c2766646ccd74c77f7b14c197204506121` | `79ed0653fdc66eef261d4147a04db9e16b9e6c50` | 0/183 | ahead_by=0 |
 | sing-quic | `main` | `SagerNet/sing-quic:main` | `aa6d98964049e4a7b1446e0758dd4a6ec2e225e6` | `5253224b67cf495b6faba0899a6e3155ee93ebb0` | 0/11 | ahead_by=0 |

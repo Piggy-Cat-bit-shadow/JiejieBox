@@ -1,0 +1,238 @@
+{
+  "schema": 1,
+  "generated_at": "2026-11-11T12:25:00+08:00",
+  "overall_status": "VERIFIED_WITH_LIMITATIONS",
+  "observation_note": "final_documentation_sha is the HEAD at generation; a later docs-only commit may exist. code_validation_sha remains the tree covered by the recorded CI.",
+  "main": {
+    "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+    "origin": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git",
+    "canonical_branch": "testing",
+    "integration_branch": "integration/0.1.45-final",
+    "head": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe",
+    "testing": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe",
+    "origin_testing": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe",
+    "upstream_ref": "SagerNet/sing-box:testing",
+    "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "merge_commit": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
+    "merge_parents": [
+      "48103716845e4ac00cc5d7eb0aa36febd90b477c",
+      "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6"
+    ],
+    "pre_merge_merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
+    "final_merge_base_at_observation": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "ahead": 3738,
+    "behind": 0,
+    "remote_heads": {
+      "backup/02-ecfffe7d0": "ecfffe7d06915d5ad5cfef771b39ac73a72696f2",
+      "feature/proxy-group-hidden": "75f608074090dc56d39439f137bbf80a90438b8f",
+      "integration/0.1.45-final": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe",
+      "testing": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe"
+    }
+  },
+  "code_validation": {
+    "code_sha": "b473c21f4803c0196e3eb920d530602d5f92867f",
+    "audit_ci_sha": "2528511d90ab876c6c853f23d6ae1deee083027e",
+    "final_documentation_sha": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe",
+    "post_ci_changes": [
+      "05_MAIN_KERNEL_UPSTREAM_ZERO_BEHIND_ACCEPTANCE.md",
+      "INTEGRATION-LOG.md",
+      "docs/fork/CLEANUP-REPORT-ROUND1.md",
+      "docs/fork/ROUND1-AUDIT-CLOSURE.md",
+      "docs/fork/ROUND1-DASHBOARD-COMMIT-MAP.csv",
+      "docs/fork/ROUND1-DASHBOARD-UPSTREAM-MAPPING.md",
+      "docs/fork/ROUND1-FAILURE-BASELINE-MATRIX.md",
+      "docs/fork/ROUND1-FINAL-GIT-CI-MATRIX.md",
+      "docs/fork/ROUND1-MERGE-CONFLICT-RESOLUTION.csv",
+      "docs/fork/ROUND1-MERGE-CONFLICT-RESOLUTION.md",
+      "docs/fork/UPSTREAM-DEBUG-AND-VALIDATION.md",
+      "docs/fork/UPSTREAM-SYNC-2026-11-11-AUDIT.json",
+      "docs/fork/UPSTREAM-SYNC-2026-11-11-AUDIT.md",
+      "docs/fork/round1-main-merge-conflicts.txt",
+      "release/dependency-final-shas.json",
+      "scripts/ci/check-round1-audit.py"
+    ]
+  },
+  "ci": {
+    "verify": {
+      "run": "42955409204",
+      "conclusion": "success",
+      "head_sha": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42955409204"
+    },
+    "android_core": {
+      "run": "42955409234",
+      "conclusion": "success",
+      "head_sha": "40dfed27474eaf8d1219fc3bb13e17015c06e5fe",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42955409234"
+    },
+    "mobile_contract": {
+      "run": "42942954909",
+      "conclusion": "success",
+      "head_sha": "08b52a30b4dbc51fdfbf1ed325e6f571c05351e7",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42942954909"
+    }
+  },
+  "tests": {
+    "windows_full": "106 ok / 3 known baseline failures (common/tls, common/tlsspoof, common/windivert)",
+    "race_core": "PASS (route, dialer, fakeip, transport/http, masque, protocol/http)",
+    "sing_tun_full_race": "NOT PASS / BASELINE_CONFIRMED (SACK, SequenceWrap, MemoryDial; pre-merge same classes)",
+    "dashboard": "main 97/97; integration 98/98; build/lint PASS; lint:css 4 baseline errors",
+    "desktop": "59/59; build PASS",
+    "android": "assembleDebug 8m28s + unit 27s PASS",
+    "source_lock": "PASS",
+    "module_tidy": "root and test go mod tidy -diff empty"
+  },
+  "exceptions": [
+    {
+      "id": "P1-03",
+      "status": "ENVIRONMENT_BLOCKED",
+      "detail": "Apple: no Xcode/macOS; pin 7fce711 vs main 97b35d1; 3 branches have 16/22/6 later NE commits; release workflow defaults to main branch, so source-lock pin and release source authority differ.",
+      "unblock": "macOS runner + Xcode + explicit APPLE_CLIENT_REF/decision"
+    },
+    {
+      "id": "P1-04",
+      "status": "EXCEPTION_JUSTIFIED",
+      "detail": "Cronet go generation behind 2 is a parallel generation from older 73349ff; fork generation source 4c96192 contains it; do not merge.",
+      "unblock": "controlled native regeneration from newer source and ABI verification"
+    },
+    {
+      "id": "P1-05",
+      "status": "DEFERRED_WITH_REASON",
+      "detail": "AWG branches awg-base/awg-graft carry independent experiments; awg3-inject is the consumed line.",
+      "unblock": "explicit product decision and wg test matrix"
+    }
+  ],
+  "cleanup": {
+    "deleted": [
+      "candidate/w07-2026-11-10",
+      "backup/02-ecfffe7d0 (restored from archive)",
+      "docs/03-overnight-gate-0.1.45",
+      "integration/next-round",
+      "next/client-consumption-candidate"
+    ],
+    "restored": [
+      {
+        "branch": "backup/02-ecfffe7d0",
+        "sha": "ecfffe7d06915d5ad5cfef771b39ac73a72696f2",
+        "reason": "01_AUDIT_AND_FREEZE identifies it as an active parallel line, not an old backup; archive tag preserved it, branch restored"
+      }
+    ],
+    "archive_tags": [
+      "archive/0.1.45/main/backup-02",
+      "archive/0.1.45/main/docs-03-overnight-gate",
+      "archive/0.1.45/main/integration-next-round",
+      "archive/0.1.45/main/client-consumption-candidate"
+    ],
+    "active_untouched": [
+      "feature/proxy-group-hidden"
+    ]
+  },
+  "dependencies": [
+    {
+      "repo": "sing",
+      "branch": "dev",
+      "sha": "4abfaed41727e43d1d98f36385a86114925f8484",
+      "upstream": "SagerNet/sing:dev",
+      "upstream_sha": "27b73774b240c645099704ba533d2615727c3410",
+      "behind": 0
+    },
+    {
+      "repo": "sing-tun",
+      "branch": "dev",
+      "sha": "99abf3c2766646ccd74c77f7b14c197204506121",
+      "upstream": "SagerNet/sing-tun:dev",
+      "upstream_sha": "79ed0653fdc66eef261d4147a04db9e16b9e6c50",
+      "behind": 0
+    },
+    {
+      "repo": "sing-quic",
+      "branch": "main",
+      "sha": "aa6d98964049e4a7b1446e0758dd4a6ec2e225e6",
+      "upstream": "SagerNet/sing-quic:main",
+      "upstream_sha": "5253224b67cf495b6faba0899a6e3155ee93ebb0",
+      "behind": 0
+    },
+    {
+      "repo": "quic-go",
+      "branch": "sagernet",
+      "sha": "f864f2f12006f053f22d577c90fdd8f3b45d4d47",
+      "consumed": "158445cdda77c05e4430fe40721709bf7bc2ffe2",
+      "upstream": "SagerNet/quic-go:dev",
+      "upstream_sha": "2e73222e969f886968e02d993e6903007e969002",
+      "behind": 0
+    },
+    {
+      "repo": "utls",
+      "branch": "main",
+      "sha": "e14b88879d809306332be7d2c226384a6f3e8fba",
+      "upstream": "MetaCubeX/utls:v1.9.0-mod-meta",
+      "upstream_sha": "89a07ad380e263f7c3b406a3f7beb2a70dea263c",
+      "behind": 0
+    },
+    {
+      "repo": "wireguard-go",
+      "branch": "awg3-inject",
+      "sha": "a765d957fd814e5c0ee579936a0780e73d66e533",
+      "upstream": "sagernet/wireguard-go:main",
+      "upstream_sha": "e4d85ef2ed387cc07233b5324d4a40f3df94566e",
+      "behind": 0
+    },
+    {
+      "repo": "cronet-go",
+      "branch": "main",
+      "sha": "4c96192d73f67c48a91cba3bce358a3c91692444",
+      "upstream": "SagerNet/cronet-go:main",
+      "upstream_sha": "73349ff2a5870631807ce5f69944f55e2f52e1b1",
+      "behind": 0
+    },
+    {
+      "repo": "cronet-go",
+      "branch": "go",
+      "sha": "7ce9c49b464ad90629a13061309a58c89890fea6",
+      "upstream": "SagerNet/cronet-go:go",
+      "upstream_sha": "095cb9e060468c80ca31d977c020dca82d101a8f",
+      "behind": 2,
+      "exception": "parallel generation from older source; see P1-04"
+    }
+  ],
+  "clients": [
+    {
+      "path": "clients/apple",
+      "sha": "7fce7117b33a38ef4c73c81db67c49f0be7a7dad",
+      "main": "97b35d1ce24207ac373f3b2235f16c8831939daf",
+      "upstream": "SagerNet/sing-box-for-apple:dev",
+      "behind": 0,
+      "state": "ENVIRONMENT_BLOCKED"
+    },
+    {
+      "path": "clients/android",
+      "sha": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "upstream": "SagerNet/sing-box-for-android:dev",
+      "behind": 0,
+      "state": "PASS"
+    },
+    {
+      "path": "clients/desktop",
+      "sha": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
+      "upstream": "SagerNet/sing-box-for-desktop:main",
+      "behind": 0,
+      "state": "PASS"
+    },
+    {
+      "path": "clients/desktop/dashboard",
+      "sha": "9bde90e1cd5577dc3f5549535aa23bea69816d6f",
+      "upstream": "SagerNet/sing-box-dashboard:main",
+      "behind": 0,
+      "state": "PASS"
+    }
+  ],
+  "evidence": {
+    "conflict_matrix": "docs/fork/ROUND1-MERGE-CONFLICT-RESOLUTION.csv",
+    "dashboard_map": "docs/fork/ROUND1-DASHBOARD-COMMIT-MAP.csv",
+    "failure_matrix": "docs/fork/ROUND1-FAILURE-BASELINE-MATRIX.md",
+    "final_matrix": "docs/fork/ROUND1-FINAL-GIT-CI-MATRIX.md",
+    "cleanup": "docs/fork/CLEANUP-REPORT-ROUND1.md",
+    "gate": "scripts/ci/check-round1-audit.py",
+    "remote_compare": "audit-evidence/upstream/round1-github-compare.txt"
+  }
+}

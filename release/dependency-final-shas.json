@@ -9,9 +9,9 @@
     "upstream": "SagerNet/sing-box:testing",
     "integration_branch": "integration/0.1.45-final",
     "default_branch": "testing",
-    "head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
+    "head": "2528511d90ab876c6c853f23d6ae1deee083027e",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
-    "ahead": 3735,
+    "ahead": 3737,
     "behind": 0,
     "merge_commit": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
     "pushed": true,
@@ -108,8 +108,8 @@
     "linux_build": "PASS (GOOS=linux, CGO_ENABLED=0, profile tags)",
     "darwin_build": "PASS (GOOS=darwin/arm64, profile tags)",
     "race": "PASS (route, common/dialer, dns/fakeip, transport/http, protocol/masque, protocol/http)",
-    "android_core_ci": "PASS run 42945339735 (b473c21f4803)",
-    "verify_ci": "PASS run 42945339834 (b473c21f4803)",
+    "android_core_ci": "PASS run 42953972663 (2528511d90ab)",
+    "verify_ci": "PASS run 42953972668 (2528511d90ab)",
     "mobile_contract_ci": "PASS run 42942954909 (08b52a3; later changes are CI script/docs only)"
   }
 }
