@@ -111,7 +111,12 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # regenerated libbox.aar, and the host that performed this merge has neither, so it is NOT_RUN
 # there. The compiler errors recorded in docs/fork/android-abi-migration-closure.md are fixed by
 # the same commits; the accessor sweep is what can be re-run without a toolchain, and it is.
-VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
+# Moved to ba5c6b161827 on 2026-11-11: the fork merged SagerNet dev into the
+# single product main. The change is UI-only (light-theme contrast, ColorContrast,
+# QR generation) and does not touch the Kotlin StringBox call sites; layer 4 was
+# re-run against this checkout (310 Kotlin files, 3 interface methods, zero
+# violations) before moving the pin.
+VERIFIED_ANDROID_SHA="ba5c6b161827a830cb7343850bf547156fbfdfee"
 # Moved from 90a0e9aef when the Apple gitlink advanced to d05249121, because the two must
 # be the same commit or this gate fails - which is exactly what it did.
 #
