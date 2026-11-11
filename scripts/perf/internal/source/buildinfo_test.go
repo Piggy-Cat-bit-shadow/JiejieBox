@@ -2,6 +2,7 @@ package source
 
 import (
 	"os"
+	"os/exec"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -115,9 +116,19 @@ func TestCollectEnrichesFromTheBinary(t *testing.T) {
 	}
 }
 
+// TestCollectWarnsAboutAStaleSourceCache drives the staleness warning against a real git
+// repository the test CREATES, not against this machine's checkout.
+//
+// The fixture used to be the authoring host's absolute path
+// (/mnt/c/Deepseek/_perf/kernel). That made the assertion a property of the host rather than of
+// the code: anywhere that path is absent, `git rev-parse HEAD` legitimately returns nothing, the
+// warning is correctly NOT emitted, and the test fails on an implementation that is right. A test
+// that can only pass on the machine it was written on is not evidence, and this one is part of the
+// closure line's own lab gate.
 func TestCollectWarnsAboutAStaleSourceCache(t *testing.T) {
+	repository := initGitRepository(t)
 	t.Setenv("PERF_SOURCE_JSON", `{"commit":"deadbeef","branch":"stale"}`)
-	collected := Collect("/mnt/c/Deepseek/_perf/kernel", "")
+	collected := Collect(repository, "")
 	if len(collected.Warnings) == 0 {
 		t.Fatal("a cache naming a different commit produced no warning")
 	}
@@ -130,4 +141,35 @@ func TestCollectWarnsAboutAStaleSourceCache(t *testing.T) {
 	if !found {
 		t.Fatalf("warnings = %v", collected.Warnings)
 	}
+}
+
+// initGitRepository creates a throwaway repository with one commit and returns its path.
+//
+// git is a real dependency of the behaviour under test (the warning is defined against a HEAD that
+// git reports), so a host without it skips with the reason instead of asserting on an empty HEAD.
+func initGitRepository(t *testing.T) string {
+	t.Helper()
+	gitBinary, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not on PATH; the cache-staleness warning is defined against a real HEAD")
+	}
+	directory := t.TempDir()
+	steps := [][]string{
+		{"init", "-q"},
+		{"commit", "-q", "--allow-empty", "-m", "fixture"},
+	}
+	for _, args := range steps {
+		command := exec.Command(gitBinary, args...)
+		command.Dir = directory
+		command.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=perf-fixture",
+			"GIT_AUTHOR_EMAIL=perf-fixture@example.invalid",
+			"GIT_COMMITTER_NAME=perf-fixture",
+			"GIT_COMMITTER_EMAIL=perf-fixture@example.invalid",
+		)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, directory, err, output)
+		}
+	}
+	return directory
 }

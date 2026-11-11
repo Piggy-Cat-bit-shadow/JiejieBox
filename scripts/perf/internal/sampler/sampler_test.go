@@ -12,6 +12,14 @@ import (
 )
 
 func TestReadOwnProcessIsPlausible(t *testing.T) {
+	// Every field asserted below comes from /proc: StartTick (the PID-reuse guard), Threads, FDs and
+	// the tick/schedstat CPU sources. The Windows implementation reads GetProcessTimes and
+	// GetProcessMemoryInfo, which provide none of them, so this test states its platform
+	// requirement the same way TestCollectorSamplesAWindowAndStops already does instead of
+	// reporting a correct port as a failure.
+	if runtime.GOOS != "linux" {
+		t.Skip("the /proc-backed fields this asserts are not available on " + runtime.GOOS)
+	}
 	self := os.Getpid()
 	stat, err := Read(self)
 	if err != nil {
