@@ -466,3 +466,21 @@
 - Dashboard `main` → `b592c65` 双父合并，97/97 + build PASS；消费线 `9bde90e` 98/98 PASS；compare ahead_by=0。
 - Desktop 59/59 + build PASS，0 behind；Apple 0 behind，Xcode BLOCKED。
 
+---
+
+## 上游同步 Stage 05 — 主内核零落后与清理
+
+- 日期：2026-11-11
+- 报告：`05_MAIN_KERNEL_UPSTREAM_ZERO_BEHIND_ACCEPTANCE.md`
+
+- 主内核 merge `303fbb47dfd`（108 冲突，42 文件实际 delta）；`testing` 与
+  `integration/0.1.45-final` = `08b52a30b4d`；upstream `a13dbe1f785f` 为祖先，3731/0。
+- 依赖：sing/sing-tun/sing-quic/quic-go/utls/wireguard/cronet 矩阵与 source-lock 收敛；
+  Android `ba5c6b1`、Desktop `e8b48be`、dashboard `9bde90e`、Apple `7fce711`。
+- 验证：Windows 全量 106 ok / 3 已知基线；race PASS；Linux/Darwin build PASS；
+  source-lock verify PASS；Android Core CI PASS（run 42942954969）。
+- 清理：删除 5 个主仓远端分支，4 个 archive tag；仅保留 testing 与
+  integration/0.1.45-final。未 force push。
+- 限制：Apple 无 Xcode；Verify/Mobile contract 报告时 in_progress；既有
+  common/tls、tlsspoof、windivert 与 dashboard lint:css 债务保留。
+

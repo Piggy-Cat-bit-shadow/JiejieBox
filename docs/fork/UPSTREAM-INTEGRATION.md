@@ -19,7 +19,7 @@ result is closed.
 | android | `SagerNet/sing-box-for-android:dev` | `main` | behind 5 | **behind 0** | DONE (stage 04) | merge `ba5c6b161827`, compare ahead_by 0 |
 | desktop | `SagerNet/sing-box-for-desktop:main` | `main` / `integration/0.1.45` | behind 0 | behind 0 | DONE (stage 04) | product line `e8b48be` with dashboard `9bde90e`; 59/59 tests + build |
 | dashboard | `SagerNet/sing-box-dashboard:main` | `main` | behind 95 (no merge base) | **behind 0** | DONE (stage 04) | two-parent merge `b592c65618e`, integration `9bde90e1cd55`, compare ahead_by 0 |
-| sing-box (main) | `SagerNet/sing-box:testing` | `integration/0.1.45-final` | behind 85 | behind 85 | TODO (stage 05, 108 trial conflicts) | audit row |
+| sing-box (main) | `SagerNet/sing-box:testing` | `testing` / `integration/0.1.45-final` | behind 85 | **behind 0** | DONE (stage 05) | merge `303fbb47dfd`, final `08b52a30b4d`, source-lock verify PASS |
 
 ## Stage 02 rows
 
@@ -76,3 +76,19 @@ See `02_SING_SINGTUN_UPSTREAM_INTEGRATION.md` and
   Xcode remains unavailable.
 
 See `04_NAIVE_CRONET_XHTTP_MIERU_CLIENTS_UPSTREAM_INTEGRATION.md`.
+
+### Stage 05 close-out
+
+- Main kernel merged `upstream/testing` at `303fbb47dfd` (108 conflicts fused;
+  42 files carry the upstream delta, the rest keep the fork's larger
+  implementation). Default `testing` and `integration/0.1.45-final` now both
+  point at `08b52a30b4d`; `HEAD...upstream/testing` = 3731/0.
+- Source lock refreshed and verified; root/test module tidy clean; Windows full
+  suite 106 ok / 3 known baseline failures; Linux and Darwin cross-builds pass;
+  race suite passes on the merged core packages.
+- Main remote branches reduced to `testing` and `integration/0.1.45-final`;
+  five superseded branches archived as `archive/0.1.45/main/*` tags and deleted.
+- Apple remains `NOT_VERIFIED_ON_DEVICE`; the three known Windows baseline
+  packages and the dashboard lint:css debt are unchanged and reported.
+
+See `05_MAIN_KERNEL_UPSTREAM_ZERO_BEHIND_ACCEPTANCE.md`.

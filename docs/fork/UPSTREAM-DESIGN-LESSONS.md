@@ -126,3 +126,27 @@ The XHTTP stream-up non-200 candidate was already fixed and covered by a
 red-first test (`96bd665`, `669fa275`). Read the current code and tests before
 turning an audit candidate into a change; otherwise the same fix is written
 twice and the test matrix is duplicated.
+
+
+## 14. The main merge is an audit, not a checkout
+
+Absorbing 85 upstream commits into a 3,700-commit fork produced 108 conflicts
+but only 42 files with a real content delta: most upstream behaviour was already
+present under a different implementation. Resolve by reading both sides, keep
+the fork's lifecycle/budget model, and port only the upstream boundary that is
+actually missing. A real two-parent merge with every conflict inspected is the
+honest shape; `-s ours` would have hidden the 42 real deltas.
+
+## 15. A generated artifact must be regenerated after conflict resolution
+
+`docs/schema.json` is generated and tracked. A hand-resolved conflict produced a
+schema that was semantically plausible but did not match the generator, and the
+tracked-schema test caught it. Resolve generated files by running their
+generator, never by hand.
+
+## 16. Release hardening is a product decision
+
+Upstream's root service switch is not automatically acceptable: the fork's
+packaged unit keeps `User=sing-box` and the capability bounding set, and its test
+pins that. A merge that takes the upstream file wholesale silently widens the
+deployment surface. Restore the fork's policy and record the rejection.

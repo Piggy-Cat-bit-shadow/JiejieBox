@@ -8,6 +8,15 @@
 > | `github.com/sagernet/sing` | `4abfaed41727e43d1d98f36385a86114925f8484` | `v0.9.6-0.20261110222322-4abfaed41727` | DONE, upstream ancestry, behind 0 |
 > | `github.com/sagernet/sing-tun` | `99abf3c2766646ccd74c77f7b14c197204506121` | `v0.9.7-0.20261110222329-99abf3c27666` | DONE, upstream ancestry, behind 0 |
 >
+> **2026-11-11 stage 05 final.** Main kernel head `08b52a30b4d`; default
+> `testing` = product line; upstream `SagerNet/sing-box:testing` `a13dbe1f785f`
+> is an ancestor (`HEAD...upstream` = 3731/0). The final pins are the source
+> lock values: sing `4abfaed41727`, sing-tun `99abf3c27666`, sing-quic
+> `aa6d98964049`, quic-go `158445cdda77`, utls `e14b88879d80`, wireguard
+> `a765d957fd81`, cronet root `362e63b14ce2` / all `7ce9c49b464a` / 29 native
+> `362e63b14ce2`; clients apple `7fce711`, android `ba5c6b1`, desktop `e8b48be`
+> with dashboard `9bde90e`; `release/source-lock.json` verifies.
+>
 > **2026-11-11 stage 03 update.** Transport-layer pins now point at:
 >
 > | module | final SHA | Go pseudo-version | state |

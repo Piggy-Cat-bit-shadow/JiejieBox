@@ -233,3 +233,32 @@ errors on the fork-only ProfileViews rules.
 Dashboard's worktree needs the materialised `@shared/subscription.ts` and the
 `vendor/iterm2-color-schemes` submodule before `pnpm generate`/tests; these are
 build environment setup, not tracked changes.
+
+
+## Main kernel merge (stage 05)
+
+```sh
+# conflict inventory
+git merge --no-commit --no-ff upstream/testing
+git diff --name-only --diff-filter=U
+
+# after resolution
+go build ./...
+go build -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ./...
+go test -vet=off -count=1 -p 1 -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" -timeout 60m ./...
+go test -race -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" \
+  ./route ./common/dialer ./dns/transport/fakeip ./transport/http ./protocol/masque ./protocol/http
+go mod tidy -diff
+go mod verify
+python scripts/ci/release-freeze.py verify --lock release/source-lock.json
+```
+
+Results: Windows full 106 ok / 3 known baseline failures; race pass; root and
+test `go mod tidy -diff` empty; source-lock verify PASS. Linux and Darwin
+cross-builds pass. The generated schema test initially failed after a manual
+conflict resolution; regenerate with
+`go run -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ./cmd/sing-box schema -o docs/schema.json`.
+
+CI: Android Core ARM64 run `42942954969` PASS on `08b52a30b4d`; Verify
+`42942954927` and Mobile contract `42942954909` were still in progress at
+report time and are not recorded as PASS.

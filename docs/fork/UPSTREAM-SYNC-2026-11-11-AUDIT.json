@@ -5,9 +5,9 @@
   "canonical": {
     "repo": "Piggy-Cat-bit-shadow/JiejieBox",
     "working_branch": "integration/0.1.45-final",
-    "working_head": "e7e9706a456a117b8e25bab84c44b4eafde19fb3",
+    "working_head": "08b52a30b4dbc51fdfbf1ed325e6f571c05351e7",
     "default_branch": "testing",
-    "default_head": "4152caf0e58f0cca9ce8044416c7c0b8d9960428",
+    "default_head": "08b52a30b4dbc51fdfbf1ed325e6f571c05351e7",
     "upstream": "SagerNet/sing-box:testing",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
     "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
@@ -15,22 +15,24 @@
     "old_audit_upstream": "a6952ccf6907c18e18917fcb763a433e8e36937b",
     "old_audit_note": "a6952cc is no longer an ancestor of upstream/testing; its code conclusions remain historical only",
     "fork_ahead": 3363,
-    "fork_behind": 85,
+    "fork_behind": 0,
     "working_ahead": 3705,
-    "working_behind": 85
+    "working_behind": 0
   },
   "repos": [
     {
       "name": "sing-box",
       "fork_ref": "origin/testing",
-      "fork_sha": "4152caf0e58f0cca9ce8044416c7c0b8d9960428",
+      "fork_sha": "08b52a30b4dbc51fdfbf1ed325e6f571c05351e7",
       "upstream_ref": "upstream/testing",
       "upstream_sha": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
       "ahead": 3363,
-      "behind": 85,
+      "behind": 0,
       "subject_matched": 44,
       "unmatched": 41,
-      "class": "ADAPT_OR_REDESIGN"
+      "class": "DONE_STAGE_05",
+      "merge_sha": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
+      "note": "upstream/testing absorbed; default testing fast-forwarded to the synced line; 0 behind; source lock verified"
     },
     {
       "name": "sing",
@@ -122,7 +124,8 @@
       "behind": 0,
       "subject_matched": null,
       "unmatched": 0,
-      "class": "ALREADY_ANCESTOR"
+      "class": "DONE_NO_WORK",
+      "note": "root/all/29 native modules one generation from 4c96192, which contains upstream 73349ff; upstream go branch is a parallel generation from older source and is intentionally not merged"
     },
     {
       "name": "wireguard-go",
@@ -222,7 +225,8 @@
       "OUT_OF_SCOPE": 1,
       "DONE_STAGE_02": 2,
       "DONE_STAGE_03": 3,
-      "DONE_STAGE_04": 4
+      "DONE_STAGE_04": 4,
+      "DONE_STAGE_05": 1
     }
   },
   "high_risk": [
@@ -474,6 +478,44 @@
       "clients/android": "ba5c6b161827a830cb7343850bf547156fbfdfee",
       "clients/desktop": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
       "desktop/dashboard": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
+    }
+  },
+  "stage05": {
+    "status": "DONE_WITH_LIMITATIONS",
+    "main_merge": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
+    "main_final_head": "08b52a30b4dbc51fdfbf1ed325e6f571c05351e7",
+    "default_branch": "testing",
+    "default_sha": "08b52a30b4dbc51fdfbf1ed325e6f571c05351e7",
+    "upstream": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "behind": 0,
+    "source_lock": "PASS (release-freeze.py verify)",
+    "tests": {
+      "windows_full": "106 ok / 3 known baseline failures (common/tls, common/tlsspoof, common/windivert); a transient common/httpclient race-test failure under load passed 5/5 standalone",
+      "linux_build": "PASS",
+      "darwin_build": "PASS",
+      "race": "PASS on route/common/dialer/fakeip/transport-http/masque/http",
+      "android_core_ci": "PASS run 42942954969 (08b52a30b4d)",
+      "verify_ci": "run 42942954927",
+      "mobile_contract_ci": "run 42942954909"
+    },
+    "cleanup": {
+      "deleted_branches": [
+        "candidate/w07-2026-11-10",
+        "backup/02-ecfffe7d0",
+        "docs/03-overnight-gate-0.1.45",
+        "integration/next-round",
+        "next/client-consumption-candidate"
+      ],
+      "archive_tags": [
+        "archive/0.1.45/main/backup-02",
+        "archive/0.1.45/main/docs-03-overnight-gate",
+        "archive/0.1.45/main/integration-next-round",
+        "archive/0.1.45/main/client-consumption-candidate"
+      ],
+      "kept": [
+        "testing",
+        "integration/0.1.45-final"
+      ]
     }
   }
 }

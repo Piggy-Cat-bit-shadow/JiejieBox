@@ -1,172 +1,113 @@
 {
-  "schema": 2,
-  "stage": "06-final-freeze",
-  "generated_at": "2026-11-11T04:59:18+08:00",
+  "schema": 3,
+  "stage": "upstream-sync-2026-11-11-final",
+  "generated_at": "2026-11-11T10:15:00+08:00",
   "release_version": "0.1.45",
   "main_repo": {
     "name": "Piggy-Cat-bit-shadow/JiejieBox",
-    "baseline_branch": "candidate/w07-2026-11-10",
-    "baseline_sha": "0b1b6a3b2f0d2e3f3d2f580a4bc77d769ff57e20",
+    "origin": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git",
+    "upstream": "SagerNet/sing-box:testing",
     "integration_branch": "integration/0.1.45-final",
-    "source_lock_commit": "69e8dcb457a41695224a094411a32c80fd39e09d",
-    "rc_commit": "the commit that contains this file and the FINAL_*.md reports",
-    "pushed": false,
-    "note": "local integration branch only; testing/main untouched"
+    "default_branch": "testing",
+    "head": "08b52a30b4dbc51fdfbf1ed325e6f571c05351e7",
+    "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
+    "ahead": 3731,
+    "behind": 0,
+    "merge_commit": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
+    "pushed": true
   },
   "go_modules": [
     {
       "module": "github.com/sagernet/sing",
-      "final_sha": "1729220c46c4cf750726b1057514a8d52a1f5e3b",
-      "version": "v0.9.6-0.20261027185736-1729220c46c4",
-      "relation": "identical to origin/dev"
+      "final_sha": "4abfaed41727e43d1d98f36385a86114925f8484",
+      "version": "v0.9.6-0.20261110222322-4abfaed41727",
+      "upstream": "SagerNet/sing:dev"
     },
     {
       "module": "github.com/sagernet/sing-tun",
-      "final_sha": "57e9d17fa852eafbc6849ae508c8b772e9fa1a66",
-      "version": "v0.0.0-20261110141903-57e9d17fa852",
-      "relation": "identical to origin/dev"
+      "final_sha": "99abf3c2766646ccd74c77f7b14c197204506121",
+      "version": "v0.9.7-0.20261110222329-99abf3c27666",
+      "upstream": "SagerNet/sing-tun:dev"
     },
     {
       "module": "github.com/sagernet/sing-quic",
-      "final_sha": "1ef2597cc1298146fcdddfeaa0384999f890d0c3",
-      "version": "v0.7.2-0.20261024181351-1ef2597cc129",
-      "relation": "identical to origin/main"
+      "final_sha": "aa6d98964049e4a7b1446e0758dd4a6ec2e225e6",
+      "version": "v0.7.2-0.20261110234451-aa6d98964049",
+      "upstream": "SagerNet/sing-quic:main"
     },
     {
       "module": "github.com/sagernet/quic-go",
-      "final_sha": "ca9992bc795e8699db2b22ad6459216e6f13649d",
-      "version": "v0.61.1-0.20261110165647-ca9992bc795e",
-      "relation": "identical to origin/integration/0.1.45 (pushed stage 02)"
+      "final_sha": "158445cdda77c05e4430fe40721709bf7bc2ffe2",
+      "version": "v0.61.1-0.20261110231807-158445cdda77",
+      "upstream": "SagerNet/quic-go:dev"
     },
     {
       "module": "github.com/metacubex/utls",
-      "final_sha": "b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc",
-      "version": "v1.8.8-0.20261028133436-b63a2e9a7b1e",
-      "relation": "identical to origin/main"
+      "final_sha": "e14b88879d809306332be7d2c226384a6f3e8fba",
+      "version": "v1.8.8-0.20261110231903-e14b88879d80",
+      "upstream": "MetaCubeX/utls:v1.9.0-mod-meta"
     },
     {
       "module": "github.com/sagernet/wireguard-go",
       "final_sha": "a765d957fd814e5c0ee579936a0780e73d66e533",
       "version": "v0.0.0-20261109042158-a765d957fd81",
-      "relation": "identical to awg3-inject"
+      "upstream": "sagernet/wireguard-go:main"
     },
     {
       "module": "github.com/sagernet/cronet-go",
-      "final_sha": "362e63b14ce21678e0b197cfcd2392e64abb98e2",
+      "final_sha": "362e63b14ce2",
       "version": "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2",
-      "relation": "ahead of main (publish order main 4c96192 -> root 362e63b); policy update, no move"
+      "upstream": "SagerNet/cronet-go:main"
     },
     {
       "module": "github.com/sagernet/cronet-go/all",
-      "final_sha": "7ce9c49b464ad90629a13061309a58c89890fea6",
+      "final_sha": "7ce9c49b464a",
       "version": "v0.0.0-20261105062941-7ce9c49b464a",
-      "relation": "ahead of main; aggregate regenerated one publish commit later"
-    },
-    {
-      "module": "github.com/sagernet/cronet-go/lib/* (29)",
-      "final_sha": "362e63b14ce21678e0b197cfcd2392e64abb98e2",
-      "relation": "controlled; unchanged (no Chromium toolchain rebuild)"
+      "upstream": "SagerNet/cronet-go:go"
     }
   ],
   "clients": [
     {
       "path": "clients/apple",
       "final_sha": "7fce7117b33a38ef4c73c81db67c49f0be7a7dad",
-      "status": "pin unchanged; on next/client-consumption, not on declared main",
-      "verification": "BLOCKED_BY_ENVIRONMENT: no macOS/Xcode; trial merge of next+NE has 3 conflicts"
+      "upstream": "SagerNet/sing-box-for-apple:dev",
+      "state": "0 behind, NOT_VERIFIED_ON_DEVICE (no Xcode)"
     },
     {
       "path": "clients/android",
-      "final_sha": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
-      "status": "pin equals main; unchanged",
-      "verification": "PASS: debug APK built with the 0.1.45 AAR (universal/arm64/armv7/x86/x86_64), 8m10s"
+      "final_sha": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "upstream": "SagerNet/sing-box-for-android:dev",
+      "state": "0 behind, assembleDebug + unit PASS"
     },
     {
       "path": "clients/desktop",
-      "final_sha": "28dc4a973bcd76eecf1af1d8d37a633f5c5bfb58",
-      "status": "verified integration commit (main + 4)",
-      "verification": "install/generate/typecheck/59 tests/build PASS with Node 26.7.0"
-    },
-    {
-      "path": "clients/desktop:dashboard",
-      "final_sha": "62f158255ce981ffa7ea2d37ff2150c9ced516ed",
-      "status": "verified nested commit (main + 1)",
-      "verification": "dashboard 98/98 tests/build PASS inside the desktop layout"
-    },
-    {
-      "path": "satelite-one (independent repo)",
-      "final_sha": "9cdf782b8c8c7bb9dbd11d0a499cf8ad3e5cf238",
-      "status": "integration branch fast-forwarded to next/subscription-refresh",
-      "verification": "PASS: :app:testDebugUnitTest and :app:assembleDebug BUILD SUCCESSFUL, verifyCoreProvenance OK"
+      "final_sha": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
+      "upstream": "SagerNet/sing-box-for-desktop:main",
+      "state": "0 behind, 59/59 tests + build PASS"
     }
   ],
-  "freeze": {
-    "tool": "scripts/ci/release-freeze.py",
-    "commands": [
-      "resolve",
-      "check",
-      "snapshot",
-      "verify"
-    ],
-    "resolve_rows": "8 go modules + 3 clients + 1 nested + 2 upstreams + 29 controlled natives",
-    "check_result": "PASS: every target comparable, none diverged, no pin needs to move",
-    "verify_result": "PASS: every pin in the tree is the pin the lock records",
-    "lock": "release/source-lock.json",
-    "lock_release_version": "0.1.45",
-    "rc_pushed": true,
-    "rc_remote_sha_verified": "b810d0c2603f11eb2127adf816eb9e2b080b4094"
-  },
-  "deferred": [
+  "nested": [
     {
-      "repo": "wireguard-go",
-      "refs": [
-        "awg-base ca3bc60c4ce7",
-        "awg-graft 52a27657d805"
-      ],
-      "reason": "superseded by awg3-inject; archive tags created, refs not consumed"
-    },
-    {
-      "repo": "cronet-go",
-      "refs": [
-        "feat/per-dial-quic"
-      ],
-      "reason": "native archives differ from provenance; controlled policy"
-    },
-    {
-      "repo": "Apple client",
-      "refs": [
-        "next/client-consumption",
-        "fix/task10-apple-ne-runtime-final"
-      ],
-      "reason": "no Xcode; semantic fusion not performed"
-    },
-    {
-      "repo": "satelite-one",
-      "refs": [
-        "next/subscription-refresh"
-      ],
-      "reason": "blocked on kernel libbox.aar; independent product"
+      "parent": "clients/desktop",
+      "path": "dashboard",
+      "final_sha": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
     }
   ],
-  "branch_cleanup": {
-    "archive_tags": "20 pushed and verified (13 main + 2 apple + 1 desktop + 1 dashboard + 1 satelite + 2 quic-go)",
-    "remote_deletions": 15,
-    "remote_deletion_log": "audit-evidence/stage06/remote-deletions.txt",
-    "kept": [
-      "backup/02-ecfffe7d0",
-      "next/client-consumption-candidate",
-      "apple next/NE",
-      "satelite next",
-      "wireguard awg-base/awg-graft"
-    ]
+  "cronet_native": {
+    "modules": 29,
+    "pin": "362e63b14ce2",
+    "policy": "controlled",
+    "note": "same generation as root; upstream go branch has two parallel generation commits from the older 73349ff source, intentionally not merged"
   },
-  "artifacts": {
-    "dir": "_int0145/artifacts/0.1.45",
-    "sha256sums": "_int0145/artifacts/0.1.45/SHA256SUMS",
-    "libbox_aar": "8bdc6270b821e3c9d761f61c6ef3ab5203f84853572748b7c87941fb34f453f2",
-    "libbox_legacy_aar": "acbfcc02240922465f9e7f5cb0a59d472e2d7c9754da284f8b2d10ea33350d30",
-    "android_client_apk": "9d20cdb2e87f4961083222995851e6ae4eddae36140aa225591200b082fd056d",
-    "satelite_apk": "05417c3b4dd5eeeffd85520dae64bc705a4c8c1ed73f0056f806827f8806530b",
-    "provenance": "commit=b810d0c2603f11eb2127adf816eb9e2b080b4094 version=b810d0c2603f11eb2127adf816eb9e2b080b4094"
+  "gates": {
+    "source_lock_verify": "PASS",
+    "windows_full": "106 ok / 3 known baseline failures (final code tree); one transient common/httpclient race-test failure under load, 5/5 standalone",
+    "linux_build": "PASS (GOOS=linux, CGO_ENABLED=0, profile tags)",
+    "darwin_build": "PASS (GOOS=darwin/arm64, profile tags)",
+    "race": "PASS (route, common/dialer, dns/fakeip, transport/http, protocol/masque, protocol/http)",
+    "android_core_ci": "PASS for 08b52a30b4d (run 42942954969)",
+    "verify_ci": "see GitHub Actions run 42942954927",
+    "mobile_contract_ci": "see GitHub Actions run 42942954909"
   }
 }
