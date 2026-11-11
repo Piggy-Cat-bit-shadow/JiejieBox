@@ -701,6 +701,8 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 		}
 		drainMS := float64(result.DrainDuration) / float64(time.Millisecond)
 		udpRecord.DrainMS = &drainMS
+		drainLastMS := float64(result.DrainLastReply) / float64(time.Millisecond)
+		udpRecord.DrainLastMS = &drainLastMS
 		drainComplete := result.DrainComplete
 		udpRecord.DrainComplete = &drainComplete
 		sendWindowMS := float64(result.SendWindow) / float64(time.Millisecond)

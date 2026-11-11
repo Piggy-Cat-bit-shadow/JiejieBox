@@ -1,0 +1,23 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "trusttunnel",
+      "tag": "tt-in",
+      "listen": "10.213.0.2",
+      "listen_port": 28887,
+      "users": [
+        {"username": "bench", "password": "e6082468135a2025dcec80d3e978e738"}
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "certificate_path": "/home/jie/perf/b8/trusttunnel-h2-20261111T165956/certs/cert.pem",
+        "key_path": "/home/jie/perf/b8/trusttunnel-h2-20261111T165956/certs/key.pem"
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}

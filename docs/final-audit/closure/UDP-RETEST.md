@@ -2,10 +2,41 @@
 
 ## Verdict of this round
 
-The old UDP cell **cannot measure loss**, so the previous
-`CONFIRMED_NOT_A_BUG` for B8 is withdrawn. B8 is `UNRESOLVED`. No protocol defect
-is claimed and no paced-mode code was added in this round; the analysis below is
-the reproducible basis for the next, bounded step.
+The old UDP cell could not measure loss; a paced, sequenced, drained mode now
+does, and the question was re-asked. B8 stays `UNRESOLVED`, but the old
+`CONFIRMED_NOT_A_BUG` ("UDP has no retransmission") is withdrawn: under a
+calibrated 500 pps offered load, 1 % per-direction netem loss loses about
+**50-60 % of datagrams end to end**, and roughly the same amount already at
+target ingress, i.e. far beyond the ~2 % the configured loss predicts. That is a
+real data-path finding, not a test artifact, and needs transport-level work.
+
+## Measured with the new instrument (80 ms RTT, 500 pps, 1200 B, 3 reps)
+
+| cell | configured loss/direction | writes | unique returned | target received | reported loss |
+|---|---|---|---|---|---|
+| MASQUE DATAGRAM | 0 % | 2500 ×3 | 2500 ×3 | 2500 ×3 | 0 % |
+| TrustTunnel H2 UDP2 | 0 % | 2500 ×3 | 2500 ×3 | 2500 ×3 | 0 % |
+| MASQUE DATAGRAM | 0.1 % | 2500,2500,2489 | 2498,2496,2484 | 2499,2498,2487 | 0.08-0.20 % |
+| TrustTunnel H2 UDP2 | 0.1 % | 2500 ×3 | 2500,2500,2491 | 2500,2500,2491 | 0-0.36 % |
+| MASQUE DATAGRAM | 1 % | 2500 ×3 | 869-1138 | 915-1234 | 54-65 % |
+| TrustTunnel H2 UDP2 | 1 % | 2500 ×3 | 1044-1248 | 1072-1606 | 50-58 % |
+
+All cells: `skipped=0`, `drain_complete=true`, no duplicates (MASQUE: two
+out-of-order in one 0.1 % rep), achieved pps 497-500 except two scheduler-short
+reps (348/366 pps). Configured q is per direction, so the expected e2e loss is
+~2q-p² (0.2 % and 1.99 %); the 1 % rows are 25-30× that, and the loss is already
+present at the target, so it is upstream of the return path and not the drain
+(0 % rows prove the instrument). MASQUE and TrustTunnel are not ranked against
+each other (different reliability models), but both show the amplification.
+
+## Status
+
+- Instrument: `FIXED_AND_VERIFIED` (paced mode, sequence header, drain, target
+  and echo counters, quiesce; smoke and the 0 % rows above).
+- B8: `UNRESOLVED` with the table above and raw runs in `results/b8/`. Next step
+  is transport-level: qdisc stats vs client queue vs server queue for the 1 %
+  cells, starting with the client-side drop counters; no protocol conclusion is
+  drawn yet.
 
 ## Why the old cell is not a loss experiment
 

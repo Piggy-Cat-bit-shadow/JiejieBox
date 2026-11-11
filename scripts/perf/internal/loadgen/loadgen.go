@@ -92,6 +92,7 @@ type Result struct {
 	DatagramStale      int64
 	SendWindow         time.Duration
 	DrainDuration      time.Duration
+	DrainLastReply     time.Duration
 	DrainComplete      bool
 	Paced              bool
 	Jitter             time.Duration
@@ -491,6 +492,7 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		jitterSum                                     time.Duration
 		jitterN                                       int
 		lastSeen                                      time.Time
+		lastReplyAt                                   time.Time
 	)
 	window := newUDPSeqWindow()
 	done := make(chan struct{})
@@ -528,6 +530,7 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 				}
 				continue
 			}
+			lastReplyAt = time.Now()
 			first := window.add(sequence)
 			if first {
 				unique++
@@ -632,6 +635,13 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		timer.Stop()
 	}
 	drainDuration := time.Since(drainStart)
+	drainLastReply := time.Duration(0)
+	if !lastReplyAt.IsZero() {
+		drainLastReply = lastReplyAt.Sub(sendWindowEnd)
+		if drainLastReply < 0 {
+			drainLastReply = 0
+		}
+	}
 	close(stop)
 	<-done
 
@@ -655,8 +665,11 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		DatagramStale:      stale,
 		SendWindow:         sendWindow,
 		DrainDuration:      drainDuration,
-		DrainComplete:      written > 0 && unique >= written,
-		Paced:              paced,
+		DrainLastReply:     drainLastReply,
+		// The drain completed when its window ran in full; loss is a separate
+		// fact (unique vs writes) and must not make this read as a truncation.
+		DrainComplete: ctx.Err() == nil,
+		Paced:         paced,
 	}
 	if jitterN > 0 {
 		result.Jitter = jitterSum / time.Duration(jitterN)

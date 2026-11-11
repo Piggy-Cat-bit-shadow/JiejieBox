@@ -25,8 +25,8 @@ earlier fixes, and states plainly what remains.
 |---|---|---|
 | B7 WireGuard/AWG stall | `FIXED_AND_VERIFIED` | fork wake fix + 36/36 two-process cells pass (WG and AWG, 2/4 streams, 0/200 ms/1 s, 3 reps) |
 | Run schema / data truth | `FIXED_AND_VERIFIED` | 48/48 historical files validate under v1.1; 4 valid + 3 invalid fixtures fail closed |
-| Binary provenance | `DEFERRED` | design complete, implementation not done; current `cgo_enabled`/tags are still host-derived or null (see `PROVENANCE-AND-SCHEMA.md`) |
-| UDP measurement / B8 | `DEFERRED` (B8 is `UNRESOLVED`) | audit proves the current cell cannot measure loss (no pacing, no sequence, no drain, target count discarded); paced mode designed, not implemented |
+| Binary provenance | `FIXED_AND_VERIFIED` (warn-only gate) | buildinfo extraction, binary sha256, tags/cgo/deps, drift and stale-cache warnings; tests in `internal/source/buildinfo_test.go` |
+| UDP measurement | `FIXED_AND_VERIFIED` | paced/sequenced/drained mode + target/echo counters + quiesce; 0 % cells clean, 0.1 % matches netem, 1 % exposes a 50-60 % amplification |
 | S3-9 Mieru recovery race | `UNRESOLVED` | 1/20 failures under `-race` (5 %), 0/20 without; test expectation is correct, pick-to-dial is in the SDK |
 | Earlier four fixes | `PREVIOUSLY_FIXED_AND_REVERIFIED` | XHTTP close, rate clock, REALITY handoff, Mieru generation tests still pass |
 
@@ -69,15 +69,14 @@ reporting a missing validator as unavailable rather than passing.
 
 ## UDP / B8
 
-The audit found fourteen ways the old cell manufactures loss: no pacing, no
-sequence, reader teardown at the send deadline, drain absent (≈1.6 % at 80 ms
-RTT), target ingress counts discarded, one SOCKS association shared by N
-labelled "streams", MTU blackhole below 1500, no reset/quiesce between
-warmup and measurement. With no pacing, "sent" means the local socket accepted
-a datagram, so `lost = sent - received` cannot separate link loss from sender
-overload. A paced+sequenced+drained design exists in `UDP-RETEST.md`; it was not
-implemented in this round, so B8 is **UNRESOLVED**, not reclassified by
-assertion. The earlier `CONFIRMED_NOT_A_BUG` is withdrawn.
+The UDP instrument was rebuilt (paced mode, 20-byte sequence header, full drain,
+target/echo counters, quiesce) and calibrated: at 0 % loss both MASQUE and
+TrustTunnel return 2500/2500/2500 datagrams with zero loss and no duplicates.
+At 0.1 % per-direction the result matches netem (~0.2 %). At 1 % the same cells
+lose 50-60 % end to end, and roughly the same amount is already missing at the
+target, so the old explanation ("UDP has no retransmission") cannot hold: that
+predicts ~2 %. B8 is `UNRESOLVED` with a real, reproducible transport-level
+finding; the evidence table and runs are in `UDP-RETEST.md` / `results/b8/`.
 
 ## Provenance
 

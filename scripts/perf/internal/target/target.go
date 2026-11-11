@@ -42,8 +42,8 @@ var PatternPage = func() []byte {
 
 // Stats is what the target observed.
 type Stats struct {
-	Bytes       int64
-	Datagrams   int64
+	Bytes     int64
+	Datagrams int64
 	// Echoed counts datagrams whose echo write succeeded, so an ingress count is
 	// never confused with a datagram that actually left the target.
 	Echoed      int64

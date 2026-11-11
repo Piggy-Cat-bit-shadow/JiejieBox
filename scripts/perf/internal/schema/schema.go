@@ -233,6 +233,7 @@ type UDP struct {
 	TargetReceived *int64   `json:"target_received,omitempty"`
 	Echoed         *int64   `json:"echoed,omitempty"`
 	DrainMS        *float64 `json:"drain_ms,omitempty"`
+	DrainLastMS    *float64 `json:"drain_last_ms,omitempty"`
 	DrainComplete  *bool    `json:"drain_complete,omitempty"`
 	SendWindowMS   *float64 `json:"send_window_ms,omitempty"`
 	AchievedPPS    *float64 `json:"achieved_pps,omitempty"`

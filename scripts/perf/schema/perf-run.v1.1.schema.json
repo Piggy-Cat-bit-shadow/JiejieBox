@@ -798,6 +798,12 @@
             "number",
             "null"
           ]
+        },
+        "drain_last_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       }
     },
