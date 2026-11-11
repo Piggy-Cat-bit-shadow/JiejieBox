@@ -751,6 +751,9 @@ func applyRouteOptionsMetadata(metadata *adapter.InboundContext, routeOptions *R
 	if routeOptions.OverrideAddress.IsValid() {
 		// A resolved address list belongs to the pre-rewrite destination.
 		metadata.DestinationAddresses = nil
+		// So does an address published for matching only: after the rewrite it describes a target
+		// this flow no longer has, and leaving it would let an IP rule match the OLD destination.
+		metadata.MatchAddresses = nil
 	}
 	if routeOptions.OverrideAddress.IsValid() {
 		metadata.Destination = M.Socksaddr{
@@ -1152,7 +1155,15 @@ func (r *Router) preMatchFlowWithTruth(ctx context.Context, metadata *adapter.In
 		}
 		if !newDestination.IsValid() {
 			if len(metadata.DestinationAddresses) == 0 {
-				r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": a resolve action is required before routing to outbound/", outbound.Type(), "[", outbound.Tag(), "]")
+				if len(metadata.MatchAddresses) > 0 {
+					// The resolve action DID run, but with `match_only: true`, so it deliberately
+					// published no dial candidate. A flow outbound needs an address, so this is a
+					// configuration boundary and not a missing rule: telling the reader to add a
+					// resolve action would send them to a rule they already have.
+					r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": the resolve action used match_only, which publishes no address to dial through outbound/", outbound.Type(), "[", outbound.Tag(), "]")
+				} else {
+					r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": a resolve action is required before routing to outbound/", outbound.Type(), "[", outbound.Tag(), "]")
+				}
 			} else {
 				r.logger.DebugContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": no resolved address for this address family")
 			}
@@ -1746,6 +1757,11 @@ func (r *Router) actionSniff(
 // metadata.Destination with a resolved address would silently change which rules match.
 // Destination therefore keeps meaning "what the client asked for" and
 // DestinationAddresses means "where we may dial instead".
+//
+// # Two publication points, one decision
+//
+// `match_only: true` runs the SAME lookup with the same options and publishes the answer as
+// matching evidence instead of a dial candidate; see publishResolvedAddresses.
 func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundContext, action *R.RuleActionResolve) error {
 	addresses, strategy, _, err := r.lookupResolveAction(ctx, metadata, action)
 	if err != nil {
@@ -1754,9 +1770,42 @@ func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundCon
 	if addresses == nil {
 		return nil
 	}
-	metadata.DestinationAddresses = mergeOriginalDestination(metadata.Destination, addresses, strategy)
-	r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
+	publishResolvedAddresses(metadata, action, addresses, strategy)
+	if action.MatchOnly {
+		r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.MatchAddresses), " "), "] for matching only")
+	} else {
+		r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
+	}
 	return nil
+}
+
+// publishResolvedAddresses publishes one resolve action's answer on the flow metadata.
+//
+// # Why the split lives here and nowhere else
+//
+// The lookup, its options, its effective strategy and its error handling are IDENTICAL for both
+// modes - that is what makes `match_only` a publication choice rather than a second resolver. The
+// only question this function answers is which of the two per-flow lists the answer belongs to, and
+// every producer (the production walk and the active diagnostic) goes through it so the two cannot
+// drift into publishing different things for the same configuration.
+//
+//   - dial candidates (the default): the historical behaviour, unchanged. The answer is merged with
+//     the literal destination the client chose so a recovery never drops an address the client can
+//     demonstrably reach, and ordered by the EFFECTIVE strategy so the plan matches the resolver's.
+//   - matching only: the answer is published as matching evidence and the candidate list is left
+//     exactly as it was. The action must not delete candidates another legitimate action produced,
+//     and it must not add this answer to them - a proxy that receives a name keeps receiving the
+//     name, which is the whole point of the option.
+//
+// A dialling answer CLEARS the match-only list: it is the newer statement about this target, and
+// keeping both would let a rule match an address the newest resolution no longer returns.
+func publishResolvedAddresses(metadata *adapter.InboundContext, action *R.RuleActionResolve, addresses []netip.Addr, strategy C.DomainStrategy) {
+	if action.MatchOnly {
+		metadata.MatchAddresses = addresses
+		return
+	}
+	metadata.MatchAddresses = nil
+	metadata.DestinationAddresses = mergeOriginalDestination(metadata.Destination, addresses, strategy)
 }
 
 // lookupResolveAction performs one resolve action's DNS query and reports the EFFECTIVE strategy.

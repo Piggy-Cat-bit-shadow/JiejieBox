@@ -18732,6 +18732,9 @@
             "strategy": {
               "$ref": "#/$defs/DomainStrategy"
             },
+            "match_only": {
+              "type": "boolean"
+            },
             "disable_cache": {
               "type": "boolean"
             },

@@ -651,6 +651,13 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	}
 
 	switch {
+	case result.Resolve.Performed && result.Resolve.MatchOnly:
+		// The action ran and the decision used its answer, but the answer is matching evidence only:
+		// reporting it as the route decision's destination would claim a dial target the connection
+		// never had, and reporting "no address" would claim the resolve failed.
+		resolveStage.Status = connectionTestStageOK
+		resolveStage.Detail = "'" + host + "' -> " + addressList(result.Resolve.Addresses) +
+			" (match only: the outbound keeps the name and resolves it at dial time)"
 	case result.Resolve.Performed:
 		resolveStage.Status = connectionTestStageOK
 		resolveStage.Detail = "'" + host + "' -> " + addressList(result.DestinationAddresses) + " (route decision)"

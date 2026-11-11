@@ -299,6 +299,7 @@ UDP 连接超时时间。
   "action": "resolve",
   "server": "",
   "strategy": "",
+  "match_only": false,
   "disable_cache": false,
   "disable_optimistic_cache": false,
   "rewrite_ttl": null,
@@ -318,6 +319,27 @@ UDP 连接超时时间。
 DNS 解析策略，可用值有：`prefer_ipv4`、`prefer_ipv6`、`ipv4_only`、`ipv6_only`。
 
 默认使用 `dns.strategy`。
+
+#### match_only
+
+将解析得到的地址仅用于规则匹配，而不是作为拨号候选。
+
+默认情况下 `resolve` 同时完成两件事：返回的地址会被 IP 类条件（`ip_cidr`、IP `rule_set`、
+`ip_is_private`、`preferred_by`）用于匹配，并且出站会使用其中某个地址拨号，而不是原始域名。
+启用 `match_only` 后，同样的查询照常执行、同样的条件照常匹配，但这些地址只作为匹配依据发布：
+拨号仍使用原始目标，因此支持域名目标的出站（代理）依然收到域名，并由代理端自行解析。
+
+- 查询本身不变：仍使用相同的 DNS 服务器、策略、超时、缓存与 ECS 选项。该选项不会禁用 DNS，
+  也不会增加第二个解析器。
+- 字面量目标仍然优先于解析结果，与本选项不存在时一致：客户端实际连接的地址才是该连接使用的地址。
+- 地址是按连接保存的。目标被改写（`override_address`）时会被清除，后续 `resolve` 会将其替换，
+  也不会被 UoT 会话的逐数据报目标继承。
+- `false` / 省略时保持原有行为。
+- 不要用在需要本地地址的场景：`direct` 等流式出站以及 FakeIP 目标都需要一个真正可拨号的地址，
+  启用本选项后不会有任何来源提供该地址。
+
+这些地址是本地解析器的观察结果：它们决定规则，但不代表代理端最终访问的地址，因此"目标是私网地址"
+之类的规则判定的是本地答案，而不是远端解析器的答案。
 
 #### disable_cache
 

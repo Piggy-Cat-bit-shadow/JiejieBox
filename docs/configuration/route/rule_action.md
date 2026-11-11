@@ -309,6 +309,7 @@ Timeout for sniffing.
   "action": "resolve",
   "server": "",
   "strategy": "",
+  "match_only": false,
   "disable_cache": false,
   "disable_optimistic_cache": false,
   "rewrite_ttl": null,
@@ -328,6 +329,33 @@ Specifies DNS server tag to use instead of selecting through DNS routing.
 DNS resolution strategy, available values are: `prefer_ipv4`, `prefer_ipv6`, `ipv4_only`, `ipv6_only`.
 
 `dns.strategy` will be used by default.
+
+#### match_only
+
+Publish the resolved addresses for rule matching only, instead of as dial candidates.
+
+By default `resolve` does both: the addresses it returns are evaluated by IP conditions
+(`ip_cidr`, an IP `rule_set`, `ip_is_private`, `preferred_by`), and the outbound is dialled with one
+of those addresses instead of the original name. With `match_only` enabled the same query runs and
+the same conditions are evaluated, but the addresses are published only as matching evidence: the
+dial keeps the original target, so an outbound that supports domain targets - a proxy - still
+receives the name and resolves it itself.
+
+- The query is unchanged: the same DNS server, strategy, timeout, cache and ECS options apply. This
+  option does not disable DNS and does not add a second resolver.
+- A literal destination still wins over the resolved addresses, exactly as it does without this
+  option: the address the client connected to is the address the flow uses.
+- The addresses are per flow. They are discarded when the destination is rewritten
+  (`override_address`), replaced by a later `resolve`, and are not inherited by the per-datagram
+  destinations of a UoT session.
+- `false` / omitted keeps the historical behaviour.
+- Do not use it where a local address is required: a `direct` or other flow-style outbound, and a
+  FakeIP destination, need an address that can actually be dialled, and with this option nothing
+  supplies one.
+
+The addresses are the local resolver's view. They select the rule; they are not a statement about
+the address the proxy finally reaches, so an "address is private" rule is evaluated against the
+local answer rather than against the remote resolver's answer.
 
 #### disable_cache
 

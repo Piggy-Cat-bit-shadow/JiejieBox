@@ -104,6 +104,10 @@ func (g *packetDestinationGuard) permits(destination M.Socksaddr) bool {
 	childMetadata := g.metadata
 	childMetadata.Destination = destination
 	childMetadata.DestinationAddresses = nil
+	// Matching evidence belongs to the destination it was resolved for. A datagram to another
+	// destination is a different target, so an address published by the session's resolve action
+	// must not be used to judge it - otherwise one datagram could authorise the next.
+	childMetadata.MatchAddresses = nil
 	childMetadata.Domain = ""
 	childMetadata.Protocol = ""
 	childMetadata.RouteRule = ""

@@ -173,7 +173,33 @@ type InboundContext struct {
 	FallbackNetworkType []C.InterfaceType
 	FallbackDelay       time.Duration
 
-	DestinationAddresses                []netip.Addr
+	DestinationAddresses []netip.Addr
+	// MatchAddresses holds the addresses a `resolve` action produced for MATCHING ONLY, i.e. for an
+	// action configured with `match_only: true`.
+	//
+	// # Why they are not DestinationAddresses
+	//
+	// DestinationAddresses means "where this flow may dial instead", and a non-empty list is what
+	// makes route/conn.go take the candidate dial path. An action configured for matching only must
+	// not put its answer there: the point of the action is that the address decides the RULE while
+	// the original target - usually a name the proxy resolves itself - is what gets dialled.
+	//
+	// # Who reads it
+	//
+	// Destination-IP conditions, and only when the destination is not itself a literal: `ip_cidr`
+	// (which is also what an IP `rule_set` compiles to), `ip_is_private` and `preferred_by`. A
+	// literal destination is the address the flow actually uses and always wins, which is the same
+	// precedence these conditions already apply to DestinationAddresses; `ip_version` deliberately
+	// reads neither field.
+	//
+	// # Lifecycle
+	//
+	// Per flow. Published by publishResolvedAddresses (route/route.go) and cleared when the answer
+	// stops describing the flow's target: an override_address rewrite, a later resolve that
+	// publishes dial candidates (the newer answer supersedes it), and the per-datagram destination
+	// check in route/packet_destination_guard.go. It is never global, never shared between flows and
+	// never a dial input.
+	MatchAddresses                      []netip.Addr
 	DNSResponse                         *dns.Msg
 	NamedDNSResponses                   map[string]*dns.Msg
 	DestinationAddressMatchFromResponse bool

@@ -91,6 +91,7 @@ func NewRuleAction(logger logger.ContextLogger, action option.RuleAction) (adapt
 			Server:                 action.ResolveOptions.Server,
 			Timeout:                time.Duration(action.ResolveOptions.Timeout),
 			Strategy:               C.DomainStrategy(action.ResolveOptions.Strategy),
+			MatchOnly:              action.ResolveOptions.MatchOnly,
 			DisableCache:           action.ResolveOptions.DisableCache,
 			DisableOptimisticCache: action.ResolveOptions.DisableOptimisticCache,
 			RewriteTTL:             action.ResolveOptions.RewriteTTL,
@@ -579,6 +580,7 @@ type RuleActionResolve struct {
 	Server                 string
 	Timeout                time.Duration
 	Strategy               C.DomainStrategy
+	MatchOnly              bool
 	DisableCache           bool
 	DisableOptimisticCache bool
 	RewriteTTL             *uint32
@@ -596,6 +598,11 @@ func (r *RuleActionResolve) String() string {
 	}
 	if r.Strategy != C.DomainStrategyAsIS {
 		options = append(options, F.ToString(option.DomainStrategy(r.Strategy)))
+	}
+	if r.MatchOnly {
+		// The observable half of the field: a log reader must be able to tell "this resolution was
+		// for matching only" from "this resolution failed to produce candidates".
+		options = append(options, "match_only")
 	}
 	if r.DisableCache {
 		options = append(options, "disable_cache")
