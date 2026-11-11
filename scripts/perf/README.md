@@ -46,6 +46,18 @@ A run directory contains `run.json` (the raw record), `summary.md` (the human
 view), the exact rendered `configs/`, per-process `logs/`, and the throwaway
 `certs/` the run minted.
 
+To attach runs to a report, export them with paths that the document can point
+at:
+
+```sh
+scripts/perf/export-results.sh "$HOME/perf/results" docs/perf/results --with-logs
+scripts/perf/summarize.py docs/perf/results --out docs/perf/matrix.md --json docs/perf/matrix.json
+```
+
+Logs are gzipped on export: a cell's log is mostly one repeated INFO line per
+connection, so 95 MB of raw logs compresses to a few hundred kilobytes and can
+be kept as evidence instead of discarded.
+
 ## Layout
 
 | path | role |
@@ -62,6 +74,7 @@ view), the exact rendered `configs/`, per-process `logs/`, and the throwaway
 | `schema/perf-run.v1.schema.json` | JSON Schema for `run.json` |
 | `run-baseline.sh` | the matrix runner |
 | `summarize.py` | matrix aggregation into Markdown/JSON |
+| `export-results.sh` | copy raw runs into the repository tree (logs gzipped) |
 
 `scripts/perf` is its own Go module. The kernel build must not depend on the
 lab, and the lab must be buildable without the kernel; both directions are
