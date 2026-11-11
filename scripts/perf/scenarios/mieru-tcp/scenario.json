@@ -2,7 +2,7 @@
   "id": "mieru-tcp-underlay",
   "protocol": "mieru",
   "mode": "multiplexed",
-  "transport": "__TRANSPORT__",
+  "transport": "tcp",
   "description": "Mieru through this repository's inbound, which embeds the official mieru server SDK. This places mieru next to the official implementation instead of only the framing codec.",
   "server": {
     "config": "server.json.tmpl",

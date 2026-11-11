@@ -90,7 +90,10 @@ func (c *Config) normalize() {
 		c.MaxLatencySamples = 1 << 20
 	}
 	if c.IOGrace <= 0 {
-		c.IOGrace = 10 * time.Second
+		// The grace only exists so a stalled socket cannot hang the runner
+		// forever. A large value silently stretches the measured window on a
+		// lossy path, which understates goodput and mislabels the duration.
+		c.IOGrace = 500 * time.Millisecond
 	}
 }
 
@@ -202,6 +205,10 @@ func uploadStream(cfg Config, deadline time.Time, stream int, sent *atomic.Int64
 		}
 		return writeErr
 	})
+	if err != nil && time.Now().After(deadline) {
+		// Same rule as the read side: the window ended, the write did not fail.
+		err = nil
+	}
 	// Half-close so the target sees EOF after the last byte, not a reset.
 	if tcp, ok := conn.(*net.TCPConn); ok {
 		_ = tcp.CloseWrite()
@@ -236,6 +243,12 @@ func downloadStream(cfg Config, deadline time.Time, received, verified, mismatch
 			if errors.Is(readErr, io.EOF) {
 				return nil
 			}
+			// A socket deadline that fires after the phase window is the phase
+			// ending, not a failure: on a lossy path the last read can wait for
+			// a byte that the window no longer has time to carry.
+			if time.Now().After(deadline) {
+				return nil
+			}
 			return readErr
 		}
 		if time.Now().After(deadline) {
@@ -258,8 +271,13 @@ func pingPongStream(cfg Config, deadline time.Time, received *atomic.Int64, late
 			return nil
 		}
 		// A per-operation deadline keeps one stalled round trip from ending the
-		// whole phase with no data at all.
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		// whole phase with no data at all, without letting a lossy path stretch
+		// the phase past its window.
+		operationDeadline := time.Now().Add(2 * time.Second)
+		if limit := deadline.Add(cfg.IOGrace); operationDeadline.After(limit) {
+			operationDeadline = limit
+		}
+		_ = conn.SetDeadline(operationDeadline)
 		start := time.Now()
 		if _, err = conn.Write(payload); err != nil {
 			return err
@@ -283,7 +301,11 @@ func connectStream(cfg Config, deadline time.Time, conns *atomic.Int64, latencie
 			return err
 		}
 		conns.Add(1)
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		operationDeadline := time.Now().Add(5 * time.Second)
+		if limit := deadline.Add(cfg.IOGrace); operationDeadline.After(limit) {
+			operationDeadline = limit
+		}
+		_ = conn.SetDeadline(operationDeadline)
 		if _, err = conn.Write([]byte{0x01}); err != nil {
 			conn.Close()
 			return err

@@ -1,79 +1,95 @@
-// Package netmeter reads the kernel's own counters for the emulated link.
-//
-// A payload byte count and a wire byte count answer different questions, and
-// the ratio between them is the protocol's overhead. The veth the run crosses
-// is the only place where both directions can be counted without a packet
-// capture and without privileges, so this package reads its statistics files.
 package netmeter
 
 import (
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
+	"encoding/json"
+	"fmt"
+	"os/exec"
 )
 
-// Counters is one interface's snapshot.
-type Counters struct {
-	Interface string
-	RxBytes   int64
-	TxBytes   int64
-	RxPackets int64
-	TxPackets int64
+// Read returns the counters for iface, or an error when they are unavailable.
+//
+// sysfs is not network-namespace aware: inside a new netns `/sys/class/net`
+// still lists the host's devices, so a veth that exists only in the namespace
+// has no statistics file there. The laboratory therefore asks `ip`, which uses
+// netlink and sees the namespace's own interfaces.
+func Read(iface string) (Counters, error) {
+	if counters, err := readViaIP(iface); err == nil {
+		return counters, nil
+	}
+	return readViaSysfs(iface)
 }
 
-// Read returns the counters for iface, or an error when they are unavailable.
-func Read(iface string) (Counters, error) {
+type ipLinkStats struct {
+	IfName  string `json:"ifname"`
+	Stats64 struct {
+		Rx struct {
+			Bytes   int64 `json:"bytes"`
+			Packets int64 `json:"packets"`
+		} `json:"rx"`
+		Tx struct {
+			Bytes   int64 `json:"bytes"`
+			Packets int64 `json:"packets"`
+		} `json:"tx"`
+	} `json:"stats64"`
+}
+
+func readViaIP(iface string) (Counters, error) {
+	output, err := exec.Command("ip", "-j", "-s", "link", "show", "dev", iface).Output()
+	if err != nil {
+		return Counters{}, err
+	}
+	var links []ipLinkStats
+	if err = json.Unmarshal(output, &links); err != nil {
+		return Counters{}, err
+	}
+	if len(links) == 0 {
+		return Counters{}, fmt.Errorf("ip reported no link for %s", iface)
+	}
+	link := links[0]
+	return Counters{
+		Interface: link.IfName,
+		RxBytes:   link.Stats64.Rx.Bytes,
+		TxBytes:   link.Stats64.Tx.Bytes,
+		RxPackets: link.Stats64.Rx.Packets,
+		TxPackets: link.Stats64.Tx.Packets,
+	}, nil
+}
+
+func readViaSysfs(iface string) (Counters, error) {
 	c := Counters{Interface: iface}
-	base := filepath.Join("/sys/class/net", iface, "statistics")
+	base := "/sys/class/net/" + iface + "/statistics"
 	var err error
-	if c.RxBytes, err = readCounter(filepath.Join(base, "rx_bytes")); err != nil {
+	if c.RxBytes, err = readCounter(base + "/rx_bytes"); err != nil {
 		return c, err
 	}
-	if c.TxBytes, err = readCounter(filepath.Join(base, "tx_bytes")); err != nil {
+	if c.TxBytes, err = readCounter(base + "/tx_bytes"); err != nil {
 		return c, err
 	}
-	if c.RxPackets, err = readCounter(filepath.Join(base, "rx_packets")); err != nil {
+	if c.RxPackets, err = readCounter(base + "/rx_packets"); err != nil {
 		return c, err
 	}
-	if c.TxPackets, err = readCounter(filepath.Join(base, "tx_packets")); err != nil {
+	if c.TxPackets, err = readCounter(base + "/tx_packets"); err != nil {
 		return c, err
 	}
 	return c, nil
 }
 
-// Delta subtracts before from after. A counter reset is reported by returning
-// no delta rather than a negative number.
-func Delta(before, after Counters) (Counters, bool) {
-	if after.RxBytes < before.RxBytes || after.TxBytes < before.TxBytes ||
-		after.RxPackets < before.RxPackets || after.TxPackets < before.TxPackets {
-		return Counters{}, false
-	}
-	return Counters{
-		Interface: after.Interface,
-		RxBytes:   after.RxBytes - before.RxBytes,
-		TxBytes:   after.TxBytes - before.TxBytes,
-		RxPackets: after.RxPackets - before.RxPackets,
-		TxPackets: after.TxPackets - before.TxPackets,
-	}, true
-}
-
-// Interfaces lists the interfaces in the current network namespace with their
-// MTU and addresses, for the run record.
+// Interfaces lists the interfaces of the current network namespace.
 func Interfaces() []InterfaceInfo {
-	entries, err := os.ReadDir("/sys/class/net")
+	output, err := exec.Command("ip", "-j", "link", "show").Output()
 	if err != nil {
 		return nil
 	}
-	var out []InterfaceInfo
-	for _, entry := range entries {
-		name := entry.Name()
-		info := InterfaceInfo{Name: name}
-		if mtu, mtuErr := readCounter(filepath.Join("/sys/class/net", name, "mtu")); mtuErr == nil {
-			info.MTU = int(mtu)
-		}
-		info.Addresses = interfaceAddresses(name)
-		out = append(out, info)
+	var links []struct {
+		IfName string `json:"ifname"`
+		MTU    int    `json:"mtu"`
+	}
+	if err = json.Unmarshal(output, &links); err != nil {
+		return nil
+	}
+	out := make([]InterfaceInfo, 0, len(links))
+	for _, link := range links {
+		out = append(out, InterfaceInfo{Name: link.IfName, MTU: link.MTU})
 	}
 	return out
 }
@@ -83,23 +99,4 @@ type InterfaceInfo struct {
 	Name      string
 	MTU       int
 	Addresses []string
-}
-
-func readCounter(path string) (int64, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
-}
-
-func interfaceAddresses(name string) []string {
-	raw, err := os.ReadFile(filepath.Join("/proc/net/fib_trie"))
-	_ = raw
-	_ = err
-	// /proc/net/fib_trie does not attribute addresses to interfaces. The
-	// addresses that matter to the lab are the ones the runner configured, and
-	// those are recorded from the environment instead; this stays empty rather
-	// than guessing.
-	return nil
 }

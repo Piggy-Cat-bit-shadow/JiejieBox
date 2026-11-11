@@ -58,6 +58,7 @@ type session struct {
 	serverNS      string
 	serverStartup time.Duration
 	clientStartup time.Duration
+	firstRequest  time.Duration
 	readyDelay    time.Duration
 	serverAddr    string
 	clientAddr    string
@@ -223,6 +224,10 @@ func Run(opts Options) (*Outcome, error) {
 	}
 	run.Scenario.Extra["startup_server_ms"] = float64(sess.serverStartup.Microseconds()) / 1000
 	run.Scenario.Extra["startup_client_ms"] = float64(sess.clientStartup.Microseconds()) / 1000
+	// startup_*_ms is when the configured readiness check passed. For a native
+	// engine that starts lazily, the interesting number is first_request_ms:
+	// the time until a real proxied request completed.
+	run.Scenario.Extra["first_request_ms"] = float64(sess.firstRequest.Microseconds()) / 1000
 
 	for _, pattern := range patterns {
 		for _, streams := range streamsList {
@@ -475,7 +480,8 @@ func prepare(scenario *Scenario, runDir string, opts Options, duration time.Dura
 		probeErr = loadgen.Probe(net.JoinHostPort(sess.clientAddr, strconv.Itoa(clientPort)),
 			sess.targets.addr[probeKind], probeKind)
 		if probeErr == nil {
-			opts.Logf("readiness probe succeeded in %s", time.Since(probeStarted).Round(time.Millisecond))
+			sess.firstRequest = time.Since(probeStarted)
+			opts.Logf("readiness probe succeeded in %s", sess.firstRequest.Round(time.Millisecond))
 			return sess, nil
 		}
 		if !sess.client.alive() || !sess.server.alive() {
@@ -559,23 +565,40 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 		stats = target.Stats{}
 		opts.Logf("target stats unavailable: %v", statsErr)
 	}
-	wire := wireDelta(wireBefore, wireBeforeOK, wireAfter, wireAfterOK, result.Elapsed, result.PayloadBytes)
+
+	// The payload is what arrived, not what was handed to the socket. For an
+	// upload that is the target's byte count; for a download it is the client's
+	// verified bytes. Using the sender's count would let a run that drops data
+	// report the bytes it queued.
+	payloadBytes := result.PayloadBytes
+	switch loadgen.Pattern(pattern) {
+	case loadgen.Upload:
+		payloadBytes = stats.Bytes
+	case loadgen.Duplex:
+		payloadBytes = stats.Bytes + result.ReceivedBytes
+	}
+	wire := wireDelta(wireBefore, wireBeforeOK, wireAfter, wireAfterOK, result.Elapsed, payloadBytes)
 
 	record := &schema.Rep{
 		Index:           rep,
 		Streams:         streams,
 		Pattern:         pattern,
-		PayloadBytes:    result.PayloadBytes,
+		PayloadBytes:    payloadBytes,
 		DurationSeconds: result.Elapsed.Seconds(),
 		Wire:            wire,
 		Latency:         latencyFrom(result),
-		Client:          procRecord(sess.client.pid(), clientMeter, clientSummary, result.PayloadBytes),
-		Server:          procRecord(sess.server.pid(), serverMeter, serverSummary, result.PayloadBytes),
-		Loadgen:         procRecord(os.Getpid(), selfMeter, sampler.Summary{}, result.PayloadBytes),
+		Client:          procRecord(sess.client.pid(), clientMeter, clientSummary, payloadBytes),
+		Server:          procRecord(sess.server.pid(), serverMeter, serverSummary, payloadBytes),
+		Loadgen:         procRecord(os.Getpid(), selfMeter, sampler.Summary{}, payloadBytes),
 		Integrity:       integrityFrom(result, stats, string(kind)),
+		Extra: map[string]any{
+			"sent_bytes":     result.SentBytes,
+			"received_bytes": result.ReceivedBytes,
+			"target_bytes":   stats.Bytes,
+		},
 	}
-	if result.PayloadBytes > 0 {
-		goodput := float64(result.PayloadBytes) / result.Elapsed.Seconds() / (1 << 20)
+	if payloadBytes > 0 {
+		goodput := float64(payloadBytes) / result.Elapsed.Seconds() / (1 << 20)
 		record.GoodputMiBPerS = &goodput
 	}
 	if loadgen.Pattern(pattern) == loadgen.UDP {
@@ -598,6 +621,26 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 	if runErr != nil {
 		record.Warnings = append(record.Warnings, runErr.Error())
 	}
+	if loadgen.Pattern(pattern) == loadgen.UDP {
+		if result.DatagramsReceived == 0 {
+			return nil, &schema.Failure{
+				Stage:   "measure",
+				Class:   "no-payload",
+				Message: fmt.Sprintf("no datagrams returned at %d stream(s): sent=%d", streams, result.DatagramsSent),
+				LogPath: "logs/client.log",
+			}
+		}
+	} else if payloadBytes == 0 {
+		switch loadgen.Pattern(pattern) {
+		case loadgen.Upload, loadgen.Download, loadgen.Duplex:
+			return nil, &schema.Failure{
+				Stage:   "measure",
+				Class:   "no-payload",
+				Message: fmt.Sprintf("no payload arrived for %s at %d stream(s): sent=%d target_received=%d client_received=%d", pattern, streams, result.SentBytes, stats.Bytes, result.ReceivedBytes),
+				LogPath: "logs/client.log",
+			}
+		}
+	}
 	_ = runID
 
 	if !sess.client.alive() {
@@ -615,7 +658,10 @@ func procRecord(pid int, meter *cpuMeter, summary sampler.Summary, payloadBytes 
 	if cpu != nil {
 		record.CPUSeconds = cpu
 		record.CPUSource = "proc-boundary"
-		if payloadBytes > 0 {
+		// Below a megabyte of payload the ratio is quantisation noise: one
+		// 10 ms tick over a few kilobytes reads as thousands of seconds per GiB
+		// and looks like a protocol cost when it is a sampling artefact.
+		if payloadBytes >= 1<<20 {
 			perGiB := *cpu / (float64(payloadBytes) / (1 << 30))
 			record.CPUSecondsPerGiB = &perGiB
 		}

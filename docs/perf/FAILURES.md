@@ -100,5 +100,15 @@ was caught.
    only generated when a template was found relative to the process working
    directory. Fixed: both templates are scanned in the scenario directory before
    rendering, and an unresolved placeholder is a hard error.
+5. **`sysfs` is not network-namespace aware.** `/sys/class/net` inside a new
+   netns still lists the host's interfaces, so the veth statistics file did not
+   exist and every shaped run recorded `wire: null` while its traffic really
+   crossed the link. Fixed by reading the counters through `ip -j -s link`
+   (netlink); `sysfs` remains only as a fallback for unshaped runs.
+6. **A scenario field was not rendered.** `mieru-tcp/scenario.json` used
+   `__TRANSPORT__` as its `transport` label; template substitution applies to the
+   config templates, not to the scenario metadata, so the run recorded the
+   placeholder. The label is fixed; the two baseline `run.json` files still carry
+   the literal string because the data is not rewritten after the fact.
 
 Each is recorded in the code comments at the point of the fix, not only here.

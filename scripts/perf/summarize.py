@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Summarize a baseline matrix written by run-baseline.sh.
+"""Summarize a baseline tree written by run-baseline.sh and perflab.
 
-Reads every run.json under the given results root and prints one Markdown table
-per protocol family, with the median, MAD and sample count that the run itself
-recorded. Nothing is recomputed from raw samples here: the runner already did
-that, and recomputing it in a second place is how two documents end up
-disagreeing.
+Reads every run.json under the results root and prints one Markdown table per
+scenario, grouped by transport guarantee. Nothing is recomputed from raw
+samples: the runner already reduced each run and this script only re-formats the
+summary rows, so two documents cannot disagree.
 
 Usage:
     summarize.py <results-root> [--out matrix.md] [--json matrix.json]
@@ -17,20 +16,20 @@ import os
 import pathlib
 import sys
 
-# Protocols are grouped by transport guarantee, not by speed. Two cells whose
-# transport promises differ (QUIC DATAGRAM vs a reliable stream carrying
-# datagrams) are never placed in the same ranking.
+# Cells are grouped by transport guarantee, not by speed. A QUIC DATAGRAM cell
+# and a reliable stream carrying datagrams are never placed in one ranking.
 GROUPS = [
     ("TCP with TLS", ["vless-vision-tcp", "vless-reality-vision", "anytls-tcp"]),
     ("HTTP/2", ["trusttunnel-h2", "naive-h2"]),
     ("HTTP/3 and QUIC", ["trusttunnel-h3", "naive-h3", "masque-connect-ip"]),
-    ("UDP underlay / userspace tunnels", ["mieru-tcp-underlay", "mieru-udp-underlay",
-                                          "wireguard-endpoint", "awg-endpoint"]),
+    ("UDP underlay and userspace tunnels",
+     ["mieru-tcp-underlay", "mieru-udp-underlay", "wireguard-endpoint", "awg-endpoint"]),
 ]
 
-
+# A run can appear under several network profiles; they are separate records and
+# are never merged into one median.
 def load_runs(root):
-    runs = {}
+    records = []
     for path in sorted(pathlib.Path(root).rglob("run.json")):
         try:
             with open(path, "r", encoding="utf-8") as handle:
@@ -38,23 +37,28 @@ def load_runs(root):
         except (OSError, json.JSONDecodeError) as error:
             print(f"warn: {path}: {error}", file=sys.stderr)
             continue
-        scenario = run.get("scenario", {}).get("id", path.parent.name)
-        runs[scenario] = (run, str(path.parent))
-    return runs
+        network = run.get("network") or {}
+        # The cell class is the network profile when there is one, and the
+        # results subdirectory otherwise. The directory matters: loopback
+        # throughput cells, loopback duplex/ping-pong cells and native-engine
+        # re-reads share the loopback topology but are separate experiments.
+        shape = network.get("profile")
+        if not shape:
+            shape = path.parent.parent.name or "unknown"
+        records.append({
+            "scenario": (run.get("scenario") or {}).get("id") or path.parent.name,
+            "shape": shape,
+            "run": run,
+            "dir": str(path.parent),
+        })
+    records.sort(key=lambda item: (item["scenario"], item["shape"]))
+    return records
 
 
-def fmt(value, digits=1, suffix=""):
+def fmt(value, digits=1):
     if value is None:
         return "null"
-    return f"{value:.{digits}f}{suffix}"
-
-
-def summarize(run):
-    """Return {(metric, streams, pattern): summary_row}."""
-    rows = {}
-    for row in run.get("summary", []):
-        rows[(row["metric"], row.get("streams", 0), row.get("pattern", ""))] = row
-    return rows
+    return f"{value:.{digits}f}"
 
 
 def main():
@@ -64,70 +68,97 @@ def main():
     parser.add_argument("--json")
     args = parser.parse_args()
 
-    runs = load_runs(args.root)
-    if not runs:
+    records = load_runs(args.root)
+    if not records:
         print(f"no run.json under {args.root}", file=sys.stderr)
         return 1
 
-    lines = []
-    lines.append("# Performance matrix")
-    lines.append("")
-    lines.append("| scenario | commit | network | cells |")
-    lines.append("|---|---|---|---|")
+    # The same cell can be run more than once (a retry, a fixed harness). The
+    # newest run wins for that (scenario, network) pair; the rest are counted so
+    # a stale directory cannot quietly contribute a row.
+    newest = {}
+    superseded = 0
+    for record in records:
+        key = (record["scenario"], record["shape"])
+        previous = newest.get(key)
+        if previous is None:
+            newest[key] = record
+            continue
+        superseded += 1
+        if os.path.getmtime(os.path.join(record["dir"], "run.json")) > \
+                os.path.getmtime(os.path.join(previous["dir"], "run.json")):
+            newest[key] = record
+    records = sorted(newest.values(), key=lambda item: (item["scenario"], item["shape"]))
+    if superseded:
+        print(f"note: {superseded} superseded run(s) ignored", file=sys.stderr)
 
-    for scenario in sorted(runs):
-        run, directory = runs[scenario]
-        source = run.get("source", {})
-        network = run.get("network", {})
-        shape = network.get("profile") or network.get("topology", "")
-        lines.append(f"| {scenario} | `{source.get('commit', '')[:12]}` | {shape} | "
-                     f"{len(run.get('reps', []))} |")
+    lines = ["# Performance matrix", ""]
+    lines.append("Every row below is a real server process and a real client process. "
+                 "`null` means not measured.")
+    lines.append("")
+    lines.append("| scenario | network | commit | repetitions | run dir |")
+    lines.append("|---|---|---|---|---|")
+    for record in records:
+        run = record["run"]
+        source = run.get("source") or {}
+        lines.append("| {} | {} | `{}` | {} | `{}` |".format(
+            record["scenario"], record["shape"],
+            (source.get("commit") or "")[:12], len(run.get("reps") or []),
+            os.path.relpath(record["dir"], args.root)))
     lines.append("")
 
-    for title, scenarios in GROUPS:
-        present = [s for s in scenarios if s in runs]
+    for title, members in GROUPS:
+        present = [record for record in records if record["scenario"] in members]
         if not present:
             continue
         lines.append(f"## {title}")
         lines.append("")
-        for scenario in present:
-            run, directory = runs[scenario]
-            extra = run.get("scenario", {}).get("extra") or {}
-            lines.append(f"### {scenario}")
+        for record in present:
+            run = record["run"]
+            scenario = run.get("scenario") or {}
+            extra = scenario.get("extra") or {}
+            lines.append(f"### {record['scenario']} — {record['shape']}")
             lines.append("")
-            lines.append(f"- run dir: `{os.path.relpath(directory, args.root)}`")
-            lines.append(f"- protocol: {run['scenario'].get('protocol')} / "
-                         f"{run['scenario'].get('transport', '')} / {run['scenario'].get('security', '')}")
+            lines.append(f"- run dir: `{os.path.relpath(record['dir'], args.root)}`")
+            lines.append(f"- protocol: {scenario.get('protocol')} / "
+                         f"{scenario.get('transport', '')} / {scenario.get('security', '')}".rstrip())
             if extra.get("startup_client_ms") is not None:
                 lines.append(f"- startup: client {extra['startup_client_ms']:.0f} ms, "
                              f"server {extra.get('startup_server_ms', 0):.0f} ms")
+            network = run.get("network") or {}
+            if network.get("delay_ms") is not None:
+                detail = f"- network: {record['shape']}, one-way delay {network['delay_ms']:.1f} ms"
+                if network.get("loss_percent") is not None:
+                    detail += f", loss {network['loss_percent']:.2f}% per direction"
+                if network.get("bandwidth_mbps") is not None:
+                    detail += f", cap {network['bandwidth_mbps']:.0f} Mbit/s"
+                lines.append(detail)
             lines.append("")
-            lines.append("| pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |")
-            lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
-            summary = summarize(run)
-            keys = sorted({(k[2], k[1]) for k in summary})
-            for pattern, streams in keys:
-                goodput = summary.get(("goodput", streams, pattern))
-                cpu_client = summary.get(("cpu_seconds_per_gib_client", streams, pattern))
-                cpu_server = summary.get(("cpu_seconds_per_gib_server", streams, pattern))
-                wire = summary.get(("wire_gbit_per_s", streams, pattern))
-                overhead = summary.get(("wire_overhead_ratio", streams, pattern))
-                p50 = summary.get(("latency_p50", streams, pattern))
-                p95 = summary.get(("latency_p95", streams, pattern))
-                p99 = summary.get(("latency_p99", streams, pattern))
 
-                def med(row, digits=1):
+            summary = {(row["metric"], row.get("streams", 0), row.get("pattern", "")): row
+                       for row in run.get("summary") or []}
+            keys = sorted({(key[2], key[1]) for key in summary})
+            lines.append("| pattern | streams | n | goodput MiB/s | CPU s/GiB client | "
+                         "CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |")
+            lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+            for pattern, streams in keys:
+                def med(metric, digits=1):
+                    row = summary.get((metric, streams, pattern))
                     return fmt(None if row is None else row.get("median"), digits)
 
+                def count(metric):
+                    row = summary.get((metric, streams, pattern))
+                    return 0 if row is None else row.get("n", 0)
+
                 lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
-                    pattern, streams,
-                    goodput.get("n") if goodput else 0,
-                    med(goodput), med(cpu_client, 2), med(cpu_server, 2),
-                    med(wire, 2), med(overhead, 2),
-                    med(p50, 2), med(p95, 2), med(p99, 2)))
+                    pattern, streams, count("goodput"),
+                    med("goodput"), med("cpu_seconds_per_gib_client", 2),
+                    med("cpu_seconds_per_gib_server", 2), med("wire_gbit_per_s", 2),
+                    med("wire_overhead_ratio", 2), med("latency_p50", 2),
+                    med("latency_p95", 2), med("latency_p99", 2)))
             lines.append("")
 
-    text = "\n".join(lines) + "\n"
+    text = "\n".join(lines).rstrip() + "\n"
     if args.out:
         pathlib.Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")
@@ -135,14 +166,16 @@ def main():
         print(text)
 
     if args.json:
-        payload = {}
-        for scenario, (run, directory) in runs.items():
-            payload[scenario] = {
-                "run_dir": os.path.relpath(directory, args.root),
-                "commit": run.get("source", {}).get("commit"),
-                "network": run.get("network", {}),
-                "summary": run.get("summary", []),
-            }
+        payload = []
+        for record in records:
+            run = record["run"]
+            payload.append({
+                "scenario": record["scenario"],
+                "network": record["shape"],
+                "run_dir": os.path.relpath(record["dir"], args.root),
+                "commit": (run.get("source") or {}).get("commit"),
+                "summary": run.get("summary") or [],
+            })
         pathlib.Path(args.json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"wrote {args.json}")
     return 0

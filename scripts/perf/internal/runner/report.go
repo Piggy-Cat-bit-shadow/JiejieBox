@@ -107,7 +107,8 @@ func writeSummaryMD(runDir string, run *schema.Run) error {
 		}
 	}
 	builder.WriteString("\n")
-	return os.WriteFile(filepath.Join(runDir, "summary.md"), []byte(builder.String()), 0o644)
+	text := strings.TrimRight(builder.String(), "\n") + "\n"
+	return os.WriteFile(filepath.Join(runDir, "summary.md"), []byte(text), 0o644)
 }
 
 func shortCommit(commit string) string {

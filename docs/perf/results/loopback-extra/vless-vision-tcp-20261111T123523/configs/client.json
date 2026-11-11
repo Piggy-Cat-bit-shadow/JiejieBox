@@ -1,0 +1,27 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 25196
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "127.0.0.1",
+      "server_port": 38896,
+      "uuid": "724400eb-bb70-408e-8e4e-1135e91fdb02",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "certificate_path": "/home/jie/perf/baseline/loopback-extra/vless-vision-tcp-20261111T123523/certs/ca.pem"
+      }
+    }
+  ],
+  "route": {"final": "proxy"}
+}

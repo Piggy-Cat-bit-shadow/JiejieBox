@@ -1,0 +1,19 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "mieru",
+      "tag": "mieru-in",
+      "listen": "127.0.0.1",
+      "listen_port": 25254,
+      "users": [
+        {"name": "bench", "password": "6854056fa318586f77f16bd47ef73c32"}
+      ],
+      "transport": "udp",
+      "mtu": 1280
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}

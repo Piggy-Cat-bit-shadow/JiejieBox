@@ -101,10 +101,12 @@ ships.
   `go_heap_peak_bytes` stays null: the production binary exposes no profile
   endpoint, and a Go heap number from an instrumented build is not the shipped
   binary's number.
-- **Wire** bytes/packets come from `/sys/class/net/<iface>/statistics` on the
-  veth when the run crosses the emulated link. `overhead_ratio` is wire bytes
-  divided by payload bytes; it is null on loopback because loopback has no
-  comparable counter.
+- **Wire** bytes/packets come from the veth's netlink counters (`ip -j -s link`,
+  because `sysfs` is not network-namespace aware and would show the host's
+  interfaces instead of the namespace's). `overhead_ratio` is wire bytes divided
+  by payload bytes; it is null on loopback because loopback has no comparable
+  counter. The counters sit below segmentation offload, so they record GSO-sized
+  packets: byte totals are comparable, packet counts are not raw wire packets.
 - **Latency** is measured per operation for `pingpong` (one round trip per
   sample) and `connect` (SOCKS dial → first echoed byte, i.e. a fresh proxied
   connection). Percentiles are only emitted when the sample count justifies

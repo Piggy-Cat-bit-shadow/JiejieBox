@@ -1,0 +1,23 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "127.0.0.1",
+      "listen_port": 21871,
+      "users": [
+        {"name": "bench", "password": "c1f36be79e34b3cbb2f2b6901bc7d3ba"}
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "certificate_path": "/home/jie/perf/baseline/loopback/anytls-tcp-20261111T114228/certs/cert.pem",
+        "key_path": "/home/jie/perf/baseline/loopback/anytls-tcp-20261111T114228/certs/key.pem"
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}
