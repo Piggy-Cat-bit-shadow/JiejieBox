@@ -58,7 +58,14 @@ func TestProductConfigurationRPCs(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = command.Process.Kill() }()
+	// Kill, reap and only then close the log: t.TempDir's cleanup runs RemoveAll on this directory,
+	// and an unreaped child on Windows still holds the log file open, which turns a passing test into
+	// a teardown failure.
+	defer func() {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		_ = logFile.Close()
+	}()
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		connection, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)

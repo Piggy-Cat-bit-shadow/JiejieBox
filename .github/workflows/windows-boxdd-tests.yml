@@ -260,6 +260,23 @@ jobs:
           Write-Host "::notice::go vet: only the known pre-existing finding is present ($($findings.Count))"
           exit 0
 
+      - name: build the daemon binary the acceptance probe drives
+        # TestProductConfigurationRPCs runs the real daemon over its development TCP transport and
+        # SKIPs unless BOXDD_ACCEPTANCE_BIN names that binary. Nothing else in CI builds it, so the
+        # no-skip guard below could only ever fail: that is why this gate was red before this step
+        # existed, with or without any product change.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go build -o boxdd-acceptance.exe ./experimental/boxdd
+          if ($LASTEXITCODE -ne 0) { throw "go build ./experimental/boxdd failed ($LASTEXITCODE)" }
+          if (-not (Test-Path 'boxdd-acceptance.exe')) {
+            throw "the daemon binary was not produced; the acceptance probe would SKIP."
+          }
+          $binary = (Resolve-Path 'boxdd-acceptance.exe').Path
+          "BOXDD_ACCEPTANCE_BIN=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "acceptance binary: $binary ($((Get-Item $binary).Length) bytes)"
+
       - name: run the daemon security tests
         # `-count=1` defeats the test cache, so a green run is a real execution rather than a replay.
         # Plain `go test` is used deliberately: these tests need no build tags (verified untagged and
