@@ -56,9 +56,9 @@
     {
       "module": "github.com/sagernet/quic-go",
       "slug": "Piggy-Cat-bit-shadow/quic-go",
-      "branch": "integration/0.1.45",
+      "branch": "sagernet",
       "policy": "update",
-      "note": "The SagerNet module line only. Never the MetaCubeX line; see docs/fork notes."
+      "note": "The SagerNet module line only. Never the MetaCubeX line; integration/0.1.45 was merged into sagernet on 2026-11-11."
     },
     {
       "module": "github.com/metacubex/utls",
@@ -72,7 +72,7 @@
       "slug": "Piggy-Cat-bit-shadow/wireguard-go",
       "branch": "awg3-inject",
       "policy": "update",
-      "note": "The AmneziaWG injection line (awg3-inject) consumed through the fork replace; the old awg-base/awg-graft refs are not consumed."
+      "note": "The AmneziaWG injection line (awg3-inject) consumed through the fork replace; awg-base/awg-graft were archived and deleted on 2026-11-11 after supersession evidence."
     },
     {
       "module": "github.com/sagernet/cronet-go",
@@ -133,8 +133,8 @@
     {
       "slug": "MetaCubeX/utls",
       "branch": "v1.9.0-mod-meta",
-      "mirror_branch": "mirror/meta-v1.9.0",
-      "note": "Audit baseline only. It is not a product branch and never receives fork commits."
+      "mirror_branch": null,
+      "note": "Audit baseline only. mirror/meta-v1.9.0 was archived and deleted on 2026-11-11; main already contains v1.9.0-mod-meta."
     },
     {
       "slug": "SagerNet/sing-box",

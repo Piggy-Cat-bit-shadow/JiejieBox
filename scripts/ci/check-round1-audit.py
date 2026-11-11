@@ -28,7 +28,9 @@ CI_TESTED = "b473c21f4803c0196e3eb920d530602d5f92867f"
 ALLOWED_RESOLUTIONS = {"FORK", "UPSTREAM", "SEMANTIC_FUSION", "GENERATED", "OBSOLETE", "SAME"}
 ALLOWED_REVIEW = {"VERIFIED", "RECONSTRUCTED"}
 CLIENT_PINS = {
-    "clients/apple": "7fce7117b33a38ef4c73c81db67c49f0be7a7dad",
+    # Apple moved from the NE-fusion ancestor 7fce711 to the fusion tip 9330d90
+    # on 2026-11-11, when integration/0.1.45-ne-fusion was merged into main.
+    "clients/apple": "9330d9018c95231ac9b5d8abb6244dcc33c95830",
     "clients/android": "ba5c6b161827a830cb7343850bf547156fbfdfee",
     "clients/desktop": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
 }
