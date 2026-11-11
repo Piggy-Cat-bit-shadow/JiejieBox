@@ -53,7 +53,7 @@
     {
       "module": "github.com/sagernet/wireguard-go",
       "final_sha": "7ece3d66d79dcea5bbf872ebe76b1c7863b69ea6",
-      "version": "v0.0.0-20261109042158-7ece3d66d79d",
+      "version": "v0.0.0-20261111081811-7ece3d66d79d",
       "upstream": "sagernet/wireguard-go:main"
     },
     {
