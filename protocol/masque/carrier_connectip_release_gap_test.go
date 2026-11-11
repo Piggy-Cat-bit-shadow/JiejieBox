@@ -2,34 +2,24 @@
 
 package masque
 
-// The old CONNECT-IP inner flow's server-side release: a measured GAP, pinned instead of asserted
-// away.
+// The old CONNECT-IP inner flow's server-side release, asserted positively.
 //
-// # What was asked and what was found
+// # What this now proves
 //
-// The closeout review asked for "独立观测旧 CONNECT-IP 会话、用户态栈和资源最终回收" and for the
-// asynchronous completion point plus its bound. The row's positive half - a new tunnel and a new flow
-// carrying bytes after the change - is in carrier_connectip_datapath_test.go. This file records the
-// negative half, because it is not merely "slow":
+//   restart the client session, close the client-side old flow, then wait
+//   <= 5 s:          the server's userspace stack HAS terminated the old inner flow
 //
-//	restart the client session, close the client-side old flow, then wait
-//	5 s / 30 s:      the server's userspace stack has NOT terminated the old inner flow
+// The router's `closed` counter is incremented in the same defer that closes the inner flow, so a
+// non-zero count means the flow's socket and its stack resources are gone rather than parked past
+// the session that carried them.
 //
-// Both waits were measured while writing this test (30 s in the first version, 5 s in the pinned
-// one). The server router's `closed` counter - incremented in the same defer that closes the inner
-// flow - stays at zero, so the old inner flow keeps its socket and its stack resources past the
-// session that carried it.
+// # What it used to be
 //
-// # Why this is a test and not a comment
-//
-// A comment would rot. This test fails as soon as the endpoint's owner makes the old stack reclaim
-// its flows on session end, which is the moment the gap is closed: flip it to the positive assertion
-// (the wait from the test below, with the measured delay) and cite it as the release evidence. The
-// production objects, the topology and the trigger are the same as the positive row's, so nothing
-// else has to be rebuilt.
-//
-// Ownership: the endpoint's userspace stack and session lifecycle are the MASQUE endpoint's internals
-// (window 05). This window observed it through the production server endpoint; it did not change it.
+// This file used to pin the opposite - a measured gap where `closed` stayed at zero after 5 s and
+// even after 30 s - because nothing tied an inner flow to the session that produced it: the stack
+// keys flows by 4-tuple, the session keys addresses. The endpoint now records each inner flow against
+// its source address (`flow_registry.go`) and closes the ones whose address belonged to a retired
+// session, which is what turns this from a gap record into a release contract.
 
 import (
 	"context"
@@ -42,8 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTheOldCONNECTIPInnerFlowIsNotReleasedWithinTheCurrentBound is the reproduction.
-func TestTheOldCONNECTIPInnerFlowIsNotReleasedWithinTheCurrentBound(t *testing.T) {
+func TestTheOldCONNECTIPInnerFlowIsReleasedWhenItsSessionRetires(t *testing.T) {
 	requireHTTP3Client(t)
 	serverPrefix := netip.MustParsePrefix(connectIPPrefix)
 	echoPort := startCarrierEcho(t)
@@ -62,23 +51,20 @@ func TestTheOldCONNECTIPInnerFlowIsNotReleasedWithinTheCurrentBound(t *testing.T
 	restartStarted := time.Now()
 	clientEndpoint.InterfaceUpdated(context.Background())
 	// Close the client-side flow: the session that carried it is gone, so this is the only signal the
-	// old path can produce. It is deliberately done BEFORE waiting, so the wait cannot be explained
-	// by the test still holding the flow open.
+	// old path can produce.
 	_ = before.Close()
 
-	// Five seconds is already far past the point where the new tunnel is ready and serving (the
-	// positive row measures that within tens of seconds); anything the old stack was going to reclaim
-	// from one cancelled session has had ample time.
-	time.Sleep(5 * time.Second)
-	require.EqualValues(t, 0, router.closed.Load(),
-		"the server RELEASED the old CONNECT-IP inner flow: the resource-release gap this test pins "+
-			"has been closed. Flip this test into the positive assertion (wait for the release and "+
-			"record the delay) and cite it as the old-session release evidence")
-	t.Logf("MEASURED old CONNECT-IP inner flow: released=%d after %s (gap: the userspace stack "+
-		"outlives the session and the client-side flow that carried it)", router.closed.Load(),
-		time.Since(restartStarted).Round(time.Millisecond))
+	// The release must arrive on its own, driven by the session retirement, not by this test's close.
+	require.Eventually(t, func() bool {
+		return router.closed.Load() >= 1
+	}, 5*time.Second, 10*time.Millisecond,
+		"the server kept the old CONNECT-IP inner flow past its session: the release contract regressed")
 
-	// The new generation is unaffected by the unreleased old flow: a new flow still carries bytes.
+	releaseDelay := time.Since(restartStarted)
+	t.Logf("old CONNECT-IP inner flow released=%d after %s", router.closed.Load(), releaseDelay.Round(time.Millisecond))
+	require.Less(t, releaseDelay, 5*time.Second)
+
+	// The new generation is unaffected: a new flow still carries bytes over the re-established tunnel.
 	require.Eventually(t, func() bool {
 		return clientEndpoint.state.Load().configured && clientEndpoint.client.Ready()
 	}, 40*time.Second, 20*time.Millisecond, "the tunnel did not re-establish after the network change")

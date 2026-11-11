@@ -61,7 +61,10 @@ type ServerEndpoint struct {
 	deviceOptions  *device.Options
 	device         device.Device
 	localAddresses []netip.Prefix
-	started        atomic.Bool
+	// flows are the inner connections this endpoint handed to the router, so a retiring session can
+	// have its generation reclaimed (see flow_registry.go).
+	flows   flowRegistry
+	started atomic.Bool
 	// startAccess orders the externally visible acquisitions in StartStateStart against the
 	// closeOnce teardown. Close publishes `closed` under it before it releases anything, and Start
 	// reads it under the same lock after it has bound the listener, so a socket that was bound while
@@ -353,6 +356,9 @@ func (s *ServerEndpoint) Close() error {
 		s.closed = true
 		s.startAccess.Unlock()
 		s.started.Store(false)
+		// Close the inner flows before the stack that produced them: a flow the router still holds
+		// would otherwise outlive the device.
+		s.flows.closeAll()
 		s.closeErr = common.Close(
 			s.listener,
 			s.http3Server,
@@ -457,11 +463,34 @@ func (s *ServerEndpoint) writePacketBuffers(packetBuffers []*buf.Buffer) error {
 }
 
 func (s *ServerEndpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	s.newConnection(ctx, s, s.localAddresses, conn, source, destination, onClose)
+	s.flows.add(conn, source.Addr)
+	s.newConnection(ctx, s, s.localAddresses, conn, source, destination, func(err error) {
+		s.flows.remove(conn)
+		if onClose != nil {
+			onClose(err)
+		}
+	})
 }
 
 func (s *ServerEndpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	s.newPacketConnection(ctx, s, s.localAddresses, conn, source, destination, onClose)
+	s.flows.addPacket(conn, source.Addr)
+	s.newPacketConnection(ctx, s, s.localAddresses, conn, source, destination, func(err error) {
+		s.flows.removePacket(conn)
+		if onClose != nil {
+			onClose(err)
+		}
+	})
+}
+
+// ReleaseSession closes the inner flows a retired session carried.
+//
+// Invoked by transport/masque through the optional SessionReleaser capability, after the session's
+// addresses returned to their pools. Closing these is what makes "the session is gone" true for the
+// userspace stack too: without it the old flow keeps its socket open on a path nobody can reach.
+func (s *ServerEndpoint) ReleaseSession(addresses []netip.Addr) {
+	if closed := s.flows.closeFor(addresses); closed > 0 {
+		s.logger.Debug("masque: released ", closed, " inner flow(s) of a retired session")
+	}
 }
 
 func (s *ServerEndpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

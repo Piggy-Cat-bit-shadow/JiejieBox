@@ -27,6 +27,17 @@ type ServerHandler interface {
 	NewOutboundQueue(handler func(packetBuffers []*buf.Buffer)) *tun.OutboundQueue
 }
 
+// SessionReleaser is the optional capability a handler implements when it owns resources that belong
+// to one session's inner addresses.
+//
+// A CONNECT-IP session's inner flows live in the userspace stack, which keys them by 4-tuple and has
+// no idea which session carried them. The handler handed those connections to the router, so it is
+// the only layer that can close the generation that just left; a handler that does not implement this
+// keeps the previous behaviour exactly.
+type SessionReleaser interface {
+	ReleaseSession(addresses []netip.Addr)
+}
+
 type ServerOptions struct {
 	Context         context.Context
 	Logger          logger.ContextLogger
@@ -315,6 +326,12 @@ func (s *Server) releaseSession(current *serverSession) {
 				pool.release(address)
 			}
 		}
+	}
+	// Tell the handler which generation left. This runs AFTER the addresses returned to their pools,
+	// so a new session that receives one of them registers fresh flows instead of inheriting this
+	// close.
+	if releaser, isReleaser := s.handler.(SessionReleaser); isReleaser {
+		releaser.ReleaseSession(current.addresses)
 	}
 }
 
