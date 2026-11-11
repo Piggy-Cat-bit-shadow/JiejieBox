@@ -1,0 +1,4 @@
+$ go test protocol/wireguard transport/wireguard
+ok  	github.com/sagernet/sing-box/protocol/wireguard	0.067s
+ok  	github.com/sagernet/sing-box/transport/wireguard	9.689s
+exit=0

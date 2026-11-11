@@ -1,0 +1,101 @@
+{
+  "round": "udp-evidence-final-2026-11-11",
+  "branch": "work/udp-evidence-final-2026-11-11",
+  "tree_head_at_run": "9ab0d01eeedd951c2b641028851e727f2f85e156",
+  "head_when_written": "9ab0d01eeedd951c2b641028851e727f2f85e156",
+  "dirty_at_run": true,
+  "dirty_files_at_run": [
+    "?? docs/final-audit/closure/results/b8-final/PROVENANCE.md",
+    "?? docs/final-audit/closure/results/b8-final/runner-diff-recovered.patch"
+  ],
+  "kernel_binary_sha256": "0157e713c8e2d43fc214e949cde40b9e3fc2dc812360c64cf41ea4b91f2bd3d6",
+  "kernel_binary_before": "0157e713c8e2d43fc214e949cde40b9e3fc2dc812360c64cf41ea4b91f2bd3d6",
+  "kernel_binary_after": "0157e713c8e2d43fc214e949cde40b9e3fc2dc812360c64cf41ea4b91f2bd3d6",
+  "binary_changed": false,
+  "runner": {
+    "path": "/home/jie/perf/bin/perflab",
+    "sha256": "6d9904288d9389f80a0ab2da4ba713e0ce717d8cb0438afe0680784a11db6520",
+    "go_version": "go1.25.5",
+    "tree_commit": "9ab0d01eeedd951c2b641028851e727f2f85e156",
+    "dirty": true,
+    "dirty_files": [
+      "?? docs/final-audit/closure/results/b8-final/PROVENANCE.md",
+      "?? docs/final-audit/closure/results/b8-final/runner-diff-recovered.patch"
+    ]
+  },
+  "netlab": {
+    "rtt_ms": 80,
+    "mtu": 1500,
+    "topology": "netns-veth"
+  },
+  "cells": [
+    {
+      "scenario": "masque-connect-ip",
+      "loss_pct": 0,
+      "rate_pps": 250,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "masque-connect-ip",
+      "loss_pct": 1,
+      "rate_pps": 250,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "masque-connect-ip",
+      "loss_pct": 1,
+      "rate_pps": 500,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "masque-connect-ip",
+      "loss_pct": 1,
+      "rate_pps": 50,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "trusttunnel-h2",
+      "loss_pct": 0,
+      "rate_pps": 250,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "trusttunnel-h2",
+      "loss_pct": 1,
+      "rate_pps": 250,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "trusttunnel-h2",
+      "loss_pct": 1,
+      "rate_pps": 500,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "trusttunnel-h2",
+      "loss_pct": 1,
+      "rate_pps": 50,
+      "drain_ms": 8000,
+      "reps": 3
+    },
+    {
+      "scenario": "trusttunnel-h2",
+      "loss_pct": 1,
+      "rate_pps": 500,
+      "drain_ms": 12000,
+      "reps": 3
+    }
+  ],
+  "counts": {
+    "runs": 9,
+    "reps": 27
+  },
+  "generated_at": "2026-11-11T21:18:34+08:00"
+}

@@ -1,51 +1,53 @@
-# B8 rate curve at 1 % netem loss per direction (80 ms RTT)
+# B8 table regenerated from raw JSON
 
-All runs: 1200 B, 1 stream, 5 s measured, 1 s warmup, 3 reps, per-direction 1 %
-loss (`~2 %` expected end to end). `loss` is null when the drain tail was not
-observed. Source runs: `b8-rate*/`, manifest beside this file.
+Loss is shown only when the record says loss_estimable=true; `not_returned` is
+writes-unique and is a deadline fact, not network-confirmed loss. Legacy runs
+predate the split observation fields and are labelled `legacy_*`.
 
-## MASQUE CONNECT-IP (QUIC DATAGRAM)
-
-| offered rate | drain | loss per rep | last reply | note |
-|---|---|---|---|---|
-| 100 pps | 2 s | 0.6 / 1.4 / 2.6 % | 0.07-0.10 s | near the ~2 % path budget |
-| 250 pps | 4 s | 1.68 / 1.84 / 2.96 % | 1.1-1.4 s | near budget, tail growing |
-| 300 pps | 4 s | 1.93 / 8.47 / 25.4 % | 1.1-2.6 s | transition, high variance |
-| 350 pps | 4 s | 10.5 / 15.3 / 24.6 % | 1.4-2.2 s | above budget |
-| 400 pps | 4 s | 25.8 / 35.0 / 37.8 % | 1.5-2.7 s | collapsed |
-| 500 pps | 4 s | 40.1 / 43.8 / 47.1 % | 1.7-3.3 s | collapsed |
-
-The transition starts between 250 and 300 pps (2.4-2.9 Mbit/s payload), far below
-the 1 Gbit/s link. A 2 s drain at 250-500 pps truncated the tail in several reps
-(loss null, marked incomplete); the 4 s runs above are authoritative.
-
-## TrustTunnel H2 UDP2 (reliable stream)
-
-| offered rate | drain | loss per rep | last reply | note |
-|---|---|---|---|---|
-| 100 pps | 2 s | 0 / 0 / 0 % | 0.10-0.46 s | clean |
-| 250 pps | 4 s | 0 / 0 / 0 % | 0.8-2.4 s | clean, tail seconds |
-| 500 pps | 2 s | 0 / 77.2 / (null) % | 2.0-2.1 s or >2 s | drain too short, invalid |
-| 500 pps | 8 s | 0 / 0 / 0 % (one set); 0 / 77.2 / (null) (another set) | 5.5-10.7 s | bimodal: all delivered 5.5-7.8 s late, or 77 % lost with tail beyond 8 s |
-
-TrustTunnel does not lose cleanly at 500 pps; it develops multi-second queueing
-delay, and whether the cell reports loss depends on whether the drain covers the
-tail. That is a latency/queue collapse, not path loss.
-
-## Diagnostics and bounds
-
-Across the 1 % cells, the veth qdisc drops only the configured ~1 % of wire
-packets, there are no overlimits/requeues, and all UDP socket error counters
-(`UdpRcvbufErrors`, `UdpSndbufErrors`, `UdpInErrors`) are zero in both namespaces.
-The client qdisc sees 40-54 % fewer packets at 500 pps than at 0 %, so the
-backlog/drop is inside the client tunnel/queue path before the veth. The exact
-queue (MASQUE device/CONNECT-IP queue vs QUIC send buffer; TrustTunnel H2 stream
-queue/flow-control window) is **NOT_AVAILABLE** without in-process counters.
-
-## What this changes
-
-B8 stays `UNRESOLVED`, but the failure is characterised: a rate threshold between
-250 and 300 pps for MASQUE and a multi-second queueing collapse (not steady drop)
-for TrustTunnel at 500 pps, with the network path and socket buffers exonerated.
-The next step is to instrument those two queues for drop/blocking time, not to
-change transport semantics.
+| scenario | rate pps | drain ms | writes | unique | target | not_returned | loss % | drain status |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| masque-connect-ip | 100 | 2000.1 | 500 | 497 | 497 | 3 |  | legacy_complete |
+| masque-connect-ip | 100 | 2000.3 | 500 | 487 | 494 | 13 |  | legacy_complete |
+| masque-connect-ip | 100 | 2000.9 | 500 | 493 | 497 | 7 |  | legacy_complete |
+| masque-connect-ip | 250 | 2000.3 | 1250 | 1185 | 1196 | 65 |  | legacy_complete |
+| masque-connect-ip | 250 | 2000.3 | 1250 | 1224 | 1242 | 26 |  | legacy_incomplete |
+| masque-connect-ip | 250 | 2000.5 | 1250 | 1140 | 1234 | 110 |  | legacy_incomplete |
+| masque-connect-ip | 250 | 4000.3 | 1250 | 1227 | 1240 | 23 |  | legacy_complete |
+| masque-connect-ip | 250 | 4000.8 | 1250 | 1213 | 1225 | 37 |  | legacy_complete |
+| masque-connect-ip | 250 | 4000.9 | 1250 | 1229 | 1237 | 21 |  | legacy_complete |
+| masque-connect-ip | 300 | 4000.2 | 1500 | 1119 | 1130 | 381 |  | legacy_complete |
+| masque-connect-ip | 300 | 4000.4 | 1500 | 1373 | 1392 | 127 |  | legacy_complete |
+| masque-connect-ip | 300 | 4000.5 | 1500 | 1471 | 1493 | 29 |  | legacy_complete |
+| masque-connect-ip | 350 | 4000.0 | 1750 | 1319 | 1331 | 431 |  | legacy_complete |
+| masque-connect-ip | 350 | 4000.6 | 1750 | 1483 | 1499 | 267 |  | legacy_complete |
+| masque-connect-ip | 350 | 4000.6 | 1750 | 1566 | 1718 | 184 |  | legacy_complete |
+| masque-connect-ip | 400 | 4000.2 | 2000 | 1244 | 1252 | 756 |  | legacy_complete |
+| masque-connect-ip | 400 | 4000.4 | 2000 | 1301 | 1393 | 699 |  | legacy_complete |
+| masque-connect-ip | 400 | 4000.7 | 2000 | 1485 | 1502 | 515 |  | legacy_complete |
+| masque-connect-ip | 500 | 2000.1 | 2500 | 1682 | 1701 | 818 |  | legacy_complete |
+| masque-connect-ip | 500 | 2000.1 | 2500 | 1205 | 1259 | 1295 |  | legacy_incomplete |
+| masque-connect-ip | 500 | 2000.9 | 2500 | 1220 | 1231 | 1280 |  | legacy_complete |
+| masque-connect-ip | 500 | 4000.4 | 2500 | 1322 | 1331 | 1178 |  | legacy_complete |
+| masque-connect-ip | 500 | 4000.6 | 2500 | 1498 | 1510 | 1002 |  | legacy_complete |
+| masque-connect-ip | 500 | 4000.6 | 2500 | 1405 | 1472 | 1095 |  | legacy_complete |
+| trusttunnel-h2 | 100 | 2000.2 | 500 | 500 | 500 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 100 | 2000.3 | 500 | 500 | 500 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 100 | 2000.9 | 500 | 500 | 500 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 250 | 2000.1 | 1250 | 51 | 140 | 1199 |  | legacy_complete |
+| trusttunnel-h2 | 250 | 2000.7 | 1250 | 1041 | 1250 | 209 |  | legacy_incomplete |
+| trusttunnel-h2 | 250 | 2000.9 | 1250 | 1211 | 1250 | 39 |  | legacy_incomplete |
+| trusttunnel-h2 | 250 | 4000.1 | 1250 | 1250 | 1250 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 250 | 4000.4 | 1250 | 1250 | 1250 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 250 | 4000.5 | 1250 | 1250 | 1250 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 500 | 2000.5 | 2500 | 1567 | 1621 | 933 |  | legacy_incomplete |
+| trusttunnel-h2 | 500 | 2000.6 | 2500 | 1366 | 2353 | 1134 |  | legacy_incomplete |
+| trusttunnel-h2 | 500 | 2000.7 | 2498 | 1014 | 1053 | 1484 |  | legacy_incomplete |
+| trusttunnel-h2 | 500 | 4000.2 | 2500 | 1752 | 2299 | 748 |  | legacy_incomplete |
+| trusttunnel-h2 | 500 | 4000.3 | 2499 | 1481 | 1677 | 1018 |  | legacy_incomplete |
+| trusttunnel-h2 | 500 | 4000.8 | 2500 | 1427 | 1447 | 1073 |  | legacy_incomplete |
+| trusttunnel-h2 | 500 | 8000.1 | 2500 | 2500 | 2500 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 500 | 8000.6 | 2500 | 2500 | 2500 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 500 | 8000.8 | 2500 | 2500 | 2500 | 0 |  | legacy_complete |
+| trusttunnel-h2 | 500 | 8000.9 | 2500 | 570 | 1559 | 1930 |  | legacy_complete |
+| trusttunnel-h2 | 500 | 8001.0 | 2499 | 2133 | 2254 | 366 |  | legacy_incomplete |
+| trusttunnel-h2 | 500 | 8001.2 | 2500 | 2500 | 2500 | 0 |  | legacy_complete |

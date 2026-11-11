@@ -1,0 +1,12 @@
+$ gofmt -l scripts/perf && go vet ./... && go test ./...
+?   	github.com/sagernet/sing-box/scripts/perf/cmd/perflab	[no test files]
+?   	github.com/sagernet/sing-box/scripts/perf/internal/certs	[no test files]
+?   	github.com/sagernet/sing-box/scripts/perf/internal/host	[no test files]
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/loadgen	5.370s
+?   	github.com/sagernet/sing-box/scripts/perf/internal/netmeter	[no test files]
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/runner	0.010s
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/sampler	0.411s
+?   	github.com/sagernet/sing-box/scripts/perf/internal/schema	[no test files]
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/source	0.177s
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/target	0.006s
+exit=0

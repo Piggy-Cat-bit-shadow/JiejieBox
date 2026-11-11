@@ -1,5 +1,12 @@
 # UDP instrument and B8 (reconciled 2026-11-11)
 
+> **Superseded by the UDP evidence final-closure round.** The drain state,
+> target epoch isolation, pacer completion metrics and regenerated tables are in
+> `docs/final-audit/udp-evidence-final/`. In particular, the TrustTunnel 500 pps
+> 75-82 % figure below was an observation-window truncation, not loss: at a 12 s
+> observation the same cell delivers 2500/2500 but the tail arrives 7-9 s late.
+> Read `B8-DATA-RECONCILIATION.md` for the current numbers.
+
 ## Instrument: FIXED_AND_VERIFIED
 
 The lab's UDP cell now measures rather than assumes:
