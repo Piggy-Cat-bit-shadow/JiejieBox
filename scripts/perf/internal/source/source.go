@@ -164,24 +164,81 @@ func modulePins(goModPath string) map[string]string {
 	if err != nil {
 		return nil
 	}
-	pins := make(map[string]string)
+	requires := make(map[string]string)
+	replacements := make(map[string]string)
+	inRequireBlock := false
+	inReplaceBlock := false
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "replace") ||
-			strings.HasPrefix(line, "module") || strings.HasPrefix(line, "go ") ||
-			line == "require (" || line == ")" {
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "module") || strings.HasPrefix(line, "go ") {
+			continue
+		}
+		switch {
+		case line == "require (":
+			inRequireBlock = true
+			continue
+		case line == "replace (":
+			inReplaceBlock = true
+			continue
+		case line == ")":
+			inRequireBlock = false
+			inReplaceBlock = false
+			continue
+		case inRequireBlock:
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				requires[fields[0]] = fields[1]
+			}
+			continue
+		case inReplaceBlock:
+			recordReplacement(replacements, line)
+			continue
+		case strings.HasPrefix(line, "replace "):
+			recordReplacement(replacements, strings.TrimPrefix(line, "replace "))
+			continue
+		case strings.HasPrefix(line, "require "):
+			fields := strings.Fields(strings.TrimPrefix(line, "require "))
+			if len(fields) >= 2 {
+				requires[fields[0]] = fields[1]
+			}
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 2 || !strings.HasPrefix(fields[0], "github.com/") {
-			continue
+		if len(fields) >= 2 && strings.HasPrefix(fields[0], "github.com/") {
+			requires[fields[0]] = fields[1]
 		}
-		for _, needle := range interestingModules {
-			if strings.HasPrefix(fields[0]+" ", needle) {
-				key := strings.TrimSpace(needle)
-				pins[key] = fields[1]
-			}
+	}
+	pins := make(map[string]string)
+	for _, needle := range interestingModules {
+		key := strings.TrimSpace(needle)
+		if version, loaded := requires[key]; loaded {
+			pins[key] = version
+		}
+		if version, loaded := replacements[key]; loaded {
+			// A replace directive is what the build actually used; recording the
+			// require version here would name a module that never ran.
+			pins[key] = version
 		}
 	}
 	return pins
+}
+
+// recordReplacement parses one replace directive body: `old => new version` or
+// `old version => new version`. A local directory replacement has no version, and
+// the path itself is the only truthful pin.
+func recordReplacement(replacements map[string]string, line string) {
+	parts := strings.SplitN(line, "=>", 2)
+	if len(parts) != 2 {
+		return
+	}
+	left := strings.Fields(parts[0])
+	right := strings.Fields(parts[1])
+	if len(left) == 0 || len(right) == 0 {
+		return
+	}
+	target := right[0]
+	if len(right) >= 2 && strings.HasPrefix(right[len(right)-1], "v") {
+		target = right[len(right)-1]
+	}
+	replacements[left[0]] = target
 }
