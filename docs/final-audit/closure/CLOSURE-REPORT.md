@@ -10,8 +10,10 @@ earlier fixes, and states plainly what remains.
   `2e0003012e1`, then merged with the current `testing` tip (`1ce3aa3a825`,
   15+ commits: hidden-group, routing-dns, daemon/libbox, release docs). Merge
   commit `fa256e89afd`; no conflicts with the programme's files.
-- End: this branch, commits `699258bfa95` (schema + wireguard pin) and the
-  commit carrying this directory. Worktree clean. Not merged, not pushed to
+- End: this branch, HEAD `98d2b8bee1419903e983cb97a807377045a02ecf`, commits
+  `699258bfa95` (schema + wireguard pin), `227777920b8` (paced UDP + BuildInfo
+  provenance), `0dc9d011fa7` (B8 evidence), `98d2b8bee14` (pacer/UDP/runner test
+  suite). Worktree clean; pushed as `work/closure-2026-11-11`, not merged into
   `testing`.
 - Dependency fork: `Piggy-Cat-bit-shadow/wireguard-go` branch
   `fix/outbound-wake-2026-11-11` = `7ece3d66d79d`, one commit on the pinned
