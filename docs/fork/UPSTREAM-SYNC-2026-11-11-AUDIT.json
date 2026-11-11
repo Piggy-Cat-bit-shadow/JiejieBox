@@ -5,9 +5,9 @@
   "canonical": {
     "repo": "Piggy-Cat-bit-shadow/JiejieBox",
     "working_branch": "integration/0.1.45-final",
-    "working_head": "5125a13fbb5705e9e548f7d1ee149fe49dbdf49b",
+    "working_head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
     "default_branch": "testing",
-    "default_head": "5125a13fbb5705e9e548f7d1ee149fe49dbdf49b",
+    "default_head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
     "upstream": "SagerNet/sing-box:testing",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
     "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
@@ -483,9 +483,9 @@
   "stage05": {
     "status": "DONE_WITH_LIMITATIONS",
     "main_merge": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
-    "main_final_head": "5125a13fbb5705e9e548f7d1ee149fe49dbdf49b",
+    "main_final_head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
     "default_branch": "testing",
-    "default_sha": "5125a13fbb5705e9e548f7d1ee149fe49dbdf49b",
+    "default_sha": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
     "upstream": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
     "behind": 0,
     "source_lock": "PASS (release-freeze.py verify)",
@@ -494,9 +494,9 @@
       "linux_build": "PASS",
       "darwin_build": "PASS",
       "race": "PASS on route/common/dialer/fakeip/transport-http/masque/http",
-      "android_core_ci": "PASS run 42944533147 (5125a13fbb57)",
-      "verify_ci": "run 42944533206 (in_progress at report time)",
-      "mobile_contract_ci": "run 42942954909 (success on 08b52a3; final docs-only head not re-run)"
+      "android_core_ci": "PASS run 42945339735 (b473c21f4803)",
+      "verify_ci": "PASS run 42945339834 (b473c21f4803)",
+      "mobile_contract_ci": "PASS run 42942954909 (08b52a3; later changes are CI script/docs only)"
     },
     "cleanup": {
       "deleted_branches": [
