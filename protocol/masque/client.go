@@ -319,6 +319,21 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	return clientEndpoint, nil
 }
 
+// Close releases the HTTP client even when Start never ran.
+//
+// Ownership: the masque client owns the HTTP client and closes it once. This endpoint is the entry
+// point for the two paths the scope never sees - a duplicate-tag loser the endpoint manager builds
+// and discards, and a constructor that succeeded while the start order never reached PostStart -
+// so a failed create cannot leave a transport, its idle connections and its goroutines behind.
+func (c *ClientEndpoint) Close() error {
+	if c.client != nil {
+		return c.client.Close()
+	}
+	if c.httpClient != nil {
+		return c.httpClient.Close()
+	}
+	return nil
+}
 func (c *ClientEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:

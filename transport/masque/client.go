@@ -98,6 +98,9 @@ type Client struct {
 	// loop, and a second Start (or a restart path that spawned a worker) must be visible as a
 	// count above one instead of as a silent duplicate reconnect engine.
 	activeLoops atomic.Int64
+	// closeOnce and closeErr make Close idempotent: the endpoint and the scope share one release.
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // clientSession is one established MASQUE tunnel.
@@ -244,12 +247,21 @@ func (c *Client) Start() {
 	go c.loop()
 }
 
+// Close releases the tunnel and the HTTP client exactly once.
+//
+// Both the scope (which owns the started client) and the endpoint's own Close can reach this, and
+// an endpoint that never started has nothing else to close its HTTP client: the duplicate-tag loser
+// the manager builds and discards, for example. Making the close idempotent is what lets those two
+// owners converge instead of guessing which one runs first.
 func (c *Client) Close() error {
-	c.cancel()
-	if c.loopDone != nil {
-		<-c.loopDone
-	}
-	return c.httpClient.Close()
+	c.closeOnce.Do(func() {
+		c.cancel()
+		if c.loopDone != nil {
+			<-c.loopDone
+		}
+		c.closeErr = c.httpClient.Close()
+	})
+	return c.closeErr
 }
 
 // notifyTunnelTransport reports the session transport to a handler that asked for it.

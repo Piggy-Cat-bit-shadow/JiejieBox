@@ -338,10 +338,17 @@ func (h *Outbound) Close() error {
 		if h.fallback != nil {
 			h.fallback.close()
 		}
-		h.drainInFlightLocked()
 		primary := h.primary
 		secondary := h.secondary
 		h.access.Unlock()
+		// Stop the runtime BEFORE waiting for the dials it owns.
+		//
+		// The other order was a dependency cycle measured in production: a dial sitting in the SDK's
+		// handshake against a blackholed underlay only returns when the SDK's own handshake timeout
+		// expires, and waiting for that dial before touching the client made teardown inherit the
+		// SDK's timeout (the audit measured 8.7-8.9 s against a 7 s contract). Closing the client is
+		// what aborts that handshake, so it has to come first; the drain below then waits for a dial
+		// that is already unwinding.
 		var stopErrors []error
 		if primary != nil {
 			if err := primary.stop(); err != nil {
@@ -353,14 +360,20 @@ func (h *Outbound) Close() error {
 				stopErrors = append(stopErrors, E.Cause(err, "mieru: stop fallback client"))
 			}
 		}
+		// No new dial can begin now: dial() reads h.closed under the read lock and refuses. So the
+		// only members of this group are dials that were already in flight when the runtime stopped.
+		h.drainInFlight()
 		h.closeErr = E.Errors(stopErrors...)
 	})
 	return h.closeErr
 }
 
-// drainInFlightLocked waits until every dial that snapshotted the client has
-// returned. The caller must hold the write lock, so no new dial can be added.
-func (h *Outbound) drainInFlightLocked() {
+// drainInFlight waits until every dial that snapshotted a transport has returned.
+//
+// It is deliberately callable without the write lock, because teardown now stops the clients first
+// and the "no new dial" guarantee comes from h.closed instead: dial() checks it under the read lock
+// before it joins the group.
+func (h *Outbound) drainInFlight() {
 	if !h.inFlight.wait(dialDrainTimeout) {
 		h.logger.Warn("mieru: a dial did not finish within ", dialDrainTimeout, " during teardown")
 	}
@@ -387,7 +400,9 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 		// traffic has been attempted.
 		return
 	}
-	h.drainInFlightLocked()
+	// The write lock is held here, so the drain both waits for the dials and guarantees no new one
+	// can join while the transports are replaced.
+	h.drainInFlight()
 	nextPrimary, err := newTransportRuntime(h.primarySpec)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "mieru: rebuild primary config after network change: ", err)

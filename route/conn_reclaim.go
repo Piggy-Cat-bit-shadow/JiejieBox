@@ -455,15 +455,26 @@ func (m *ConnectionManager) AcquireConnection(ctx context.Context) (adapter.Conn
 type admissionTicket struct {
 	manager  *ConnectionManager
 	priority bool
-	settled  bool
+	// settled is the once-only consumption latch: the admission slot is returned by exactly one
+	// of Release, a successful Track, or the rejection path, and every later call is inert. It is
+	// atomic because Track and Release are not promised to be the same goroutine once a dial is
+	// cancelled while it is being tracked.
+	settled atomic.Bool
+}
+
+// consume claims this ticket's one consumption and reports whether this call owns it. Returning
+// the slot twice is the defect this function exists to make impossible: the second decrement would
+// land on whichever ticket happens to be outstanding at the time.
+func (t *admissionTicket) consume() bool {
+	if t == nil || !t.settled.CompareAndSwap(false, true) {
+		return false
+	}
+	t.manager.settleAdmission(t.priority)
+	return true
 }
 
 func (t *admissionTicket) Release() {
-	if t == nil || t.settled {
-		return
-	}
-	t.settled = true
-	t.manager.settleAdmission(t.priority)
+	t.consume()
 }
 
 // settleAdmissionLocked returns the slot. Caller holds d.mu.
@@ -491,19 +502,21 @@ func (m *ConnectionManager) settleAdmission(priority bool) {
 func (m *ConnectionManager) rejectAdmissionLocked(ticket *admissionTicket, closer io.Closer) {
 	d := &m.disposal
 	d.mu.Lock()
-	ticket.settled = true
 	d.pending++
 	d.queue = append(d.queue, &shutdownSocket{closer: closer})
 	if !d.worker {
 		d.worker = true
 		go m.disposalWorker()
 	}
-	m.settleAdmissionLocked(ticket.priority)
+	// The rejection owns the consumption only if nobody else claimed it first.
+	if ticket.settled.CompareAndSwap(false, true) {
+		m.settleAdmissionLocked(ticket.priority)
+	}
 	d.mu.Unlock()
 }
 
 func (t *admissionTicket) TrackConn(conn net.Conn) (net.Conn, error) {
-	if t == nil || t.settled {
+	if t == nil || t.settled.Load() {
 		return nil, net.ErrClosed
 	}
 	manager := t.manager
@@ -516,12 +529,14 @@ func (t *admissionTicket) TrackConn(conn net.Conn) (net.Conn, error) {
 	}
 	tracked.element = manager.connections.PushBack(tracked)
 	manager.access.Unlock()
-	manager.settleAdmission(t.priority)
+	// The successful hand-over consumes the ticket. Settling here without latching it is what let a
+	// later Release(A) decrement an unrelated outstanding ticket B.
+	t.consume()
 	return tracked, nil
 }
 
 func (t *admissionTicket) TrackPacketConn(conn net.PacketConn) (net.PacketConn, error) {
-	if t == nil || t.settled {
+	if t == nil || t.settled.Load() {
 		return nil, net.ErrClosed
 	}
 	manager := t.manager
@@ -534,7 +549,7 @@ func (t *admissionTicket) TrackPacketConn(conn net.PacketConn) (net.PacketConn, 
 	}
 	tracked.element = manager.connections.PushBack(tracked)
 	manager.access.Unlock()
-	manager.settleAdmission(t.priority)
+	t.consume()
 	return tracked, nil
 }
 
