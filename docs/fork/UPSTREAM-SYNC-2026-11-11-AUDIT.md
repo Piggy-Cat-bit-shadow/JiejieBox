@@ -13,9 +13,11 @@
 | 当前工作分支 | `integration/0.1.45-final` @ `e7e9706a456` |
 | 主仓默认分支 | `testing` @ `4152caf0e5` |
 | 主仓上游 | `SagerNet/sing-box:testing` @ `a13dbe1f78` |
-| 主仓上游 merge-base | `8eb4395a391`（2026-11-03） |
+| 审计时 merge-base | `8eb4395a391`（2026-11-03，合并前共同祖先） |
 | 上游独有 | **85** 个提交；375 文件，+21090/−6137 |
 | 本分支相对上游 | ahead 3705 / behind 85；`origin/testing` ahead 3363 / behind 85 |
+
+> 口径说明：`8eb4395` 是合并前的共同祖先；`303fbb4` 合并 `a13dbe1` 之后，最终共同祖先（final merge-base）是 `a13dbe1`。本文件是 2026-11-11 审计快照，保留审计时口径。
 
 **上游历史已重写**：旧审计记录的 upstream `a6952ccf690`（2026-10-24）**不再是当前 upstream/testing 的祖先**（`merge-base --is-ancestor` 失败）。旧审计的 22 行语义结论仍代表当时已吸收的代码，但其“behind=0 / upstream observed=a6952cc”已过期；本轮以 `8eb4395` 为 merge-base 重新计算，85 个提交是当前真实增量。
 

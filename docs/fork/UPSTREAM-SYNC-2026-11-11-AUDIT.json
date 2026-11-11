@@ -10,14 +10,17 @@
     "default_head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
     "upstream": "SagerNet/sing-box:testing",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
-    "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
     "upstream_rewritten": true,
     "old_audit_upstream": "a6952ccf6907c18e18917fcb763a433e8e36937b",
     "old_audit_note": "a6952cc is no longer an ancestor of upstream/testing; its code conclusions remain historical only",
     "fork_ahead": 3363,
     "fork_behind": 0,
     "working_ahead": 3705,
-    "working_behind": 0
+    "working_behind": 0,
+    "pre_merge_merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
+    "upstream_merged_sha": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "final_merge_base_at_observation": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "merge_base_note": "8eb4395 is the common ancestor before the merge; after 303fbb4 merged a13dbe1, the final merge-base is a13dbe1"
   },
   "repos": [
     {

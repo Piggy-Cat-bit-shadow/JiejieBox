@@ -260,5 +260,4 @@ conflict resolution; regenerate with
 `go run -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ./cmd/sing-box schema -o docs/schema.json`.
 
 CI: Android Core ARM64 run `42945339735` PASS on `08b52a30b4d`; Verify
-`42945339834` and Mobile contract `42942954909` were still in progress at
-report time and are not recorded as PASS.
+`42945339834` and Android Core `42945339735` succeeded on the final code head; Mobile contract `42942954909` succeeded on `08b52a3`, and later changes are CI-script/docs only.
