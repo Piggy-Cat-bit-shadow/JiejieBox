@@ -1,0 +1,588 @@
+{
+  "schema_version": "perf-run/v1",
+  "run_id": "wireguard-endpoint-20261111T162757",
+  "kind": "e2e",
+  "started_at": "2026-11-11T16:27:57.687397848+08:00",
+  "finished_at": "2026-11-11T16:28:26.0873617+08:00",
+  "source": {
+    "repo": "/mnt/c/Deepseek/_perf/kernel",
+    "branch": "work/closure-2026-11-11",
+    "commit": "fa256e89afd85f0f583510d958d4ace07f8ad077",
+    "commit_subject": "merge: start the closure round from the current testing tip",
+    "commit_time": "2026-11-11T16:15:48+08:00",
+    "dirty": true,
+    "dirty_files": [
+      "M go.mod",
+      "M go.sum",
+      "M test/go.mod",
+      "?? scripts/perf/validate_runs.py"
+    ],
+    "go_version": "go version go1.25.5 linux/amd64",
+    "cgo_enabled": false,
+    "modules": {
+      "github.com/enfein/mieru": "v3.39.0",
+      "github.com/sagernet/cronet-go": "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2",
+      "github.com/sagernet/quic-go": "v0.61.0-sing-box-mod.13",
+      "github.com/sagernet/sing": "v0.9.7-0.20261110095940-27b73774b240",
+      "github.com/sagernet/sing-anytls": "v0.0.0-20260928104022-580984e4d8cb",
+      "github.com/sagernet/sing-mux": "v0.3.10-0.20261110064256-375087483ea2",
+      "github.com/sagernet/sing-quic": "v0.7.2-0.20261109110824-5253224b67cf",
+      "github.com/sagernet/sing-shadowsocks": "v0.2.2-0.20261110092058-52ade8ab7e95",
+      "github.com/sagernet/sing-tun": "v0.9.7-0.20261109145802-79ed0653fdc6",
+      "github.com/sagernet/sing-vmess": "v0.2.9-0.20261110093549-d800eb57f96c",
+      "github.com/sagernet/wireguard-go": "v0.0.8-0.20261022215849-fdf0ad046586"
+    }
+  },
+  "host": {
+    "os": "linux",
+    "arch": "amd64",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "distro": "Ubuntu",
+    "distro_version": "24.04",
+    "wsl": true,
+    "wsl_kernel_release": "6.18.33.2-microsoft-standard-WSL2",
+    "glibc": "glibc 2.39",
+    "cpu_model": "AMD Ryzen 7 4800H with Radeon Graphics",
+    "cpu_cores": 16,
+    "mem_total_bytes": 8017055744,
+    "clk_tck": 100,
+    "sampling_interval_ms": 100,
+    "sample_limit_note": "samples are point reads every sampling_interval_ms; a spike shorter than one interval can be missed, and the last interval before exit is covered by wait4 rusage rather than by sampling"
+  },
+  "network": {
+    "topology": "loopback",
+    "delay_ms": null,
+    "jitter_ms": null,
+    "loss_percent": null,
+    "bandwidth_mbps": null,
+    "mtu": null,
+    "interfaces": [
+      {
+        "name": "lo",
+        "mtu": 65536
+      },
+      {
+        "name": "eth0",
+        "mtu": 1500
+      }
+    ]
+  },
+  "scenario": {
+    "id": "wireguard-endpoint",
+    "protocol": "wireguard",
+    "mode": "userspace",
+    "transport": "udp",
+    "security": "noise",
+    "server_config": "configs/server.json",
+    "client_config": "configs/client.json",
+    "extra": {
+      "first_request_ms": 406.812,
+      "known_limits": "userspace endpoint: download and UDP do not carry traffic reliably in this configuration; see docs/perf/FAILURES.md#b7",
+      "startup_client_ms": 105.062,
+      "startup_server_ms": 801.546,
+      "tunnel_addresses": [
+        "198.18.17.1/32",
+        "198.18.17.2/32"
+      ]
+    }
+  },
+  "environment": [
+    {
+      "name": "PERF_SOURCE_JSON",
+      "value": "{\"repo\": \"/mnt/c/Deepseek/_perf/kernel\", \"branch\": \"work/closure-2026-11-11\", \"commit\": \"fa256e89afd85f0f583510d958d4ace07f8ad077\", \"commit_subject\": \"merge: start the closure round from the current testing tip\", \"commit_time\": \"2026-11-11T16:15:48+08:00\", \"dirty\": true, \"dirty_files\": [\"M go.mod\", \"M go.sum\", \"M test/go.mod\", \"?? scripts/perf/validate_runs.py\"], \"go_version\": \"go version go1.25.5 linux/amd64\", \"cgo_enabled\": false, \"modules\": {\"github.com/enfein/mieru\": \"v3.39.0\", \"github.com/sagernet/cronet-go\": \"v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2\", \"github.com/sagernet/quic-go\": \"v0.61.0-sing-box-mod.13\", \"github.com/sagernet/sing\": \"v0.9.7-0.20261110095940-27b73774b240\", \"github.com/sagernet/sing-anytls\": \"v0.0.0-20260928104022-580984e4d8cb\", \"github.com/sagernet/sing-mux\": \"v0.3.10-0.20261110064256-375087483ea2\", \"github.com/sagernet/sing-quic\": \"v0.7.2-0.20261109110824-5253224b67cf\", \"github.com/sagernet/sing-shadowsocks\": \"v0.2.2-0.20261110092058-52ade8ab7e95\", \"github.com/sagernet/sing-tun\": \"v0.9.7-0.20261109145802-79ed0653fdc6\", \"github.com/sagernet/sing-vmess\": \"v0.2.9-0.20261110093549-d800eb57f96c\", \"github.com/sagernet/wireguard-go\": \"v0.0.8-0.20261022215849-fdf0ad046586\"}}"
+    }
+  ],
+  "reps": [
+    {
+      "index": 0,
+      "streams": 2,
+      "pattern": "upload",
+      "payload_bytes": 139041032,
+      "duration_seconds": 3.093670136,
+      "goodput_mib_per_s": 42.86166763611915,
+      "wire": null,
+      "latency": null,
+      "udp": null,
+      "client": {
+        "pid": 17115,
+        "cpu_seconds": 8.47,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 65.40941992778075,
+        "rss_start_bytes": 89915392,
+        "rss_end_bytes": 107642880,
+        "rss_peak_bytes": 106967040,
+        "threads_peak": 20,
+        "fds_peak": 19,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 17099,
+        "cpu_seconds": 8.86,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 68.42118778750145,
+        "rss_start_bytes": 84025344,
+        "rss_end_bytes": 101122048,
+        "rss_peak_bytes": 101122048,
+        "threads_peak": 16,
+        "fds_peak": 18,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 17076,
+        "cpu_seconds": 2.17,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 16.757785270753743,
+        "rss_start_bytes": 9822208,
+        "rss_end_bytes": 12070912,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 139041032,
+        "ok": true,
+        "detail": "target verified every block against the pattern page"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 137363456,
+        "target_bytes": 139041032
+      }
+    },
+    {
+      "index": 1,
+      "streams": 2,
+      "pattern": "upload",
+      "payload_bytes": 144531152,
+      "duration_seconds": 3.007199375,
+      "goodput_mib_per_s": 45.83522087989521,
+      "wire": null,
+      "latency": null,
+      "udp": null,
+      "client": {
+        "pid": 17115,
+        "cpu_seconds": 8.45,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 62.77621320557937,
+        "rss_start_bytes": 115175424,
+        "rss_end_bytes": 117448704,
+        "rss_peak_bytes": 117424128,
+        "threads_peak": 20,
+        "fds_peak": 19,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 17099,
+        "cpu_seconds": 9.16,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 68.05090094237954,
+        "rss_start_bytes": 105877504,
+        "rss_end_bytes": 106643456,
+        "rss_peak_bytes": 106643456,
+        "threads_peak": 16,
+        "fds_peak": 18,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 17076,
+        "cpu_seconds": 2.42,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 17.978513131065334,
+        "rss_start_bytes": 12664832,
+        "rss_end_bytes": 12648448,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 144531152,
+        "ok": true,
+        "detail": "target verified every block against the pattern page"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 142868480,
+        "target_bytes": 144531152
+      }
+    },
+    {
+      "index": 2,
+      "streams": 2,
+      "pattern": "upload",
+      "payload_bytes": 170988812,
+      "duration_seconds": 3.02788701,
+      "goodput_mib_per_s": 53.855258752610055,
+      "wire": null,
+      "latency": null,
+      "udp": null,
+      "client": {
+        "pid": 17115,
+        "cpu_seconds": 9.1,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 57.14438555430164,
+        "rss_start_bytes": 119050240,
+        "rss_end_bytes": 124678144,
+        "rss_peak_bytes": 124506112,
+        "threads_peak": 20,
+        "fds_peak": 19,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 17099,
+        "cpu_seconds": 9.63,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 60.47257504262911,
+        "rss_start_bytes": 108736512,
+        "rss_end_bytes": 110583808,
+        "rss_peak_bytes": 110583808,
+        "threads_peak": 16,
+        "fds_peak": 18,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 17076,
+        "cpu_seconds": 2.49,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 15.636210992330891,
+        "rss_start_bytes": 12967936,
+        "rss_end_bytes": 12816384,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 170988812,
+        "ok": true,
+        "detail": "target verified every block against the pattern page"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 169345024,
+        "target_bytes": 170988812
+      }
+    },
+    {
+      "index": 0,
+      "streams": 4,
+      "pattern": "upload",
+      "payload_bytes": 160946652,
+      "duration_seconds": 3.080507173,
+      "goodput_mib_per_s": 49.826434318766836,
+      "wire": null,
+      "latency": null,
+      "udp": null,
+      "client": {
+        "pid": 17115,
+        "cpu_seconds": 9.79,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 65.31314771903425,
+        "rss_start_bytes": 126599168,
+        "rss_end_bytes": 126828544,
+        "rss_peak_bytes": 126828544,
+        "threads_peak": 20,
+        "fds_peak": 23,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 17099,
+        "cpu_seconds": 10.97,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 73.18541680059303,
+        "rss_start_bytes": 111165440,
+        "rss_end_bytes": 118726656,
+        "rss_peak_bytes": 118603776,
+        "threads_peak": 17,
+        "fds_peak": 22,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 17076,
+        "cpu_seconds": 3.4,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 22.68280921805071,
+        "rss_start_bytes": 14323712,
+        "rss_end_bytes": 14241792,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 160946652,
+        "ok": true,
+        "detail": "target verified every block against the pattern page"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 168296448,
+        "target_bytes": 160946652
+      }
+    },
+    {
+      "index": 1,
+      "streams": 4,
+      "pattern": "upload",
+      "payload_bytes": 172883160,
+      "duration_seconds": 3.07120986,
+      "goodput_mib_per_s": 53.683804411578805,
+      "wire": null,
+      "latency": null,
+      "udp": null,
+      "client": {
+        "pid": 17115,
+        "cpu_seconds": 9.8,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 60.86578863551546,
+        "rss_start_bytes": 126857216,
+        "rss_end_bytes": 132444160,
+        "rss_peak_bytes": 132440064,
+        "threads_peak": 21,
+        "fds_peak": 23,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 17099,
+        "cpu_seconds": 10.81,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 67.13869134182879,
+        "rss_start_bytes": 119373824,
+        "rss_end_bytes": 120193024,
+        "rss_peak_bytes": 120193024,
+        "threads_peak": 17,
+        "fds_peak": 22,
+        "samples": 31,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 17076,
+        "cpu_seconds": 3.35,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 20.806162441732326,
+        "rss_start_bytes": 14786560,
+        "rss_end_bytes": 14249984,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 172883160,
+        "ok": true,
+        "detail": "target verified every block against the pattern page"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 177209344,
+        "target_bytes": 172883160
+      }
+    },
+    {
+      "index": 2,
+      "streams": 4,
+      "pattern": "upload",
+      "payload_bytes": 178280284,
+      "duration_seconds": 3.103257016,
+      "goodput_mib_per_s": 54.78802661068796,
+      "wire": null,
+      "latency": null,
+      "udp": null,
+      "client": {
+        "pid": 17115,
+        "cpu_seconds": 9.6,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 57.81862850521373,
+        "rss_start_bytes": 132448256,
+        "rss_end_bytes": 133976064,
+        "rss_peak_bytes": 133976064,
+        "threads_peak": 21,
+        "fds_peak": 23,
+        "samples": 32,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 17099,
+        "cpu_seconds": 10.77,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 64.86527385428666,
+        "rss_start_bytes": 124555264,
+        "rss_end_bytes": 119562240,
+        "rss_peak_bytes": 124858368,
+        "threads_peak": 17,
+        "fds_peak": 22,
+        "samples": 32,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 17076,
+        "cpu_seconds": 3.42,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 20.597886404982393,
+        "rss_start_bytes": 15564800,
+        "rss_end_bytes": 16523264,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 178280284,
+        "ok": true,
+        "detail": "target verified every block against the pattern page"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 175374336,
+        "target_bytes": 178280284
+      }
+    }
+  ],
+  "summary": [
+    {
+      "metric": "goodput",
+      "unit": "MiB/s",
+      "streams": 2,
+      "pattern": "upload",
+      "n": 3,
+      "median": 45.83522087989521,
+      "mad": 2.9735532437760597,
+      "min": 42.86166763611915,
+      "max": 53.855258752610055
+    },
+    {
+      "metric": "cpu_seconds_per_gib_client",
+      "unit": "s/GiB",
+      "streams": 2,
+      "pattern": "upload",
+      "n": 3,
+      "median": 62.77621320557937,
+      "mad": 2.633206722201379,
+      "min": 57.14438555430164,
+      "max": 65.40941992778075
+    },
+    {
+      "metric": "cpu_seconds_per_gib_server",
+      "unit": "s/GiB",
+      "streams": 2,
+      "pattern": "upload",
+      "n": 3,
+      "median": 68.05090094237954,
+      "mad": 0.37028684512191035,
+      "min": 60.47257504262911,
+      "max": 68.42118778750145
+    },
+    {
+      "metric": "goodput",
+      "unit": "MiB/s",
+      "streams": 4,
+      "pattern": "upload",
+      "n": 3,
+      "median": 53.683804411578805,
+      "mad": 1.1042221991091523,
+      "min": 49.826434318766836,
+      "max": 54.78802661068796
+    },
+    {
+      "metric": "cpu_seconds_per_gib_client",
+      "unit": "s/GiB",
+      "streams": 4,
+      "pattern": "upload",
+      "n": 3,
+      "median": 60.86578863551546,
+      "mad": 3.0471601303017266,
+      "min": 57.81862850521373,
+      "max": 65.31314771903425
+    },
+    {
+      "metric": "cpu_seconds_per_gib_server",
+      "unit": "s/GiB",
+      "streams": 4,
+      "pattern": "upload",
+      "n": 3,
+      "median": 67.13869134182879,
+      "mad": 2.273417487542133,
+      "min": 64.86527385428666,
+      "max": 73.18541680059303
+    }
+  ],
+  "artifacts": {
+    "run_json": "run.json",
+    "summary_md": "summary.md",
+    "client_config": "configs/client.json",
+    "server_config": "configs/server.json",
+    "client_log": "logs/client.log",
+    "server_log": "logs/server.log"
+  },
+  "method": "e2e process pair: sing-box server + sing-box client on real sockets; payload verified against a pattern page; CPU from /proc boundary reads and wait4 rusage; RSS/threads/FDs sampled every 100ms; wire bytes from veth statistics when the run crosses an emulated link"
+}
