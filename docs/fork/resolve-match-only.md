@@ -135,6 +135,7 @@ DNS 答案"看起来是公网"而丢失 `ip_is_private` 命中。
 | `route::TestNewRuleActionCarriesAndDescribesMatchOnly` | 配置字段 → 运行时动作 → `String()` |
 | `route::TestMatchOnlyResolutionKeepsTheNameForUDP` | UDP 臂：`ListenPacket` 收到域名（match_only）/ IP（候选） |
 | `route::TestPacketDestinationGuardDoesNotInheritMatchOnlyEvidence` | 跨数据报污染差分用例：使用新目标的自身解析结果；旧证据会（对照组）错误拒绝 |
+| `e2e::TestResolveMatchOnlyUoTSessionDoesNotJudgeOneDatagramByAnother` | **真实 UoT 会话**：会话目标 `a.test`（→`127.0.0.1`）被允许转发；同一会话内第二个数据报发往 `b.test`（→`127.0.0.2`）被逐数据报规则丢弃（日志 `drop datagram to b.test`），随后同会话继续可用；`MatchAddresses` 只属于会话目标 |
 | `e2e::TestResolveMatchOnlyFakeIPFlowKeepsTheMappedDomain` | **TUN + FakeIP 数据面**：设备拿到占位地址、连占位地址，规则由匹配地址选中代理，代理收到**域名**；占位地址与本地解析结果都不出现在线上；`FakeIP=true`、`OriginDestination` 为占位地址 |
 | `e2e::TestResolveMatchOnlyPrivateAnswerSelectsTheRule` | 私网答案在两种模式下都选中 `ip_is_private` 规则，线格式分别为域名 / 答案 |
 | `e2e::TestResolveMatchOnlyLookupFailureIsNotAnAllow` | 解析失败两种模式一致失败：不落到下一条规则、不触达命名出站、不兜底直连 |
