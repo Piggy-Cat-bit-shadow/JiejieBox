@@ -60,10 +60,13 @@ type Config struct {
 	// Zero keeps the historical unpaced saturation mode; a positive value selects
 	// paced mode, which is the only mode in which "lost" describes the path.
 	UDPRate int
-	// UDPDrain is how long the receiver keeps reading after the last write.
-	// Zero selects the default (500ms when paced, none when unpaced); a negative
-	// value disables the drain.
+	// UDPDrain is the post-send observation window. Zero selects the default
+	// (500 ms when paced, none when unpaced); a negative value disables it.
 	UDPDrain time.Duration
+	// UDPQuietGuard overrides the tail guard used to decide whether the last
+	// reply sat too close to the observation edge. Zero selects max(250 ms, 10 %
+	// of the window). It is an operational policy, never proof of no late tail.
+	UDPQuietGuard time.Duration
 	// UDPEpoch tags this phase's payloads so a late packet from another phase can
 	// be counted as stale instead of as a duplicate.
 	UDPEpoch uint32
@@ -94,9 +97,9 @@ type Result struct {
 	SendWindow         time.Duration
 	DrainDuration      time.Duration
 	DrainLastReply     time.Duration
-	// DrainComplete says the drain window was long enough to observe the tail
-	// (it ran in full and the last reply was not still arriving at its edge).
-	// AllReturned is the separate fact "every write came back".
+	// DrainComplete is kept as the alias "the observation window reached
+	// complete_quiet". New consumers use the split fields below; old JSON that
+	// carries only DrainComplete is not proof of a complete tail.
 	DrainComplete   bool
 	AllReturned     bool
 	Aborted         bool
@@ -106,6 +109,43 @@ type Result struct {
 	MismatchedBytes int64
 	Connections     int64
 	Errors          []string
+
+	// Split observation state. ObservationDuration is the configured post-send
+	// horizon; ObservationComplete means it ran to its end with a live context.
+	// TailActive means the last reply landed inside the guard, so the tail may
+	// have been cut. QuietPeriod is time since the last reply at the end.
+	ObservationDuration time.Duration
+	ObservationElapsed  time.Duration
+	ObservationComplete bool
+	QuietPeriod         time.Duration
+	TailActive          bool
+	DrainStatus         string
+	// LossEstimable is true only for complete_quiet with exact sequence
+	// tracking. lost/loss_percent are only derived from such a run.
+	LossEstimable bool
+	// NotReturned is writes-unique, i.e. "no reply before the deadline", never
+	// "the network dropped this many". It is recorded even when not estimable.
+	NotReturned      int64
+	NotReturnedRatio float64
+	// SequenceTrackingComplete is false once the sequence window is full; unique
+	// and duplicate are then lower bounds only.
+	SequenceTrackingComplete bool
+	DatagramUnattributed     int64
+	DatagramWriteErrors      int64
+	// SendPhaseDuration is the time from phase start to the last write
+	// completion; WriteCompletionPPS is writes divided by it (not by the
+	// configured duration). SendOverrun is how far it exceeded the window.
+	SendPhaseDuration  time.Duration
+	SendOverrun        time.Duration
+	ConfiguredPPS      float64
+	ScheduledPPS       float64
+	AttemptPPS         float64
+	WriteCompletionPPS float64
+	// Offsets from phase start for the last scheduled callback, the last write
+	// start and the last successful write completion.
+	LastScheduledOffset  time.Duration
+	LastWriteStartOffset time.Duration
+	LastWriteEndOffset   time.Duration
 }
 
 func (c *Config) normalize() {
@@ -438,6 +478,13 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 	if drain < 0 {
 		drain = 0
 	}
+	guard := cfg.UDPQuietGuard
+	if guard <= 0 {
+		guard = drain / 10
+		if guard < 250*time.Millisecond {
+			guard = 250 * time.Millisecond
+		}
+	}
 	if cfg.PacketSize < udpHeaderSize+16 {
 		cfg.PacketSize = udpHeaderSize + 16
 	}
@@ -462,13 +509,17 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 	_ = association.socket.SetWriteDeadline(deadline.Add(drain + 2*time.Second))
 
 	var (
-		attempts  atomic.Int64
-		writes    atomic.Int64
-		scheduled atomic.Int64
-		skipped   atomic.Int64
-		seq       atomic.Uint32
-		firstErr  atomic.Value
-		sendEnd   atomic.Int64
+		attempts       atomic.Int64
+		writes         atomic.Int64
+		writeErrors    atomic.Int64
+		scheduled      atomic.Int64
+		skipped        atomic.Int64
+		seq            atomic.Uint32
+		firstErr       atomic.Value
+		sendEnd        atomic.Int64
+		lastScheduled  atomic.Int64
+		lastWriteStart atomic.Int64
+		lastWriteEnd   atomic.Int64
 	)
 	recordErr := func(err error) {
 		if err == nil {
@@ -485,19 +536,24 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		attempts.Add(1)
 		packet, buildErr := socksPacket(buffer)
 		if buildErr != nil {
+			writeErrors.Add(1)
 			recordErr(buildErr)
 			return
 		}
+		lastWriteStart.Store(time.Now().UnixNano())
 		if _, writeErr := association.socket.WriteToUDP(packet, association.relay); writeErr != nil {
+			writeErrors.Add(1)
 			recordErr(writeErr)
 			return
 		}
+		lastWriteEnd.Store(time.Now().UnixNano())
 		writes.Add(1)
 	}
 
 	var latencies = newLatencySink(cfg.MaxLatencySamples)
 	var (
 		unique, duplicate, outOfOrder, foreign, stale int64
+		unattributed                                  int64
 		jitterSum                                     time.Duration
 		jitterN                                       int
 		lastSeen                                      time.Time
@@ -540,7 +596,13 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 				continue
 			}
 			lastReplyAt = time.Now()
-			first := window.add(sequence)
+			first, exact := window.add(sequence)
+			if !exact {
+				// The sequence window is full; this reply cannot be attributed as
+				// unique or duplicate. Never count it as unique.
+				unattributed++
+				continue
+			}
 			if first {
 				unique++
 				if sentNs > 0 && sentNs < uint64(time.Now().UnixNano()) {
@@ -568,6 +630,7 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			defer senders.Done()
 			buffer := append([]byte(nil), template...)
 			paced := runPacer(ctx, start, deadline, rate, func() {
+				lastScheduled.Store(time.Now().UnixNano())
 				sendOne(buffer)
 			})
 			scheduled.Add(paced.scheduled)
@@ -589,6 +652,7 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 						return
 					}
 					scheduled.Add(1)
+					lastScheduled.Store(time.Now().UnixNano())
 					sendOne(buffer)
 				}
 				sendEnd.Store(time.Now().UnixNano())
@@ -624,8 +688,23 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}
 	written := writes.Load()
-	drainComplete := drainCompleteFor(ctx.Err(), drain, written, unique, drainLastReply, !lastReplyAt.IsZero())
+	writeErrCount := writeErrors.Load()
 	returned := unique + duplicate
+	notReturned := written - unique
+	if notReturned < 0 {
+		notReturned = 0
+	}
+	quiet := drainDuration
+	if !lastReplyAt.IsZero() {
+		quiet = time.Since(lastReplyAt)
+	}
+	drainStatus, observationComplete, tailActive := drainStateFor(ctx.Err(), drain, quiet, !lastReplyAt.IsZero(), guard)
+	sequenceComplete := !window.truncated
+	lossEstimable := drainStatus == "complete_quiet" && sequenceComplete
+	phase := sendWindow
+	if phase <= 0 {
+		phase = time.Millisecond
+	}
 	result := Result{
 		SentBytes:          written * int64(cfg.PacketSize),
 		DatagramsSent:      written,
@@ -646,10 +725,40 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		SendWindow:         sendWindow,
 		DrainDuration:      drainDuration,
 		DrainLastReply:     drainLastReply,
-		DrainComplete:      drainComplete,
+		DrainComplete:      lossEstimable,
 		AllReturned:        written > 0 && unique >= written,
 		Aborted:            ctx.Err() != nil,
 		Paced:              paced,
+
+		ObservationDuration:      drain,
+		ObservationElapsed:       drainDuration,
+		ObservationComplete:      observationComplete,
+		QuietPeriod:              quiet,
+		TailActive:               tailActive,
+		DrainStatus:              drainStatus,
+		LossEstimable:            lossEstimable,
+		NotReturned:              notReturned,
+		SequenceTrackingComplete: sequenceComplete,
+		DatagramUnattributed:     unattributed,
+		DatagramWriteErrors:      writeErrCount,
+		SendPhaseDuration:        sendWindow,
+		SendOverrun:              maxDuration(0, sendWindow-cfg.Duration),
+		ConfiguredPPS:            float64(rate),
+		ScheduledPPS:             float64(scheduled.Load()) / phase.Seconds(),
+		AttemptPPS:               float64(attempts.Load()) / phase.Seconds(),
+		WriteCompletionPPS:       float64(written) / phase.Seconds(),
+	}
+	if written > 0 {
+		result.NotReturnedRatio = float64(notReturned) / float64(written)
+	}
+	if at := lastScheduled.Load(); at != 0 {
+		result.LastScheduledOffset = time.Unix(0, at).Sub(start)
+	}
+	if at := lastWriteStart.Load(); at != 0 {
+		result.LastWriteStartOffset = time.Unix(0, at).Sub(start)
+	}
+	if at := lastWriteEnd.Load(); at != 0 {
+		result.LastWriteEndOffset = time.Unix(0, at).Sub(start)
 	}
 	if jitterN > 0 {
 		result.Jitter = jitterSum / time.Duration(jitterN)
@@ -659,6 +768,13 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 	}
 	result.Connections = 1
 	return result, nil
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 const udpHeaderSize = 20
@@ -707,53 +823,56 @@ func parseUDPHeader(payload []byte) (magic, epoch, sequence uint32, sentNs uint6
 }
 
 // udpSeqWindow attributes a datagram to first-arrival, duplicate or late-order
-// without unbounded memory: the cap is one million sequences, far above any phase
-// this generator is meant to run, and a truncated window keeps counting first
-// arrivals rather than failing the phase.
+// without unbounded memory. Once the cap is reached the window reports
+// exact=false instead of guessing: a caller must count that datagram as
+// unattributed, never as unique, and must stop claiming an exact loss figure.
 type udpSeqWindow struct {
 	seen      map[uint32]struct{}
 	maxSeen   uint32
 	truncated bool
+	limit     int
 }
 
 const udpSeqWindowLimit = 1 << 20
 
 func newUDPSeqWindow() *udpSeqWindow {
-	return &udpSeqWindow{seen: make(map[uint32]struct{}, 1024)}
+	return &udpSeqWindow{seen: make(map[uint32]struct{}, 1024), limit: udpSeqWindowLimit}
 }
 
-// add reports whether the sequence is the first arrival.
-func (w *udpSeqWindow) add(sequence uint32) bool {
+// add reports whether the sequence is the first arrival and whether the window
+// could attribute it at all. exact=false means the window is full.
+func (w *udpSeqWindow) add(sequence uint32) (first bool, exact bool) {
 	if _, found := w.seen[sequence]; found {
-		return false
+		return false, true
 	}
+	if w.limit <= 0 {
+		w.limit = udpSeqWindowLimit
+	}
+	if len(w.seen) >= w.limit {
+		w.truncated = true
+		return false, false
+	}
+	w.seen[sequence] = struct{}{}
 	if sequence > w.maxSeen {
 		w.maxSeen = sequence
 	}
-	if len(w.seen) < udpSeqWindowLimit {
-		w.seen[sequence] = struct{}{}
-	} else {
-		w.truncated = true
-	}
-	return true
+	return true, true
 }
 
-// drainCompleteFor is the only definition of a usable loss figure: the context
-// stayed alive, and the tail was actually observed. A zero-length drain cannot
-// rule out a late tail once replies are missing, so it is only complete when
-// nothing is missing (or nothing was sent). A tail arriving within 50 ms of the
-// window edge may have been cut off, so that is also incomplete.
-func drainCompleteFor(ctxErr error, drain time.Duration, written, unique int64, lastReply time.Duration, sawReply bool) bool {
+// drainStateFor is the observation-state machine. It separates the window
+// actually running, the quiet tail, and cancellation; it never claims that a
+// quiet period proves no late packet exists.
+func drainStateFor(ctxErr error, observation time.Duration, quiet time.Duration, sawReply bool, guard time.Duration) (status string, complete bool, tailActive bool) {
 	if ctxErr != nil {
-		return false
+		return "canceled", false, false
 	}
-	if drain <= 0 {
-		return written == 0 || unique >= written
+	if observation <= 0 {
+		return "zero_window", false, false
 	}
-	if sawReply && lastReply > drain-50*time.Millisecond {
-		return false
+	if sawReply && quiet < guard {
+		return "window_elapsed_tail_active", false, true
 	}
-	return true
+	return "complete_quiet", true, false
 }
 
 // runPacer drives send at a fixed offered rate on an absolute schedule. It

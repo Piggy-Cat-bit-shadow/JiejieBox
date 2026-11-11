@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -212,6 +213,30 @@ func Run(opts Options) (*Outcome, error) {
 		reps = 1
 	}
 
+	// Record the parameters that actually run, after scenario defaults and CLI
+	// overrides have been resolved. The raw options are kept too, so a default is
+	// distinguishable from an explicit value.
+	run.Scenario.Extra["requested_parameters"] = map[string]any{
+		"patterns": opts.Patterns, "streams": opts.Streams, "reps": opts.Reps,
+		"duration_s": opts.Duration.Seconds(), "warmup_s": opts.Warmup.Seconds(),
+		"stagger_ms": float64(opts.Stagger.Microseconds()) / 1000,
+		"udp_rate":   opts.UDPRate, "udp_drain_ms": float64(opts.UDPDrain.Microseconds()) / 1000,
+		"udp_packet_size": opts.UDPPacketSize,
+	}
+	run.Scenario.Extra["load_parameters"] = loadParameters(opts, scenario, patterns, streamsList, duration, warmup, reps)
+
+	runnerPath, _ := os.Executable()
+	runnerSHA, _ := source.FileSHA256(runnerPath)
+	run.Source.Runner = &schema.RunnerInfo{
+		Path: runnerPath, SHA256: runnerSHA, GoVersion: runtime.Version(),
+		TreeCommit: run.Source.Commit, Dirty: run.Source.Dirty, DirtyFiles: run.Source.DirtyFiles,
+	}
+	if before, hashErr := source.FileSHA256(opts.Binaries["lab"]); hashErr == nil {
+		run.Source.BinarySHA256Before = before
+	} else {
+		run.Source.Warnings = append(run.Source.Warnings, "binary_hash_before: "+hashErr.Error())
+	}
+
 	sess, err := prepare(scenario, runDir, opts, duration)
 	if err != nil {
 		run.Failures = append(run.Failures, schema.Failure{Stage: "prepare", Message: err.Error(), Class: "environment"})
@@ -244,16 +269,6 @@ func Run(opts Options) (*Outcome, error) {
 	// The invocation parameters are part of the evidence: a run directory name
 	// does not say which stagger produced it, and a matrix that cannot be
 	// reconstructed from its own JSON is not reproducible.
-	run.Scenario.Extra["load_parameters"] = map[string]any{
-		"patterns":     opts.Patterns,
-		"streams":      opts.Streams,
-		"reps":         opts.Reps,
-		"duration_s":   opts.Duration.Seconds(),
-		"warmup_s":     opts.Warmup.Seconds(),
-		"stagger_ms":   float64(opts.Stagger.Microseconds()) / 1000,
-		"udp_rate":     opts.UDPRate,
-		"udp_drain_ms": float64(opts.UDPDrain.Microseconds()) / 1000,
-	}
 	run.Scenario.Extra["startup_server_ms"] = float64(sess.serverStartup.Microseconds()) / 1000
 	run.Scenario.Extra["startup_client_ms"] = float64(sess.clientStartup.Microseconds()) / 1000
 	// startup_*_ms is when the configured readiness check passed. For a native
@@ -306,6 +321,17 @@ func Run(opts Options) (*Outcome, error) {
 
 	run.Summary = summarise(run.Reps)
 	run.FinishedAt = time.Now()
+	if after, changed, hashErr := binaryState(run.Source.BinarySHA256Before, opts.Binaries["lab"]); hashErr == nil {
+		run.Source.BinarySHA256After = after
+		run.Source.BinaryChanged = &changed
+		if changed {
+			run.Source.Warnings = append(run.Source.Warnings,
+				"binary_changed: measured binary changed between start and finish; provenance invalid")
+			run.Notes = append(run.Notes, "provenance_invalid: binary changed during the run")
+		}
+	} else {
+		run.Source.Warnings = append(run.Source.Warnings, "binary_hash_after: "+hashErr.Error())
+	}
 	opts.Logf("measurement loop finished after %s", time.Since(startedAt).Round(time.Millisecond))
 	outcome.Failures = run.Failures
 	if err = writeRun(runDir, run); err != nil {
@@ -611,10 +637,12 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 			opts.Logf("warmup for %s/%d reported: %v", pattern, streams, err)
 		}
 	}
+	quiesceStatus := "not_applicable"
 	if loadgen.Pattern(pattern) == loadgen.UDP {
-		// Warmup may still have datagrams in flight; without this wait they land
-		// in the measured target counter and make target_received unattributable.
-		quiesceTarget(sess, kind, opts)
+		// Warmup may still have datagrams in flight. The measured target count no
+		// longer depends on this wait (it is read per epoch), but the structured
+		// result is recorded so an unclean target is visible.
+		quiesceStatus = quiesceTarget(sess, kind, opts).Status
 	}
 	sess.targets.reset()
 
@@ -674,7 +702,7 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 		record.GoodputMiBPerS = &goodput
 	}
 	if loadgen.Pattern(pattern) == loadgen.UDP {
-		record.UDP = udpRecordFrom(result, stats, statsErr, packetSize)
+		record.UDP = udpRecordFrom(result, stats, statsErr, packetSize, cfg.UDPEpoch, quiesceStatus)
 	}
 	if runErr != nil {
 		record.Warnings = append(record.Warnings, runErr.Error())
@@ -1174,10 +1202,12 @@ func envFloat(name string) *float64 {
 
 func intPtr(value int) *int { return &value }
 
-// udpRecordFrom turns the loader's UDP accounting into the schema block. Loss is
-// only claimed when the drain was demonstrably long enough to see the tail; with
-// a truncated drain the lost/loss fields stay null rather than invent a number.
-func udpRecordFrom(result loadgen.Result, stats target.Stats, statsErr error, packetSize int) *schema.UDP {
+// udpRecordFrom turns the loader's UDP accounting into the schema block. The
+// observation state, target epoch and sequence tracking are separate facts: a
+// loss figure is emitted only when the window completed quietly AND the sequence
+// window attributed every reply. Otherwise not_returned_by_deadline is recorded
+// and lost/loss_percent stay null.
+func udpRecordFrom(result loadgen.Result, stats target.Stats, statsErr error, packetSize int, epoch uint32, quiesceStatus string) *schema.UDP {
 	mode := "unpaced"
 	if result.Paced {
 		mode = "paced"
@@ -1190,7 +1220,7 @@ func udpRecordFrom(result loadgen.Result, stats target.Stats, statsErr error, pa
 	}
 	writes := result.DatagramWrites
 	unique := result.DatagramUnique
-	if result.DrainComplete && writes > 0 {
+	if result.LossEstimable && writes > 0 {
 		lost := writes - unique
 		if lost < 0 {
 			lost = 0
@@ -1198,10 +1228,6 @@ func udpRecordFrom(result loadgen.Result, stats target.Stats, statsErr error, pa
 		record.Lost = int64Ptr(lost)
 		loss := float64(lost) / float64(writes) * 100
 		record.LossPercent = &loss
-	}
-	if seconds := result.SendWindow.Seconds(); seconds > 0 && writes > 0 && result.Paced {
-		pps := float64(writes) / seconds
-		record.AchievedPPS = &pps
 	}
 	record.Attempts = int64Ptr(result.DatagramAttempts)
 	record.Writes = int64Ptr(writes)
@@ -1215,18 +1241,64 @@ func udpRecordFrom(result loadgen.Result, stats target.Stats, statsErr error, pa
 	record.OutOfOrder = int64Ptr(result.DatagramOutOfOrder)
 	record.Foreign = int64Ptr(result.DatagramForeign)
 	record.Stale = int64Ptr(result.DatagramStale)
-	if statsErr == nil {
+	record.TargetEpoch = uint32Ptr(epoch)
+	isolated := statsErr == nil && stats.EpochDatagrams != nil
+	if isolated {
+		// A missing key means zero datagrams for this epoch, not "unknown": the
+		// target was alive and its map was read after the window.
+		record.TargetReceived = int64Ptr(stats.EpochDatagrams[epoch])
+		record.Echoed = int64Ptr(stats.EpochEchoed[epoch])
+	} else if statsErr == nil {
 		record.TargetReceived = int64Ptr(stats.Datagrams)
 		record.Echoed = int64Ptr(stats.Echoed)
 	}
-	drainMS := float64(result.DrainDuration) / float64(time.Millisecond)
+	record.TargetEpochIsolated = &isolated
+	record.QuiesceStatus = quiesceStatus
+
+	drainMS := float64(result.ObservationDuration) / float64(time.Millisecond)
 	record.DrainMS = &drainMS
+	observationElapsed := float64(result.ObservationElapsed) / float64(time.Millisecond)
+	record.ObservationElapsedMS = &observationElapsed
+	record.ObservationMS = &drainMS
+	record.ObservationComplete = &result.ObservationComplete
+	quiet := float64(result.QuietPeriod) / float64(time.Millisecond)
+	record.QuietPeriodMS = &quiet
+	record.TailActive = &result.TailActive
+	record.DrainStatus = result.DrainStatus
+	record.LossEstimable = &result.LossEstimable
+	record.DrainComplete = &result.LossEstimable
+	record.NotReturned = int64Ptr(result.NotReturned)
+	notReturnedPercent := result.NotReturnedRatio * 100
+	record.NotReturnedPercent = &notReturnedPercent
+	record.SequenceTrackingComplete = &result.SequenceTrackingComplete
+	record.Unattributed = int64Ptr(result.DatagramUnattributed)
+	record.WriteErrors = int64Ptr(result.DatagramWriteErrors)
+
 	sendEndToLastReplyMS := float64(result.DrainLastReply) / float64(time.Millisecond)
 	record.SendEndToLastReplyMS = &sendEndToLastReplyMS
-	drainComplete := result.DrainComplete
-	record.DrainComplete = &drainComplete
 	sentWindowMS := float64(result.SendWindow) / float64(time.Millisecond)
 	record.SentWindowMS = &sentWindowMS
+	record.SendPhaseMS = &sentWindowMS
+	overrun := float64(result.SendOverrun) / float64(time.Millisecond)
+	record.SendOverrunMS = &overrun
+	configured := result.ConfiguredPPS
+	record.ConfiguredPPS = &configured
+	scheduledPPS := result.ScheduledPPS
+	record.ScheduledPPS = &scheduledPPS
+	attemptPPS := result.AttemptPPS
+	record.AttemptPPS = &attemptPPS
+	completionPPS := result.WriteCompletionPPS
+	record.WriteCompletionPPS = &completionPPS
+	if result.Paced {
+		achieved := completionPPS
+		record.AchievedPPS = &achieved
+	}
+	lastScheduled := float64(result.LastScheduledOffset) / float64(time.Millisecond)
+	record.LastScheduledMS = &lastScheduled
+	lastWriteStart := float64(result.LastWriteStartOffset) / float64(time.Millisecond)
+	record.LastWriteStartMS = &lastWriteStart
+	lastWriteEnd := float64(result.LastWriteEndOffset) / float64(time.Millisecond)
+	record.LastWriteEndMS = &lastWriteEnd
 	allReturned := result.AllReturned
 	record.AllReturned = &allReturned
 	aborted := result.Aborted
@@ -1238,26 +1310,37 @@ func udpRecordFrom(result loadgen.Result, stats target.Stats, statsErr error, pa
 	return record
 }
 
-// quiesceTarget waits until the target's datagram counter has been unchanged for
-// a short window, so warmup traffic still in flight cannot be counted as part of
-// the measured phase. It is bounded: a target that never settles is reported and
-// the run continues, with the target count labelled as possibly polluted.
-func quiesceTarget(sess *session, kind target.Kind, opts Options) {
+// QuiesceResult is the structured outcome of the pre-measurement wait. A target
+// count is never called clean merely because a wait function ran.
+type QuiesceResult struct {
+	Status    string
+	OK        bool
+	TimedOut  bool
+	ElapsedMS float64
+	Datagrams int64
+	Reason    string
+}
+
+// quiesceTarget waits until the target's datagram counter is unchanged for a
+// guard window. Its result is informational for the measured epoch (which is
+// counted separately); it is recorded so a target that never settles is visible.
+func quiesceTarget(sess *session, kind target.Kind, opts Options) QuiesceResult {
+	started := time.Now()
 	handle, loaded := sess.targets.byKind[kind]
 	if !loaded {
-		return
+		return QuiesceResult{Status: "unavailable", Reason: "target handle missing"}
 	}
 	var last int64 = -1
 	stableSince := time.Now()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := started.Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		stats, err := handle.Snapshot()
 		if err != nil {
-			return
+			return QuiesceResult{Status: "unavailable", ElapsedMS: time.Since(started).Seconds() * 1000, Reason: err.Error()}
 		}
 		if stats.Datagrams == last {
 			if time.Since(stableSince) >= 250*time.Millisecond {
-				return
+				return QuiesceResult{Status: "confirmed", OK: true, ElapsedMS: time.Since(started).Seconds() * 1000, Datagrams: stats.Datagrams}
 			}
 		} else {
 			last = stats.Datagrams
@@ -1265,9 +1348,52 @@ func quiesceTarget(sess *session, kind target.Kind, opts Options) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	opts.Logf("target did not quiesce within 2s; warmup datagrams may be included in target_received")
+	opts.Logf("target did not quiesce within 2s; target counts are epoch-isolated but the wait timed out")
+	return QuiesceResult{Status: "timeout", TimedOut: true, ElapsedMS: time.Since(started).Seconds() * 1000, Datagrams: last, Reason: "counter did not stay stable for 250ms within 2s"}
 }
+
 func int64Ptr(value int64) *int64 { return &value }
+
+// loadParameters formats the parameters that actually run, after defaults and
+// overrides. It must never be fed the raw Options alone: a default duration or
+// rep count would then appear as zero in the record.
+func loadParameters(opts Options, scenario *Scenario, patterns []string, streams []int, duration, warmup time.Duration, reps int) map[string]any {
+	udpDrain := opts.UDPDrain
+	if udpDrain < 0 {
+		udpDrain = 0
+	} else if udpDrain == 0 && opts.UDPRate > 0 {
+		udpDrain = 500 * time.Millisecond
+	}
+	packetSize := opts.UDPPacketSize
+	if packetSize <= 0 {
+		packetSize = 1200
+	}
+	return map[string]any{
+		"patterns": patterns, "streams": streams, "reps": reps,
+		"duration_s": duration.Seconds(), "warmup_s": warmup.Seconds(),
+		"stagger_ms": float64(opts.Stagger.Microseconds()) / 1000,
+		"udp_rate":   opts.UDPRate, "udp_drain_ms": float64(udpDrain.Microseconds()) / 1000,
+		"udp_packet_size": packetSize,
+		"scenario":        scenario.ID,
+	}
+}
+
+// binaryState re-hashes the measured executable at the end of a run. An empty
+// before-hash means the file could not be read at start; the caller records the
+// error separately, and changed is false here rather than inventing a match.
+func binaryState(before, path string) (after string, changed bool, err error) {
+	after, err = source.FileSHA256(path)
+	if err != nil {
+		return "", false, err
+	}
+	return after, before != "" && after != before, nil
+}
+
+func float64Ptr(value float64) *float64 { return &value }
+
+func boolPtr(value bool) *bool { return &value }
+
+func uint32Ptr(value uint32) *uint32 { return &value }
 
 func valueOrZero(value *float64) float64 {
 	if value == nil {

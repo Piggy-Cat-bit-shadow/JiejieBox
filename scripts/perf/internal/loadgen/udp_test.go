@@ -55,7 +55,10 @@ func TestUDPSeqWindowAttributesDuplicatesAndOrder(t *testing.T) {
 	order := []uint32{5, 3, 5, 7, 6}
 	wantFirst := []bool{true, true, false, true, true}
 	for index, sequence := range order {
-		first := window.add(sequence)
+		first, exact := window.add(sequence)
+		if !exact {
+			t.Fatalf("sequence %d unexpectedly unattributable", sequence)
+		}
 		if first != wantFirst[index] {
 			t.Fatalf("sequence %d first=%v, want %v", sequence, first, wantFirst[index])
 		}

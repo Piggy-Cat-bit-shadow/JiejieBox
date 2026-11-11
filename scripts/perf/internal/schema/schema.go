@@ -68,6 +68,25 @@ type Source struct {
 	Binary       *Binary  `json:"binary,omitempty"`
 	BinarySHA256 string   `json:"binary_sha256,omitempty"`
 	Warnings     []string `json:"warnings,omitempty"`
+
+	// Runner describes the laboratory executor (perflab), which is a different
+	// subject from the measured kernel binary above.
+	Runner *RunnerInfo `json:"runner,omitempty"`
+	// BinarySHA256Before/After bracket the run. A change invalidates provenance;
+	// it is never silently accepted as the same binary.
+	BinarySHA256Before string `json:"binary_sha256_before,omitempty"`
+	BinarySHA256After  string `json:"binary_sha256_after,omitempty"`
+	BinaryChanged      *bool  `json:"binary_changed,omitempty"`
+}
+
+// RunnerInfo is the executor's own provenance, not the kernel's.
+type RunnerInfo struct {
+	Path       string   `json:"path,omitempty"`
+	SHA256     string   `json:"sha256,omitempty"`
+	GoVersion  string   `json:"go_version,omitempty"`
+	TreeCommit string   `json:"tree_commit,omitempty"`
+	Dirty      *bool    `json:"dirty"`
+	DirtyFiles []string `json:"dirty_files,omitempty"`
 }
 
 // Binary is the provenance read from the executable itself.
@@ -240,6 +259,33 @@ type UDP struct {
 	AllReturned          *bool    `json:"all_returned,omitempty"`
 	Aborted              *bool    `json:"aborted,omitempty"`
 	AchievedPPS          *float64 `json:"achieved_pps,omitempty"`
+
+	// Split observation state. DrainComplete above is only an alias of
+	// LossEstimable; these fields say what actually happened.
+	ObservationMS            *float64 `json:"observation_ms,omitempty"`
+	ObservationElapsedMS     *float64 `json:"observation_elapsed_ms,omitempty"`
+	ObservationComplete      *bool    `json:"observation_complete,omitempty"`
+	QuietPeriodMS            *float64 `json:"quiet_period_ms,omitempty"`
+	TailActive               *bool    `json:"tail_active,omitempty"`
+	DrainStatus              string   `json:"drain_status,omitempty"`
+	LossEstimable            *bool    `json:"loss_estimable,omitempty"`
+	NotReturned              *int64   `json:"not_returned_by_deadline,omitempty"`
+	NotReturnedPercent       *float64 `json:"not_returned_percent,omitempty"`
+	SequenceTrackingComplete *bool    `json:"sequence_tracking_complete,omitempty"`
+	Unattributed             *int64   `json:"unattributed,omitempty"`
+	WriteErrors              *int64   `json:"write_errors,omitempty"`
+	SendPhaseMS              *float64 `json:"send_phase_ms,omitempty"`
+	SendOverrunMS            *float64 `json:"send_overrun_ms,omitempty"`
+	ConfiguredPPS            *float64 `json:"configured_pps,omitempty"`
+	ScheduledPPS             *float64 `json:"scheduled_pps,omitempty"`
+	AttemptPPS               *float64 `json:"attempt_pps,omitempty"`
+	WriteCompletionPPS       *float64 `json:"write_completion_pps,omitempty"`
+	LastScheduledMS          *float64 `json:"last_scheduled_ms,omitempty"`
+	LastWriteStartMS         *float64 `json:"last_write_start_ms,omitempty"`
+	LastWriteEndMS           *float64 `json:"last_write_end_ms,omitempty"`
+	TargetEpoch              *uint32  `json:"target_epoch,omitempty"`
+	TargetEpochIsolated      *bool    `json:"target_epoch_isolated,omitempty"`
+	QuiesceStatus            string   `json:"target_quiesce_status,omitempty"`
 }
 
 // Proc is one process's resource cost.

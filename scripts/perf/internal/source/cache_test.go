@@ -64,6 +64,24 @@ func TestCachedSourceKeepsMatchingModules(t *testing.T) {
 	}
 }
 
+func TestCachedSourceMarksDirtyStateAsCached(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/tree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirty := false
+	cached := schema.Source{Repo: repo, Commit: "deadbeef", Dirty: &dirty}
+	raw, err := json.Marshal(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PERF_SOURCE_JSON", string(raw))
+	got := Collect(repo, "")
+	if !hasWarning(got.Warnings, "source_cache_dirty_from_cache") {
+		t.Fatalf("cached dirty state was not disclosed: %v", got.Warnings)
+	}
+}
+
 func hasWarning(warnings []string, prefix string) bool {
 	for _, warning := range warnings {
 		if strings.HasPrefix(warning, prefix) {

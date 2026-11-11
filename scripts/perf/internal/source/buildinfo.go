@@ -104,6 +104,12 @@ func TagsSource(binary schema.Binary, sidecarTags []string) ([]string, string) {
 	return nil, "unavailable"
 }
 
+// FileSHA256 exposes the same hash used by InspectBinary so the runner can
+// bracket a run with a before/after check on the measured executable.
+func FileSHA256(path string) (string, error) {
+	return fileSHA256(path)
+}
+
 func fileSHA256(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {

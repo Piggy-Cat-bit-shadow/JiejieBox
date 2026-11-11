@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Validate perflab run.json files against the run schema.
 
 The schema is a contract, not documentation: a run that does not validate is a
 run whose numbers cannot be compared across cells. Two revisions are kept:
 
   perf-run.v1.schema.json    frozen, as published with the first 48 runs
-  perf-run.v1.1.schema.json  the same payload, with wire/latency/udp nullable
+  perf-run.v1.2.schema.json  the same payload, with wire/latency/udp nullable
                              when the runner did not measure them
 
 New data is validated against v1.1. Historical files are validated against the
@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - environment guard
     sys.exit(3)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_SCHEMA = os.path.join(HERE, "schema", "perf-run.v1.1.schema.json")
+DEFAULT_SCHEMA = os.path.join(HERE, "schema", "perf-run.v1.2.schema.json")
 FIXTURES = os.path.join(HERE, "internal", "schema", "testdata")
 REPO = os.path.dirname(os.path.dirname(HERE))
 DEFAULT_ROOTS = [

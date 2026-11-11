@@ -47,6 +47,13 @@ func Collect(repoDir, binaryPath string) schema.Source {
 				addSourceWarning(&fromEnv,
 					"source_cache_stale: cached commit "+fromEnv.Commit+" but HEAD is "+head)
 			}
+			// The dirty flag (and its file list) is cached, not re-read: running
+			// git status is the cost this cache exists to avoid. Say so instead of
+			// letting a cached clean state look like a fresh check.
+			if fromEnv.Dirty != nil {
+				addSourceWarning(&fromEnv,
+					"source_cache_dirty_from_cache: dirty state is the cached value, not a fresh git status")
+			}
 			// HEAD can stay the same while go.mod or test/go.mod changes (a pin
 			// bump or a local dependency edit). The module view is cheap to
 			// recompute and must never be served stale from the cache.

@@ -51,7 +51,14 @@ type Stats struct {
 	Verified    int64
 	Mismatched  int64
 	WriteBytes  int64
-	Extra       map[string]int64
+	// EpochDatagrams/EpochEchoed split the same counters by the load generator's
+	// epoch carried in the UDP header (magic "PLB1"). The runner reads only the
+	// measured epoch, so warmup or previous-rep datagrams that arrive late can
+	// never enter the measured target_received. A nil map means the target cannot
+	// attribute epochs (unavailable), not zero.
+	EpochDatagrams map[uint32]int64
+	EpochEchoed    map[uint32]int64
+	Extra          map[string]int64
 }
 
 // Server serves one kind on one address until Close.
@@ -71,6 +78,12 @@ type Server struct {
 	verified    atomic.Int64
 	mismatched  atomic.Int64
 	writeBytes  atomic.Int64
+
+	// epoch counters are keyed by the epoch in the generator's UDP header. The
+	// map is bounded by the number of epochs a phase uses (normally one measured
+	// plus one warmup) and is cleared by Reset.
+	epochDatagrams sync.Map // map[uint32]*atomic.Int64
+	epochEchoed    sync.Map // map[uint32]*atomic.Int64
 
 	wg sync.WaitGroup
 }
@@ -112,15 +125,26 @@ func (s *Server) Addr() string {
 
 // Snapshot returns the counters accumulated so far.
 func (s *Server) Snapshot() Stats {
-	return Stats{
-		Bytes:       s.bytes.Load(),
-		Datagrams:   s.datagrams.Load(),
-		Echoed:      s.echoed.Load(),
-		Connections: s.connections.Load(),
-		Verified:    s.verified.Load(),
-		Mismatched:  s.mismatched.Load(),
-		WriteBytes:  s.writeBytes.Load(),
+	stats := Stats{
+		Bytes:          s.bytes.Load(),
+		Datagrams:      s.datagrams.Load(),
+		Echoed:         s.echoed.Load(),
+		Connections:    s.connections.Load(),
+		Verified:       s.verified.Load(),
+		Mismatched:     s.mismatched.Load(),
+		WriteBytes:     s.writeBytes.Load(),
+		EpochDatagrams: make(map[uint32]int64),
+		EpochEchoed:    make(map[uint32]int64),
 	}
+	s.epochDatagrams.Range(func(key, value any) bool {
+		stats.EpochDatagrams[key.(uint32)] = value.(*atomic.Int64).Load()
+		return true
+	})
+	s.epochEchoed.Range(func(key, value any) bool {
+		stats.EpochEchoed[key.(uint32)] = value.(*atomic.Int64).Load()
+		return true
+	})
+	return stats
 }
 
 // Reset zeroes the counters between warmup and measurement.
@@ -132,6 +156,14 @@ func (s *Server) Reset() {
 	s.verified.Store(0)
 	s.mismatched.Store(0)
 	s.writeBytes.Store(0)
+	s.epochDatagrams.Range(func(key, _ any) bool {
+		s.epochDatagrams.Delete(key)
+		return true
+	})
+	s.epochEchoed.Range(func(key, _ any) bool {
+		s.epochEchoed.Delete(key)
+		return true
+	})
 }
 
 // Close stops the server and waits for its goroutines.
@@ -264,10 +296,39 @@ func (s *Server) serveUDP() {
 		}
 		s.datagrams.Add(1)
 		s.bytes.Add(int64(n))
+		epoch, ok := udpEpoch(buffer[:n])
+		if ok {
+			epochCounter(&s.epochDatagrams, epoch).Add(1)
+		}
 		if written, err := s.packet.WriteTo(buffer[:n], from); err == nil && written > 0 {
 			s.echoed.Add(1)
+			if ok {
+				epochCounter(&s.epochEchoed, epoch).Add(1)
+			}
 		}
 	}
+}
+
+// udpEpoch reads the load generator's header (magic "PLB1", epoch in bytes
+// 4..8). A datagram without the header is still echoed and counted globally,
+// but contributes no epoch attribution.
+func udpEpoch(packet []byte) (uint32, bool) {
+	if len(packet) < 8 {
+		return 0, false
+	}
+	if binary.BigEndian.Uint32(packet[0:4]) != 0x504c4231 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint32(packet[4:8]), true
+}
+
+func epochCounter(counters *sync.Map, epoch uint32) *atomic.Int64 {
+	if value, loaded := counters.Load(epoch); loaded {
+		return value.(*atomic.Int64)
+	}
+	value := &atomic.Int64{}
+	actual, _ := counters.LoadOrStore(epoch, value)
+	return actual.(*atomic.Int64)
 }
 
 // DecodeLength reads a length prefix used by the ping-pong pattern.
