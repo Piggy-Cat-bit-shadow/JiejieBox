@@ -1,6 +1,6 @@
-$ report-b8.py --check determinism
-wrote /tmp/b8-a.md (27 reps)
-wrote /tmp/b8-b.md (27 reps)
+$ report-b8.py deterministic
+wrote /tmp/t1.md (27 reps)
+wrote /tmp/t2.md (27 reps)
 DETERMINISTIC
 docs/final-audit/udp-evidence-final/results/b8-evidence-final/table.md: deterministic output matches
 exit=0

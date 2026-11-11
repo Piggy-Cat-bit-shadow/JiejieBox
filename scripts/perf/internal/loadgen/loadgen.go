@@ -506,6 +506,10 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 
 	start := time.Now()
 	deadline := start.Add(cfg.Duration)
+	// All local measurements use offsets from start on the monotonic clock.
+	// UnixNano is deliberately not used for timing: an NTP step between send and
+	// receive would otherwise turn into a negative or inflated latency.
+	mono := func() int64 { return time.Since(start).Nanoseconds() }
 	_ = association.socket.SetWriteDeadline(deadline.Add(drain + 2*time.Second))
 
 	var (
@@ -532,7 +536,10 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		binary.BigEndian.PutUint32(buffer[0:4], udpMagic)
 		binary.BigEndian.PutUint32(buffer[4:8], epoch)
 		binary.BigEndian.PutUint32(buffer[8:12], sequence)
-		binary.BigEndian.PutUint64(buffer[12:20], uint64(time.Now().UnixNano()))
+		// sent_monotonic_ns: an offset from phase start, not a wall-clock stamp.
+		// The reader lives in the same process and clock domain, so this is a
+		// monotonic one-way delay estimate.
+		binary.BigEndian.PutUint64(buffer[12:20], uint64(mono()))
 		attempts.Add(1)
 		packet, buildErr := socksPacket(buffer)
 		if buildErr != nil {
@@ -540,13 +547,13 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			recordErr(buildErr)
 			return
 		}
-		lastWriteStart.Store(time.Now().UnixNano())
+		lastWriteStart.Store(mono())
 		if _, writeErr := association.socket.WriteToUDP(packet, association.relay); writeErr != nil {
 			writeErrors.Add(1)
 			recordErr(writeErr)
 			return
 		}
-		lastWriteEnd.Store(time.Now().UnixNano())
+		lastWriteEnd.Store(mono())
 		writes.Add(1)
 	}
 
@@ -605,8 +612,9 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			}
 			if first {
 				unique++
-				if sentNs > 0 && sentNs < uint64(time.Now().UnixNano()) {
-					latencies.add(time.Duration(time.Now().UnixNano() - int64(sentNs)))
+				nowMono := mono()
+				if sentNs > 0 && int64(sentNs) <= nowMono {
+					latencies.add(time.Duration(nowMono - int64(sentNs)))
 				}
 			} else {
 				duplicate++
@@ -630,7 +638,7 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			defer senders.Done()
 			buffer := append([]byte(nil), template...)
 			paced := runPacer(ctx, start, deadline, rate, func() {
-				lastScheduled.Store(time.Now().UnixNano())
+				lastScheduled.Store(mono())
 				sendOne(buffer)
 			})
 			scheduled.Add(paced.scheduled)
@@ -638,7 +646,7 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			if paced.aborted {
 				recordErr(ctx.Err())
 			}
-			sendEnd.Store(time.Now().UnixNano())
+			sendEnd.Store(mono())
 		}()
 	} else {
 		for stream := 0; stream < cfg.Streams; stream++ {
@@ -652,19 +660,20 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 						return
 					}
 					scheduled.Add(1)
-					lastScheduled.Store(time.Now().UnixNano())
+					lastScheduled.Store(mono())
 					sendOne(buffer)
 				}
-				sendEnd.Store(time.Now().UnixNano())
+				sendEnd.Store(mono())
 			}()
 		}
 	}
 	senders.Wait()
-	sendWindowEnd := time.Unix(0, sendEnd.Load())
-	if sendWindowEnd.Before(start) {
-		sendWindowEnd = time.Now()
+	sendOffset := sendEnd.Load()
+	if sendOffset <= 0 {
+		sendOffset = mono()
 	}
-	sendWindow := sendWindowEnd.Sub(start)
+	sendWindowEnd := start.Add(time.Duration(sendOffset))
+	sendWindow := time.Duration(sendOffset)
 
 	drainStart := time.Now()
 	if drain > 0 && ctx.Err() == nil {
@@ -752,13 +761,13 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		result.NotReturnedRatio = float64(notReturned) / float64(written)
 	}
 	if at := lastScheduled.Load(); at != 0 {
-		result.LastScheduledOffset = time.Unix(0, at).Sub(start)
+		result.LastScheduledOffset = time.Duration(at)
 	}
 	if at := lastWriteStart.Load(); at != 0 {
-		result.LastWriteStartOffset = time.Unix(0, at).Sub(start)
+		result.LastWriteStartOffset = time.Duration(at)
 	}
 	if at := lastWriteEnd.Load(); at != 0 {
-		result.LastWriteEndOffset = time.Unix(0, at).Sub(start)
+		result.LastWriteEndOffset = time.Duration(at)
 	}
 	if jitterN > 0 {
 		result.Jitter = jitterSum / time.Duration(jitterN)
@@ -810,7 +819,8 @@ func socksUDPPayload(packet []byte) []byte {
 	return packet[offset:]
 }
 
-// parseUDPHeader reads magic, epoch, sequence and send timestamp.
+// parseUDPHeader reads magic, epoch, sequence and the sender's monotonic
+// offset (nanoseconds from phase start, not a wall-clock timestamp).
 func parseUDPHeader(payload []byte) (magic, epoch, sequence uint32, sentNs uint64, ok bool) {
 	if len(payload) < udpHeaderSize {
 		return 0, 0, 0, 0, false
@@ -859,10 +869,12 @@ func (w *udpSeqWindow) add(sequence uint32) (first bool, exact bool) {
 	return true, true
 }
 
-// drainStateFor is the observation-state machine. It separates the window
-// actually running, the quiet tail, and cancellation; it never claims that a
-// quiet period proves no late packet exists.
-func drainStateFor(ctxErr error, observation time.Duration, quiet time.Duration, sawReply bool, guard time.Duration) (status string, complete bool, tailActive bool) {
+// drainStateFor is the observation state machine. observation_complete says the
+// configured window ran to its end with a live context; tail_active says the last
+// reply landed inside the guard, so the quiet period is not long enough to call
+// the loss estimable. The two are independent: a full window with an active tail
+// is still a complete observation, just not a loss-estimable one.
+func drainStateFor(ctxErr error, observation time.Duration, quiet time.Duration, sawReply bool, guard time.Duration) (status string, observationComplete bool, tailActive bool) {
 	if ctxErr != nil {
 		return "canceled", false, false
 	}
@@ -870,7 +882,7 @@ func drainStateFor(ctxErr error, observation time.Duration, quiet time.Duration,
 		return "zero_window", false, false
 	}
 	if sawReply && quiet < guard {
-		return "window_elapsed_tail_active", false, true
+		return "window_elapsed_tail_active", true, true
 	}
 	return "complete_quiet", true, false
 }

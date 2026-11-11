@@ -8,16 +8,18 @@
 |---|---|
 | `observation_ms` | configured post-send horizon (`-udp-drain`; 0 = loader default 500 ms when paced, `-1` disables) |
 | `observation_elapsed_ms` | how long the horizon actually ran |
-| `observation_complete` | the horizon ran to its end with a live context |
+| `observation_complete` | the horizon ran to its end with a live context; it is true even when the tail is active |
 | `quiet_period_ms` | time since the last reply at the end |
 | `tail_active` | last reply landed inside the guard (`max(250 ms, 10 % of window)`) |
 | `drain_status` | `complete_quiet`, `window_elapsed_tail_active`, `canceled`, `zero_window` |
-| `loss_estimable` | `drain_status==complete_quiet` **and** sequence tracking exact |
+| `loss_estimable` | `drain_status==complete_quiet` (window complete **and** tail quiet) **and** sequence tracking exact |
 | `not_returned_by_deadline` | `writes - unique`, always recorded |
 | `sequence_tracking_complete` | false once the sequence window is full |
 
 `drainCompleteFor` was removed; `drainStateFor` is the pure function and is unit
-tested for cancellation, zero window, tail-at-edge, quiet tail and no replies.
+tested for cancellation, zero window, tail-at-edge, quiet tail and no replies. A
+full window with an active tail is `observation_complete=true, tail_active=true,
+loss_estimable=false` — the three facts are independent.
 
 ## Loss semantics
 

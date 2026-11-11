@@ -3,7 +3,9 @@
 ## Two separate subjects
 
 - **Measured kernel binary**: SHA256 before and after the run (`binary_sha256_before`,
-  `binary_sha256_after`, `binary_changed`). A change invalidates provenance with
+  `binary_sha256_after`, `binary_changed`). If the before-hash is unavailable,
+  `binary_changed` is null/omitted (unknown) and a warning is recorded — it is
+  never serialised as `false`. A change invalidates provenance with
   a warning and `provenance_invalid` note; it is never silently treated as the
   same binary. Test: `internal/runner/provenance_test.go`.
 - **Runner (perflab)**: its own executable SHA256, Go version, and the tree

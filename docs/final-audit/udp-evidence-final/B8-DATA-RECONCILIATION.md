@@ -33,12 +33,14 @@ All at 80 ms RTT, 1200 B, 5 s, 1 s warmup, 3 reps; 8 s observation unless noted.
 
 ## Interpretation
 
-- MASQUE at 500 pps genuinely loses a third to a half of the datagrams; the target
-  ingress is also short (1168-1857 of 2500), so the drop is on the client/tunnel
-  path before the target, consistent with the earlier qdisc/socket evidence (veth
-  drops only ~1 %, socket errors zero).
+- MASQUE at 500 pps shows 36.6-51.3 % not returned by the observation deadline.
+  The target ingress is also short (1232-1600 of 2500), so the missing datagrams
+  are on the client/tunnel path before the target, consistent with the earlier
+  qdisc/socket evidence (veth drops only ~1 %, socket errors zero). This is a
+  deadline-scoped, target-confirmed shortfall; it is not network-confirmed packet
+  loss and no protocol root cause is claimed.
 - TrustTunnel at 500 pps does **not** lose the datagrams in the new window: it
-  delivers all 2500, but the tail takes 7-9 s. The old 75-82 % figure was an
+  delivers all 2500, but the tail takes 5.5-8.3 s. The old 75-82 % figure was an
   observation-window truncation, not network loss. This is a latency/queue
   collapse, not a loss result.
 - The rate threshold is therefore transport-specific: MASQUE starts losing

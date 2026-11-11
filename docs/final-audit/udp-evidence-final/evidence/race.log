@@ -1,0 +1,6 @@
+$ go test -race ./internal/loadgen ./internal/runner ./internal/source ./internal/target
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/loadgen	6.206s
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/runner	3.306s
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/source	1.290s
+ok  	github.com/sagernet/sing-box/scripts/perf/internal/target	1.033s
+exit=0

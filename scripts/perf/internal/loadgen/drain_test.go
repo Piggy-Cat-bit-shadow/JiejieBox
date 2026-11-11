@@ -23,7 +23,7 @@ func TestDrainStateFor(t *testing.T) {
 	}{
 		{"cancelled", cancelled, 2 * time.Second, time.Second, true, 250 * time.Millisecond, "canceled", false, false},
 		{"zero window", nil, 0, time.Second, true, 250 * time.Millisecond, "zero_window", false, false},
-		{"tail at edge", nil, 2 * time.Second, 100 * time.Millisecond, true, 250 * time.Millisecond, "window_elapsed_tail_active", false, true},
+		{"tail at edge", nil, 2 * time.Second, 100 * time.Millisecond, true, 250 * time.Millisecond, "window_elapsed_tail_active", true, true},
 		{"quiet tail", nil, 2 * time.Second, 500 * time.Millisecond, true, 250 * time.Millisecond, "complete_quiet", true, false},
 		{"no replies, full window", nil, 2 * time.Second, 2 * time.Second, false, 250 * time.Millisecond, "complete_quiet", true, false},
 	}

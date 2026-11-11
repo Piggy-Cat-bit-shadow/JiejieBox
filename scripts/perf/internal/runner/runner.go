@@ -324,13 +324,16 @@ func Run(opts Options) (*Outcome, error) {
 
 	run.Summary = summarise(run.Reps)
 	run.FinishedAt = time.Now()
-	if after, changed, hashErr := binaryState(run.Source.BinarySHA256Before, opts.Binaries["lab"]); hashErr == nil {
+	if after, changed, hashErr := binaryProvenance(run.Source.BinarySHA256Before, opts.Binaries["lab"]); hashErr == nil {
 		run.Source.BinarySHA256After = after
-		run.Source.BinaryChanged = &changed
-		if changed {
+		run.Source.BinaryChanged = changed
+		if changed != nil && *changed {
 			run.Source.Warnings = append(run.Source.Warnings,
 				"binary_changed: measured binary changed between start and finish; provenance invalid")
 			run.Notes = append(run.Notes, "provenance_invalid: binary changed during the run")
+		} else if changed == nil {
+			run.Source.Warnings = append(run.Source.Warnings,
+				"binary_hash_before_unavailable: binary_changed is unknown, not false")
 		}
 	} else {
 		run.Source.Warnings = append(run.Source.Warnings, "binary_hash_after: "+hashErr.Error())
@@ -1381,15 +1384,19 @@ func loadParameters(opts Options, scenario *Scenario, patterns []string, streams
 	}
 }
 
-// binaryState re-hashes the measured executable at the end of a run. An empty
-// before-hash means the file could not be read at start; the caller records the
-// error separately, and changed is false here rather than inventing a match.
-func binaryState(before, path string) (after string, changed bool, err error) {
+// binaryProvenance re-hashes the measured executable at the end of a run. When
+// the before-hash is unavailable, changed is nil (unknown), never false: an
+// unknown provenance state must not be serialised as "unchanged".
+func binaryProvenance(before, path string) (after string, changed *bool, err error) {
 	after, err = source.FileSHA256(path)
 	if err != nil {
-		return "", false, err
+		return "", nil, err
 	}
-	return after, before != "" && after != before, nil
+	if before == "" {
+		return after, nil, nil
+	}
+	value := after != before
+	return after, &value, nil
 }
 
 func float64Ptr(value float64) *float64 { return &value }

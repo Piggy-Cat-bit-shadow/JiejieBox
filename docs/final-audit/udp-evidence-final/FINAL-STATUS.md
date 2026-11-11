@@ -45,8 +45,7 @@ rate; TrustTunnel accumulates multi-second delay. The exact queue remains
 ## Not run / blocked
 
 - Platform devices and privileged TUN: `NOT_RUN`.
-- Quiesce timeout timing test: `NOT_RUN` (code path explicit; no deterministic
-  target that never settles in the current harness).
+- Quiesce timeout/confirmation/unavailable paths: tested in `quiesce_test.go`.
 - B8 root-cause instrumentation inside QUIC/H2: `DEFERRED`.
 - Mieru retry: `DEFERRED` (no semantic change).
 - B7 matrix and other protocols: not rerun by design.

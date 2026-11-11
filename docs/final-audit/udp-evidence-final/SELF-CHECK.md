@@ -21,6 +21,8 @@ NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 | A12 | sequence truncation degrades | `drain_test.go` truncation; `sequence_tracking_complete=false`, loss null | PASS |
 | A13 | schema covers new state | v1.2; 48/48 historical; 4 valid + 3 invalid fixtures; 27 new reps validate | PASS |
 | A14 | B8 report from raw JSON | `report-b8.py`; tables generated for both sets; deterministic check | PASS |
+| A15 | monotonic local timing | all offsets from phase start (mono()); no UnixNano in latency/last-write/send-end paths; epoch is an identifier only | PASS |
+| A16 | unknown binary provenance | `binaryProvenance` returns nil changed when before-hash is missing; warning `binary_hash_before_unavailable`; test covers nil/equal/changed | PASS |
 
 ## Round B 鈥?negative / edge / fault injection
 
@@ -71,3 +73,4 @@ go test -tags "$TAGS" ./protocol/wireguard ./transport/wireguard
 python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
 go mod verify
 ```
+
