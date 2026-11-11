@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -434,6 +435,157 @@ func TestHiddenGroupKeepsItsExpandState(t *testing.T) {
 	restoredExpand, isStored := started.Instance().cacheFile.LoadGroupExpand("REGION")
 	require.True(t, isStored, "a reload must not clear a hidden group's expand state")
 	require.True(t, restoredExpand)
+}
+
+// TestHiddenGroupWithAllProviderNodesFilteredOutStillStarts is the EMPTY production group, built the
+// only way this fork can build one that stays empty: a provider that publishes real nodes, and a
+// group whose own `exclude` filter drops every one of them.
+//
+// (An empty provider DOCUMENT is refused - "refusing an empty node set: an unrecognised or empty
+// document must not wipe the published nodes" - so a durable provider-backed empty group cannot be
+// built that way. Measured, not assumed.)
+//
+// This is the state the pre-existing comment in readGroups defends ("a group with one member or none
+// is emitted exactly as before unless it asks not to be"). It is also the state where a display
+// filter could plausibly be written as "skip groups with no items". It must not be.
+func TestHiddenGroupWithAllProviderNodesFilteredOutStillStarts(t *testing.T) {
+	members := map[string]*memberListener{
+		"node-1": startMemberListener(t),
+		"node-2": startMemberListener(t),
+	}
+	profile := fmt.Sprintf(`{
+  "log": {"level": "error"},
+  "providers": [
+    {"type": "inline", "tag": "pool", "outbounds": [
+      {"type": "probe-member", "tag": "node-1", "destination": "%s"},
+      {"type": "probe-member", "tag": "node-2", "destination": "%s"}
+    ]}
+  ],
+  "outbounds": [
+    {"type": "selector", "tag": "REGION", "providers": ["pool"], "exclude": ".*", "hidden": true},
+    {"type": "selector", "tag": "VISIBLE-EMPTY", "providers": ["pool"], "exclude": ".*"},
+    {"type": "selector", "tag": "MAIN", "outbounds": ["REGION"]}
+  ],
+  "route": {"final": "pool/node-1"}
+}`, members["node-1"].target(), members["node-2"].target())
+	started := newHiddenGroupService(t, profile)
+
+	require.Empty(t, liveGroupMembers(t, started, "REGION"),
+		"the hidden provider-backed group really is empty, so the assertions below are not vacuous")
+	require.Empty(t, liveGroupMembers(t, started, "VISIBLE-EMPTY"))
+
+	// Both empty groups are listed or not strictly by their own flag: the visible one appears with
+	// an empty member list, the hidden one does not appear at all.
+	require.Equal(t, []string{"VISIBLE-EMPTY", "MAIN"}, reportedGroupTags(t, started),
+		"an empty group must still be listed when it did not ask to be hidden")
+	require.Empty(t, reportedGroupItems(t, started, "VISIBLE-EMPTY"),
+		"the visible empty group is reported with no members")
+	require.Equal(t, []string{"REGION"}, reportedGroupItems(t, started, "MAIN"),
+		"the hidden empty group is still a member of its parent")
+	require.ElementsMatch(t,
+		[]string{"pool/node-1", "pool/node-2", "REGION", "VISIBLE-EMPTY", "MAIN"},
+		reportedOutboundTags(t, started))
+}
+
+// TestHiddenLoadBalanceHealthFilterStillApplies pins the half of section 4.6 the distribution test
+// cannot reach: `hidden` must not disable the group's health-aware candidate filtering.
+//
+// One member can serve the probe target (a loopback HTTP server); the other dials a closed port, so
+// every probe through it fails. Once the health checker has a verdict, a flow must never be handed
+// to the failed member - which is observable as "every dial succeeds", because a flow through the
+// failed member could only error, plus the server seeing the connection.
+func TestHiddenLoadBalanceHealthFilterStillApplies(t *testing.T) {
+	var served atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			served.Add(1)
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+	serverPort := server.Listener.Addr().(*net.TCPAddr).Port
+
+	// A port with nothing behind it: probes through that member are refused.
+	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	deadPort := deadListener.Addr().(*net.TCPAddr).Port
+	require.NoError(t, deadListener.Close())
+
+	profile := fmt.Sprintf(`{
+  "log": {"level": "error"},
+  "outbounds": [
+    {"type": "probe-member", "tag": "healthy", "destination": "127.0.0.1:%d"},
+    {"type": "probe-member", "tag": "broken", "destination": "127.0.0.1:%d"},
+    {"type": "loadbalance", "tag": "hidden-pool", "outbounds": ["healthy", "broken"],
+     "url": "http://127.0.0.1:%d/", "expected_status": "204", "interval": "1s", "hidden": true}
+  ]
+}`, serverPort, deadPort, serverPort)
+	started := newHiddenGroupService(t, profile)
+	require.Empty(t, reportedGroupTags(t, started))
+
+	instance := started.Instance()
+	require.Eventually(t, func() bool {
+		return instance.urlTestHistoryStorage.HealthEntryCount() > 0
+	}, 20*time.Second, 25*time.Millisecond,
+		"a hidden balancing group must still run its health checker")
+
+	pool, isLoaded := instance.outboundManager.Outbound("hidden-pool")
+	require.True(t, isLoaded)
+	poolDialer, isDialer := pool.(N.Dialer)
+	require.True(t, isDialer)
+
+	before := served.Load()
+	for range 4 {
+		dialContext, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+		conn, dialErr := poolDialer.DialContext(dialContext, N.NetworkTCP, M.ParseSocksaddr("origin.test:443"))
+		cancelDial()
+		require.NoError(t, dialErr,
+			"a flow must never be handed to the member its own health check has failed")
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}
+	// The server's accept can land just after the dial returns, so this is a wait rather than an
+	// immediate compare; the require.NoError above is already the primary evidence, because a flow
+	// handed to the failed member could only have returned a connection error.
+	require.Eventually(t, func() bool {
+		return served.Load()-before >= 4
+	}, 5*time.Second, 5*time.Millisecond,
+		"all four flows must have reached the healthy member's destination")
+
+	// Negative control, built from CONFIGURATION only: the same group without the health URL has no
+	// candidate filter at all, so its round-robin must hand a flow to the failed member and that
+	// dial must fail. Without this, "four dials succeeded" could also be explained by the cursor
+	// never reaching the broken member, and the test would pass for the wrong reason.
+	controlProfile := fmt.Sprintf(`{
+  "log": {"level": "error"},
+  "outbounds": [
+    {"type": "probe-member", "tag": "healthy", "destination": "127.0.0.1:%d"},
+    {"type": "probe-member", "tag": "broken", "destination": "127.0.0.1:%d"},
+    {"type": "loadbalance", "tag": "hidden-pool", "outbounds": ["healthy", "broken"], "hidden": true}
+  ]
+}`, serverPort, deadPort)
+	controlStarted := newHiddenGroupService(t, controlProfile)
+	controlPool, isLoaded := controlStarted.Instance().outboundManager.Outbound("hidden-pool")
+	require.True(t, isLoaded)
+	controlDialer := controlPool.(N.Dialer)
+	var controlFailures int
+	for range 4 {
+		controlContext, cancelControl := context.WithTimeout(context.Background(), 5*time.Second)
+		controlConn, controlErr := controlDialer.DialContext(controlContext, N.NetworkTCP, M.ParseSocksaddr("origin.test:443"))
+		cancelControl()
+		if controlConn != nil {
+			_ = controlConn.Close()
+		}
+		if controlErr != nil {
+			controlFailures++
+		}
+	}
+	require.Positive(t, controlFailures,
+		"the control profile must hand at least one flow to the failed member, or this test proves nothing")
 }
 
 // TestHiddenProviderBackedGroupStillPublishes is the section-5/acceptance "Provider" row: a provider

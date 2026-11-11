@@ -119,6 +119,8 @@ configuration field.
 | `detour` pointing at a hidden group | `direct` refuses `detour` outright, so a `socks` outbound dials its server through the hidden group and the group's default member receives the connection |
 | hidden URLTest | it measures its members at start with nothing touching it; `URLTest.Selected` is a pure preview and deliberately does not start the ticker, a real flow through it does, and the history timestamp then keeps advancing; the `URLTest` RPC resolves it by tag and re-measures |
 | hidden LoadBalance | candidate set unchanged; six round-robin flows over three members reach all three |
+| hidden LoadBalance with a health URL | with the probe target reachable through one member and refused through the other, every flow after the verdict lands on the healthy member; the control profile (same group, no `url`) hands a flow to the failed one, which is what makes the first result mean the filter ran |
+| a group whose own `exclude` drops every provider node (a durable EMPTY group) | the visible one is listed with no members, the hidden one is not listed at all, and its parent still lists it. An empty provider DOCUMENT is refused by the platform ("an empty node set must not wipe the published nodes"), so this is the only way to build a group that stays empty |
 | inline provider feeding a hidden selector | both nodes publish with `<provider>/<node>` tags and join the hidden group, are registered outbounds, and the parent's flow leaves through one of them; the group stays unlisted |
 | expand cache | `SetGroupExpand` stores for a hidden group, and the value survives a reload |
 | `hidden: null` | decodes as unset (visible) - the same as every non-pointer field in this tree |
@@ -132,9 +134,12 @@ configuration field.
 
 Every production read of the property is one line: `daemon.StartedService.readGroups`. Nothing on
 the selection, dial, probe, balance, provider or Clash API path reads it, and the clients do not
-filter for themselves - all three consume the one stream this project emits
-(`clients/apple/Library/Network/CommandClient.swift` `writeGroups`, Android's libbox
-`OutboundGroupIterator`, `clients/desktop/dashboard/src/api/daemon.ts` `subscribeGroups`).
+filter for themselves - all three take the stream as it arrives:
+
+* Apple: `CommandClient.writeGroups` converts every received group, and `GroupListViewModel.setGroups`
+  only reconciles pending selection/expand state - it removes nothing.
+* Android: `compose/model/Groups.kt` `Group(item: OutboundGroup)` converts every group.
+* Desktop: `GroupsView` renders `useStream(api.groups)` directly, fed by `subscribeGroups`.
 
 ## Limits
 
@@ -142,3 +147,7 @@ filter for themselves - all three consume the one stream this project emits
   flag is a configuration edit plus a reload, which rebuilds every group.
 * A hidden group is still visible through the Clash API, to third-party dashboards and to the
   outbound list. That is the intended separation, not an oversight.
+* The three clients were read, not built: this host has no Xcode and no Android toolchain, and the
+  client submodules are not checked out in the kernel worktree. What is established is that each one
+  converts or renders the stream without removing entries, and that the daemon exposes exactly one
+  group RPC - so there is no second place for the decision to be made or forgotten.
