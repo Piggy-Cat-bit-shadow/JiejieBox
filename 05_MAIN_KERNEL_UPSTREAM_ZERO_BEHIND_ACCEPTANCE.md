@@ -4,7 +4,7 @@
 
 **DONE_WITH_LIMITATIONS**
 
-主内核已真实 merge 上游并零落后；所有被消费 Fork 的 pin、native 矩阵、客户端 gitlink 与 source-lock 已收敛；可清理分支已逐项审计清理。限制项：Apple 无 Xcode（`NOT_VERIFIED_ON_DEVICE`）、`common/tls` 等三个既有基线失败、Dashboard `lint:css` 的既有规则错误、GitHub Actions 的 Verify/Mobile contract 在报告时仍 in_progress（不记为 PASS）。
+主内核已真实 merge 上游并零落后；所有被消费 Fork 的 pin、native 矩阵、客户端 gitlink 与 source-lock 已收敛；可清理分支已逐项审计清理。限制项：Apple 无 Xcode（`NOT_VERIFIED_ON_DEVICE`）、`common/tls` 等三个既有基线失败、Dashboard `lint:css` 的既有规则错误。GitHub Actions Verify/Android Core 已在最终 head 通过。
 
 ## B. 主内核
 
@@ -12,10 +12,10 @@
 |---|---|
 | origin | `Piggy-Cat-bit-shadow/JiejieBox` |
 | upstream | `SagerNet/sing-box:testing` |
-| canonical/default | `testing` = `integration/0.1.45-final` = **`5125a13fbb5705e9e548f7d1ee149fe49dbdf49b`** |
+| canonical/default | `testing` = `integration/0.1.45-final` = **`b473c21f4803c0196e3eb920d530602d5f92867f`** |
 | 最后观察 upstream | `a13dbe1f785f66c86acbf3985c33fdafea0cbfd6`（2026-11-10 11:23 UTC，Fix platform auto-redirect close order） |
 | merge-base | `8eb4395a391b775ad240433a7009f39357c1eba0` |
-| ahead / behind | **3733 / 0** |
+| ahead / behind | **3734 / 0** |
 | 真实 merge | `303fbb47dfdca4520dd201fea8bd48b3db1f1010`（parents `48103716845e` + `a13dbe1f785f`） |
 | 后续提交 | docs/testing merge `03620f67fc0`、bridge 去重 `f4331ac5a18`、module tidy `08b52a30b4d`、source-lock `a9a0cb0c093` |
 
@@ -89,7 +89,7 @@ GitHub Compare（base=fork 正式分支, head=正确 upstream）：main、sing�
 | Dashboard main 97/97、消费线 98/98、build | PASS |
 | Desktop 59/59、build | PASS |
 | source-lock verify | PASS |
-| GitHub Actions | Android Core **success**（run `42944533147`，SHA `08b52a3`）；Verify `42944533206` 与 Mobile contract `42942954909` 在报告时 **in_progress**，不记为 PASS |
+| GitHub Actions | Verify **success**（run `42945339834`）、Android Core **success**（run `42945339735`，均为最终 head `b473c21`）；Mobile contract **success**（run `42942954909`，08b52a3；之后仅 CI 脚本/文档变化） |
 
 ## G. Git 与分支清理
 
