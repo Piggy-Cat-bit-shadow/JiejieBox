@@ -81,11 +81,12 @@ func (r *IPCIDRItem) Match(metadata *adapter.InboundContext) bool {
 		}
 		return slices.ContainsFunc(addresses, r.ipSet.Contains)
 	}
-	if metadata.Destination.IsIP() {
-		return r.ipSet.Contains(metadata.Destination.Addr)
+	exact, candidates := destinationMatchSource(metadata)
+	if exact.IsValid() {
+		return r.ipSet.Contains(exact)
 	}
-	if len(metadata.DestinationAddresses) > 0 {
-		return common.Any(metadata.DestinationAddresses, r.ipSet.Contains)
+	if len(candidates) > 0 {
+		return common.Any(candidates, r.ipSet.Contains)
 	}
 	return metadata.IPCIDRAcceptEmpty
 }

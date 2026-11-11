@@ -309,6 +309,7 @@ Timeout for sniffing.
   "action": "resolve",
   "server": "",
   "strategy": "",
+  "match_only": false,
   "disable_cache": false,
   "disable_optimistic_cache": false,
   "rewrite_ttl": null,
@@ -328,6 +329,46 @@ Specifies DNS server tag to use instead of selecting through DNS routing.
 DNS resolution strategy, available values are: `prefer_ipv4`, `prefer_ipv6`, `ipv4_only`, `ipv6_only`.
 
 `dns.strategy` will be used by default.
+
+#### match_only
+
+Publish the resolved addresses for rule matching only, instead of as dial candidates.
+
+By default `resolve` does both: the addresses it returns are evaluated by IP conditions
+(`ip_cidr`, an IP `rule_set`, `ip_is_private`, `preferred_by`), and the outbound is dialled with one
+of those addresses instead of the original name. With `match_only` enabled the same query runs and
+the same conditions are evaluated, but the addresses are published only as matching evidence: the
+dial keeps the original target, so an outbound that supports domain targets still receives the name
+and resolves it itself.
+
+- The query is unchanged: the same DNS server, strategy, timeout, cache and ECS options apply. This
+  option does not disable DNS and does not add a second resolver.
+- A literal destination still wins over the resolved addresses, exactly as it does without this
+  option: the address the client connected to is the address the flow uses.
+- The addresses are per flow. They are discarded when the destination is rewritten
+  (`override_address`), replaced by a later `resolve`, and are not inherited by the per-datagram
+  destinations of a UoT session.
+- `false` / omitted keeps the historical behaviour.
+- This option does not delete the dial candidates a previous action published, and it does not make
+  a name reach an outbound that cannot dial one: the target the outbound receives follows the
+  outbound's own capability and the candidates that exist (see below).
+
+Whether the outbound receives the name depends on the outbound and on the candidates already
+present, not on `match_only` alone:
+
+- a proxy outbound that supports domain targets (SOCKS, VMess, AnyTLS, ...) resolves the name on
+  the remote side;
+- a `direct` outbound configured with `domain_resolver` can also receive the name and resolve it
+  itself;
+- a path that needs a real address (a FakeIP placeholder handed to a flow outbound, or a native
+  pre-match commit) refuses or stays in userspace rather than sending the placeholder or the
+  matching addresses;
+- an earlier plain `resolve` in the same rule list keeps its dial candidates: they are what the
+  connection dials, and this option never removes them.
+
+The addresses are the local resolver's view. They select the rule; they are not a statement about
+the address the proxy finally reaches, so an "address is private" rule is evaluated against the
+local answer rather than against the remote resolver's answer.
 
 #### disable_cache
 

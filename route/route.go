@@ -598,10 +598,11 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 				continue
 			}
 			//goland:noinspection GoDeprecation
-			if action.OverrideDestination && M.IsDomainName(metadata.Domain) {
-				metadata.Destination = M.Socksaddr{
-					Fqdn: metadata.Domain,
-					Port: metadata.Destination.Port,
+			if action.OverrideDestination {
+				// A rewritten destination is a different target: the address evidence produced for the
+				// previous one (matching-only and dial candidates alike) stops describing this flow.
+				if _, dropped := applySniffOverride(&metadata); dropped {
+					r.logger.DebugContext(ctx, "sniff override to ", metadata.Domain, " dropped the address evidence of the previous target")
 				}
 			}
 			if metadata.Domain != "" && metadata.Client != "" {
@@ -742,6 +743,58 @@ func applyActionRouteOptions(metadata *adapter.InboundContext, action adapter.Ru
 	return true
 }
 
+// invalidateResolvedAddressEvidence drops the per-flow address evidence that belongs to the target
+// the flow HAD, and reports whether there was any.
+//
+// # Why both lists move together
+//
+// Address evidence describes ONE destination. `DestinationAddresses` is the dial candidate list a
+// plain `resolve` published, `MatchAddresses` is what a `match_only` resolve published for rule
+// matching - two publications of the same observation, not two independent caches. When a rule
+// changes the flow's destination, neither describes the flow any more:
+//
+//   - a stale `MatchAddresses` would let `ip_cidr` / `ip_is_private` judge the NEW target with the
+//     OLD target's addresses (the same flow could be rejected or routed by a name it no longer
+//     dials);
+//   - a stale `DestinationAddresses` would keep dialling the old name's address for the new name.
+//
+// # What it deliberately does not touch
+//
+// Only the two address lists. `OriginDestination`, `RouteOriginalDestination`, `Domain`, the DNS
+// response cache (`DNSResponse` / `NamedDNSResponses`) and the source metadata all describe
+// different facts and keep their meaning across a rewrite.
+func invalidateResolvedAddressEvidence(metadata *adapter.InboundContext) bool {
+	hadEvidence := len(metadata.DestinationAddresses) > 0 || len(metadata.MatchAddresses) > 0
+	metadata.DestinationAddresses = nil
+	metadata.MatchAddresses = nil
+	return hadEvidence
+}
+
+// applySniffOverride applies the legacy `override_destination` rewrite to the flow's destination and
+// reports whether the destination's IDENTITY changed and whether the previous target's address
+// evidence had to be dropped.
+//
+// The two questions are separate on purpose. A sniff that merely confirms the name the client already
+// used rewrites nothing (`rewritten == metadata.Destination`), so the evidence produced for that same
+// name is still valid and must not be thrown away; a sniff that replaces the target makes every
+// address observation about the previous target stale. The port is preserved, which is what makes the
+// comparison meaningful: only the name decides whether this is the same target.
+func applySniffOverride(metadata *adapter.InboundContext) (targetChanged bool, evidenceDropped bool) {
+	if !M.IsDomainName(metadata.Domain) {
+		return false, false
+	}
+	rewritten := M.Socksaddr{
+		Fqdn: metadata.Domain,
+		Port: metadata.Destination.Port,
+	}
+	if rewritten == metadata.Destination {
+		return false, false
+	}
+	evidenceDropped = invalidateResolvedAddressEvidence(metadata)
+	metadata.Destination = rewritten
+	return true, evidenceDropped
+}
+
 func applyRouteOptionsMetadata(metadata *adapter.InboundContext, routeOptions *R.RuleActionRouteOptions) {
 	// The original destination is captured before any rewrite, and only the first time: it records
 	// what the application asked for, which later rules must not overwrite.
@@ -749,8 +802,10 @@ func applyRouteOptionsMetadata(metadata *adapter.InboundContext, routeOptions *R
 		metadata.RouteOriginalDestination = metadata.Destination
 	}
 	if routeOptions.OverrideAddress.IsValid() {
-		// A resolved address list belongs to the pre-rewrite destination.
-		metadata.DestinationAddresses = nil
+		// A resolved address list belongs to the pre-rewrite destination, and so does an address
+		// published for matching only: after the rewrite they describe a target this flow no longer
+		// has, and leaving them would let an IP rule match the OLD destination or dial it.
+		invalidateResolvedAddressEvidence(metadata)
 	}
 	if routeOptions.OverrideAddress.IsValid() {
 		metadata.Destination = M.Socksaddr{
@@ -1017,6 +1072,20 @@ func (r *Router) preMatchFlowWithNeed(ctx context.Context, metadata *adapter.Inb
 	return r.preMatchFlowWithTruth(ctx, metadata, packetDestination, matchedRule, outboundTag, r.processTruthFor(metadata, reached))
 }
 
+// fakeIPFlowRejectionDetail explains, for the operator, why a FakeIP flow cannot be committed to a
+// flow outbound.
+//
+// Two different states reach the same refusal and they need different actions: a configuration with
+// no resolve action has a rule missing, while one whose resolve action runs with `match_only: true`
+// has the rule and chose, correctly, not to publish a dialable address. Reporting both as "a resolve
+// action is required" sends the reader to add a rule they already have.
+func fakeIPFlowRejectionDetail(metadata *adapter.InboundContext) string {
+	if len(metadata.MatchAddresses) > 0 {
+		return "the resolve action used match_only, which publishes no address to dial through"
+	}
+	return "a resolve action is required before routing to"
+}
+
 // preMatchFlowWithTruth is preMatchFlow with what the rule walk proved about the process metadata.
 func (r *Router) preMatchFlowWithTruth(ctx context.Context, metadata *adapter.InboundContext, packetDestination M.Socksaddr, matchedRule adapter.Rule, outboundTag string, truth processTruth) adapter.PreMatchResult {
 	continueResult := adapter.PreMatchResult{Action: adapter.PreMatchContinue}
@@ -1152,7 +1221,7 @@ func (r *Router) preMatchFlowWithTruth(ctx context.Context, metadata *adapter.In
 		}
 		if !newDestination.IsValid() {
 			if len(metadata.DestinationAddresses) == 0 {
-				r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": a resolve action is required before routing to outbound/", outbound.Type(), "[", outbound.Tag(), "]")
+				r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": ", fakeIPFlowRejectionDetail(metadata), " outbound/", outbound.Type(), "[", outbound.Tag(), "]")
 			} else {
 				r.logger.DebugContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": no resolved address for this address family")
 			}
@@ -1489,10 +1558,11 @@ func (r *Router) actionSniff(
 		metadata.SniffError = err
 		if err == nil {
 			//goland:noinspection GoDeprecation
-			if action.OverrideDestination && M.IsDomainName(metadata.Domain) {
-				metadata.Destination = M.Socksaddr{
-					Fqdn: metadata.Domain,
-					Port: metadata.Destination.Port,
+			if action.OverrideDestination {
+				// Same target identity rule as the packet arm: evidence about the previous target must
+				// not judge (or dial) the rewritten one.
+				if _, dropped := applySniffOverride(metadata); dropped {
+					r.logger.DebugContext(ctx, "sniff override to ", metadata.Domain, " dropped the address evidence of the previous target")
 				}
 			}
 			if metadata.Domain != "" && metadata.Client != "" {
@@ -1695,10 +1765,11 @@ func (r *Router) actionSniff(
 	finally:
 		if err == nil {
 			//goland:noinspection GoDeprecation
-			if action.OverrideDestination && M.IsDomainName(metadata.Domain) {
-				metadata.Destination = M.Socksaddr{
-					Fqdn: metadata.Domain,
-					Port: metadata.Destination.Port,
+			if action.OverrideDestination {
+				// The packet arm of the same rewrite. A UoT/TUN datagram whose payload revealed a name
+				// gets a new target, so the previous target's address evidence is dropped here too.
+				if _, dropped := applySniffOverride(metadata); dropped {
+					r.logger.DebugContext(ctx, "sniff override to ", metadata.Domain, " dropped the address evidence of the previous target")
 				}
 			}
 			if metadata.Domain != "" && metadata.Client != "" {
@@ -1746,6 +1817,11 @@ func (r *Router) actionSniff(
 // metadata.Destination with a resolved address would silently change which rules match.
 // Destination therefore keeps meaning "what the client asked for" and
 // DestinationAddresses means "where we may dial instead".
+//
+// # Two publication points, one decision
+//
+// `match_only: true` runs the SAME lookup with the same options and publishes the answer as
+// matching evidence instead of a dial candidate; see publishResolvedAddresses.
 func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundContext, action *R.RuleActionResolve) error {
 	addresses, strategy, _, err := r.lookupResolveAction(ctx, metadata, action)
 	if err != nil {
@@ -1754,9 +1830,42 @@ func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundCon
 	if addresses == nil {
 		return nil
 	}
-	metadata.DestinationAddresses = mergeOriginalDestination(metadata.Destination, addresses, strategy)
-	r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
+	publishResolvedAddresses(metadata, action, addresses, strategy)
+	if action.MatchOnly {
+		r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.MatchAddresses), " "), "] for matching only")
+	} else {
+		r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
+	}
 	return nil
+}
+
+// publishResolvedAddresses publishes one resolve action's answer on the flow metadata.
+//
+// # Why the split lives here and nowhere else
+//
+// The lookup, its options, its effective strategy and its error handling are IDENTICAL for both
+// modes - that is what makes `match_only` a publication choice rather than a second resolver. The
+// only question this function answers is which of the two per-flow lists the answer belongs to, and
+// every producer (the production walk and the active diagnostic) goes through it so the two cannot
+// drift into publishing different things for the same configuration.
+//
+//   - dial candidates (the default): the historical behaviour, unchanged. The answer is merged with
+//     the literal destination the client chose so a recovery never drops an address the client can
+//     demonstrably reach, and ordered by the EFFECTIVE strategy so the plan matches the resolver's.
+//   - matching only: the answer is published as matching evidence and the candidate list is left
+//     exactly as it was. The action must not delete candidates another legitimate action produced,
+//     and it must not add this answer to them - a proxy that receives a name keeps receiving the
+//     name, which is the whole point of the option.
+//
+// A dialling answer CLEARS the match-only list: it is the newer statement about this target, and
+// keeping both would let a rule match an address the newest resolution no longer returns.
+func publishResolvedAddresses(metadata *adapter.InboundContext, action *R.RuleActionResolve, addresses []netip.Addr, strategy C.DomainStrategy) {
+	if action.MatchOnly {
+		metadata.MatchAddresses = addresses
+		return
+	}
+	metadata.MatchAddresses = nil
+	metadata.DestinationAddresses = mergeOriginalDestination(metadata.Destination, addresses, strategy)
 }
 
 // lookupResolveAction performs one resolve action's DNS query and reports the EFFECTIVE strategy.

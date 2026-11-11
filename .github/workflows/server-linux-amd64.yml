@@ -707,8 +707,16 @@ jobs:
           set -euo pipefail
           # The TARGET is named explicitly. `go` reads GOOS/GOARCH/CGO_ENABLED from its own
           # environment, so omitting them makes this check describe the RUNNER, not the
-          # artifact this workflow ships. Same values the build step compiles with.
-          export GOOS="linux" GOARCH="amd64" CGO_ENABLED="0"
+          # artifact this workflow ships.
+          #
+          # CGO_ENABLED is the ONE value that differs from the build: the race runtime is a cgo
+          # runtime, and `go test -race` fails before any test compiles when cgo is off
+          # ("go: -race requires cgo; enable cgo by setting CGO_ENABLED=1"). Measured on run
+          # 43016291709: the step failed at that check, so the race, fuzz, reference and MASQUE
+          # steps behind it had never run in a deep dispatch. The artifact build step keeps
+          # CGO_ENABLED=0 and is untouched; this step only compiles the instrumented test binary
+          # for the runner host, which is the same GOOS/GOARCH the artifact targets.
+          export GOOS="linux" GOARCH="amd64" CGO_ENABLED="1"
           echo "server check target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           go test -race -tags "$TAGS" -count=1 -timeout 40m \

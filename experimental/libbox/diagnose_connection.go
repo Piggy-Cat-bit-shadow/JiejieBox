@@ -653,7 +653,7 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	switch {
 	case result.Resolve.Performed:
 		resolveStage.Status = connectionTestStageOK
-		resolveStage.Detail = "'" + host + "' -> " + addressList(result.DestinationAddresses) + " (route decision)"
+		resolveStage.Detail = resolveActionStageDetail(host, result)
 	case result.Rejected || result.Unknown != "":
 		resolveStage.Status = connectionTestStageSkipped
 		resolveStage.Detail = "the route decision does not dial this request"
@@ -762,6 +762,21 @@ func resolveLabel(resolve route.RouteDiagnoseResolve) string {
 		label += " (" + resolve.ServerType + ")"
 	}
 	return label
+}
+
+// resolveActionStageDetail renders what the route decision did about ADDRESSES, for the resolve
+// stage of the report.
+//
+// The two modes must not read alike. With `match_only` the action really ran and the decision really
+// used its answer, but the answer is matching evidence only: printing the dial candidates - which
+// are empty by design - would claim the resolution produced no address, and printing the matching
+// addresses without saying so would claim a dial target this connection never had.
+func resolveActionStageDetail(host string, result route.RouteDiagnoseResult) string {
+	if result.Resolve.MatchOnly {
+		return "'" + host + "' -> " + addressList(result.Resolve.Addresses) +
+			" (match only: the outbound keeps the name and resolves it at dial time)"
+	}
+	return "'" + host + "' -> " + addressList(result.DestinationAddresses) + " (route decision)"
 }
 
 // runBoundedOutboundDial performs one dial inside the stage budget for the root-mode contract.

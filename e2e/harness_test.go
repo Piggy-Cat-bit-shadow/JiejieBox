@@ -248,6 +248,10 @@ type flowRecord struct {
 	OutboundChain            []string
 	TrafficClass             trafficclass.Class
 	FakeIP                   bool
+	// MatchAddresses is what `resolve` with `match_only: true` published for rule matching. It is
+	// recorded for the same reason DestinationAddresses is: a test that claims "the address selected
+	// the rule but was not dialled" has to observe both facts separately.
+	MatchAddresses []string
 }
 
 type flowRecorder struct {
@@ -282,6 +286,9 @@ func (r *flowRecorder) record(metadata adapter.InboundContext) {
 	}
 	for _, address := range metadata.DestinationAddresses {
 		record.DestinationAddresses = append(record.DestinationAddresses, address.String())
+	}
+	for _, address := range metadata.MatchAddresses {
+		record.MatchAddresses = append(record.MatchAddresses, address.String())
 	}
 	for _, outbound := range metadata.OutboundChain {
 		if outbound == nil {

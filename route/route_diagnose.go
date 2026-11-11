@@ -76,6 +76,10 @@ type RouteDiagnoseResolve struct {
 	ServerType string
 	// Strategy is the strategy the action asked for.
 	Strategy C.DomainStrategy
+	// MatchOnly reports that the action published this answer for RULE MATCHING ONLY
+	// (`match_only: true`): it is in the report because the decision really used it, but it is
+	// deliberately absent from DestinationAddresses and is not a dial candidate.
+	MatchOnly bool
 	// Addresses are the answers the resolver returned, in the order the dial may use them.
 	Addresses []netip.Addr
 }
@@ -363,9 +367,10 @@ func (r *Router) diagnoseWalk(ctx context.Context, metadata *adapter.InboundCont
 					Server:     action.Server,
 					ServerType: serverType,
 					Strategy:   strategy,
+					MatchOnly:  action.MatchOnly,
 					Addresses:  addresses,
 				}
-				metadata.DestinationAddresses = mergeOriginalDestination(metadata.Destination, addresses, strategy)
+				publishResolvedAddresses(metadata, action, addresses, strategy)
 			}
 		case *R.RuleActionSniff:
 			if metadata.Domain == "" {

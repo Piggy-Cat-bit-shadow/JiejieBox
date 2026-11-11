@@ -62,6 +62,20 @@ func (r *PreferredByItem) Match(metadata *adapter.InboundContext) bool {
 			}
 		}
 	}
+	// Addresses published for matching only are consulted for a NAMED destination, matching the
+	// precedence the IP conditions apply: a literal destination is the address really in use and
+	// stays the only evidence about it. Unlike those conditions this item is additive by design -
+	// it asks "does anything here prefer this flow" - so the candidate list below is still
+	// consulted for a literal destination, exactly as before.
+	if !metadata.Destination.IsIP() && len(metadata.MatchAddresses) > 0 {
+		for _, address := range metadata.MatchAddresses {
+			for _, outbound := range r.outbounds {
+				if outbound.PreferredAddress(metadata, address) {
+					return true
+				}
+			}
+		}
+	}
 	if len(metadata.DestinationAddresses) > 0 {
 		for _, address := range metadata.DestinationAddresses {
 			for _, outbound := range r.outbounds {

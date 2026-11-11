@@ -27,10 +27,11 @@ func (r *IPIsPrivateItem) Match(metadata *adapter.InboundContext) bool {
 		}
 		return false
 	}
-	if metadata.Destination.Addr.IsValid() {
-		return !N.IsPublicAddr(metadata.Destination.Addr)
+	exact, candidates := destinationMatchSource(metadata)
+	if exact.IsValid() {
+		return !N.IsPublicAddr(exact)
 	}
-	for _, destinationAddress := range metadata.DestinationAddresses {
+	for _, destinationAddress := range candidates {
 		if !N.IsPublicAddr(destinationAddress) {
 			return true
 		}

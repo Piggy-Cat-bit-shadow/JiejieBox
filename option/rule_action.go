@@ -291,6 +291,7 @@ type RouteActionResolve struct {
 	Server                 string                `json:"server,omitempty" reference:"dns_server"`
 	Timeout                badoption.Duration    `json:"timeout,omitempty"`
 	Strategy               DomainStrategy        `json:"strategy,omitempty"`
+	MatchOnly              bool                  `json:"match_only,omitempty"`
 	DisableCache           bool                  `json:"disable_cache,omitempty"`
 	DisableOptimisticCache bool                  `json:"disable_optimistic_cache,omitempty"`
 	RewriteTTL             *uint32               `json:"rewrite_ttl,omitempty"`
