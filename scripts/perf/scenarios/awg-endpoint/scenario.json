@@ -1,0 +1,41 @@
+{
+  "id": "awg-endpoint",
+  "protocol": "awg",
+  "mode": "userspace",
+  "transport": "udp",
+  "security": "noise",
+  "description": "AmneziaWG 3.x between two endpoints in this repository, userspace device (system=false). Same topology and payload as wireguard-endpoint, with the obfuscation parameters enabled on both ends, so the difference between the two cells is the AWG graft rather than the load model.",
+  "target": {
+    "bind": "127.0.0.1",
+    "address": "198.18.17.1"
+  },
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {
+      "sleep_ms": 800
+    }
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {
+      "tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"
+    }
+  },
+  "extra": {
+    "build_tag": "with_awg",
+    "comparison": "wireguard-endpoint",
+    "known_limits": "userspace endpoint: download and UDP do not carry traffic reliably in this configuration; see docs/perf/FAILURES.md#b7"
+  },
+  "defaults": {
+    "patterns": [
+      "upload"
+    ],
+    "streams": [
+      1
+    ],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3,
+    "restart_per_pattern": false
+  }
+}

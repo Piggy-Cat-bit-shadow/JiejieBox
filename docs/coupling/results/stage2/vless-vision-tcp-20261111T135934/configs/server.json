@@ -1,0 +1,23 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "127.0.0.1",
+      "listen_port": 27785,
+      "users": [
+        {"name": "bench", "uuid": "5756c5c7-bdf9-4855-87c9-2961615b0cab", "flow": "xtls-rprx-vision"}
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "certificate_path": "/home/jie/perf/stage2/vless-vision-tcp-20261111T135934/certs/cert.pem",
+        "key_path": "/home/jie/perf/stage2/vless-vision-tcp-20261111T135934/certs/key.pem"
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}

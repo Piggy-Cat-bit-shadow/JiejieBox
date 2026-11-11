@@ -1,0 +1,28 @@
+{
+  "id": "xhttp-h2",
+  "protocol": "vless+xhttp",
+  "mode": "packet-up",
+  "transport": "http2",
+  "security": "tls",
+  "description": "VLESS XHTTP in packet-up mode over HTTP/2. The client is this repository's outbound; the server is the reference Xray 26.9.30 binary, because the fork registers only an XHTTP client transport. This is the reference-server cell the existing xnettool A/B stand also needs; it is not an in-fork pair and is labelled as such.",
+  "server": {
+    "binary": "xray",
+    "config": "server.json.tmpl",
+    "ready": {"tcp": "__SERVER_ADDR__:__SERVER_PORT__"}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "extra": {
+    "reference_server": "Xray 26.9.30 (linux-64)",
+    "server_transport_in_fork": false
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "connect"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

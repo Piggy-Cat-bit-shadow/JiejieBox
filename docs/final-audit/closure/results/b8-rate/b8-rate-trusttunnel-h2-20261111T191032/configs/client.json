@@ -1,0 +1,29 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "10.213.0.1",
+      "listen_port": 21873
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "trusttunnel",
+      "tag": "proxy",
+      "server": "10.213.0.2",
+      "server_port": 37936,
+      "username": "bench",
+      "password": "3ebd02922595c45918c31b81c61c6e1c",
+      "quic": false,
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "certificate_path": "/home/jie/perf/b8-rate/trusttunnel-h2-20261111T191032/certs/ca.pem",
+        "alpn": ["h2"]
+      }
+    }
+  ],
+  "route": {"final": "proxy"}
+}

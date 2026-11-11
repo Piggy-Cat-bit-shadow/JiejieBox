@@ -1,0 +1,27 @@
+{
+  "id": "trusttunnel-h3",
+  "protocol": "trusttunnel",
+  "mode": "h3",
+  "transport": "http3",
+  "security": "tls",
+  "description": "TrustTunnel over HTTP/3 and QUIC. The server side serves H2 over TCP and H3 over QUIC on the same port; this cell selects QUIC on the client, so the comparison against trusttunnel-h2 is like-for-like at the tunnel layer.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"sleep_ms": 800}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "extra": {
+    "tunnel_transport": "QUIC",
+    "comparison": "trusttunnel-h2"
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "udp"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

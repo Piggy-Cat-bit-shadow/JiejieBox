@@ -1,0 +1,29 @@
+{
+  "id": "xhttp-h3",
+  "protocol": "vless+xhttp",
+  "mode": "packet-up",
+  "transport": "http3",
+  "security": "tls",
+  "description": "VLESS XHTTP in packet-up mode over HTTP/3 and QUIC. The client is this repository's outbound; the server is the reference Xray 26.9.30 binary. Same client, same mode, different transport, so the pair against xhttp-h2 isolates the H2/H3 difference.",
+  "server": {
+    "binary": "xray",
+    "config": "server.json.tmpl",
+    "ready": {"sleep_ms": 800}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "extra": {
+    "reference_server": "Xray 26.9.30 (linux-64)",
+    "server_transport_in_fork": false,
+    "comparison": "xhttp-h2"
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "connect"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

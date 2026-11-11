@@ -1,0 +1,22 @@
+{
+  "id": "mieru-udp-underlay",
+  "protocol": "mieru",
+  "mode": "multiplexed",
+  "transport": "udp",
+  "description": "Mieru over its UDP underlay (the mieru MTU-framed transport), through this repository's inbound which embeds the official mieru server SDK. Server readiness is a settle delay because the listener is UDP and has no TCP port to dial.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"sleep_ms": 800}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "connect"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

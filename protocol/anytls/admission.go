@@ -55,12 +55,15 @@ func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial str
 	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 		class = resourceguard.ClassInteractive
 	}
-	started := time.Now()
 	permit, err := guard.Acquire(ctx, class)
 	if err != nil {
 		return nil, err
 	}
 	defer permit.Release()
+	// Queueing at the gate is our own backpressure, not creation time. Starting the clock before
+	// Acquire would make a queued refusal look slow and keep the fast-fail rate limit disarmed
+	// exactly when the gate is saturated.
+	started := time.Now()
 	// The TLS handshake this dial may perform is admitted again at the shared TLS layer. Marking
 	// the context is what stops one handshake being charged twice; see resourceguard.HeldPermit.
 	conn, dialErr := dial(resourceguard.WithHeldPermit(ctx), destination)

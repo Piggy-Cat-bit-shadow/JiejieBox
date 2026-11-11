@@ -1,0 +1,99 @@
+phase: before
+date: 2026-11-11T19:17:04+08:00
+cell: masque-connect-ip loss: 1 rate: 400
+PERF_NET_TOPOLOGY=netns-veth RTT=80 LOSS=1 MTU=1500
+client_if: plab-2919a
+server_pid: 2929
+server_if: plab-2919b
+
+== client tc -s -d qdisc (plab-2919a)
+qdisc netem 8015: root refcnt 17 limit 1000 delay 40ms loss 1%
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 90b 1p requeues 0
+
+== server tc -s -d qdisc (plab-2919b)
+qdisc netem 8016: root refcnt 17 limit 1000 delay 40ms loss 1%
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 90b 1p requeues 0
+
+== client nstat Udp
+UdpInDatagrams                  0                  0.0
+UdpNoPorts                      0                  0.0
+UdpInErrors                     0                  0.0
+UdpOutDatagrams                 0                  0.0
+UdpRcvbufErrors                 0                  0.0
+UdpSndbufErrors                 0                  0.0
+UdpInCsumErrors                 0                  0.0
+UdpIgnoredMulti                 0                  0.0
+UdpMemErrors                    0                  0.0
+UdpLiteInDatagrams              0                  0.0
+UdpLiteNoPorts                  0                  0.0
+UdpLiteInErrors                 0                  0.0
+UdpLiteOutDatagrams             0                  0.0
+UdpLiteRcvbufErrors             0                  0.0
+UdpLiteSndbufErrors             0                  0.0
+UdpLiteInCsumErrors             0                  0.0
+UdpLiteIgnoredMulti             0                  0.0
+UdpLiteMemErrors                0                  0.0
+Udp6InDatagrams                 0                  0.0
+Udp6NoPorts                     0                  0.0
+Udp6InErrors                    0                  0.0
+Udp6OutDatagrams                0                  0.0
+Udp6RcvbufErrors                0                  0.0
+Udp6SndbufErrors                0                  0.0
+Udp6InCsumErrors                0                  0.0
+Udp6IgnoredMulti                0                  0.0
+Udp6MemErrors                   0                  0.0
+UdpLite6InDatagrams             0                  0.0
+UdpLite6NoPorts                 0                  0.0
+UdpLite6InErrors                0                  0.0
+UdpLite6OutDatagrams            0                  0.0
+UdpLite6RcvbufErrors            0                  0.0
+UdpLite6SndbufErrors            0                  0.0
+UdpLite6InCsumErrors            0                  0.0
+UdpLite6MemErrors               0                  0.0
+
+== server nstat Udp
+UdpInDatagrams                  0                  0.0
+UdpNoPorts                      0                  0.0
+UdpInErrors                     0                  0.0
+UdpOutDatagrams                 0                  0.0
+UdpRcvbufErrors                 0                  0.0
+UdpSndbufErrors                 0                  0.0
+UdpInCsumErrors                 0                  0.0
+UdpIgnoredMulti                 0                  0.0
+UdpMemErrors                    0                  0.0
+UdpLiteInDatagrams              0                  0.0
+UdpLiteNoPorts                  0                  0.0
+UdpLiteInErrors                 0                  0.0
+UdpLiteOutDatagrams             0                  0.0
+UdpLiteRcvbufErrors             0                  0.0
+UdpLiteSndbufErrors             0                  0.0
+UdpLiteInCsumErrors             0                  0.0
+UdpLiteIgnoredMulti             0                  0.0
+UdpLiteMemErrors                0                  0.0
+Udp6InDatagrams                 0                  0.0
+Udp6NoPorts                     0                  0.0
+Udp6InErrors                    0                  0.0
+Udp6OutDatagrams                0                  0.0
+Udp6RcvbufErrors                0                  0.0
+Udp6SndbufErrors                0                  0.0
+Udp6InCsumErrors                0                  0.0
+Udp6IgnoredMulti                0                  0.0
+Udp6MemErrors                   0                  0.0
+UdpLite6InDatagrams             0                  0.0
+UdpLite6NoPorts                 0                  0.0
+UdpLite6InErrors                0                  0.0
+UdpLite6OutDatagrams            0                  0.0
+UdpLite6RcvbufErrors            0                  0.0
+UdpLite6SndbufErrors            0                  0.0
+UdpLite6InCsumErrors            0                  0.0
+UdpLite6MemErrors               0                  0.0
+
+== client /proc/net/snmp Udp
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 0 0 0 0 0 0 0 0 0
+
+== server /proc/net/snmp Udp
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 0 0 0 0 0 0 0 0 0

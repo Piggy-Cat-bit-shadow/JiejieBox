@@ -1,0 +1,43 @@
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [
+    {
+      "listen": "__SERVER_ADDR__",
+      "port": __SERVER_PORT__,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{"id": "__UUID__"}],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "__SERVER_NAME__",
+          "alpn": ["h2"],
+          "certificates": [
+            {"certificateFile": "__CERT__", "keyFile": "__KEY__"}
+          ]
+        },
+        "xhttpSettings": {
+          "path": "/xhttp",
+          "mode": "packet-up"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {
+        "finalRules": [
+          {
+            "action": "allow",
+            "ip": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "198.18.0.0/15"]
+          }
+        ]
+      }
+    }
+  ]
+}
+}

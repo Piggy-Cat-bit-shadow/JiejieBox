@@ -187,12 +187,16 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 		class = resourceguard.ClassInteractive
 	}
-	started := time.Now()
 	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, class)
 	if err != nil {
 		return nil, err
 	}
 	defer permit.Release()
+	// The clock starts after the permit, not before it: queueing at the gate is this process's own
+	// backpressure, and counting it as creation time would hide a genuinely fast failure behind a
+	// wait the far side never caused. With the clock outside, a queued refusal looked slower than
+	// the fast-fail window and never armed the rate limit.
+	started := time.Now()
 	// The marker goes into the context the dial runs with, not just the one this function
 	// returns. A detour, chain or fallback makes one logical dial re-enter this seam: the outer
 	// outbound's handshake dials through another outbound, which performs its own handshake.
@@ -204,6 +208,23 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	return conn, dialErr
 }
 
+// connectionHandoff is implemented by a handshake error whose connection is still
+// owned by the handshake implementation and must not be closed by the caller.
+//
+// REALITY needs it: when verification fails it answers like the camouflage site and
+// performs that exchange on the same socket after the failure is reported, so the
+// caller closing the socket would abort the very exchange that makes the failure look
+// like an ordinary TLS client. The handshake implementation closes the socket when
+// its fallback ends.
+type connectionHandoff interface {
+	ConnectionHandedOff() bool
+}
+
+func isHandedOff(err error) bool {
+	var handoff connectionHandoff
+	return errors.As(err, &handoff) && handoff.ConnectionHandedOff()
+}
+
 func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {
 	conn, err := d.dialer.DialContext(ctx, N.NetworkTCP, destination)
 	if err != nil {
@@ -211,7 +232,9 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	}
 	tlsConn, err := aTLS.ClientHandshake(ctx, conn, d.config)
 	if err != nil {
-		conn.Close()
+		if !isHandedOff(err) {
+			conn.Close()
+		}
 		var echErr *tls.ECHRejectionError
 		if echRetry && errors.As(err, &echErr) && len(echErr.RetryConfigList) > 0 {
 			if echConfig, isECH := d.config.(ECHCapableConfig); isECH {

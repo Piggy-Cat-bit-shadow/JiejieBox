@@ -1,0 +1,33 @@
++0800 2026-11-11 18:24:46 [36mINFO[0m inbound/socks[socks-in]: tcp server started at 10.213.0.1:32202
++0800 2026-11-11 18:24:46 [31mERROR[0m network: missing default interface
++0800 2026-11-11 18:24:46 [36mINFO[0m sing-box started (0.00s)
++0800 2026-11-11 18:24:46 [36mINFO[0m [[38;5;227m882573523[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:55656
++0800 2026-11-11 18:24:46 [36mINFO[0m [[38;5;50m2033929141[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:55668
++0800 2026-11-11 18:24:46 [36mINFO[0m [[38;5;50m2033929141[0m 0ms] inbound/socks[socks-in]: inbound connection to 10.213.0.2:30463
++0800 2026-11-11 18:24:46 [36mINFO[0m [[38;5;50m2033929141[0m 0ms] endpoint/masque-client[masque]: outbound connection to 10.213.0.2:30463
++0800 2026-11-11 18:24:46 [31mERROR[0m [[38;5;50m2033929141[0m 0ms] connection: open connection to 10.213.0.2:30463 using outbound/masque-client[masque]: endpoint is not ready yet
++0800 2026-11-11 18:24:46 [36mINFO[0m endpoint/masque-client[masque]: assigned 10.8.0.2/32
++0800 2026-11-11 18:24:46 [36mINFO[0m [[38;5;229m164163842[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:55678
++0800 2026-11-11 18:24:46 [36mINFO[0m [[38;5;229m164163842[0m 0ms] inbound/socks[socks-in]: inbound connection to 10.213.0.2:30463
++0800 2026-11-11 18:24:46 [36mINFO[0m [[38;5;229m164163842[0m 0ms] endpoint/masque-client[masque]: outbound connection to 10.213.0.2:30463
++0800 2026-11-11 18:24:47 [36mINFO[0m [[38;5;107m669187675[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:55686
++0800 2026-11-11 18:24:47 [36mINFO[0m [[38;5;107m669187675[0m 3ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:24:47 [36mINFO[0m [[38;5;107m669187675[0m 3ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:24:51 [36mINFO[0m [[38;5;199m3816530103[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:40806
++0800 2026-11-11 18:24:51 [36mINFO[0m [[38;5;199m3816530103[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:24:51 [36mINFO[0m [[38;5;199m3816530103[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:00 [36mINFO[0m endpoint/masque-client[masque]: inbound packet connection from 10.213.0.2:34839
++0800 2026-11-11 18:25:00 [36mINFO[0m endpoint/masque-client[masque]: inbound packet connection to 127.0.0.1:54919
++0800 2026-11-11 18:25:00 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 127.0.0.1:54919
++0800 2026-11-11 18:25:00 [36mINFO[0m [[38;5;114m307096674[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:51612
++0800 2026-11-11 18:25:00 [36mINFO[0m [[38;5;114m307096674[0m 1ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:00 [36mINFO[0m [[38;5;114m307096674[0m 1ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:04 [36mINFO[0m [[38;5;182m3827437478[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:51626
++0800 2026-11-11 18:25:04 [36mINFO[0m [[38;5;182m3827437478[0m 1ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:04 [36mINFO[0m [[38;5;182m3827437478[0m 1ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:11 [36mINFO[0m [[38;5;31m4115816678[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:51066
++0800 2026-11-11 18:25:11 [36mINFO[0m [[38;5;31m4115816678[0m 1ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:11 [36mINFO[0m [[38;5;31m4115816678[0m 1ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:15 [36mINFO[0m [[38;5;201m2516563897[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:51078
++0800 2026-11-11 18:25:15 [36mINFO[0m [[38;5;201m2516563897[0m 1ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:34839
++0800 2026-11-11 18:25:15 [36mINFO[0m [[38;5;201m2516563897[0m 1ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:34839

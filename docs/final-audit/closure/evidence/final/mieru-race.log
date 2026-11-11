@@ -1,0 +1,70 @@
+$ go test -race -count=20 -run TestMieruClientObservesServerClosingAnIdleUnderlay ./protocol/mieru
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+    idle_underlay_test.go:140: 
+        	Error Trace:	/mnt/c/Deepseek/_perf/kernel/protocol/mieru/idle_underlay_test.go:140
+        	Error:      	Received unexpected error:
+        	            	failed to read socks5 connection response from the server: EOF
+        	Test:       	TestMieruClientObservesServerClosingAnIdleUnderlay
+--- FAIL: TestMieruClientObservesServerClosingAnIdleUnderlay (2.31s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+    idle_underlay_test.go:140: 
+        	Error Trace:	/mnt/c/Deepseek/_perf/kernel/protocol/mieru/idle_underlay_test.go:140
+        	Error:      	Received unexpected error:
+        	            	failed to read socks5 connection response from the server: EOF
+        	Test:       	TestMieruClientObservesServerClosingAnIdleUnderlay
+--- FAIL: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.31s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.32s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+    idle_underlay_test.go:140: 
+        	Error Trace:	/mnt/c/Deepseek/_perf/kernel/protocol/mieru/idle_underlay_test.go:140
+        	Error:      	Received unexpected error:
+        	            	failed to read socks5 connection response from the server: EOF
+        	Test:       	TestMieruClientObservesServerClosingAnIdleUnderlay
+--- FAIL: TestMieruClientObservesServerClosingAnIdleUnderlay (2.30s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+    idle_underlay_test.go:140: 
+        	Error Trace:	/mnt/c/Deepseek/_perf/kernel/protocol/mieru/idle_underlay_test.go:140
+        	Error:      	Received unexpected error:
+        	            	failed to read socks5 connection response from the server: EOF
+        	Test:       	TestMieruClientObservesServerClosingAnIdleUnderlay
+--- FAIL: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+    idle_underlay_test.go:140: 
+        	Error Trace:	/mnt/c/Deepseek/_perf/kernel/protocol/mieru/idle_underlay_test.go:140
+        	Error:      	Received unexpected error:
+        	            	failed to read socks5 connection response from the server: EOF
+        	Test:       	TestMieruClientObservesServerClosingAnIdleUnderlay
+--- FAIL: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.29s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.26s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.30s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.25s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (1.86s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.30s)
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+--- PASS: TestMieruClientObservesServerClosingAnIdleUnderlay (2.31s)
+FAIL
+FAIL	github.com/sagernet/sing-box/protocol/mieru	45.103s
+FAIL
+exit=1

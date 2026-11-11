@@ -1,0 +1,52 @@
+# Mieru underlay retention under churn (S3-2)
+
+Two probes on the pinned Mieru SDK v3.39.0 with the fork's default
+`multiplexing: default` mapping (factor 1). Both run in-process, so the FD count
+includes the test inbound's own accepted sockets; that limitation is why the
+finding stays `DEFERRED` rather than being declared a leak or a warm pool.
+
+## Sequential dials
+
+```
+base fds=8 after 20 dials=16
+idle samples every 5 s for 40 s: [16 16 16 16 16 16 16 16]
+```
+
+A second run: base 9 → 24 after 20 dials. The first batch pays for the pool; the
+count does not drop within 40 s, so the SDK scheduler does not reclaim while it
+believes the underlay may still be reused.
+
+## Burst rounds (200 concurrent dials, then 10 s idle)
+
+```
+round 0: failures=0 fds-after-burst=55 fds-after-10s-idle=55
+round 1: failures=0 fds-after-burst=73 fds-after-10s-idle=73
+round 2: failures=0 fds-after-burst=83 fds-after-10s-idle=83
+```
+
+Increments diminish (25→18→10 over the later rounds): consistent with a warm pool
+sized by the burst, not one descriptor per dial. No reclamation inside 10 s.
+
+## Laboratory measurement that raised the issue
+
+`mieru-tcp` `connect` pattern, client process only, sampled every 100 ms:
+
+```
+upload s=1   fds 15 → 20 → 23 → 27
+connect s=1  fds 113 → 137 → 159 → 179 → 198
+connect s=4  fds 222 → 237 → 255 → 275 → 285
+```
+
+Peak grows roughly linearly with the number of repetitions while RSS steps once to
+~217 MiB and then stays flat. This is the observation that must be explained; the
+in-process probes above cannot attribute it to a client-side leak because the
+server shares the process.
+
+## Why it is still DEFERRED
+
+The decisive experiment is a **two-process** client that performs the same connect
+burst and then stays idle while an external sampler watches only the client's
+`/proc/<pid>/fd`. That needs a lab idle phase the runner does not have; the
+alternative is a one-off harness outside the lab. Until then, calling it a leak
+would overstate the evidence, and calling it a warm pool would ignore that no
+reclamation was observed.

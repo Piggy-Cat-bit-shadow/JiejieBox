@@ -1,0 +1,25 @@
++0800 2026-11-11 19:09:01 [36mINFO[0m inbound/trusttunnel[tt-in]: tcp server started at 10.213.0.2:20969
++0800 2026-11-11 19:09:01 [36mINFO[0m inbound/trusttunnel[tt-in]: udp server started at 10.213.0.2:20969
++0800 2026-11-11 19:09:01 [31mERROR[0m network: missing default interface
++0800 2026-11-11 19:09:01 [36mINFO[0m sing-box started (0.00s)
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;159m2658973583[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound connection from 10.213.0.1:52448
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;159m2658973583[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound connection to 10.213.0.2:38237
++0800 2026-11-11 19:09:01 [36mINFO[0m [[38;5;159m2658973583[0m 0ms] outbound/direct[direct]: outbound connection to 10.213.0.2:38237
++0800 2026-11-11 19:09:03 [36mINFO[0m [[38;5;154m2312367754[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection from 10.213.0.1:52448
++0800 2026-11-11 19:09:03 [36mINFO[0m [[38;5;154m2312367754[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:03 [36mINFO[0m [[38;5;154m2312367754[0m 0ms] outbound/direct[direct]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:06 [36mINFO[0m [[38;5;87m3081183047[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection from 10.213.0.1:52448
++0800 2026-11-11 19:09:06 [36mINFO[0m [[38;5;87m3081183047[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:06 [36mINFO[0m [[38;5;87m3081183047[0m 0ms] outbound/direct[direct]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:13 [36mINFO[0m [[38;5;181m2592991909[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection from 10.213.0.1:52448
++0800 2026-11-11 19:09:13 [36mINFO[0m [[38;5;181m2592991909[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:13 [36mINFO[0m [[38;5;181m2592991909[0m 0ms] outbound/direct[direct]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:17 [36mINFO[0m [[38;5;228m2723049428[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection from 10.213.0.1:52448
++0800 2026-11-11 19:09:17 [36mINFO[0m [[38;5;228m2723049428[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:17 [36mINFO[0m [[38;5;228m2723049428[0m 0ms] outbound/direct[direct]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:24 [36mINFO[0m [[38;5;66m3875844146[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection from 10.213.0.1:52448
++0800 2026-11-11 19:09:24 [36mINFO[0m [[38;5;66m3875844146[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:24 [36mINFO[0m [[38;5;66m3875844146[0m 0ms] outbound/direct[direct]: outbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:29 [36mINFO[0m [[38;5;217m151452617[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection from 10.213.0.1:52448
++0800 2026-11-11 19:09:29 [36mINFO[0m [[38;5;217m151452617[0m 0ms] inbound/trusttunnel[tt-in]: [bench] inbound packet connection to 10.213.0.2:32258
++0800 2026-11-11 19:09:29 [36mINFO[0m [[38;5;217m151452617[0m 0ms] outbound/direct[direct]: outbound packet connection to 10.213.0.2:32258

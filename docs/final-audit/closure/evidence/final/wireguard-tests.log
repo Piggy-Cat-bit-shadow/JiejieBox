@@ -1,0 +1,4 @@
+$ go test -tags TAGS ./protocol/wireguard ./transport/wireguard
+ok  	github.com/sagernet/sing-box/protocol/wireguard	0.056s
+ok  	github.com/sagernet/sing-box/transport/wireguard	9.692s
+exit=0

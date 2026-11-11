@@ -1,0 +1,43 @@
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 32842,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{"id": "a3b1c23d-b56d-4160-84a8-80d839e9c298"}],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "perf-lab.test",
+          "alpn": ["h3"],
+          "certificates": [
+            {"certificateFile": "/home/jie/perf/stage2/xhttp-h3-20261111T135744/certs/cert.pem", "keyFile": "/home/jie/perf/stage2/xhttp-h3-20261111T135744/certs/key.pem"}
+          ]
+        },
+        "xhttpSettings": {
+          "path": "/xhttp",
+          "mode": "packet-up"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {
+        "finalRules": [
+          {
+            "action": "allow",
+            "ip": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "198.18.0.0/15"]
+          }
+        ]
+      }
+    }
+  ]
+}
+}

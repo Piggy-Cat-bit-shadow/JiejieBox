@@ -1,0 +1,33 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "endpoints": [
+    {
+      "type": "masque-server",
+      "tag": "masque",
+      "listen": "10.213.0.2",
+      "listen_port": 24039,
+      "system": false,
+      "mtu": 1400,
+      "users": [
+        {"username": "bench", "password": "6ecdd6aee187c957308bda4f8b737238"}
+      ],
+      "address": ["10.8.0.1/24"],
+      "version": [3],
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "certificate_path": "/home/jie/perf/b8-evidence-clean/masque-connect-ip-20261111T213128/certs/cert.pem",
+        "key_path": "/home/jie/perf/b8-evidence-clean/masque-connect-ip-20261111T213128/certs/key.pem",
+        "alpn": ["h3"]
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {
+    "rules": [
+      {"inbound": ["masque"], "action": "route", "outbound": "direct"}
+    ]
+  }
+}

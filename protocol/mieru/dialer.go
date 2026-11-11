@@ -98,7 +98,6 @@ func (d *serverDialer) DialContext(ctx context.Context, network string, address 
 	if !destination.IsValid() {
 		return nil, fmt.Errorf("mieru: invalid server address %q", address)
 	}
-	started := time.Now()
 	release, held, err := d.admit(ctx)
 	if err != nil {
 		// Record the typed admission error for the fallback classifier: the SDK flattens underlay
@@ -109,6 +108,9 @@ func (d *serverDialer) DialContext(ctx context.Context, network string, address 
 		return nil, err
 	}
 	defer release()
+	// The creation clock starts after admission: queue time is our own backpressure and must not
+	// be charged to the far side by the fast-fail rate limit.
+	started := time.Now()
 	dialCtx := ctx
 	if held {
 		dialCtx = resourceguard.WithHeldPermit(ctx)

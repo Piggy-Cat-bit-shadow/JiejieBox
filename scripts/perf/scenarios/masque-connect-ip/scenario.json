@@ -1,0 +1,27 @@
+{
+  "id": "masque-connect-ip",
+  "protocol": "masque",
+  "mode": "connect-ip",
+  "transport": "quic",
+  "security": "tls",
+  "description": "MASQUE CONNECT-IP over HTTP/3 and QUIC, both ends in this repository. TCP patterns ride IP packets inside CONNECT-IP; the udp pattern is real QUIC DATAGRAM or capsule fallback, which is a different transport guarantee from UDP-over-Stream protocols and is never ranked against them.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"sleep_ms": 800}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "extra": {
+    "dataplane": "CONNECT-IP",
+    "datagram": "QUIC DATAGRAM with capsule fallback"
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "udp"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

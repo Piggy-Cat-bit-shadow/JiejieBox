@@ -516,7 +516,10 @@ func (h *Outbound) dial(ctx context.Context, destination mierumodel.NetAddrSpec)
 			}
 			return nil, wrapFailureFacts(err, class)
 		}
-		return conn, nil
+		// Single-transport outbounds take the same ownership check as the fallback
+		// path: an InterfaceUpdated that outlived its drain must not hand the route a
+		// connection created for the previous generation.
+		return h.acceptGeneratedConn(conn, generation)
 	}
 	return h.dialWithFallback(ctx, destination, primary, secondary, fallback, generation)
 }

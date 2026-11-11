@@ -370,7 +370,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // was verified. v0.8.0-awg.3/.4 also carry device.NewPeerConfig.PresharedKey and
 // device.Peer.SetPresharedKey, which the pinned sagernet/tailscale wgengine/wgcfg requires; without
 // them the Android/Mobile libbox build does not compile.
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109042158-a765d957fd81
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d
 
 replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261110222329-99abf3c27666
 

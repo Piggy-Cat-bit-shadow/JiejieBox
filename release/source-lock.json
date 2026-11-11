@@ -53,9 +53,9 @@
     },
     {
       "module": "github.com/sagernet/wireguard-go",
-      "pinned": "a765d957fd81",
+      "pinned": "7ece3d66d79d",
       "target": "github.com/Piggy-Cat-bit-shadow/wireguard-go",
-      "version": "v0.0.0-20261109042158-a765d957fd81"
+      "version": "v0.0.0-20261111081811-7ece3d66d79d"
     },
     {
       "module": "github.com/sagernet/cronet-go",
@@ -74,7 +74,7 @@
     {
       "parent": "clients/desktop",
       "path": "dashboard",
-      "pinned": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
+      "pinned": null
     }
   ],
   "release_version": "0.1.45",

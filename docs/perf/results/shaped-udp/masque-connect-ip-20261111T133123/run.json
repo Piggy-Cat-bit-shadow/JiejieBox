@@ -1,0 +1,527 @@
+{
+  "schema_version": "perf-run/v1",
+  "run_id": "masque-connect-ip-20261111T133123",
+  "kind": "e2e",
+  "started_at": "2026-11-11T13:31:23.708405784+08:00",
+  "finished_at": "2026-11-11T13:31:46.327602174+08:00",
+  "source": {
+    "repo": "/mnt/c/Deepseek/_perf/kernel",
+    "branch": "work/perf-lab-2026-11-11",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
+    "commit_subject": "docs(perf): record that the remote advanced by docs-only commits during the baseline",
+    "commit_time": "2026-11-11T13:00:11+08:00",
+    "dirty": true,
+    "dirty_files": [
+      "M docs/perf/ASSET-INVENTORY.md",
+      "M docs/perf/ENVIRONMENT.md",
+      "M docs/perf/FAILURES.md",
+      "M docs/perf/STAGE-1-REPORT.md",
+      "M docs/perf/matrix.json",
+      "M docs/perf/matrix.md",
+      "D docs/perf/results/loopback/awg-endpoint-20261111T120712/configs/client.json",
+      "D docs/perf/results/loopback/awg-endpoint-20261111T120712/configs/server.json",
+      "D docs/perf/results/loopback/awg-endpoint-20261111T120712/logs/client.log.gz",
+      "D docs/perf/results/loopback/awg-endpoint-20261111T120712/logs/server.log.gz",
+      "D docs/perf/results/loopback/awg-endpoint-20261111T120712/run.json",
+      "D docs/perf/results/loopback/awg-endpoint-20261111T120712/summary.md",
+      "D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/configs/client.json",
+      "D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/configs/server.json",
+      "D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/logs/client.log.gz",
+      "D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/logs/server.log.gz",
+      "D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/run.json",
+      "D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/summary.md",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/configs/client.json",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/configs/server.json",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/client.log.gz",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/server.log.gz",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-duplex.log.gz",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-echo.log.gz",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-sink.log.gz",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-source.log.gz",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-udp-echo.log.gz",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/run.json",
+      "D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/summary.md",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/configs/client.json",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/configs/server.json",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/client.log.gz",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/server.log.gz",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-duplex.log.gz",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-echo.log.gz",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-sink.log.gz",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-source.log.gz",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-udp-echo.log.gz",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/run.json",
+      "D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/summary.md"
+    ],
+    "go_version": "go1.25.5",
+    "cgo_enabled": null,
+    "modules": {
+      "github.com/enfein/mieru": "v3.39.0",
+      "github.com/sagernet/cronet-go": "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2",
+      "github.com/sagernet/quic-go": "v0.61.0-sing-box-mod.13",
+      "github.com/sagernet/sing": "v0.9.7-0.20261110095940-27b73774b240",
+      "github.com/sagernet/sing-anytls": "v0.0.0-20260928104022-580984e4d8cb",
+      "github.com/sagernet/sing-mux": "v0.3.10-0.20261110064256-375087483ea2",
+      "github.com/sagernet/sing-quic": "v0.7.2-0.20261109110824-5253224b67cf",
+      "github.com/sagernet/sing-shadowsocks": "v0.2.2-0.20261110092058-52ade8ab7e95",
+      "github.com/sagernet/sing-tun": "v0.9.7-0.20261109145802-79ed0653fdc6",
+      "github.com/sagernet/sing-vmess": "v0.2.9-0.20261110093549-d800eb57f96c",
+      "github.com/sagernet/wireguard-go": "v0.0.8-0.20261022215849-fdf0ad046586"
+    }
+  },
+  "host": {
+    "os": "linux",
+    "arch": "amd64",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "distro": "Ubuntu",
+    "distro_version": "24.04",
+    "wsl": true,
+    "wsl_kernel_release": "6.18.33.2-microsoft-standard-WSL2",
+    "glibc": "glibc 2.39",
+    "cpu_model": "AMD Ryzen 7 4800H with Radeon Graphics",
+    "cpu_cores": 16,
+    "mem_total_bytes": 8017051648,
+    "clk_tck": 100,
+    "sampling_interval_ms": 100,
+    "sample_limit_note": "samples are point reads every sampling_interval_ms; a spike shorter than one interval can be missed, and the last interval before exit is covered by wait4 rusage rather than by sampling"
+  },
+  "network": {
+    "topology": "netns-veth",
+    "profile": "custom-rtt80-loss0.1",
+    "delay_ms": 40,
+    "jitter_ms": 0,
+    "loss_percent": 0.1,
+    "bandwidth_mbps": null,
+    "mtu": 1500,
+    "qdiscs": [
+      {
+        "device": "plab-4816a",
+        "kind": "netem",
+        "parent": "root",
+        "args": "delay 40.000ms loss 0.1%"
+      },
+      {
+        "device": "plab-4816b",
+        "kind": "netem",
+        "parent": "root",
+        "args": "delay 40.000ms loss 0.1%"
+      }
+    ],
+    "interfaces": [
+      {
+        "name": "lo",
+        "mtu": 65536
+      },
+      {
+        "name": "plab-4816a",
+        "mtu": 1500
+      }
+    ],
+    "namespace": "perf-plab-4816"
+  },
+  "scenario": {
+    "id": "masque-connect-ip",
+    "protocol": "masque",
+    "mode": "connect-ip",
+    "transport": "quic",
+    "security": "tls",
+    "server_config": "configs/server.json",
+    "client_config": "configs/client.json",
+    "extra": {
+      "datagram": "QUIC DATAGRAM with capsule fallback",
+      "dataplane": "CONNECT-IP",
+      "first_request_ms": 748.358,
+      "startup_client_ms": 101.661,
+      "startup_server_ms": 801.628
+    }
+  },
+  "environment": [
+    {
+      "name": "PERF_CLIENT_ADDR",
+      "value": "10.213.0.1"
+    },
+    {
+      "name": "PERF_NET_BANDWIDTH_MBPS",
+      "value": ""
+    },
+    {
+      "name": "PERF_NET_DELAY_MS",
+      "value": "40.000"
+    },
+    {
+      "name": "PERF_NET_JITTER_MS",
+      "value": "0"
+    },
+    {
+      "name": "PERF_NET_LOSS_PCT",
+      "value": "0.1"
+    },
+    {
+      "name": "PERF_NET_MTU",
+      "value": "1500"
+    },
+    {
+      "name": "PERF_NET_NAMESPACE",
+      "value": "perf-plab-4816"
+    },
+    {
+      "name": "PERF_NET_PROFILE",
+      "value": "custom-rtt80-loss0.1"
+    },
+    {
+      "name": "PERF_NET_QDISC",
+      "value": "plab-4816a|netem|root|delay 40.000ms loss 0.1%;plab-4816b|netem|root|delay 40.000ms loss 0.1%;"
+    },
+    {
+      "name": "PERF_NET_RTT_MS",
+      "value": "80"
+    },
+    {
+      "name": "PERF_NET_TOPOLOGY",
+      "value": "netns-veth"
+    },
+    {
+      "name": "PERF_SERVER_ADDR",
+      "value": "10.213.0.2"
+    },
+    {
+      "name": "PERF_SERVER_NS",
+      "value": "4826"
+    },
+    {
+      "name": "PERF_SITE_ADDR",
+      "value": "10.213.0.2"
+    },
+    {
+      "name": "PERF_SOURCE_JSON",
+      "value": "{\"repo\": \"/mnt/c/Deepseek/_perf/kernel\", \"branch\": \"work/perf-lab-2026-11-11\", \"commit\": \"49679c0e92735a0d060872247ca6f64eda2cc0e5\", \"commit_subject\": \"docs(perf): record that the remote advanced by docs-only commits during the baseline\", \"commit_time\": \"2026-11-11T13:00:11+08:00\", \"dirty\": true, \"dirty_files\": [\"M docs/perf/ASSET-INVENTORY.md\", \"M docs/perf/ENVIRONMENT.md\", \"M docs/perf/FAILURES.md\", \"M docs/perf/STAGE-1-REPORT.md\", \"M docs/perf/matrix.json\", \"M docs/perf/matrix.md\", \"D docs/perf/results/loopback/awg-endpoint-20261111T120712/configs/client.json\", \"D docs/perf/results/loopback/awg-endpoint-20261111T120712/configs/server.json\", \"D docs/perf/results/loopback/awg-endpoint-20261111T120712/logs/client.log.gz\", \"D docs/perf/results/loopback/awg-endpoint-20261111T120712/logs/server.log.gz\", \"D docs/perf/results/loopback/awg-endpoint-20261111T120712/run.json\", \"D docs/perf/results/loopback/awg-endpoint-20261111T120712/summary.md\", \"D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/configs/client.json\", \"D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/configs/server.json\", \"D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/logs/client.log.gz\", \"D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/logs/server.log.gz\", \"D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/run.json\", \"D docs/perf/results/loopback/wireguard-endpoint-20261111T120039/summary.md\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/configs/client.json\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/configs/server.json\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/client.log.gz\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/server.log.gz\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-duplex.log.gz\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-echo.log.gz\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-sink.log.gz\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-source.log.gz\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/logs/target-udp-echo.log.gz\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/run.json\", \"D docs/perf/results/shaped-remote/masque-connect-ip-20261111T125139/summary.md\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/configs/client.json\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/configs/server.json\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/client.log.gz\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/server.log.gz\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-duplex.log.gz\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-echo.log.gz\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-sink.log.gz\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-source.log.gz\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/logs/target-udp-echo.log.gz\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/run.json\", \"D docs/perf/results/shaped-remote/trusttunnel-h2-20261111T124834/summary.md\"], \"go_version\": \"go1.25.5\", \"cgo_enabled\": null, \"modules\": {\"github.com/enfein/mieru\": \"v3.39.0\", \"github.com/sagernet/cronet-go\": \"v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2\", \"github.com/sagernet/quic-go\": \"v0.61.0-sing-box-mod.13\", \"github.com/sagernet/sing\": \"v0.9.7-0.20261110095940-27b73774b240\", \"github.com/sagernet/sing-anytls\": \"v0.0.0-20260928104022-580984e4d8cb\", \"github.com/sagernet/sing-mux\": \"v0.3.10-0.20261110064256-375087483ea2\", \"github.com/sagernet/sing-quic\": \"v0.7.2-0.20261109110824-5253224b67cf\", \"github.com/sagernet/sing-shadowsocks\": \"v0.2.2-0.20261110092058-52ade8ab7e95\", \"github.com/sagernet/sing-tun\": \"v0.9.7-0.20261109145802-79ed0653fdc6\", \"github.com/sagernet/sing-vmess\": \"v0.2.9-0.20261110093549-d800eb57f96c\", \"github.com/sagernet/wireguard-go\": \"v0.0.8-0.20261022215849-fdf0ad046586\"}}"
+    },
+    {
+      "name": "PERF_WIRE_IFACE",
+      "value": "plab-4816a"
+    }
+  ],
+  "reps": [
+    {
+      "index": 0,
+      "streams": 1,
+      "pattern": "udp",
+      "payload_bytes": 9962400,
+      "duration_seconds": 5,
+      "goodput_mib_per_s": 1.900177001953125,
+      "wire": {
+        "tx_bytes": 13106843,
+        "rx_bytes": 10868188,
+        "tx_packets": 11088,
+        "rx_packets": 9658,
+        "gbit_per_s": 0.0383600496,
+        "pps": 4149.2,
+        "overhead_ratio": 2.406551734521802,
+        "source": "veth-statistics"
+      },
+      "latency": null,
+      "udp": {
+        "sent": 259502,
+        "received": 8302,
+        "lost": 251200,
+        "loss_percent": 96.80079536959254,
+        "jitter_ms": 0.592525,
+        "packet_size": 1200
+      },
+      "client": {
+        "pid": 4963,
+        "cpu_seconds": 5.31,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 572.3087895928692,
+        "rss_start_bytes": 73842688,
+        "rss_end_bytes": 72761344,
+        "rss_peak_bytes": 73842688,
+        "threads_peak": 17,
+        "fds_peak": 14,
+        "samples": 51,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 4951,
+        "cpu_seconds": 2.81,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 302.8602069220268,
+        "rss_start_bytes": 75276288,
+        "rss_end_bytes": 73162752,
+        "rss_peak_bytes": 75583488,
+        "threads_peak": 17,
+        "fds_peak": 13,
+        "samples": 51,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 4840,
+        "cpu_seconds": 6.72,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 724.2777902192242,
+        "rss_start_bytes": 11919360,
+        "rss_end_bytes": 13807616,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 0,
+        "ok": true,
+        "detail": "no payload integrity check for this target kind"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 311402400,
+        "target_bytes": 12076800
+      }
+    },
+    {
+      "index": 1,
+      "streams": 1,
+      "pattern": "udp",
+      "payload_bytes": 4480800,
+      "duration_seconds": 5,
+      "goodput_mib_per_s": 0.854644775390625,
+      "wire": {
+        "tx_bytes": 7010465,
+        "rx_bytes": 5299401,
+        "tx_packets": 6077,
+        "rx_packets": 4965,
+        "gbit_per_s": 0.0196957856,
+        "pps": 2208.4,
+        "overhead_ratio": 2.7472473665416888,
+        "source": "veth-statistics"
+      },
+      "latency": null,
+      "udp": {
+        "sent": 249099,
+        "received": 3734,
+        "lost": 245365,
+        "loss_percent": 98.50099759533359,
+        "jitter_ms": 1.219331,
+        "packet_size": 1200
+      },
+      "client": {
+        "pid": 4963,
+        "cpu_seconds": 4.9,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 1174.1954422424567,
+        "rss_start_bytes": 73175040,
+        "rss_end_bytes": 72187904,
+        "rss_peak_bytes": 73756672,
+        "threads_peak": 17,
+        "fds_peak": 14,
+        "samples": 51,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 4951,
+        "cpu_seconds": 2.19,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 524.7934731655062,
+        "rss_start_bytes": 74063872,
+        "rss_end_bytes": 74596352,
+        "rss_peak_bytes": 75259904,
+        "threads_peak": 17,
+        "fds_peak": 15,
+        "samples": 51,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 4840,
+        "cpu_seconds": 6.74,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 1615.1178123906445,
+        "rss_start_bytes": 13869056,
+        "rss_end_bytes": 15249408,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 0,
+        "ok": true,
+        "detail": "no payload integrity check for this target kind"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 298918800,
+        "target_bytes": 6523200
+      }
+    },
+    {
+      "index": 2,
+      "streams": 1,
+      "pattern": "udp",
+      "payload_bytes": 3102000,
+      "duration_seconds": 5,
+      "goodput_mib_per_s": 0.5916595458984375,
+      "wire": {
+        "tx_bytes": 4707867,
+        "rx_bytes": 3598268,
+        "tx_packets": 4056,
+        "rx_packets": 3446,
+        "gbit_per_s": 0.013289816,
+        "pps": 1500.4,
+        "overhead_ratio": 2.677670857511283,
+        "source": "veth-statistics"
+      },
+      "latency": null,
+      "udp": {
+        "sent": 245371,
+        "received": 2585,
+        "lost": 242786,
+        "loss_percent": 98.94649326937575,
+        "jitter_ms": 1.842858,
+        "packet_size": 1200
+      },
+      "client": {
+        "pid": 4963,
+        "cpu_seconds": 4.51,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 1561.113999432624,
+        "rss_start_bytes": 72527872,
+        "rss_end_bytes": 72769536,
+        "rss_peak_bytes": 73756672,
+        "threads_peak": 18,
+        "fds_peak": 14,
+        "samples": 51,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "server": {
+        "pid": 4951,
+        "cpu_seconds": 1.49,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 515.7560663313991,
+        "rss_start_bytes": 73990144,
+        "rss_end_bytes": 75091968,
+        "rss_peak_bytes": 75522048,
+        "threads_peak": 17,
+        "fds_peak": 17,
+        "samples": 51,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "loadgen": {
+        "pid": 4840,
+        "cpu_seconds": 6.68,
+        "user_seconds": null,
+        "sys_seconds": null,
+        "cpu_seconds_per_gib": 2312.2486732172792,
+        "rss_start_bytes": 15331328,
+        "rss_end_bytes": 15261696,
+        "rss_peak_bytes": null,
+        "threads_peak": null,
+        "fds_peak": null,
+        "samples": 0,
+        "cpu_source": "proc-boundary",
+        "go_heap_peak_bytes": null,
+        "exit_code": null
+      },
+      "integrity": {
+        "verified_bytes": 0,
+        "ok": true,
+        "detail": "no payload integrity check for this target kind"
+      },
+      "extra": {
+        "received_bytes": 0,
+        "sent_bytes": 294445200,
+        "target_bytes": 4408800
+      }
+    }
+  ],
+  "summary": [
+    {
+      "metric": "goodput",
+      "unit": "MiB/s",
+      "streams": 1,
+      "pattern": "udp",
+      "n": 3,
+      "median": 0.854644775390625,
+      "mad": 0.2629852294921875,
+      "min": 0.5916595458984375,
+      "max": 1.900177001953125
+    },
+    {
+      "metric": "cpu_seconds_per_gib_client",
+      "unit": "s/GiB",
+      "streams": 1,
+      "pattern": "udp",
+      "n": 3,
+      "median": 1174.1954422424567,
+      "mad": 386.91855719016735,
+      "min": 572.3087895928692,
+      "max": 1561.113999432624
+    },
+    {
+      "metric": "cpu_seconds_per_gib_server",
+      "unit": "s/GiB",
+      "streams": 1,
+      "pattern": "udp",
+      "n": 3,
+      "median": 515.7560663313991,
+      "mad": 9.03740683410706,
+      "min": 302.8602069220268,
+      "max": 524.7934731655062
+    },
+    {
+      "metric": "wire_gbit_per_s",
+      "unit": "Gbit/s",
+      "streams": 1,
+      "pattern": "udp",
+      "n": 3,
+      "median": 0.0196957856,
+      "mad": 0.006405969600000002,
+      "min": 0.013289816,
+      "max": 0.0383600496
+    },
+    {
+      "metric": "wire_overhead_ratio",
+      "unit": "ratio",
+      "streams": 1,
+      "pattern": "udp",
+      "n": 3,
+      "median": 2.677670857511283,
+      "mad": 0.06957650903040591,
+      "min": 2.406551734521802,
+      "max": 2.7472473665416888
+    }
+  ],
+  "artifacts": {
+    "run_json": "run.json",
+    "summary_md": "summary.md",
+    "client_config": "configs/client.json",
+    "server_config": "configs/server.json",
+    "client_log": "logs/client.log",
+    "server_log": "logs/server.log"
+  },
+  "method": "e2e process pair: sing-box server + sing-box client on real sockets; payload verified against a pattern page; CPU from /proc boundary reads and wait4 rusage; RSS/threads/FDs sampled every 100ms; wire bytes from veth statistics when the run crosses an emulated link"
+}

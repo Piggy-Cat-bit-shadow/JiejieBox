@@ -1,0 +1,30 @@
++0800 2026-11-11 18:27:23 [36mINFO[0m inbound/socks[socks-in]: tcp server started at 10.213.0.1:35334
++0800 2026-11-11 18:27:23 [31mERROR[0m network: missing default interface
++0800 2026-11-11 18:27:23 [36mINFO[0m sing-box started (0.00s)
++0800 2026-11-11 18:27:23 [36mINFO[0m [[38;5;86m1618767761[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:40946
++0800 2026-11-11 18:27:23 [36mINFO[0m [[38;5;29m3321280525[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:40956
++0800 2026-11-11 18:27:23 [36mINFO[0m [[38;5;29m3321280525[0m 0ms] inbound/socks[socks-in]: inbound connection to 10.213.0.2:29262
++0800 2026-11-11 18:27:23 [36mINFO[0m [[38;5;29m3321280525[0m 0ms] endpoint/masque-client[masque]: outbound connection to 10.213.0.2:29262
++0800 2026-11-11 18:27:23 [31mERROR[0m [[38;5;29m3321280525[0m 0ms] connection: open connection to 10.213.0.2:29262 using outbound/masque-client[masque]: endpoint is not ready yet
++0800 2026-11-11 18:27:23 [36mINFO[0m endpoint/masque-client[masque]: assigned 10.8.0.2/32
++0800 2026-11-11 18:27:23 [36mINFO[0m [[38;5;170m1586560154[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:40966
++0800 2026-11-11 18:27:23 [36mINFO[0m [[38;5;170m1586560154[0m 0ms] inbound/socks[socks-in]: inbound connection to 10.213.0.2:29262
++0800 2026-11-11 18:27:23 [36mINFO[0m [[38;5;170m1586560154[0m 0ms] endpoint/masque-client[masque]: outbound connection to 10.213.0.2:29262
++0800 2026-11-11 18:27:24 [36mINFO[0m [[38;5;38m3646606317[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:40980
++0800 2026-11-11 18:27:24 [36mINFO[0m [[38;5;38m3646606317[0m 1ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:24 [36mINFO[0m [[38;5;38m3646606317[0m 1ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:28 [36mINFO[0m [[38;5;225m2890718685[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:37214
++0800 2026-11-11 18:27:28 [36mINFO[0m [[38;5;225m2890718685[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:28 [36mINFO[0m [[38;5;225m2890718685[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:36 [36mINFO[0m [[38;5;62m1584757294[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:37220
++0800 2026-11-11 18:27:36 [36mINFO[0m [[38;5;62m1584757294[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:36 [36mINFO[0m [[38;5;62m1584757294[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:39 [36mINFO[0m [[38;5;40m3076378095[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:42576
++0800 2026-11-11 18:27:39 [36mINFO[0m [[38;5;40m3076378095[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:39 [36mINFO[0m [[38;5;40m3076378095[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:49 [36mINFO[0m [[38;5;149m188597637[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:56064
++0800 2026-11-11 18:27:49 [36mINFO[0m [[38;5;149m188597637[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:49 [36mINFO[0m [[38;5;149m188597637[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:53 [36mINFO[0m [[38;5;50m1277629433[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:56080
++0800 2026-11-11 18:27:53 [36mINFO[0m [[38;5;50m1277629433[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:29847
++0800 2026-11-11 18:27:53 [36mINFO[0m [[38;5;50m1277629433[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:29847

@@ -330,6 +330,10 @@ type xmuxManager struct {
 	newConn     func() xmuxConn
 	clients     []*xmuxClient
 	access      sync.Mutex
+	// closed is set by Close and checked by get. Without it a dial racing (or following) Close
+	// opened a fresh pooled connection that no later Close could reach: the pool had been emptied,
+	// the transport was already closed, and the new connection had no owner left.
+	closed bool
 	// onEvent, when set, receives debug lines about pool activity: connection
 	// opened, connection evicted (with cause). Stands in for pool metrics — the
 	// pool state is fully determined by the config, so what is worth observing is
@@ -520,6 +524,7 @@ func (m *xmuxManager) CloseIdleConnections() {
 // they finish (deferred close).
 func (m *xmuxManager) Close() {
 	m.access.Lock()
+	m.closed = true
 	clients := m.clients
 	m.clients = nil
 	for _, client := range clients {
@@ -669,6 +674,12 @@ func (m *xmuxManager) getContext(ctx context.Context) (*xmuxClient, error) {
 		if client != nil {
 			return client, nil
 		}
+		// An empty result with no wait means the pool is closed, not that the breaker is backing
+		// off. Waiting here would spin until the caller's deadline and turn a lifecycle error into
+		// a timeout.
+		if wait == 0 {
+			return nil, E.New("v2ray-xhttp: connection pool is closed")
+		}
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -688,6 +699,12 @@ func (m *xmuxManager) getContext(ctx context.Context) (*xmuxClient, error) {
 func (m *xmuxManager) get() (*xmuxClient, time.Duration) {
 	m.access.Lock()
 	defer m.access.Unlock()
+
+	// A closed pool opens nothing. getContext turns the empty result into an error, so a dial that
+	// lost the race with Close fails instead of creating a connection nobody owns.
+	if m.closed {
+		return nil, 0
+	}
 
 	var evicted []*xmuxClient
 	for i := 0; i < len(m.clients); {

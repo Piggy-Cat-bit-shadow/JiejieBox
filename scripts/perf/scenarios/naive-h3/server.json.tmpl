@@ -1,0 +1,23 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "naive",
+      "tag": "naive-in",
+      "listen": "__SERVER_ADDR__",
+      "listen_port": __SERVER_PORT__,
+      "users": [
+        {"username": "bench", "password": "__PASSWORD__"}
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "__SERVER_NAME__",
+        "certificate_path": "__CERT__",
+        "key_path": "__KEY__"
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}

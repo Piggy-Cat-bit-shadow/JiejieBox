@@ -1,0 +1,26 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "__CLIENT_ADDR__",
+      "listen_port": __CLIENT_PORT__
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "anytls",
+      "tag": "proxy",
+      "server": "__SERVER_ADDR__",
+      "server_port": __SERVER_PORT__,
+      "password": "__PASSWORD__",
+      "tls": {
+        "enabled": true,
+        "server_name": "__SERVER_NAME__",
+        "certificate_path": "__CA__"
+      }
+    }
+  ],
+  "route": {"final": "proxy"}
+}

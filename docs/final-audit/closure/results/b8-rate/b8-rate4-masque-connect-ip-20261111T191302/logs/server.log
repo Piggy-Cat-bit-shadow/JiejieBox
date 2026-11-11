@@ -1,0 +1,26 @@
++0800 2026-11-11 19:13:18 [36mINFO[0m endpoint/masque-server[masque]: udp server started at 10.213.0.2:37574
++0800 2026-11-11 19:13:18 [31mERROR[0m network: missing default interface
++0800 2026-11-11 19:13:18 [36mINFO[0m sing-box started (0.00s)
++0800 2026-11-11 19:13:19 [36mINFO[0m [[38;5;115m4092617059[0m 0ms] endpoint/masque-server[masque]: [bench] inbound tunnel from 10.213.0.1:46166 assigned 10.8.0.2
++0800 2026-11-11 19:13:19 [36mINFO[0m endpoint/masque-server[masque]: inbound connection from 10.8.0.2:57500
++0800 2026-11-11 19:13:19 [36mINFO[0m endpoint/masque-server[masque]: inbound connection to 10.213.0.2:28468
++0800 2026-11-11 19:13:19 [36mINFO[0m outbound/direct[direct]: outbound connection to 10.213.0.2:28468
++0800 2026-11-11 19:13:20 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:42426
++0800 2026-11-11 19:13:20 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:20 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:30 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:60882
++0800 2026-11-11 19:13:30 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:30 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:39 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:56448
++0800 2026-11-11 19:13:39 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:39 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:45 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:41902
++0800 2026-11-11 19:13:45 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:45 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:54 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:40061
++0800 2026-11-11 19:13:54 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:13:54 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:14:02 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection from 10.8.0.2:41396
++0800 2026-11-11 19:14:02 [36mINFO[0m endpoint/masque-server[masque]: inbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:14:02 [36mINFO[0m outbound/direct[direct]: outbound packet connection to 10.213.0.2:39480
++0800 2026-11-11 19:14:11 [31mERROR[0m endpoint/masque-server[masque]: http3 server connection failed: accepting stream failed: INTERNAL_ERROR (local): raw-write udp 10.213.0.2:37574: use of closed network connection

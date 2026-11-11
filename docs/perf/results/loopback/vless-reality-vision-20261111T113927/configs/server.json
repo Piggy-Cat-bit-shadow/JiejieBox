@@ -1,0 +1,30 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "127.0.0.1",
+      "listen_port": 33576,
+      "users": [
+        {"name": "bench", "uuid": "8dff00ba-52dd-49a0-977f-a5c058bad804", "flow": "xtls-rprx-vision"}
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "127.0.0.1",
+            "server_port": 30872
+          },
+          "private_key": "MD3pWfkuqk4fMXkoCebc3lS26-iTcoms8Rsf5U_AnmM",
+          "short_id": ["71f92316"]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}
