@@ -1,20 +1,20 @@
 phase: before
-date: 2026-11-11T20:54:24+08:00
+date: 2026-11-11T21:33:42+08:00
 cell: masque-connect-ip loss: 1 rate: 250
 PERF_NET_TOPOLOGY=netns-veth RTT=80 LOSS=1 MTU=1500
-client_if: plab-2586a
-server_pid: 2596
-server_if: plab-2586b
+client_if: plab-613a
+server_pid: 623
+server_if: plab-613b
 
-== client tc -s -d qdisc (plab-2586a)
-qdisc netem 8013: root refcnt 17 limit 1000 delay 40ms loss 1%
- Sent 90 bytes 1 pkt (dropped 0, overlimits 0 requeues 0) 
- backlog 0b 0p requeues 0
+== client tc -s -d qdisc (plab-613a)
+qdisc netem 8003: root refcnt 17 limit 1000 delay 40ms loss 1%
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 90b 1p requeues 0
 
-== server tc -s -d qdisc (plab-2586b)
-qdisc netem 8014: root refcnt 17 limit 1000 delay 40ms loss 1%
- Sent 90 bytes 1 pkt (dropped 0, overlimits 0 requeues 0) 
- backlog 0b 0p requeues 0
+== server tc -s -d qdisc (plab-613b)
+qdisc netem 8004: root refcnt 17 limit 1000 delay 40ms loss 1%
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 90b 1p requeues 0
 
 == client nstat Udp
 UdpInDatagrams                  0                  0.0

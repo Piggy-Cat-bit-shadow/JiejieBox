@@ -1,0 +1,30 @@
++0800 2026-11-11 21:37:18 [36mINFO[0m inbound/socks[socks-in]: tcp server started at 10.213.0.1:34365
++0800 2026-11-11 21:37:18 [31mERROR[0m network: missing default interface
++0800 2026-11-11 21:37:18 [36mINFO[0m sing-box started (0.00s)
++0800 2026-11-11 21:37:18 [36mINFO[0m [[38;5;123m2830886764[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:56894
++0800 2026-11-11 21:37:18 [36mINFO[0m [[38;5;45m1947266804[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:56906
++0800 2026-11-11 21:37:18 [36mINFO[0m [[38;5;45m1947266804[0m 0ms] inbound/socks[socks-in]: inbound connection to 10.213.0.2:35798
++0800 2026-11-11 21:37:18 [36mINFO[0m [[38;5;45m1947266804[0m 0ms] endpoint/masque-client[masque]: outbound connection to 10.213.0.2:35798
++0800 2026-11-11 21:37:18 [31mERROR[0m [[38;5;45m1947266804[0m 0ms] connection: open connection to 10.213.0.2:35798 using outbound/masque-client[masque]: endpoint is not ready yet
++0800 2026-11-11 21:37:18 [36mINFO[0m endpoint/masque-client[masque]: assigned 10.8.0.2/32
++0800 2026-11-11 21:37:18 [36mINFO[0m [[38;5;46m659462901[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:56908
++0800 2026-11-11 21:37:18 [36mINFO[0m [[38;5;46m659462901[0m 0ms] inbound/socks[socks-in]: inbound connection to 10.213.0.2:35798
++0800 2026-11-11 21:37:18 [36mINFO[0m [[38;5;46m659462901[0m 0ms] endpoint/masque-client[masque]: outbound connection to 10.213.0.2:35798
++0800 2026-11-11 21:37:19 [36mINFO[0m [[38;5;31m924469519[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:56924
++0800 2026-11-11 21:37:19 [36mINFO[0m [[38;5;31m924469519[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:37:19 [36mINFO[0m [[38;5;31m924469519[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:37:29 [36mINFO[0m [[38;5;31m847898383[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:48552
++0800 2026-11-11 21:37:29 [36mINFO[0m [[38;5;31m847898383[0m 1ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:37:29 [36mINFO[0m [[38;5;31m847898383[0m 1ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:37:42 [36mINFO[0m [[38;5;121m1758493806[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:47974
++0800 2026-11-11 21:37:42 [36mINFO[0m [[38;5;121m1758493806[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:37:42 [36mINFO[0m [[38;5;121m1758493806[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:37:54 [36mINFO[0m [[38;5;45m4129314333[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:45850
++0800 2026-11-11 21:37:54 [36mINFO[0m [[38;5;45m4129314333[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:37:54 [36mINFO[0m [[38;5;45m4129314333[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:38:07 [36mINFO[0m [[38;5;216m3514789320[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:50362
++0800 2026-11-11 21:38:07 [36mINFO[0m [[38;5;216m3514789320[0m 0ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:38:07 [36mINFO[0m [[38;5;216m3514789320[0m 0ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:38:17 [36mINFO[0m [[38;5;195m71904179[0m 0ms] inbound/socks[socks-in]: inbound connection from 10.213.0.1:40988
++0800 2026-11-11 21:38:17 [36mINFO[0m [[38;5;195m71904179[0m 1ms] inbound/socks[socks-in]: inbound packet connection to 10.213.0.2:31310
++0800 2026-11-11 21:38:17 [36mINFO[0m [[38;5;195m71904179[0m 1ms] endpoint/masque-client[masque]: outbound packet connection to 10.213.0.2:31310

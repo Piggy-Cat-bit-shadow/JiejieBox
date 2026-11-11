@@ -47,7 +47,7 @@ NOT_RUN = not executed; DEFERRED = out of scope; SUPERSEDED = old evidence.
 |---|---|---|---|
 | C01 | b8-final diff recovered? | `runner-diff-recovered.patch` + blob `1fb4bc23...`; runtime hash absent, stated | PASS (recovered, not bound) |
 | C02 | unrecoverable old data downgraded | `PROVENANCE_INCOMPLETE`/`SUPERSEDED` in `PROVENANCE.md` | PASS |
-| C03 | new set provenance | `source.runner`, pre/post SHA, effective params, dirty = untracked docs only | PASS |
+| C03 | new set provenance | tree clean at run (`dirty=false`), `source.runner.sha256=6d9904…`, pre/post kernel SHA equal, effective params recorded | PASS |
 | C04 | comparable data only | new set + labelled legacy; TT 12 s separate | PASS |
 | C05 | 2/4/8/12 s unified semantics | regenerated legacy table; new table; no old loss reused | PASS |
 | C06 | TrustTunnel 500 summary fixed | generated row: 2 s `legacy_incomplete`, not_returned 933/1134/1484, no loss | PASS |

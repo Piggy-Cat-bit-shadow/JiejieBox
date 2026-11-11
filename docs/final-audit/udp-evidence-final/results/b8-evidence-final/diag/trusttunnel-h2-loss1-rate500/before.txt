@@ -1,18 +1,18 @@
 phase: before
-date: 2026-11-11T21:06:21+08:00
+date: 2026-11-11T21:44:54+08:00
 cell: trusttunnel-h2 loss: 1 rate: 500
 PERF_NET_TOPOLOGY=netns-veth RTT=80 LOSS=1 MTU=1500
-client_if: plab-4320a
-server_pid: 4330
-server_if: plab-4320b
+client_if: plab-2213a
+server_pid: 2223
+server_if: plab-2213b
 
-== client tc -s -d qdisc (plab-4320a)
-qdisc netem 8021: root refcnt 17 limit 1000 delay 40ms loss 1%
+== client tc -s -d qdisc (plab-2213a)
+qdisc netem 8011: root refcnt 17 limit 1000 delay 40ms loss 1%
  Sent 90 bytes 1 pkt (dropped 0, overlimits 0 requeues 0) 
  backlog 0b 0p requeues 0
 
-== server tc -s -d qdisc (plab-4320b)
-qdisc netem 8022: root refcnt 17 limit 1000 delay 40ms loss 1%
+== server tc -s -d qdisc (plab-2213b)
+qdisc netem 8012: root refcnt 17 limit 1000 delay 40ms loss 1%
  Sent 90 bytes 1 pkt (dropped 0, overlimits 0 requeues 0) 
  backlog 0b 0p requeues 0
 

@@ -22,14 +22,14 @@ All at 80 ms RTT, 1200 B, 5 s, 1 s warmup, 3 reps; 8 s observation unless noted.
 | cell | loss/dir | rate | result |
 |---|---|---:|---|
 | MASQUE | 0 % | 250 | 1250/1250/1250 unique, 0 % loss |
-| MASQUE | 1 % | 250 | 1.60 / 2.16 / 2.24 % loss (complete) |
-| MASQUE | 1 % | 50 | 1.2 / 1.2 / 1.6 % loss (control) |
-| MASQUE | 1 % | 500 | **34.4 / 46.6 / 54.0 % loss**, all complete_quiet; unique 1150/1334/1640, target 1168/1350/1857 |
+| MASQUE | 1 % | 250 | 1.60 / 1.92 / 7.28 % loss (complete; one outlier) |
+| MASQUE | 1 % | 50 | 2.0 / 2.4 / 3.2 % loss (control) |
+| MASQUE | 1 % | 500 | **36.6 / 45.2 / 51.3 % loss**, all complete_quiet; unique 1218/1584/1371, target 1232/1600/1381 |
 | TrustTunnel | 0 % | 250 | 1250/1250/1250, 0 % |
 | TrustTunnel | 1 % | 250 | 1250/1250/1250, 0 % |
 | TrustTunnel | 1 % | 50 | 250/250/250, 0 % |
-| TrustTunnel | 1 % | 500 @8 s | one rep complete 0 %, two `window_elapsed_tail_active` (12/218 not returned) |
-| TrustTunnel | 1 % | 500 @12 s | **2500/2500/2500, 0 % loss**, last reply 7.0-9.0 s |
+| TrustTunnel | 1 % | 500 @8 s | two reps complete 0 %, one `window_elapsed_tail_active` (295 not returned) |
+| TrustTunnel | 1 % | 500 @12 s | **2500/2500/2500, 0 % loss**, last reply 5.5-8.3 s |
 
 ## Interpretation
 

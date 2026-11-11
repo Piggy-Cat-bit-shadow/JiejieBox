@@ -1,18 +1,18 @@
 phase: before
-date: 2026-11-11T20:59:13+08:00
+date: 2026-11-11T21:38:33+08:00
 cell: trusttunnel-h2 loss: 0 rate: 250
 PERF_NET_TOPOLOGY=netns-veth RTT=80 LOSS=0 MTU=1500
-client_if: plab-3324a
-server_pid: 3334
-server_if: plab-3324b
+client_if: plab-1305a
+server_pid: 1315
+server_if: plab-1305b
 
-== client tc -s -d qdisc (plab-3324a)
-qdisc netem 8019: root refcnt 17 limit 1000 delay 40ms
+== client tc -s -d qdisc (plab-1305a)
+qdisc netem 8009: root refcnt 17 limit 1000 delay 40ms
  Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
  backlog 90b 1p requeues 0
 
-== server tc -s -d qdisc (plab-3324b)
-qdisc netem 801a: root refcnt 17 limit 1000 delay 40ms
+== server tc -s -d qdisc (plab-1305b)
+qdisc netem 800a: root refcnt 17 limit 1000 delay 40ms
  Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
  backlog 90b 1p requeues 0
 

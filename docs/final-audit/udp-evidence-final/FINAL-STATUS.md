@@ -23,12 +23,12 @@
 
 ## B8 result under the fixed instrument
 
-- MASQUE 250 pps: 0 % / 1.60-2.24 % loss (0 % / 1 % netem), complete.
-- MASQUE 500 pps 1 %: 34.4-54.0 % loss, complete quiet; target ingress also short.
-- MASQUE 50 pps 1 %: 1.2-1.6 % loss.
+- MASQUE 250 pps: 0 % / 1.60-7.28 % loss (0 % / 1 % netem; one outlier), complete.
+- MASQUE 500 pps 1 %: 36.6-51.3 % loss, complete quiet; target ingress also short.
+- MASQUE 50 pps 1 %: 2.0-3.2 % loss.
 - TrustTunnel 250 pps: 0 % at both losses.
-- TrustTunnel 500 pps 1 %: 8 s observation leaves 2/3 reps tail-active; at 12 s
-  all 2500 arrive, last reply 7.0-9.0 s. It is delay/queueing, not loss.
+- TrustTunnel 500 pps 1 %: 8 s leaves 1/3 reps tail-active; at 12 s all 2500
+  arrive, last reply 5.5-8.3 s. It is delay/queueing, not loss.
 
 B8 remains **UNRESOLVED**: MASQUE loses inside the client/tunnel path at high
 rate; TrustTunnel accumulates multi-second delay. The exact queue remains

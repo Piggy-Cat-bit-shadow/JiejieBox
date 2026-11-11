@@ -1,20 +1,20 @@
 phase: after
-date: 2026-11-11T21:05:39+08:00
+date: 2026-11-11T21:44:53+08:00
 cell: trusttunnel-h2 loss: 1 rate: 50
 PERF_NET_TOPOLOGY=netns-veth RTT=80 LOSS=1 MTU=1500
-client_if: plab-4035a
-server_pid: 4045
-server_if: plab-4035b
+client_if: plab-1993a
+server_pid: 2003
+server_if: plab-1993b
 
-== client tc -s -d qdisc (plab-4035a)
-qdisc netem 801f: root refcnt 17 limit 1000 delay 40ms loss 1%
- Sent 4202530 bytes 3905 pkt (dropped 18, overlimits 0 requeues 0) 
- backlog 594b 9p requeues 0
+== client tc -s -d qdisc (plab-1993a)
+qdisc netem 800f: root refcnt 17 limit 1000 delay 40ms loss 1%
+ Sent 4222905 bytes 3800 pkt (dropped 25, overlimits 0 requeues 0) 
+ backlog 486b 7p requeues 0
 
-== server tc -s -d qdisc (plab-4035b)
-qdisc netem 8020: root refcnt 17 limit 1000 delay 40ms loss 1%
- Sent 1305597 bytes 2013 pkt (dropped 20, overlimits 0 requeues 0) 
- backlog 108b 2p requeues 0
+== server tc -s -d qdisc (plab-1993b)
+qdisc netem 8010: root refcnt 17 limit 1000 delay 40ms loss 1%
+ Sent 1324378 bytes 2223 pkt (dropped 18, overlimits 0 requeues 0) 
+ backlog 504b 8p requeues 0
 
 == client nstat Udp
 UdpInDatagrams                  1800               0.0
