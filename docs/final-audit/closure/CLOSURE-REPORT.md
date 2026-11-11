@@ -1,4 +1,4 @@
-# Final evidence reconciliation report (2026-11-11)
+﻿# Final evidence reconciliation report (2026-11-11)
 
 ## 1. Final state
 
@@ -34,7 +34,7 @@ bounded locus and a next step; they are not counted as fixed.
 - `1318fa6ff5b` evidence(b8): final paced matrix, low-rate control,
   qdisc/socket diagnostics, manifest, recheck; Mieru brief; provenance/schema
   reconciliation.
-- Final B7 evidence and this report follow in the last commit.
+- `c4e09f41b57` docs: reconcile provenance, UDP, B8 and Mieru with the final code.\n- `067cceb562e` docs: finalize the B7 evidence chain and index.\n- `7758798ba3b` evidence(b7): clean-tree matrix with binary, pin and parameters\n  in every run; this report follows in the last docs commit.
 
 ## 4. B7: FIXED_AND_VERIFIED, full chain
 
@@ -47,8 +47,8 @@ bounded locus and a next step; they are not counted as fixed.
 - Binary: rebuilt from the reconciled tree with the laboratory tags;
   sha256 `0157e713c8e2d43fc214e949cde40b9e3fc2dc812360c64cf41ea4b91f2bd3d6`,
   Go 1.25.5, CGO off, 19 tags, BuildInfo shows the wireguard-go pin above.
-- Runs: 6 cells (WG and AWG × stagger 0/200 ms/1 s) × 2/4 streams × 3 reps =
-  36/36 pass, upload; every run records commit, dirty=false, binary SHA,
+- Runs: 6 cells (WG and AWG 脳 stagger 0/200 ms/1 s) 脳 2/4 streams 脳 3 reps =
+  36/36 pass, upload; every run records commit `067cceb562e`, dirty=false, binary SHA,
   `load_parameters` including stagger. Before the fix the 0/200 ms cells failed
   2/2; after the fork fix they pass. Raw runs: `results/b7-final/`.
 - Honest caveat: the earlier `results/b7/` runs lacked binary SHA and stagger in
@@ -82,9 +82,8 @@ Final B8 (`results/b8-final/`, 80 ms RTT, 500 pps, 1200 B, 5 s, 3 reps, drain
 Diagnostics: the veth qdisc drops only the configured ~1 % of wire packets (60-96
 per cell), no overlimits/requeues, and every UDP socket error counter is zero in
 both namespaces. The client qdisc sees 40-54 % fewer packets at 1 % than at 0 %
-(MASQUE 15.8 k → 9.2 k; TrustTunnel 17.5 k → 8.0 k), so the missing datagrams are
-dropped inside the client/tunnel queue path before the veth. MASQUE target ≈
-unique means upstream loss dominates; TrustTunnel target > unique means both
+(MASQUE 15.8 k 鈫?9.2 k; TrustTunnel 17.5 k 鈫?8.0 k), so the missing datagrams are
+dropped inside the client/tunnel queue path before the veth. MASQUE target 鈮?unique means upstream loss dominates; TrustTunnel target > unique means both
 directions are queue-limited. The exact queue (device queue vs transport send
 buffer) is `NOT_AVAILABLE` without in-process instrumentation. No production
 transport code was changed. Legacy B8 data (7/18 reps failing the final drain
@@ -109,14 +108,14 @@ mismatch, changed binary and stale cache produce warnings, not failures. The
 source cache now recomputes the module view from `go.mod` even when HEAD is
 unchanged, with a `source_cache_modules_stale` warning. The linked worktree
 cannot carry `vcs.revision` (Go's `buildvcs` requires a `.git` directory), so the
-chain is binary SHA → BuildInfo → build command → commit; that limitation is
+chain is binary SHA 鈫?BuildInfo 鈫?build command 鈫?commit; that limitation is
 recorded, not papered over. Strict mode is not implemented.
 
 ## 9. Mieru S3-9: UNRESOLVED, root cause located upstream
 
 Pinned SDK v3.39.0 has a pick-to-attach TOCTOU: `Mux.DialContext` picks an
 underlay, then `AddSession` has no liveness/`done` guard, and `done` closes only
-after sessions are closed and awaited — which is exactly what unblocks the app
+after sessions are closed and awaited 鈥?which is exactly what unblocks the app
 read with `io.EOF`. Deterministic probe: `AddSession` after `Close()` succeeds.
 Upstream has no issue/tests for this; a throwaway P1+P2 patch gave 42/42 clean
 `-race` runs. The adapter retry is rejected (cannot force a fresh underlay,
@@ -154,3 +153,4 @@ in `ZIP-MANIFEST.json`; the README and GIT-STATE point at the same final HEAD.
 All subagents are inactive, no background jobs or test processes remain, and the
 worktree is clean at the final HEAD. No merge to `testing`, no force-push, no
 release tag; prior branches and the old ZIP were not modified.
+
