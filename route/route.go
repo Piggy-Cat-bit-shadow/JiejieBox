@@ -1020,6 +1020,20 @@ func (r *Router) preMatchFlowWithNeed(ctx context.Context, metadata *adapter.Inb
 	return r.preMatchFlowWithTruth(ctx, metadata, packetDestination, matchedRule, outboundTag, r.processTruthFor(metadata, reached))
 }
 
+// fakeIPFlowRejectionDetail explains, for the operator, why a FakeIP flow cannot be committed to a
+// flow outbound.
+//
+// Two different states reach the same refusal and they need different actions: a configuration with
+// no resolve action has a rule missing, while one whose resolve action runs with `match_only: true`
+// has the rule and chose, correctly, not to publish a dialable address. Reporting both as "a resolve
+// action is required" sends the reader to add a rule they already have.
+func fakeIPFlowRejectionDetail(metadata *adapter.InboundContext) string {
+	if len(metadata.MatchAddresses) > 0 {
+		return "the resolve action used match_only, which publishes no address to dial through"
+	}
+	return "a resolve action is required before routing to"
+}
+
 // preMatchFlowWithTruth is preMatchFlow with what the rule walk proved about the process metadata.
 func (r *Router) preMatchFlowWithTruth(ctx context.Context, metadata *adapter.InboundContext, packetDestination M.Socksaddr, matchedRule adapter.Rule, outboundTag string, truth processTruth) adapter.PreMatchResult {
 	continueResult := adapter.PreMatchResult{Action: adapter.PreMatchContinue}
@@ -1155,15 +1169,7 @@ func (r *Router) preMatchFlowWithTruth(ctx context.Context, metadata *adapter.In
 		}
 		if !newDestination.IsValid() {
 			if len(metadata.DestinationAddresses) == 0 {
-				if len(metadata.MatchAddresses) > 0 {
-					// The resolve action DID run, but with `match_only: true`, so it deliberately
-					// published no dial candidate. A flow outbound needs an address, so this is a
-					// configuration boundary and not a missing rule: telling the reader to add a
-					// resolve action would send them to a rule they already have.
-					r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": the resolve action used match_only, which publishes no address to dial through outbound/", outbound.Type(), "[", outbound.Tag(), "]")
-				} else {
-					r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": a resolve action is required before routing to outbound/", outbound.Type(), "[", outbound.Tag(), "]")
-				}
+				r.logger.WarnContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": ", fakeIPFlowRejectionDetail(metadata), " outbound/", outbound.Type(), "[", outbound.Tag(), "]")
 			} else {
 				r.logger.DebugContext(ctx, "pre-match: reject ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to fake destination ", metadata.Destination.Fqdn, ": no resolved address for this address family")
 			}

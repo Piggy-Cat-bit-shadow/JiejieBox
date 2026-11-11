@@ -53,8 +53,3 @@ func BenchmarkIPCIDRItemMatch(b *testing.B) {
 		})
 	}
 }
-
-func benchmarkPrefixable(cidr string) *badoption.Prefixable {
-	prefix := badoption.Prefixable(netip.MustParsePrefix(cidr))
-	return &prefix
-}

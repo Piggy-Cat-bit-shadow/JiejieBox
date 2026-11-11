@@ -248,6 +248,21 @@ func TestResolveMatchOnlyEmptyAnswerClearsStaleEvidence(t *testing.T) {
 		"an empty answer must clear the previous one, not leave a stale address matching rules")
 }
 
+// A FakeIP flow needs a dialable address for a flow outbound, and `match_only` deliberately does not
+// publish one. The refusal's message is the ONLY thing that distinguishes that configuration
+// boundary from a configuration with no resolve action at all, so the words are pinned here.
+func TestFakeIPFlowRejectionExplainsMatchOnly(t *testing.T) {
+	require.Equal(t, "a resolve action is required before routing to",
+		fakeIPFlowRejectionDetail(&adapter.InboundContext{}),
+		"the historical wording for a missing resolve action must not change")
+
+	require.Equal(t, "the resolve action used match_only, which publishes no address to dial through",
+		fakeIPFlowRejectionDetail(&adapter.InboundContext{
+			MatchAddresses: resolvedAddresses(),
+		}),
+		"an operator who already has a resolve action must not be told to add one")
+}
+
 // Matching evidence must never be what lets a flow skip the userspace path: a bypass would hand the
 // packet to the platform, which would dial the literal destination instead of the name the proxy is
 // supposed to resolve.
