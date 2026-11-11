@@ -623,16 +623,8 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			drainLastReply = 0
 		}
 	}
-	drainComplete := ctx.Err() == nil
-	if drainComplete && drain > 0 && !lastReplyAt.IsZero() {
-		// A reply still arriving at the very edge of the window means the window
-		// may have truncated the tail: do not claim a loss it might have cut off.
-		if drainLastReply > drain-50*time.Millisecond {
-			drainComplete = false
-		}
-	}
-
 	written := writes.Load()
+	drainComplete := drainCompleteFor(ctx.Err(), drain, written, unique, drainLastReply, !lastReplyAt.IsZero())
 	returned := unique + duplicate
 	result := Result{
 		SentBytes:          written * int64(cfg.PacketSize),
@@ -742,6 +734,24 @@ func (w *udpSeqWindow) add(sequence uint32) bool {
 		w.seen[sequence] = struct{}{}
 	} else {
 		w.truncated = true
+	}
+	return true
+}
+
+// drainCompleteFor is the only definition of a usable loss figure: the context
+// stayed alive, and the tail was actually observed. A zero-length drain cannot
+// rule out a late tail once replies are missing, so it is only complete when
+// nothing is missing (or nothing was sent). A tail arriving within 50 ms of the
+// window edge may have been cut off, so that is also incomplete.
+func drainCompleteFor(ctxErr error, drain time.Duration, written, unique int64, lastReply time.Duration, sawReply bool) bool {
+	if ctxErr != nil {
+		return false
+	}
+	if drain <= 0 {
+		return written == 0 || unique >= written
+	}
+	if sawReply && lastReply > drain-50*time.Millisecond {
+		return false
 	}
 	return true
 }

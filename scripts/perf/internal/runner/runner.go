@@ -241,6 +241,19 @@ func Run(opts Options) (*Outcome, error) {
 	if run.Scenario.Extra == nil {
 		run.Scenario.Extra = map[string]any{}
 	}
+	// The invocation parameters are part of the evidence: a run directory name
+	// does not say which stagger produced it, and a matrix that cannot be
+	// reconstructed from its own JSON is not reproducible.
+	run.Scenario.Extra["load_parameters"] = map[string]any{
+		"patterns":    opts.Patterns,
+		"streams":     opts.Streams,
+		"reps":        opts.Reps,
+		"duration_s":  opts.Duration.Seconds(),
+		"warmup_s":    opts.Warmup.Seconds(),
+		"stagger_ms":  float64(opts.Stagger.Microseconds()) / 1000,
+		"udp_rate":    opts.UDPRate,
+		"udp_drain_ms": float64(opts.UDPDrain.Microseconds()) / 1000,
+	}
 	run.Scenario.Extra["startup_server_ms"] = float64(sess.serverStartup.Microseconds()) / 1000
 	run.Scenario.Extra["startup_client_ms"] = float64(sess.clientStartup.Microseconds()) / 1000
 	// startup_*_ms is when the configured readiness check passed. For a native
