@@ -120,7 +120,7 @@ func TestCollectEnrichesFromTheBinary(t *testing.T) {
 // repository the test CREATES, not against this machine's checkout.
 //
 // The fixture used to be the authoring host's absolute path
-// (/mnt/c/Deepseek/_perf/kernel). That made the assertion a property of the host rather than of
+// (a fixed directory on the authoring machine). That made the assertion a property of the host rather than of
 // the code: anywhere that path is absent, `git rev-parse HEAD` legitimately returns nothing, the
 // warning is correctly NOT emitted, and the test fails on an implementation that is right. A test
 // that can only pass on the machine it was written on is not evidence, and this one is part of the

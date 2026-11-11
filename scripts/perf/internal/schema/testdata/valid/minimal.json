@@ -4,7 +4,7 @@
   "kind": "e2e",
   "started_at": "2026-11-11T12:35:23.431003793+08:00",
   "source": {
-    "repo": "/mnt/c/Deepseek/_perf/kernel",
+    "repo": "/srv/perf/kernel",
     "branch": "work/perf-lab-2026-11-11",
     "commit": "bf0e0bec56004caf2530176a098e27c03ed66dc5",
     "commit_subject": "perf(lab): add the stage-1 performance laboratory",

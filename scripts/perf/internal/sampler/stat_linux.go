@@ -53,6 +53,7 @@ func readStat(pid int) (Stat, error) {
 	cstime, _ := strconv.ParseUint(fields[14], 10, 64)
 	st.CPUTicks = utime + stime + cutime + cstime
 	st.Threads, _ = strconv.Atoi(fields[17])
+	st.ThreadsKnown = true
 	st.StartTick, _ = strconv.ParseUint(fields[19], 10, 64)
 
 	if status, statusErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status"); statusErr == nil {
@@ -81,6 +82,7 @@ func readStat(pid int) (Stat, error) {
 
 	if entries, readErr := os.ReadDir("/proc/" + strconv.Itoa(pid) + "/fd"); readErr == nil {
 		st.FDs = len(entries)
+		st.FDsKnown = true
 	}
 
 	if schedstat, schedErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/schedstat"); schedErr == nil {

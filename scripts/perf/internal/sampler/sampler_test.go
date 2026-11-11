@@ -6,6 +6,7 @@ package sampler
 
 import (
 	"os"
+	"os/exec"
 	"runtime"
 	"testing"
 	"time"
@@ -103,4 +104,92 @@ func TestCollectorStopIsSafeToRepeat(t *testing.T) {
 		}
 	}()
 	_ = collector.Stop()
+}
+
+// TestPIDReuseControlUsesCreationTime is the negative control for the PID-reuse
+// guard: the guard may only fire on a *known* creation time that changed. An
+// unknown time (zero) is not evidence of reuse, and a stable time is not either.
+func TestPIDReuseControlUsesCreationTime(t *testing.T) {
+	collector := &Collector{}
+	collector.absorb(Stat{StartTick: 100})
+	collector.absorb(Stat{StartTick: 100})
+	if collector.reused {
+		t.Fatal("an unchanged creation time was reported as PID reuse")
+	}
+	collector.absorb(Stat{StartTick: 0})
+	if collector.reused {
+		t.Fatal("an unknown creation time was reported as PID reuse")
+	}
+	collector.absorb(Stat{StartTick: 200})
+	if !collector.reused {
+		t.Fatal("a changed creation time was not reported as PID reuse")
+	}
+}
+
+// TestUnmeasurableFieldsAreNullNotZero pins the reporting contract: a platform
+// that cannot see threads or file descriptors must leave the peaks nil so they
+// serialize as null, rather than publishing an unmeasured 0 as a measurement.
+func TestUnmeasurableFieldsAreNullNotZero(t *testing.T) {
+	collector := Start(os.Getpid(), 20*time.Millisecond)
+	time.Sleep(120 * time.Millisecond)
+	summary := collector.Stop()
+	if runtime.GOOS == "linux" {
+		if summary.ThreadsPeak == nil || summary.FDsPeak == nil {
+			t.Fatal("Linux can read threads and FDs from /proc, so both peaks must be present")
+		}
+		return
+	}
+	if summary.ThreadsPeak != nil {
+		t.Fatalf("threads are not observable on %s, but ThreadsPeak = %d", runtime.GOOS, *summary.ThreadsPeak)
+	}
+	if summary.FDsPeak != nil {
+		t.Fatalf("file descriptors are not observable on %s, but FDsPeak = %d", runtime.GOOS, *summary.FDsPeak)
+	}
+}
+
+// TestWindowsStartTickIsStableAndNonZero proves the Windows PID-reuse guard has
+// a real source: the creation FILETIME must be read, must not move while the
+// process lives, and must differ for a different process.
+func TestWindowsStartTickIsStableAndNonZero(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the creation FILETIME is a Windows-only source")
+	}
+	first, err := Read(os.Getpid())
+	if err != nil {
+		t.Fatalf("Read(self): %v", err)
+	}
+	if first.StartTick == 0 {
+		t.Fatal("StartTick is zero: PID reuse cannot be detected on Windows")
+	}
+	second, err := Read(os.Getpid())
+	if err != nil {
+		t.Fatalf("Read(self) again: %v", err)
+	}
+	if second.StartTick != first.StartTick {
+		t.Fatalf("StartTick moved between reads of a live process: %d -> %d", first.StartTick, second.StartTick)
+	}
+
+	child := exec.Command("cmd.exe", "/c", "ping", "-n", "3", "127.0.0.1")
+	if err := child.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	defer func() {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+	}()
+	var childStat Stat
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		childStat, err = Read(child.Process.Pid)
+		if err == nil && childStat.StartTick != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("read child %d: %v", child.Process.Pid, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if childStat.StartTick == first.StartTick {
+		t.Fatal("a different process reported the same creation time as this one")
+	}
 }

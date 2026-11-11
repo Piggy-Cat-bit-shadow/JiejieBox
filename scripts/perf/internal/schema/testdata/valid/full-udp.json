@@ -5,7 +5,7 @@
   "started_at": "2026-11-11T11:42:28.811744271+08:00",
   "finished_at": "2026-11-11T11:45:29.609509375+08:00",
   "source": {
-    "repo": "/mnt/c/Deepseek/_perf/kernel",
+    "repo": "/srv/perf/kernel",
     "branch": "work/perf-lab-2026-11-11",
     "commit": "bf0e0bec56004caf2530176a098e27c03ed66dc5",
     "commit_subject": "perf(lab): add the stage-1 performance laboratory",
@@ -81,7 +81,7 @@
   "environment": [
     {
       "name": "PERF_SOURCE_JSON",
-      "value": "{\"repo\": \"/mnt/c/Deepseek/_perf/kernel\", \"branch\": \"work/perf-lab-2026-11-11\", \"commit\": \"bf0e0bec56004caf2530176a098e27c03ed66dc5\", \"commit_subject\": \"perf(lab): add the stage-1 performance laboratory\", \"commit_time\": \"2026-11-11T11:35:25+08:00\", \"dirty\": true, \"dirty_files\": [\"M scripts/perf/internal/runner/runner.go\", \"?? docs/perf/README.md\"], \"go_version\": \"go1.25.5\", \"cgo_enabled\": null, \"modules\": {\"github.com/enfein/mieru\": \"v3.39.0\", \"github.com/sagernet/cronet-go\": \"v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2\", \"github.com/sagernet/quic-go\": \"v0.61.0-sing-box-mod.13\", \"github.com/sagernet/sing\": \"v0.9.7-0.20261110095940-27b73774b240\", \"github.com/sagernet/sing-anytls\": \"v0.0.0-20260928104022-580984e4d8cb\", \"github.com/sagernet/sing-mux\": \"v0.3.10-0.20261110064256-375087483ea2\", \"github.com/sagernet/sing-quic\": \"v0.7.2-0.20261109110824-5253224b67cf\", \"github.com/sagernet/sing-shadowsocks\": \"v0.2.2-0.20261110092058-52ade8ab7e95\", \"github.com/sagernet/sing-tun\": \"v0.9.7-0.20261109145802-79ed0653fdc6\", \"github.com/sagernet/sing-vmess\": \"v0.2.9-0.20261110093549-d800eb57f96c\", \"github.com/sagernet/wireguard-go\": \"v0.0.8-0.20261022215849-fdf0ad046586\"}}"
+      "value": "{\"repo\": \"/srv/perf/kernel\", \"branch\": \"work/perf-lab-2026-11-11\", \"commit\": \"bf0e0bec56004caf2530176a098e27c03ed66dc5\", \"commit_subject\": \"perf(lab): add the stage-1 performance laboratory\", \"commit_time\": \"2026-11-11T11:35:25+08:00\", \"dirty\": true, \"dirty_files\": [\"M scripts/perf/internal/runner/runner.go\", \"?? docs/perf/README.md\"], \"go_version\": \"go1.25.5\", \"cgo_enabled\": null, \"modules\": {\"github.com/enfein/mieru\": \"v3.39.0\", \"github.com/sagernet/cronet-go\": \"v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2\", \"github.com/sagernet/quic-go\": \"v0.61.0-sing-box-mod.13\", \"github.com/sagernet/sing\": \"v0.9.7-0.20261110095940-27b73774b240\", \"github.com/sagernet/sing-anytls\": \"v0.0.0-20260928104022-580984e4d8cb\", \"github.com/sagernet/sing-mux\": \"v0.3.10-0.20261110064256-375087483ea2\", \"github.com/sagernet/sing-quic\": \"v0.7.2-0.20261109110824-5253224b67cf\", \"github.com/sagernet/sing-shadowsocks\": \"v0.2.2-0.20261110092058-52ade8ab7e95\", \"github.com/sagernet/sing-tun\": \"v0.9.7-0.20261109145802-79ed0653fdc6\", \"github.com/sagernet/sing-vmess\": \"v0.2.9-0.20261110093549-d800eb57f96c\", \"github.com/sagernet/wireguard-go\": \"v0.0.8-0.20261022215849-fdf0ad046586\"}}"
     }
   ],
   "reps": [

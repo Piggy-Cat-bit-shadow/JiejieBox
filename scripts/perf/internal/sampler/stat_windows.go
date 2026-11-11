@@ -56,6 +56,10 @@ func readStat(pid int) (Stat, error) {
 		return st, callErr
 	}
 	st.CPUTicks = filetimeTicks(kernelTime) + filetimeTicks(userTime)
+	// The creation time is the PID-reuse guard: a recycled PID has a different
+	// creation FILETIME even when the numeric PID is the same. It is recorded in
+	// 100 ns units, which is fine because the value is only ever compared.
+	st.StartTick = filetimeTicks(creation)
 
 	var counters processMemoryCounters
 	counters.CB = uint32(unsafe.Sizeof(counters))

@@ -3,12 +3,14 @@ package libbox
 import (
 	"runtime"
 	"time"
-	"unsafe"
 )
 
 func TriggerGoPanic() {
 	time.AfterFunc(200*time.Millisecond, func() {
-		*(*int)(unsafe.Pointer(uintptr(0))) = 0
+		// Deliberately fault at address zero: the crash trigger stays a hard fault, and a nil
+		// pointer store needs no unsafe.
+		var crash *int
+		*crash = 0
 	})
 }
 

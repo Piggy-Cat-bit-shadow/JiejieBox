@@ -17,14 +17,19 @@ import (
 
 // Stat is one point-in-time reading.
 type Stat struct {
-	CPUTicks  uint64 // utime+stime+cutime+cstime, in clock ticks
-	CPUNanos  uint64 // from /proc/<pid>/schedstat, 0 when unavailable
-	RSSBytes  int64
-	HWMBytes  int64
-	Threads   int
-	FDs       int
-	StartTick uint64 // field 22 of /proc/<pid>/stat; detects PID reuse
-	At        time.Time
+	CPUTicks uint64 // utime+stime+cutime+cstime, in clock ticks
+	CPUNanos uint64 // from /proc/<pid>/schedstat, 0 when unavailable
+	RSSBytes int64
+	HWMBytes int64
+	Threads  int
+	FDs      int
+	// ThreadsKnown and FDsKnown say whether the two numbers above were actually
+	// measured. A platform that cannot see them must leave the flag false so the
+	// summary reports null; a zero from an unsupported probe is not a measurement.
+	ThreadsKnown bool
+	FDsKnown     bool
+	StartTick    uint64 // process creation time; detects PID reuse. /proc field 22, or the Windows creation FILETIME
+	At           time.Time
 }
 
 // Summary is the reduction of a sampling window.
@@ -145,6 +150,7 @@ func (c *Collector) Stop() Summary {
 	s.RSSStart, s.RSSEnd = &start, &end
 	var peakRSS int64
 	var peakThreads, peakFDs int
+	threadsMeasured, fdsMeasured := false, false
 	cpuTicks := c.first.CPUTicks
 	if c.last.CPUTicks >= cpuTicks {
 		cpuTicks = c.last.CPUTicks - cpuTicks
@@ -158,16 +164,24 @@ func (c *Collector) Stop() Summary {
 		if st.RSSBytes > peakRSS {
 			peakRSS = st.RSSBytes
 		}
-		if st.Threads > peakThreads {
+		if st.ThreadsKnown && (!threadsMeasured || st.Threads > peakThreads) {
 			peakThreads = st.Threads
+			threadsMeasured = true
 		}
-		if st.FDs > peakFDs {
+		if st.FDsKnown && (!fdsMeasured || st.FDs > peakFDs) {
 			peakFDs = st.FDs
+			fdsMeasured = true
 		}
 	}
 	s.RSSPeak = &peakRSS
-	s.ThreadsPeak = &peakThreads
-	s.FDsPeak = &peakFDs
+	// Leave a peak nil when no sample measured it: the schema and the report
+	// render nil as null, which is the honest value for "not observable here".
+	if threadsMeasured {
+		s.ThreadsPeak = &peakThreads
+	}
+	if fdsMeasured {
+		s.FDsPeak = &peakFDs
+	}
 	if tick := seconds(cpuTicks, c.clkTck); tick != nil {
 		s.CPUSeconds = tick
 	}

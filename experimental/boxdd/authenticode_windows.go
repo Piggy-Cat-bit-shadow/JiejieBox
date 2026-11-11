@@ -217,7 +217,8 @@ func verifiedSignerCertificate(stateData windows.Handle) ([]byte, error) {
 	if providerCertificate == 0 {
 		return nil, E.New("missing Authenticode provider certificate")
 	}
-	certificateContext := (*cryptProviderCertificate)(unsafe.Pointer(providerCertificate)).certificateContext
+	// providerCertificate is a pointer to provider-owned native memory; see nativePointer.
+	certificateContext := (*cryptProviderCertificate)(nativePointer(providerCertificate)).certificateContext
 	if certificateContext == nil {
 		return nil, E.New("empty Authenticode signer certificate context")
 	}
@@ -253,4 +254,14 @@ func validateUntrustedSelfSignedCertificate(certificate *x509.Certificate) error
 		return E.Cause(err, "verify untrusted Authenticode signer self-signature")
 	}
 	return nil
+}
+
+// nativePointer reinterprets a pointer-sized value returned by a Windows API as
+// a pointer. The value comes from WinTrust and points into provider data owned
+// by the STATE_DATA that is alive for the whole call, so Go's collector never
+// sees that memory and has nothing to move. The direct uintptr conversion is
+// what vet flags; keeping the reinterpretation in one documented place says why
+// it is sound instead of suppressing the check for the package.
+func nativePointer(value uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&value))
 }

@@ -5,6 +5,7 @@ package httpclient
 import (
 	"context"
 	stdTLS "crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -204,6 +205,25 @@ func (b *warmTrackedBody) Read(p []byte) (int, error) {
 
 func (b *warmTrackedBody) Close() error { b.closes.Add(1); return nil }
 
+// waitForBodyClose waits for the close the caller owns to arrive. The rebuild
+// path hands bodies to both the HTTP/3 attempt and the cross-version fallback,
+// and the attempt that loses the race is closed by its own goroutine, so the
+// close can land just after RoundTrip returns. Waiting keeps "closed exactly
+// once" as the assertion instead of making it a property of the scheduler.
+func waitForBodyClose(t *testing.T, body *warmTrackedBody, label string) int32 {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if closes := body.closes.Load(); closes > 0 {
+			return closes
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s was never closed", label)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // TestWarmRejectedReplayablePostFallsBackWithAFreshBody: the warm H3 stream consumed and closed the
 // original body; the rejection must reach this layer (so the fallback is allowed) and the fallback
 // must use a rebuilt body, never the closed original.
@@ -249,7 +269,7 @@ func TestWarmRejectedReplayablePostFallsBackWithAFreshBody(t *testing.T) {
 	require.Zero(t, original.readsAfterClose.Load(),
 		"the original body must never be read after the warm attempt closed it")
 	require.Len(t, copies, 1, "exactly one rebuilt body is used for the fallback")
-	require.Equal(t, int32(1), copies[0].closes.Load(), "the rebuilt body is closed by the fallback")
+	require.Equal(t, int32(1), waitForBodyClose(t, copies[0], "the rebuilt body"), "the rebuilt body is closed by the fallback")
 }
 
 // TestWarmRejectedOnceOnlyPostFailsWithoutReuse: the same warm rejection with a body that cannot be
@@ -322,8 +342,9 @@ func TestColdRejectedReplayablePostWithoutKeyFallsBack(t *testing.T) {
 	require.Equal(t, int32(1), original.closes.Load())
 	require.Zero(t, original.readsAfterClose.Load())
 	require.Len(t, copies, 2)
-	for _, copy := range copies {
-		require.Equal(t, int32(1), copy.closes.Load())
+	for index, copy := range copies {
+		require.Equal(t, int32(1), waitForBodyClose(t, copy, fmt.Sprintf("rebuilt body %d", index)),
+			"each rebuilt body is closed exactly once")
 	}
 	require.False(t, transport.h3Broken(requestAuthority(request)))
 }
