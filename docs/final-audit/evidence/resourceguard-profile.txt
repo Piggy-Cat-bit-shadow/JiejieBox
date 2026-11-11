@@ -1,0 +1,61 @@
+# ResourceGuard profile (stage 3)
+
+`go test -run ^$ -bench "BenchmarkGateAcquireRelease" -benchtime 5s -cpuprofile -memprofile -mutexprofile ./common/resourceguard`
+
+BenchmarkGateAcquireRelease-16             	22355692	       270.7 ns/op	      48 B/op	       1 allocs/op
+BenchmarkGateAcquireReleaseContended-16    	 4256973	      1438 ns/op	     504 B/op	       6 allocs/op
+ok  	github.com/sagernet/sing-box/common/resourceguard	14.131s
+
+## CPU top
+File: resourceguard.test
+Build ID: ec6c524f64824f3b2b903c69381b04f68ed8a937
+Type: cpu
+Time: 2026-11-11 15:27:56 CST
+Duration: 14.04s, Total samples = 37190ms (264.88%)
+Showing nodes accounting for 21410ms, 57.57% of 37190ms total
+Dropped 274 nodes (cum <= 185.95ms)
+Showing top 12 nodes out of 159
+      flat  flat%   sum%        cum   cum%
+    6610ms 17.77% 17.77%     6610ms 17.77%  runtime.futex
+    4070ms 10.94% 28.72%     4070ms 10.94%  time.runtimeNow
+    2900ms  7.80% 36.52%     2900ms  7.80%  runtime.procyield
+    1300ms  3.50% 40.01%     5940ms 15.97%  internal/sync.(*Mutex).lockSlow
+    1210ms  3.25% 43.26%     7160ms 19.25%  internal/sync.(*Mutex).Lock (inline)
+    1170ms  3.15% 46.41%     1170ms  3.15%  runtime.usleep
+     910ms  2.45% 48.86%     6860ms 18.45%  internal/sync.(*Mutex).Unlock (inline)
+     780ms  2.10% 50.95%      780ms  2.10%  runtime.nanotime (inline)
+     720ms  1.94% 52.89%     3210ms  8.63%  runtime.lock2
+
+## allocations top
+File: resourceguard.test
+Build ID: ec6c524f64824f3b2b903c69381b04f68ed8a937
+Type: alloc_space
+Time: 2026-11-11 15:28:10 CST
+Showing nodes accounting for 3559.76MB, 99.73% of 3569.53MB total
+Dropped 33 nodes (cum <= 17.85MB)
+      flat  flat%   sum%        cum   cum%
+ 2087.13MB 58.47% 58.47%  3559.26MB 99.71%  github.com/sagernet/sing-box/common/resourceguard.(*Gate).Acquire
+  674.56MB 18.90% 77.37%  1211.62MB 33.94%  time.NewTimer
+  537.06MB 15.05% 92.41%   537.06MB 15.05%  time.newTimer
+  260.51MB  7.30% 99.71%   260.51MB  7.30%  container/list.(*List).insertValue (inline)
+    0.50MB 0.014% 99.73%  3559.76MB 99.73%  testing.(*B).RunParallel.func1
+         0     0% 99.73%   260.51MB  7.30%  container/list.(*List).PushBack (inline)
+         0     0% 99.73%  3559.26MB 99.71%  github.com/sagernet/sing-box/common/resourceguard.(*Guard).Acquire
+         0     0% 99.73%  1066.05MB 29.87%  github.com/sagernet/sing-box/common/resourceguard.BenchmarkGateAcquireRelease.func2
+         0     0% 99.73%  2493.21MB 69.85%  github.com/sagernet/sing-box/common/resourceguard.BenchmarkGateAcquireReleaseContended.func2
+
+## mutex top
+File: resourceguard.test
+Build ID: ec6c524f64824f3b2b903c69381b04f68ed8a937
+Type: delay
+Time: 2026-11-11 15:28:10 CST
+Showing nodes accounting for 40594.26ms, 99.94% of 40619.85ms total
+Dropped 133 nodes (cum <= 203.10ms)
+Showing top 8 nodes out of 24
+      flat  flat%   sum%        cum   cum%
+38959.88ms 95.91% 95.91% 39528.53ms 97.31%  sync.(*Mutex).Unlock (inline)
+ 1634.38ms  4.02% 99.94%  1634.38ms  4.02%  runtime.unlock (inline)
+         0     0% 99.94% 21325.80ms 52.50%  github.com/sagernet/sing-box/common/resourceguard.(*Gate).Acquire
+         0     0% 99.94% 17843.68ms 43.93%  github.com/sagernet/sing-box/common/resourceguard.(*Gate).release
+         0     0% 99.94% 22023.35ms 54.22%  github.com/sagernet/sing-box/common/resourceguard.(*Guard).Acquire
+         0     0% 99.94%   697.55ms  1.72%  github.com/sagernet/sing-box/common/resourceguard.(*Guard).observe

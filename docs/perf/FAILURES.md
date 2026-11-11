@@ -107,6 +107,17 @@ here used the newest sing-tun in the module cache rather than the version
 `go.mod` pins, so its result is not evidence and must be redone against the
 pinned module.
 
+**Stage-3 update (2026-11-11).** Root cause found against the pinned dependency:
+the userspace stack has exactly one outbound-drain goroutine, and it blocks
+forever in wireguard-go's `Peer.WritePackets` → `waitOutboundSpace` once
+`queuedOutboundPackets` reaches its 1024 cap while the encryption and sender
+queues are empty (nothing can decrement the counter or wake the waiter). Keepalives
+bypass the staged path, so the tunnel still looks alive while every TCP flow is
+stalled. The SIGQUIT dump and peer-queue markers are in
+`docs/final-audit/evidence/b7-wireguard-wedge.txt`. The fix is a wireguard-go
+fork change (flush staged containers on keypair install, audit the counter); this
+branch deliberately carries no loss-hiding workaround.
+
 ### B8 — UDP over the tunnel collapses at 1% uniform loss
 
 Same cells, UDP pattern, 80 ms RTT, changing only the loss rate:

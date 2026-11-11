@@ -1,0 +1,34 @@
+# Mieru idle-underlay recovery race (S3-9)
+
+Command:
+
+```
+go test -count=3 -race -timeout 5m -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" \
+  -run TestMieruClientObservesServerClosingAnIdleUnderlay -v ./protocol/mieru
+```
+
+Result: 1 of 3 runs failed; 3 of 3 pass without `-race`.
+
+```
+=== RUN   TestMieruClientObservesServerClosingAnIdleUnderlay
+    idle_underlay_test.go:140:
+        	Error:      	Received unexpected error:
+        	            	failed to read socks5 connection response from the server: EOF
+        	Test:       	TestMieruClientObservesServerClosingAnIdleUnderlay
+--- FAIL: TestMieruClientObservesServerClosingAnIdleUnderlay (2.31s)
+```
+
+The failing assertion is the **new dial after the idle close** (line 140), not the
+blocked read the test was written for. The test expects the client to build a
+fresh underlay; it instead picked the underlay the proxy had just closed and the
+SOCKS response read hit EOF. Without `-race` the window is too small to hit in
+three runs, which is why every earlier suite passed.
+
+Why this is not "a flaky test": the assertion is the product behaviour the test
+documents (a new dial must recover). The flakiness belongs to the recovery path:
+the pick-to-dial window is inside the SDK's `Mux.DialContext`, and the fork's
+adapter cannot select a different underlay. A product fix needs either a retry on
+a fresh underlay when the reused one dies before the SOCKS reply, or an SDK
+change; both change connection semantics and were not made in this audit.
+
+Status: `UNRESOLVED` in `ISSUE-LEDGER.md`.

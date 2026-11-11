@@ -1,0 +1,32 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 30171
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "127.0.0.1",
+      "server_port": 26471,
+      "uuid": "2f88c961-fa87-4243-a9ce-82364ec322bb",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "utls": {"enabled": true, "fingerprint": "chrome"},
+        "reality": {
+          "enabled": true,
+          "public_key": "xD-0QMuDMFNA-JRUCycKBWNIZ7sj7tjJ-V1I5YC9aVc",
+          "short_id": "6114db08"
+        }
+      }
+    }
+  ],
+  "route": {"final": "proxy"}
+}

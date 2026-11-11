@@ -170,5 +170,30 @@ stage-2 work.
 | Windows | the shipping desktop client; `xnettool` CPU accounting | Windows process CPU and Winsock costs |
 | Real device with TUN | `system=true` WireGuard/MASQUE, route/idle-cleanup accounting | privileged TUN data path, on-demand tunnels |
 
+## Correction (stage 3): the pins above are `require` versions, not what was built
+
+Every fork in this repository is reached through a `replace` directive, and the
+rows in the dependency table quote the `require` version. `go list -m -json all`
+shows the effective version after replacement, which is what ran:
+
+| module | require (quoted above) | effective (built) |
+|---|---|---|
+| `github.com/sagernet/sing` | `v0.9.7-0.20261110095940-27b73774b240` | `v0.9.6-0.20261110222322-4abfaed41727` (`Piggy-Cat-bit-shadow/sing`) |
+| `github.com/sagernet/quic-go` | `v0.61.0-sing-box-mod.13` | `v0.61.1-0.20261110231807-158445cdda77` (`Piggy-Cat-bit-shadow/quic-go`) |
+| `github.com/sagernet/sing-quic` | `v0.7.2-0.20261109110824-5253224b67cf` | `v0.7.2-0.20261110234451-aa6d98964049` (`Piggy-Cat-bit-shadow/sing-quic`) |
+| `github.com/sagernet/sing-tun` | `v0.9.7-0.20261109145802-79ed0653fdc6` | `v0.9.7-0.20261110222329-99abf3c27666` (`Piggy-Cat-bit-shadow/sing-tun`) |
+| `github.com/sagernet/wireguard-go` | `v0.0.8-0.20261022215849-fdf0ad046586` | `v0.0.0-20261109042158-a765d957fd81` (`Piggy-Cat-bit-shadow/wireguard-go`) |
+| `github.com/sagernet/cronet-go` | `v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2` | same version, replaced by the fork of the same version |
+
+`sing-anytls`, `sing-mux`, `sing-vmess` and `sing-shadowsocks` have no replace, so
+their rows are already the effective pins.
+
+The stage-1 and stage-2 `run.json` files on disk record the require versions,
+because `scripts/perf/internal/source.modulePins` skipped `replace` lines at the
+time; stage 3 fixed the parser (`source_test.go` covers single-line, block and
+local replacements) and the final runs under `docs/final-audit/results/` carry the
+effective pins. The correction matters for B7: the wireguard-go build that
+exhibits it is the fork at `a765d957fd81`, not the upstream pin in the table.
+
 Everything in the matrix that is marked as measured was measured on this WSL2
 host, with the binary and tags recorded in the run.

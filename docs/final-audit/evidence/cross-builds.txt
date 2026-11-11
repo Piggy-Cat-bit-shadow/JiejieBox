@@ -1,0 +1,41 @@
+# Cross-platform build check (stage 3)
+
+Command:
+
+```
+BASE="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+TAGS="$BASE,with_trusttunnel,with_awg,with_naive_outbound,with_purego"
+for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64 android/arm64; do
+  CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} go build -tags "$TAGS" ./cmd/sing-box
+done
+```
+
+Result:
+
+```
+=== linux/amd64
+PASS 122418559 bytes
+=== linux/arm64
+PASS 115722315 bytes
+=== windows/amd64
+PASS 121356800 bytes
+=== darwin/arm64
+PASS 110493410 bytes
+=== android/arm64
+FAIL
+# github.com/ebitengine/purego
+.../dlfcn_android.go:21:13: undefined: cgo.Dlopen
+.../dlfcn_android.go:25:13: undefined: cgo.Dlsym
+.../dlfcn_android.go:29:13: undefined: cgo.Dlclose
+=== default tag set, linux/amd64
+PASS
+```
+
+The Android failure is a configuration limitation, not a source break: with
+`CGO_ENABLED=0` the purego binding's Android file needs the cgo `dlopen`
+wrappers, and this host has no Android NDK. `BLOCKED_BY_ENVIRONMENT`.
+
+What these builds prove: the branch's source (including the stage-2 fixes and the
+stage-3 parser) compiles for four production targets. They do not prove runtime
+behaviour on those targets; the platform cells in `B6` remain
+`BLOCKED_BY_ENVIRONMENT`.

@@ -1,0 +1,24 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 24518
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "mieru",
+      "tag": "proxy",
+      "server": "127.0.0.1",
+      "server_port": 28616,
+      "username": "bench",
+      "password": "795634bab11417d64e659b43aa1dcfb7",
+      "transport": "tcp",
+      "multiplexing": "default"
+    }
+  ],
+  "route": {"final": "proxy"}
+}

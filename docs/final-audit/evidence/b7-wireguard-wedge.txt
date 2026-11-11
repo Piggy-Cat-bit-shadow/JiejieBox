@@ -1,0 +1,80 @@
+# B7 evidence: userspace WireGuard outbound pipeline wedge
+
+Captured 2026-11-11 on WSL2 (Linux 6.x, amd64), branch `work/coupling-audit-2026-11-11`.
+sing-box built with the laboratory tag set; sing-tun was a local copy of the version
+`go list -m` resolves to (fork `v0.9.7-0.20261110222329-99abf3c27666`),
+instrumented only with rate-limited `println` markers. No production code was changed
+for the capture.
+
+## Failing cell
+
+```
+perflab run -scenario scripts/perf/scenarios/wireguard-endpoint \
+  -pattern upload -streams 2 -reps 1 -duration 20s -warmup 0s
+```
+
+Result: `no payload arrived for upload at 2 stream(s): sent=0 target_received=0`.
+
+Client errors, 10 s after each dial:
+
+```
+connection: open connection to 198.18.17.1:33300 using outbound/wireguard[wg]:
+go: handshake: context canceled
+```
+
+## Peer-queue write markers
+
+`transport/wireguard.(*peerQueue).write` prints `PEER-WRITE` before
+`peer.WritePackets` and `PEER-WRITE-DONE` after it returns. In a failing run the
+counters were **60 entries and 59 completions**: the 60th call entered
+`WritePackets` and never returned. The first entries carry 60-byte SYNs and later
+ones carry 1280-byte data packets, so traffic had been flowing before the stall.
+
+## Goroutine dump (SIGQUIT to the wedged client)
+
+The writer goroutine, blocked in wireguard-go's outbound-space wait:
+
+```
+goroutine 13 gp=0xc000132fc0 m=nil [chan receive]:
+runtime.gopark(...)
+runtime.chanrecv(0xc002e4a000, 0x0, 0x1)
+runtime.chanrecv1(0x0?, 0x0?)
+github.com/sagernet/wireguard-go/device.(*Peer).waitOutboundSpace(0xc000005008)
+	.../wireguard-go@v0.0.0-20261109042158-a765d957fd81/device/send.go:1130
+github.com/sagernet/wireguard-go/device.(*Peer).WritePackets(0xc000005008, {...})
+	.../device/send.go:1167
+github.com/sagernet/sing-box/transport/wireguard.(*peerQueue).write(0xc000410120, {...})
+	transport/wireguard/device_peer_router.go:122
+github.com/sagernet/sing-tun.(*OutboundQueue).loopHandle(0xc0004ac2d0)
+	.../sing-tun@v0.9.7-0.20261110222329-99abf3c27666/tun_memory_queue.go:109
+```
+
+The rest of the pipeline was idle:
+
+```
+...(*Peer).RoutineSequentialSender(0xc000005008, 0x80)
+	.../device/send.go:1029   [chan receive on queue.outbound.c]
+...(*Device).RoutineEncryption(0xc000004c08, 0x1) ... 0x10
+	[chan receive, 16 goroutines]
+```
+
+No container was in flight through encryption or the sender, so nothing could
+decrement `queuedOutboundPackets` or call `wakeOutboundWaiters`. The wait has no
+timeout (`send.go:1116-1131`), and `maxQueuedOutboundPackets` is 1024
+(`send.go:1145`), so the counter had reached its cap while the queues were empty.
+
+## What this means
+
+`Peer.WritePackets` is called from the single outbound-drain goroutine of the
+userspace stack. Blocking it stops **every** flow of that peer, not just the
+caller: keepalives continue (they use `SendBuffers`, not the staged path), the
+server keeps seeing the peer, and new TCP SYNs never leave the process. That is
+exactly the observed shape: the first flows work, then nothing, with no error in
+any log and no packet at the peer.
+
+The counter/queue accounting lives in the wireguard-go fork, not in this
+repository, so the fix is a fork change: flush staged containers when a keypair is
+installed and audit every `queuedOutboundPackets.Add` for a matching decrement on
+the container path. The in-repo alternative (make `peerQueue.write` non-blocking
+with a bounded drop policy) changes wireguard-go's intended "injection waits
+instead of dropping" contract and would hide loss, so it was not applied.
