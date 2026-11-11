@@ -39,6 +39,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/protocol/direct"
 	"github.com/sagernet/sing-box/protocol/group"
+	"github.com/sagernet/sing-box/protocol/socks"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -64,6 +65,9 @@ func groupDisplayContext(t *testing.T) context.Context {
 	group.RegisterSelector(outboundRegistry)
 	group.RegisterURLTest(outboundRegistry)
 	group.RegisterLoadBalance(outboundRegistry)
+	// The SOCKS outbound is here for the detour attack: `direct` refuses `detour`, so a proxy
+	// outbound is the only way to point a real `detour` at a hidden group.
+	socks.RegisterOutbound(outboundRegistry)
 	outbound.Register[probeMemberOptions](outboundRegistry, "probe-member", newProbeMember)
 	outbound.Register[capabilityFreeGroupOptions](outboundRegistry, "capability-free-group", newCapabilityFreeGroup)
 	dnsRegistry := dns.NewTransportRegistry()

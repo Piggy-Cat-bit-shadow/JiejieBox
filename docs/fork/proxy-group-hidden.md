@@ -101,8 +101,39 @@ Measured on `go1.25.5 windows/amd64`, build tags `release/DEFAULT_BUILD_TAGS_OTH
 `gofumpt` would reformat `protocol/group/selector.go` and `protocol/group/urltest.go`, and does so on
 the pristine tree as well; the only hunks are a blank line before `DialContext`, unrelated to this
 change, so those files were left as they are. No workflow in this repository runs the linter or the
-formatters, so none of the above is a gate; they were run because the Makefile exposes them and a
+formatters, so none of the above is a gate; they were run because the Makefile exposes it and a
 display-only feature should not arrive with formatting or dead-code debt.
+
+## Adversarial acceptance (round 2)
+
+A second, independent round tried to BREAK the separation. Everything below is a measurement on this
+branch, and every assertion reads an output - the group list, the outbound list, the router's
+decision, a loopback listener that did or did not receive a connection, the probe history - never a
+configuration field.
+
+| Attack | Result |
+|---|---|
+| A-H matrix in one Box (default, explicit false, three hidden types, single node, empty group) | the report contains exactly the non-hidden groups; no member-count or emptiness threshold re-entered |
+| `MAIN -> REGION-US(hidden)`, `REGION-HK(visible)`, plus a hidden parent with a visible child | hiding does not propagate in either direction; `MAIN`'s member list still names `REGION-US` (read from the payload); `MAIN` selects it and the flow follows |
+| `MAIN -> REGION(hidden) -> CITY(hidden urltest) -> LEAF`, with `route.rules[].outbound = REGION` | only `MAIN` is listed; the real router, driven with a connection whose destination matches the rule, reaches a LEAF listener; a `route.final` fallback in the same profile is never used, which is the negative control that proves the rule matched |
+| `detour` pointing at a hidden group | `direct` refuses `detour` outright, so a `socks` outbound dials its server through the hidden group and the group's default member receives the connection |
+| hidden URLTest | it measures its members at start with nothing touching it; `URLTest.Selected` is a pure preview and deliberately does not start the ticker, a real flow through it does, and the history timestamp then keeps advancing; the `URLTest` RPC resolves it by tag and re-measures |
+| hidden LoadBalance | candidate set unchanged; six round-robin flows over three members reach all three |
+| expand cache | `SetGroupExpand` stores for a hidden group, and the value survives a reload |
+| `hidden: null` | decodes as unset (visible) - the same as every non-pointer field in this tree |
+| `"true"`, `1`, `{}`, `[true]` | refused with the field named (`cannot unmarshal ... into Go struct field ... of type bool`); no silent coercion |
+| duplicate `"hidden"` key | last value wins, as `encoding/json` does for every struct field here |
+| `hidden` on ten leaf families (`direct`, `block`, `socks`, `http`, `shadowsocks`, `trojan`, `vless`, `vmess`, `hysteria2`, `tuic`) | every one refused with `unknown field "hidden"` |
+| `hidden` on an unknown outbound type | `unknown outbound type`, refused by the registry before any option applies |
+| Mutation: the filter also drops hidden groups from a PARENT's member list | the nesting and three-level tests fail |
+| Mutation: the filter also drops hidden groups from the complete outbound list | four tests fail |
+| Mutation: the filter never fires / fires on capability presence instead of its value | the display tests fail |
+
+Every production read of the property is one line: `daemon.StartedService.readGroups`. Nothing on
+the selection, dial, probe, balance, provider or Clash API path reads it, and the clients do not
+filter for themselves - all three consume the one stream this project emits
+(`clients/apple/Library/Network/CommandClient.swift` `writeGroups`, Android's libbox
+`OutboundGroupIterator`, `clients/desktop/dashboard/src/api/daemon.ts` `subscribeGroups`).
 
 ## Limits
 
