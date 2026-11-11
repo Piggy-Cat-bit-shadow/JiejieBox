@@ -41,12 +41,13 @@ func Collect(repoDir, binaryPath string) schema.Source {
 	if cached := os.Getenv("PERF_SOURCE_JSON"); cached != "" {
 		var fromEnv schema.Source
 		if err := json.Unmarshal([]byte(cached), &fromEnv); err == nil {
-			if binaryPath != "" {
-				if tags := buildTags(binaryPath); len(tags) > 0 {
-					fromEnv.BuildTags = tags
-				}
+			// A cache is a speed contract, not a truth claim: enrich it from the
+			// binary and report when its commit is no longer the checked-out one.
+			if head := git(repoDir, "rev-parse", "HEAD"); head != "" && fromEnv.Commit != "" && fromEnv.Commit != head {
+				fromEnv.Warnings = append(fromEnv.Warnings,
+					"source_cache_stale: cached commit "+fromEnv.Commit+" but HEAD is "+head)
 			}
-			return fromEnv
+			return enrichSource(fromEnv, repoDir, binaryPath)
 		}
 	}
 	s := schema.Source{Repo: repoDir}
@@ -87,7 +88,87 @@ func Collect(repoDir, binaryPath string) schema.Source {
 		s.CGOEnabled = &enabled
 	}
 	s.Modules = modulePins(filepath.Join(repoDir, "go.mod"))
+	return enrichSource(s, repoDir, binaryPath)
+}
+
+// enrichSource adds what the measured executable says about itself and compares
+// it with the tree. Warnings are additive and never silently overwrite the
+// tree-derived fields; Binary keeps the binary's own view.
+func enrichSource(s schema.Source, repoDir, binaryPath string) schema.Source {
+	if binaryPath == "" {
+		return s
+	}
+	binary := InspectBinary(binaryPath)
+	s.Binary = &binary
+	s.BinarySHA256 = binary.SHA256
+	if binary.ReadError != "" {
+		s.Warnings = append(s.Warnings, "binary_unreadable: "+binary.ReadError)
+		return s
+	}
+	sidecar := buildTags(binaryPath)
+	tags, tagsSource := TagsSource(binary, sidecar)
+	if len(binary.BuildTags) > 0 && len(sidecar) > 0 && !sameStrings(binary.BuildTags, sidecar) {
+		s.Warnings = append(s.Warnings, "tag_sidecar_mismatch: buildinfo="+joinTags(binary.BuildTags)+" sidecar="+joinTags(sidecar))
+	}
+	if len(tags) > 0 {
+		s.BuildTags = tags
+	}
+	binary.TagsSource = tagsSource
+	if binary.GoVersion != "" {
+		s.GoVersion = binary.GoVersion
+	}
+	if binary.CGOEnabled != nil {
+		s.CGOEnabled = binary.CGOEnabled
+	}
+	if binary.VCSRevision == "" {
+		s.Warnings = append(s.Warnings, "vcs_unavailable: the binary carries no vcs.revision (linked worktree cannot be stamped by buildvcs)")
+	}
+	if binary.MainPath != "" && binary.MainPath != "github.com/sagernet/sing-box" {
+		s.Warnings = append(s.Warnings, "binary_main_module_mismatch: "+binary.MainPath)
+	}
+	for _, dep := range binary.Deps {
+		treeVersion, tracked := s.Modules[dep.Module]
+		if !tracked {
+			continue
+		}
+		builtVersion := dep.Version
+		if dep.ReplaceVersion != "" {
+			builtVersion = dep.ReplaceVersion
+		}
+		if treeVersion != builtVersion {
+			s.Warnings = append(s.Warnings,
+				"module_pin_drift: "+dep.Module+" tree="+treeVersion+" binary="+builtVersion)
+		}
+	}
 	return s
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]int, len(left))
+	for _, value := range left {
+		seen[value]++
+	}
+	for _, value := range right {
+		seen[value]--
+		if seen[value] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func joinTags(tags []string) string {
+	out := ""
+	for index, tag := range tags {
+		if index > 0 {
+			out += ","
+		}
+		out += tag
+	}
+	return out
 }
 
 func goVersion() string {

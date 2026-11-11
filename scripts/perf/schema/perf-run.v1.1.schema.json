@@ -159,6 +159,103 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "binary": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "go_version": {
+                  "type": "string"
+                },
+                "goos": {
+                  "type": "string"
+                },
+                "goarch": {
+                  "type": "string"
+                },
+                "cgo_enabled": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "build_tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "tags_source": {
+                  "type": "string"
+                },
+                "main_path": {
+                  "type": "string"
+                },
+                "main_version": {
+                  "type": "string"
+                },
+                "vcs_revision": {
+                  "type": "string"
+                },
+                "vcs_time": {
+                  "type": "string"
+                },
+                "vcs_modified": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "deps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "module"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "module": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      },
+                      "replace": {
+                        "type": "string"
+                      },
+                      "replace_version": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "read_error": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "binary_sha256": {
+          "type": "string"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -603,6 +700,102 @@
         "packet_size": {
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "paced",
+            "unpaced"
+          ]
+        },
+        "attempts": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "writes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scheduled": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "skipped": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "unique": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "duplicate": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "out_of_order": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "foreign": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stale": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "target_received": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "echoed": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "drain_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "drain_complete": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "send_window_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "achieved_pps": {
+          "type": [
+            "number",
             "null"
           ]
         }

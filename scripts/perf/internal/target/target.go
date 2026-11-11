@@ -44,6 +44,9 @@ var PatternPage = func() []byte {
 type Stats struct {
 	Bytes       int64
 	Datagrams   int64
+	// Echoed counts datagrams whose echo write succeeded, so an ingress count is
+	// never confused with a datagram that actually left the target.
+	Echoed      int64
 	Connections int64
 	Verified    int64
 	Mismatched  int64
@@ -63,6 +66,7 @@ type Server struct {
 
 	bytes       atomic.Int64
 	datagrams   atomic.Int64
+	echoed      atomic.Int64
 	connections atomic.Int64
 	verified    atomic.Int64
 	mismatched  atomic.Int64
@@ -111,6 +115,7 @@ func (s *Server) Snapshot() Stats {
 	return Stats{
 		Bytes:       s.bytes.Load(),
 		Datagrams:   s.datagrams.Load(),
+		Echoed:      s.echoed.Load(),
 		Connections: s.connections.Load(),
 		Verified:    s.verified.Load(),
 		Mismatched:  s.mismatched.Load(),
@@ -122,6 +127,7 @@ func (s *Server) Snapshot() Stats {
 func (s *Server) Reset() {
 	s.bytes.Store(0)
 	s.datagrams.Store(0)
+	s.echoed.Store(0)
 	s.connections.Store(0)
 	s.verified.Store(0)
 	s.mismatched.Store(0)
@@ -258,7 +264,9 @@ func (s *Server) serveUDP() {
 		}
 		s.datagrams.Add(1)
 		s.bytes.Add(int64(n))
-		_, _ = s.packet.WriteTo(buffer[:n], from)
+		if written, err := s.packet.WriteTo(buffer[:n], from); err == nil && written > 0 {
+			s.echoed.Add(1)
+		}
 	}
 }
 

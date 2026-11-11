@@ -9,6 +9,7 @@ package loadgen
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -55,6 +56,17 @@ type Config struct {
 	// can separate "concurrent handshakes fail" from "the transfer path fails".
 	// Zero starts every stream together, which is what a throughput cell wants.
 	Stagger time.Duration
+	// UDPRate is the offered rate for the udp pattern, in packets per second.
+	// Zero keeps the historical unpaced saturation mode; a positive value selects
+	// paced mode, which is the only mode in which "lost" describes the path.
+	UDPRate int
+	// UDPDrain is how long the receiver keeps reading after the last write.
+	// Zero selects the default (500ms when paced, none when unpaced); a negative
+	// value disables the drain.
+	UDPDrain time.Duration
+	// UDPEpoch tags this phase's payloads so a late packet from another phase can
+	// be counted as stale instead of as a duplicate.
+	UDPEpoch uint32
 }
 
 // Result is what one load phase observed.
@@ -67,11 +79,26 @@ type Result struct {
 	LatencyDropped    int64
 	DatagramsSent     int64
 	DatagramsReceived int64
-	Jitter            time.Duration
-	VerifiedBytes     int64
-	MismatchedBytes   int64
-	Connections       int64
-	Errors            []string
+	// UDP accounting: writes are local accepts, unique is what came back once,
+	// duplicate/out_of_order are attribution, foreign/stale are rejected input.
+	DatagramAttempts   int64
+	DatagramWrites     int64
+	DatagramScheduled  int64
+	DatagramSkipped    int64
+	DatagramUnique     int64
+	DatagramDuplicate  int64
+	DatagramOutOfOrder int64
+	DatagramForeign    int64
+	DatagramStale      int64
+	SendWindow         time.Duration
+	DrainDuration      time.Duration
+	DrainComplete      bool
+	Paced              bool
+	Jitter             time.Duration
+	VerifiedBytes      int64
+	MismatchedBytes    int64
+	Connections        int64
+	Errors             []string
 }
 
 func (c *Config) normalize() {
@@ -392,22 +419,80 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 	}
 	defer association.Close()
 
-	deadline := time.Now().Add(cfg.Duration)
-	payload := make([]byte, cfg.PacketSize)
-	copy(payload, target.PatternPage)
-	packet, err := udpPacket(cfg.TargetAddr, payload)
-	if err != nil {
-		return Result{}, err
+	rate := cfg.UDPRate
+	paced := rate > 0
+	drain := cfg.UDPDrain
+	if drain == 0 {
+		drain = 0
+		if paced {
+			drain = 500 * time.Millisecond
+		}
+	}
+	if drain < 0 {
+		drain = 0
+	}
+	if cfg.PacketSize < udpHeaderSize+16 {
+		cfg.PacketSize = udpHeaderSize + 16
+	}
+	epoch := cfg.UDPEpoch
+	if epoch == 0 {
+		epoch = uint32(time.Now().UnixNano())
 	}
 
+	template := make([]byte, cfg.PacketSize)
+	for offset := udpHeaderSize; offset < len(template); offset += len(target.PatternPage) {
+		copy(template[offset:], target.PatternPage)
+	}
+	socksPacket := func(payload []byte) ([]byte, error) {
+		return udpPacket(cfg.TargetAddr, payload)
+	}
+
+	start := time.Now()
+	deadline := start.Add(cfg.Duration)
+	_ = association.socket.SetWriteDeadline(deadline.Add(drain + 2*time.Second))
+
 	var (
-		sent      atomic.Int64
-		received  atomic.Int64
-		latencies = newLatencySink(cfg.MaxLatencySamples)
-		lastSeen  time.Time
-		jitterSum time.Duration
-		jitterN   int
+		attempts  atomic.Int64
+		writes    atomic.Int64
+		scheduled atomic.Int64
+		skipped   atomic.Int64
+		seq       atomic.Uint32
+		firstErr  atomic.Value
+		sendEnd   atomic.Int64
 	)
+	recordErr := func(err error) {
+		if err == nil {
+			return
+		}
+		firstErr.CompareAndSwap(nil, err.Error())
+	}
+	sendOne := func(buffer []byte) {
+		sequence := seq.Add(1)
+		binary.BigEndian.PutUint32(buffer[0:4], udpMagic)
+		binary.BigEndian.PutUint32(buffer[4:8], epoch)
+		binary.BigEndian.PutUint32(buffer[8:12], sequence)
+		binary.BigEndian.PutUint64(buffer[12:20], uint64(time.Now().UnixNano()))
+		attempts.Add(1)
+		packet, buildErr := socksPacket(buffer)
+		if buildErr != nil {
+			recordErr(buildErr)
+			return
+		}
+		if _, writeErr := association.socket.WriteToUDP(packet, association.relay); writeErr != nil {
+			recordErr(writeErr)
+			return
+		}
+		writes.Add(1)
+	}
+
+	var latencies = newLatencySink(cfg.MaxLatencySamples)
+	var (
+		unique, duplicate, outOfOrder, foreign, stale int64
+		jitterSum                                     time.Duration
+		jitterN                                       int
+		lastSeen                                      time.Time
+	)
+	window := newUDPSeqWindow()
 	done := make(chan struct{})
 	stop := make(chan struct{})
 	go func() {
@@ -422,12 +507,39 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			_ = association.socket.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 			n, _, readErr := association.socket.ReadFromUDP(buffer)
 			if readErr != nil {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 				continue
 			}
-			if n < 3 {
+			payload := socksUDPPayload(buffer[:n])
+			if len(payload) < udpHeaderSize {
+				foreign++
 				continue
 			}
-			received.Add(1)
+			magic, packetEpoch, sequence, sentNs, ok := parseUDPHeader(payload)
+			if !ok || magic != udpMagic || (cfg.UDPEpoch != 0 && packetEpoch != cfg.UDPEpoch) {
+				if ok && magic == udpMagic {
+					stale++
+				} else {
+					foreign++
+				}
+				continue
+			}
+			first := window.add(sequence)
+			if first {
+				unique++
+				if sentNs > 0 && sentNs < uint64(time.Now().UnixNano()) {
+					latencies.add(time.Duration(time.Now().UnixNano() - int64(sentNs)))
+				}
+			} else {
+				duplicate++
+			}
+			if first && sequence < window.maxSeen && window.maxSeen > 1 {
+				outOfOrder++
+			}
 			now := time.Now()
 			if !lastSeen.IsZero() {
 				jitterSum += now.Sub(lastSeen)
@@ -437,47 +549,207 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}()
 
-	// The senders run as fast as the association accepts datagrams. A paced
-	// generator measures the pacer, not the protocol: the interesting number is
-	// where the path stops keeping up, which shows up as a gap between sent and
-	// received rather than as a fixed rate.
 	var senders sync.WaitGroup
-	for stream := 0; stream < cfg.Streams; stream++ {
+	if paced {
+		interval := time.Second / time.Duration(rate)
+		if interval <= 0 {
+			interval = time.Microsecond
+		}
 		senders.Add(1)
 		go func() {
 			defer senders.Done()
-			for time.Now().Before(deadline) {
-				if _, writeErr := association.socket.WriteToUDP(packet, association.relay); writeErr != nil {
-					return
+			buffer := append([]byte(nil), template...)
+			next := start
+			timer := time.NewTimer(0)
+			defer timer.Stop()
+			for {
+				if ctx.Err() != nil {
+					recordErr(ctx.Err())
+					break
 				}
-				sent.Add(1)
+				now := time.Now()
+				if !now.Before(deadline) {
+					break
+				}
+				if now.Before(next) {
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					timer.Reset(minDuration(next.Sub(now), time.Until(deadline)))
+					select {
+					case <-ctx.Done():
+					case <-timer.C:
+					}
+					continue
+				}
+				if lag := now.Sub(next); lag >= interval {
+					missed := int64(lag / interval)
+					skipped.Add(missed)
+					scheduled.Add(missed)
+					next = next.Add(time.Duration(missed) * interval)
+				}
+				scheduled.Add(1)
+				sendOne(buffer)
+				next = next.Add(interval)
 			}
+			sendEnd.Store(time.Now().UnixNano())
 		}()
+	} else {
+		for stream := 0; stream < cfg.Streams; stream++ {
+			senders.Add(1)
+			go func() {
+				defer senders.Done()
+				buffer := append([]byte(nil), template...)
+				for time.Now().Before(deadline) {
+					if ctx.Err() != nil {
+						recordErr(ctx.Err())
+						return
+					}
+					scheduled.Add(1)
+					sendOne(buffer)
+				}
+				sendEnd.Store(time.Now().UnixNano())
+			}()
+		}
 	}
 	senders.Wait()
+	sendWindowEnd := time.Unix(0, sendEnd.Load())
+	if sendWindowEnd.Before(start) {
+		sendWindowEnd = time.Now()
+	}
+	sendWindow := sendWindowEnd.Sub(start)
+
+	drainStart := time.Now()
+	if drain > 0 && ctx.Err() == nil {
+		timer := time.NewTimer(drain)
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+	drainDuration := time.Since(drainStart)
 	close(stop)
 	<-done
-	_ = ctx
 
+	written := writes.Load()
+	returned := unique + duplicate
 	result := Result{
-		SentBytes:         sent.Load() * int64(cfg.PacketSize),
-		DatagramsSent:     sent.Load(),
-		DatagramsReceived: received.Load(),
-		PayloadBytes:      received.Load() * int64(cfg.PacketSize),
-		Elapsed:           cfg.Duration,
-		Latencies:         latencies.values(),
+		SentBytes:          written * int64(cfg.PacketSize),
+		DatagramsSent:      written,
+		DatagramsReceived:  returned,
+		PayloadBytes:       unique * int64(cfg.PacketSize),
+		Elapsed:            sendWindow,
+		Latencies:          latencies.values(),
+		DatagramAttempts:   attempts.Load(),
+		DatagramWrites:     written,
+		DatagramScheduled:  scheduled.Load(),
+		DatagramSkipped:    skipped.Load(),
+		DatagramUnique:     unique,
+		DatagramDuplicate:  duplicate,
+		DatagramOutOfOrder: outOfOrder,
+		DatagramForeign:    foreign,
+		DatagramStale:      stale,
+		SendWindow:         sendWindow,
+		DrainDuration:      drainDuration,
+		DrainComplete:      written > 0 && unique >= written,
+		Paced:              paced,
 	}
 	if jitterN > 0 {
 		result.Jitter = jitterSum / time.Duration(jitterN)
 	}
-	if sent.Load() > 0 {
-		lost := sent.Load() - received.Load()
-		if lost > 0 {
-			result.Errors = append(result.Errors, fmt.Sprintf("%d datagrams lost", lost))
-		}
+	if errText, ok := firstErr.Load().(string); ok && errText != "" {
+		result.Errors = append(result.Errors, errText)
 	}
 	result.Connections = 1
 	return result, nil
+}
+
+const udpHeaderSize = 20
+
+// udpMagic starts every load-generator datagram ("PLB1").
+const udpMagic uint32 = 0x504c4231
+
+// socksUDPPayload strips the SOCKS5 UDP response header. The relay wraps the
+// echo in RSV/FRAG/ATYP/address/port; the old reader counted that header as
+// payload and accepted any datagram of three bytes or more.
+func socksUDPPayload(packet []byte) []byte {
+	if len(packet) < 4 || packet[0] != 0 || packet[1] != 0 || packet[2] != 0 {
+		return nil
+	}
+	offset := 4
+	switch packet[3] {
+	case 0x01:
+		offset += 4
+	case 0x04:
+		offset += 16
+	case 0x03:
+		if len(packet) < 5 {
+			return nil
+		}
+		offset = 5 + int(packet[4])
+	default:
+		return nil
+	}
+	offset += 2
+	if offset > len(packet) {
+		return nil
+	}
+	return packet[offset:]
+}
+
+// parseUDPHeader reads magic, epoch, sequence and send timestamp.
+func parseUDPHeader(payload []byte) (magic, epoch, sequence uint32, sentNs uint64, ok bool) {
+	if len(payload) < udpHeaderSize {
+		return 0, 0, 0, 0, false
+	}
+	return binary.BigEndian.Uint32(payload[0:4]),
+		binary.BigEndian.Uint32(payload[4:8]),
+		binary.BigEndian.Uint32(payload[8:12]),
+		binary.BigEndian.Uint64(payload[12:20]),
+		true
+}
+
+// udpSeqWindow attributes a datagram to first-arrival, duplicate or late-order
+// without unbounded memory: the cap is one million sequences, far above any phase
+// this generator is meant to run, and a truncated window keeps counting first
+// arrivals rather than failing the phase.
+type udpSeqWindow struct {
+	seen      map[uint32]struct{}
+	maxSeen   uint32
+	truncated bool
+}
+
+const udpSeqWindowLimit = 1 << 20
+
+func newUDPSeqWindow() *udpSeqWindow {
+	return &udpSeqWindow{seen: make(map[uint32]struct{}, 1024)}
+}
+
+// add reports whether the sequence is the first arrival.
+func (w *udpSeqWindow) add(sequence uint32) bool {
+	if _, found := w.seen[sequence]; found {
+		return false
+	}
+	if sequence > w.maxSeen {
+		w.maxSeen = sequence
+	}
+	if len(w.seen) < udpSeqWindowLimit {
+		w.seen[sequence] = struct{}{}
+	} else {
+		w.truncated = true
+	}
+	return true
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // verifyPattern returns the number of bytes in chunk that do not match the

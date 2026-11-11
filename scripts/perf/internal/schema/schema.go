@@ -62,6 +62,39 @@ type Source struct {
 	BuildTags     []string          `json:"build_tags,omitempty"`
 	CGOEnabled    *bool             `json:"cgo_enabled"`
 	Modules       map[string]string `json:"modules,omitempty"`
+
+	// Binary is the measured executable's own build information. Modules above
+	// is the go.mod view; Binary.Deps is what the linker actually embedded.
+	Binary       *Binary  `json:"binary,omitempty"`
+	BinarySHA256 string   `json:"binary_sha256,omitempty"`
+	Warnings     []string `json:"warnings,omitempty"`
+}
+
+// Binary is the provenance read from the executable itself.
+type Binary struct {
+	Path        string      `json:"path,omitempty"`
+	SHA256      string      `json:"sha256,omitempty"`
+	GoVersion   string      `json:"go_version,omitempty"`
+	GOOS        string      `json:"goos,omitempty"`
+	GOARCH      string      `json:"goarch,omitempty"`
+	CGOEnabled  *bool       `json:"cgo_enabled"`
+	BuildTags   []string    `json:"build_tags,omitempty"`
+	TagsSource  string      `json:"tags_source,omitempty"`
+	MainPath    string      `json:"main_path,omitempty"`
+	MainVersion string      `json:"main_version,omitempty"`
+	VCSRevision string      `json:"vcs_revision,omitempty"`
+	VCSTime     string      `json:"vcs_time,omitempty"`
+	VCSModified *bool       `json:"vcs_modified"`
+	Deps        []ModulePin `json:"deps,omitempty"`
+	ReadError   string      `json:"read_error,omitempty"`
+}
+
+// ModulePin is one dependency as linked, with its replace target when present.
+type ModulePin struct {
+	Module         string `json:"module"`
+	Version        string `json:"version,omitempty"`
+	Replace        string `json:"replace,omitempty"`
+	ReplaceVersion string `json:"replace_version,omitempty"`
 }
 
 // Host is the machine and the sampling regime.
@@ -185,6 +218,24 @@ type UDP struct {
 	LossPercent *float64 `json:"loss_percent"`
 	JitterMS    *float64 `json:"jitter_ms"`
 	PacketSize  *int     `json:"packet_size"`
+
+	// Paced separates a fixed offered rate from the historical saturation mode.
+	Mode           string   `json:"mode,omitempty"`
+	Attempts       *int64   `json:"attempts,omitempty"`
+	Writes         *int64   `json:"writes,omitempty"`
+	Scheduled      *int64   `json:"scheduled,omitempty"`
+	Skipped        *int64   `json:"skipped,omitempty"`
+	Unique         *int64   `json:"unique,omitempty"`
+	Duplicate      *int64   `json:"duplicate,omitempty"`
+	OutOfOrder     *int64   `json:"out_of_order,omitempty"`
+	Foreign        *int64   `json:"foreign,omitempty"`
+	Stale          *int64   `json:"stale,omitempty"`
+	TargetReceived *int64   `json:"target_received,omitempty"`
+	Echoed         *int64   `json:"echoed,omitempty"`
+	DrainMS        *float64 `json:"drain_ms,omitempty"`
+	DrainComplete  *bool    `json:"drain_complete,omitempty"`
+	SendWindowMS   *float64 `json:"send_window_ms,omitempty"`
+	AchievedPPS    *float64 `json:"achieved_pps,omitempty"`
 }
 
 // Proc is one process's resource cost.

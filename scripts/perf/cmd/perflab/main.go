@@ -138,6 +138,9 @@ func runScenario(args []string) error {
 	reps := flags.Int("reps", 0, "repetitions per cell")
 	verify := flags.Bool("verify", true, "verify payload integrity")
 	stagger := flags.Duration("stagger", 0, "space stream starts by this much (diagnostic: does the failure need simultaneous handshakes)")
+	udpRate := flags.Int("udp-rate", 0, "paced UDP offered rate in packets/s (0 keeps the historical unpaced saturation mode)")
+	udpDrain := flags.Duration("udp-drain", 0, "UDP post-send read window (0 = default: 500ms paced, none unpaced; negative disables)")
+	udpPacketSize := flags.Int("udp-packet-size", 0, "UDP datagram size including the 20-byte header (default 1200)")
 	quiet := flags.Bool("quiet", false, "only print the run directory")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -149,17 +152,20 @@ func runScenario(args []string) error {
 		return fmt.Errorf("-bin-lab is required (path to the kernel binary built with the lab tag set)")
 	}
 	options := runner.Options{
-		ScenarioDir: *scenarioDir,
-		OutDir:      *outDir,
-		RunID:       *runID,
-		Binaries:    map[string]string{"lab": *binLab, "default": *binDefault, "xray": *binXray},
-		Patterns:    splitList(*pattern),
-		Streams:     parseIntList(*streams),
-		Duration:    *duration,
-		Warmup:      *warmup,
-		Reps:        *reps,
-		Verify:      *verify,
-		Stagger:     *stagger,
+		ScenarioDir:   *scenarioDir,
+		OutDir:        *outDir,
+		RunID:         *runID,
+		Binaries:      map[string]string{"lab": *binLab, "default": *binDefault, "xray": *binXray},
+		Patterns:      splitList(*pattern),
+		Streams:       parseIntList(*streams),
+		Duration:      *duration,
+		Warmup:        *warmup,
+		Reps:          *reps,
+		Verify:        *verify,
+		Stagger:       *stagger,
+		UDPRate:       *udpRate,
+		UDPDrain:      *udpDrain,
+		UDPPacketSize: *udpPacketSize,
 	}
 	if !*quiet {
 		started := time.Now()

@@ -37,8 +37,16 @@ type Options struct {
 	// Stagger spaces stream starts inside one phase; a diagnostic for "does the
 	// failure need simultaneous handshakes". Zero means all streams start together.
 	Stagger time.Duration
-	Quiet   bool
-	Logf    func(format string, args ...any)
+	// UDPRate selects paced mode for the udp pattern (packets per second).
+	// Zero keeps the historical unpaced saturation mode.
+	UDPRate int
+	// UDPDrain overrides the post-send read window; zero selects the loader
+	// default (500 ms paced, none unpaced), negative disables it.
+	UDPDrain time.Duration
+	// UDPPacketSize overrides the 1200-byte datagram (header included).
+	UDPPacketSize int
+	Quiet         bool
+	Logf          func(format string, args ...any)
 }
 
 // Outcome is what a run produced.
@@ -169,6 +177,10 @@ func Run(opts Options) (*Outcome, error) {
 	}
 	outcome.Run = run
 	run.Host.SamplingIntervalMS = int(sampleInterval / time.Millisecond)
+	for _, warning := range run.Source.Warnings {
+		run.Notes = append(run.Notes, "source: "+warning)
+		opts.Logf("provenance: %s", warning)
+	}
 
 	patterns := opts.Patterns
 	if len(patterns) == 0 {
@@ -556,6 +568,10 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 			Message: fmt.Sprintf("pattern %q needs a %s target, which this scenario does not start", pattern, kind),
 		}
 	}
+	packetSize := opts.UDPPacketSize
+	if packetSize <= 0 {
+		packetSize = 1200
+	}
 	cfg := loadgen.Config{
 		ProxyAddr:     proxyAddr,
 		TargetAddr:    targetAddr,
@@ -564,17 +580,28 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 		Duration:      duration,
 		ChunkSize:     256 * 1024,
 		PingPongBytes: 1024,
-		PacketSize:    1200,
+		PacketSize:    packetSize,
 		Verify:        opts.Verify,
 		Stagger:       opts.Stagger,
+		UDPRate:       opts.UDPRate,
+		UDPDrain:      opts.UDPDrain,
+		UDPEpoch:      uint32(time.Now().UnixNano()),
 	}
 
 	if warmup > 0 {
 		warmCfg := cfg
 		warmCfg.Duration = warmup
+		// A separate epoch lets the reader reject warmup datagrams that arrive
+		// after the reset instead of counting them as measured replies.
+		warmCfg.UDPEpoch ^= 0x9e3779b9
 		if _, err := loadgen.Run(context.Background(), warmCfg); err != nil {
 			opts.Logf("warmup for %s/%d reported: %v", pattern, streams, err)
 		}
+	}
+	if loadgen.Pattern(pattern) == loadgen.UDP {
+		// Warmup may still have datagrams in flight; without this wait they land
+		// in the measured target counter and make target_received unattributable.
+		quiesceTarget(sess, kind, opts)
 	}
 	sess.targets.reset()
 
@@ -634,33 +661,85 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 		record.GoodputMiBPerS = &goodput
 	}
 	if loadgen.Pattern(pattern) == loadgen.UDP {
-		record.UDP = &schema.UDP{
+		mode := "unpaced"
+		if result.Paced {
+			mode = "paced"
+		}
+		udpRecord := &schema.UDP{
 			Sent:       result.DatagramsSent,
 			Received:   result.DatagramsReceived,
-			PacketSize: intPtr(1200),
+			PacketSize: intPtr(packetSize),
+			Mode:       mode,
 		}
-		if result.DatagramsSent > 0 {
-			lost := result.DatagramsSent - result.DatagramsReceived
-			record.UDP.Lost = &lost
-			loss := float64(lost) / float64(result.DatagramsSent) * 100
-			record.UDP.LossPercent = &loss
+		writes := result.DatagramWrites
+		unique := result.DatagramUnique
+		if writes > 0 {
+			lost := writes - unique
+			if lost < 0 {
+				lost = 0
+			}
+			udpRecord.Lost = int64Ptr(lost)
+			loss := float64(lost) / float64(writes) * 100
+			udpRecord.LossPercent = &loss
+			if seconds := result.SendWindow.Seconds(); seconds > 0 {
+				pps := float64(writes) / seconds
+				udpRecord.AchievedPPS = &pps
+			}
 		}
+		udpRecord.Attempts = int64Ptr(result.DatagramAttempts)
+		udpRecord.Writes = int64Ptr(writes)
+		udpRecord.Scheduled = int64Ptr(result.DatagramScheduled)
+		udpRecord.Skipped = int64Ptr(result.DatagramSkipped)
+		udpRecord.Unique = int64Ptr(unique)
+		udpRecord.Duplicate = int64Ptr(result.DatagramDuplicate)
+		udpRecord.OutOfOrder = int64Ptr(result.DatagramOutOfOrder)
+		udpRecord.Foreign = int64Ptr(result.DatagramForeign)
+		udpRecord.Stale = int64Ptr(result.DatagramStale)
+		if statsErr == nil {
+			udpRecord.TargetReceived = int64Ptr(stats.Datagrams)
+			udpRecord.Echoed = int64Ptr(stats.Echoed)
+		}
+		drainMS := float64(result.DrainDuration) / float64(time.Millisecond)
+		udpRecord.DrainMS = &drainMS
+		drainComplete := result.DrainComplete
+		udpRecord.DrainComplete = &drainComplete
+		sendWindowMS := float64(result.SendWindow) / float64(time.Millisecond)
+		udpRecord.SendWindowMS = &sendWindowMS
 		if result.Jitter > 0 {
 			jitter := float64(result.Jitter) / float64(time.Millisecond)
-			record.UDP.JitterMS = &jitter
+			udpRecord.JitterMS = &jitter
 		}
+		record.UDP = udpRecord
 	}
 	if runErr != nil {
 		record.Warnings = append(record.Warnings, runErr.Error())
 	}
+	if len(result.Errors) > 0 {
+		record.Warnings = append(record.Warnings, result.Errors...)
+	}
 	if loadgen.Pattern(pattern) == loadgen.UDP {
-		if result.DatagramsReceived == 0 {
+		// A datagram protocol may legitimately return nothing: 100 % loss is a
+		// measurement, not a broken cell. The cell is only failed when nothing
+		// was written, or nothing reached the target either.
+		if result.DatagramWrites == 0 {
 			return nil, &schema.Failure{
 				Stage:   "measure",
 				Class:   "no-payload",
-				Message: fmt.Sprintf("no datagrams returned at %d stream(s): sent=%d", streams, result.DatagramsSent),
+				Message: fmt.Sprintf("no datagrams written at %d stream(s): attempts=%d", streams, result.DatagramAttempts),
 				LogPath: "logs/client.log",
 			}
+		}
+		if result.DatagramUnique == 0 && stats.Datagrams == 0 {
+			return nil, &schema.Failure{
+				Stage:   "measure",
+				Class:   "no-payload",
+				Message: fmt.Sprintf("no datagram reached the target or returned: writes=%d attempts=%d", result.DatagramWrites, result.DatagramAttempts),
+				LogPath: "logs/client.log",
+			}
+		}
+		if result.DatagramUnique == 0 {
+			record.Warnings = append(record.Warnings,
+				fmt.Sprintf("all %d returned datagrams were lost on the return path; target received %d", result.DatagramWrites, stats.Datagrams))
 		}
 	} else if payloadBytes == 0 {
 		switch loadgen.Pattern(pattern) {
@@ -1128,7 +1207,37 @@ func envFloat(name string) *float64 {
 	return &value
 }
 
-func intPtr(value int) *int       { return &value }
+func intPtr(value int) *int { return &value }
+
+// quiesceTarget waits until the target's datagram counter has been unchanged for
+// a short window, so warmup traffic still in flight cannot be counted as part of
+// the measured phase. It is bounded: a target that never settles is reported and
+// the run continues, with the target count labelled as possibly polluted.
+func quiesceTarget(sess *session, kind target.Kind, opts Options) {
+	handle, loaded := sess.targets.byKind[kind]
+	if !loaded {
+		return
+	}
+	var last int64 = -1
+	stableSince := time.Now()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stats, err := handle.Snapshot()
+		if err != nil {
+			return
+		}
+		if stats.Datagrams == last {
+			if time.Since(stableSince) >= 250*time.Millisecond {
+				return
+			}
+		} else {
+			last = stats.Datagrams
+			stableSince = time.Now()
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	opts.Logf("target did not quiesce within 2s; warmup datagrams may be included in target_received")
+}
 func int64Ptr(value int64) *int64 { return &value }
 
 func valueOrZero(value *float64) float64 {
