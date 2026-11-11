@@ -1,6 +1,7 @@
 package urltest
 
 import (
+	"math"
 	"sync"
 	"time"
 
@@ -78,13 +79,131 @@ type HistoryStorage struct {
 	// closed makes Close terminal. A measurement that finishes afterwards must not write.
 	closed bool
 
+	// tagCounts and scopeCounts count the evidence DROPS this storage has performed, scoped to what
+	// the drop was actually about.
+	//
+	// A measurement captures the pair when its PROBE starts and may only store while both are
+	// unchanged. The scope matters in both directions: retiring node A must not discard a valid
+	// result for node B, and invalidating one target's health for a node must not invalidate another
+	// target's measurement of it.
+	//
+	// # Why a count is not enough
+	//
+	// The tables are bounded (see maxEvidenceEpochEntries), so an entry can be RECLAIMED. Deleting
+	// one used to be described as safe because "a stale probe holds a non-zero stamp", and that is
+	// only true for a probe that started after its node was already dropped once. A probe that
+	// started while the node had no record captures the ZERO stamp; after a drop and a reclaim the
+	// record reads zero again and that probe's write is accepted, resurrecting evidence the drop
+	// removed.
+	//
+	// The tables therefore live in an INCARNATION: reclaiming them moves epochIncarnation, and a
+	// stamp carries the incarnation it was issued under. A stamp from before a reclaim cannot match
+	// anything afterwards, whichever counter it happens to read, and the counts themselves only ever
+	// grow within one incarnation - so a value is never reused while it can still be compared.
+	tagCounts   map[string]uint32
+	scopeCounts map[scopedHistoryKey]uint32
+	// epochIncarnation names the current epoch book. It advances when the tables are reclaimed, and
+	// it is what makes a reclaimed entry fail closed instead of matching the zero stamp again.
+	epochIncarnation uint64
+
 	updateHooks []*observable.Subscriber[struct{}]
+}
+
+// maxEvidenceEpochEntries bounds the two epoch tables TOGETHER. A device that replaces thousands of
+// provider nodes must not grow them without limit; reclaiming them moves the incarnation, which is
+// what keeps the reclamation safe (see epochIncarnation).
+const maxEvidenceEpochEntries = 4096
+
+// EvidenceOwnership is the authority a measurement holds to change one node's evidence.
+//
+// It is the probe's provenance, not the caller's: a caller that joined a probe receives the LEADER's
+// ownership, so a drop that happened after the probe started invalidates the result even for a
+// caller that arrived afterwards.
+type EvidenceOwnership struct {
+	// TagEpoch and ScopeEpoch are the stamps the probe was requested under (see EvidenceStamp).
+	TagEpoch   uint64
+	ScopeEpoch uint64
+	// StillCurrent, when set, is evaluated INSIDE the storage lock immediately before the change.
+	//
+	// It is what closes the window between "the check said yes" and "the write happened": a state
+	// transition that lands in between (a network reset, whose generation this callback reads) is
+	// observed by the write itself rather than by a check that already passed. It must be a cheap,
+	// non-blocking read of a value the caller already owns - never a call back into this storage.
+	StillCurrent func() bool
+}
+
+// authorizesLocked reports whether this ownership still holds. Caller holds the storage lock.
+func (o EvidenceOwnership) authorizesLocked(storage *HistoryStorage, tag string, scope MeasurementScope) bool {
+	if storage.tagStampLocked(tag) != o.TagEpoch || storage.scopeStampLocked(tag, scope) != o.ScopeEpoch {
+		return false
+	}
+	if o.StillCurrent != nil && !o.StillCurrent() {
+		return false
+	}
+	return true
+}
+
+// EvidenceStillOwned reports whether a published result still describes the current state.
+//
+// It is the CONVERGENCE half of the publication contract: a result can be authorized when its probe
+// writes and invalidated afterwards (the node is dropped while another member's probe is still in
+// flight). A caller that is about to report or act on a result it published earlier re-checks the
+// same provenance through this call, so a round cannot converge with a member the drop removed.
+func (s *HistoryStorage) EvidenceStillOwned(tag string, scope MeasurementScope, ownership EvidenceOwnership) bool {
+	if s == nil {
+		return false
+	}
+	s.access.RLock()
+	if s.closed {
+		s.access.RUnlock()
+		return false
+	}
+	owned := ownership.authorizesLocked(s, tag, scope)
+	s.access.RUnlock()
+	return owned
+}
+
+// CommitAgainstEvidence runs commit under the storage lock, and only while (tag, scope) still owns
+// its health evidence: the record must exist, and when ownership is given the tag/scope stamps and
+// the network reset generation must be unchanged.
+//
+// # Why the check and the commit share the lock
+//
+// The selection commit is the last consumer of a round's evidence. Checking validity and then
+// changing the selection in a separate step leaves exactly the window a drop needs to land in
+// between - the reviewed failure was a selection moving to a member whose evidence had just been
+// removed. The caller's commit therefore runs INSIDE this storage's critical section.
+//
+// The callback must not call back into this storage (it runs while the write lock is held) and must
+// be short: it exists to publish a decision the caller already computed.
+func (s *HistoryStorage) CommitAgainstEvidence(tag string, scope MeasurementScope, ownership *EvidenceOwnership, commit func()) bool {
+	if s == nil || commit == nil {
+		return false
+	}
+	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return false
+	}
+	if _, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded {
+		s.access.Unlock()
+		return false
+	}
+	if ownership != nil && !ownership.authorizesLocked(s, tag, scope) {
+		s.access.Unlock()
+		return false
+	}
+	commit()
+	s.access.Unlock()
+	return true
 }
 
 func NewHistoryStorage() *HistoryStorage {
 	return &HistoryStorage{
 		displayHistory: make(map[string]displayRecord),
 		healthHistory:  make(map[scopedHistoryKey]adapter.URLTestHistory),
+		tagCounts:      make(map[string]uint32),
+		scopeCounts:    make(map[scopedHistoryKey]uint32),
 	}
 }
 
@@ -160,6 +279,13 @@ func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope,
 		s.access.Unlock()
 		return
 	}
+	s.storeDisplayLocked(tag, scope, history)
+	s.access.Unlock()
+	s.notifyUpdated()
+}
+
+// storeDisplayLocked writes one display record, rejecting older evidence. Caller holds the lock.
+func (s *HistoryStorage) storeDisplayLocked(tag string, scope MeasurementScope, history *adapter.URLTestHistory) {
 	if existing, loaded := s.displayHistory[tag]; loaded && existing.History.Time.After(history.Time) {
 		// Older evidence for the same node: the newer entry wins.
 		//
@@ -167,12 +293,9 @@ func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope,
 		// while a newer one ran and finished cannot describe the node as it is now. Without this a
 		// slow probe - the one most likely to be measuring a path that has since changed - would
 		// be the last writer and would undo the newer measurement.
-		s.access.Unlock()
 		return
 	}
 	s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
-	s.access.Unlock()
-	s.notifyUpdated()
 }
 
 // StoreHealthHistory records an automatic health measurement, in both layers.
@@ -191,20 +314,142 @@ func (s *HistoryStorage) StoreHealthHistory(tag string, scope MeasurementScope, 
 		s.access.Unlock()
 		return
 	}
-	healthUpdated := false
-	if existing, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded || isNewerEvidence(history.Time, existing.Time) {
-		s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}] = *history
-		healthUpdated = true
-	}
-	displayUpdated := false
-	if existing, loaded := s.displayHistory[tag]; !loaded || isNewerEvidence(history.Time, existing.History.Time) {
-		s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
-		displayUpdated = true
-	}
+	healthUpdated, displayUpdated := s.storeHealthLocked(tag, scope, history)
 	s.access.Unlock()
 	if healthUpdated || displayUpdated {
 		s.notifyUpdated()
 	}
+}
+
+// EvidenceStamp reports the current drop stamps for one (node, target) pair.
+//
+// A measurement captures this pair when its PROBE starts and passes it back, with the storage
+// write, through EvidenceOwnership. A result whose stamps are stale belongs to evidence that a drop
+// had already forgotten, even when the caller joined the probe afterwards.
+func (s *HistoryStorage) EvidenceStamp(tag string, scope MeasurementScope) (tagEpoch uint64, scopeEpoch uint64) {
+	if s == nil {
+		return 0, 0
+	}
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.tagStampLocked(tag), s.scopeStampLocked(tag, scope)
+}
+
+// tagStampLocked renders one node's stamp. Caller holds the storage lock.
+func (s *HistoryStorage) tagStampLocked(tag string) uint64 {
+	return s.epochIncarnation<<32 | uint64(s.tagCounts[tag])
+}
+
+// scopeStampLocked renders one (node, target) stamp. Caller holds the storage lock.
+func (s *HistoryStorage) scopeStampLocked(tag string, scope MeasurementScope) uint64 {
+	return s.epochIncarnation<<32 | uint64(s.scopeCounts[scopedHistoryKey{Tag: tag, Scope: scope}])
+}
+
+// evidenceEntryCountLocked reports how many epoch records exist across both tables.
+func (s *HistoryStorage) evidenceEntryCountLocked() int {
+	return len(s.tagCounts) + len(s.scopeCounts)
+}
+
+// reclaimEpochBookLocked drops every epoch record and opens a new incarnation.
+//
+// Reclaiming the tables wholesale is what makes the reclamation safe: a per-entry eviction leaves a
+// probe that captured the zero stamp able to match the zero stamp again. The cost is that a
+// measurement in flight at the moment of reclamation loses its right to publish even when its own
+// node was not the reason for the reclaim - the failure-closed direction, and a rare event (the
+// tables hold thousands of entries).
+func (s *HistoryStorage) reclaimEpochBookLocked() {
+	// 32 bits of incarnation. Wrapping is unreachable by construction: each step needs a full table
+	// of drops, i.e. 2^32 * 4096 recorded drops. The wrap is written down anyway so the value can
+	// never return to 0, which is the one value a probe could have captured before any reclaim.
+	if s.epochIncarnation >= math.MaxUint32 {
+		s.epochIncarnation = 1
+	} else {
+		s.epochIncarnation++
+	}
+	clear(s.tagCounts)
+	clear(s.scopeCounts)
+}
+
+// bumpTagEpochLocked records a node-level evidence drop. Caller holds the write lock.
+func (s *HistoryStorage) bumpTagEpochLocked(tag string) {
+	if s.evidenceEntryCountLocked() >= maxEvidenceEpochEntries || s.tagCounts[tag] == math.MaxUint32 {
+		s.reclaimEpochBookLocked()
+	}
+	s.tagCounts[tag]++
+}
+
+// bumpScopeEpochLocked records a (node, target) evidence drop. Caller holds the write lock.
+func (s *HistoryStorage) bumpScopeEpochLocked(tag string, scope MeasurementScope) {
+	key := scopedHistoryKey{Tag: tag, Scope: scope}
+	if s.evidenceEntryCountLocked() >= maxEvidenceEpochEntries || s.scopeCounts[key] == math.MaxUint32 {
+		s.reclaimEpochBookLocked()
+	}
+	s.scopeCounts[key]++
+}
+
+// StoreHealthHistoryOwned stores a health measurement only while the probe's ownership still holds.
+//
+// The ownership check and the write happen under the SAME lock, and the ownership's StillCurrent
+// predicate is evaluated inside that lock immediately before the write. That is what stops a state
+// transition - a network reset - from landing between a check that said "current" and the write it
+// was meant to invalidate.
+//
+// It reports whether the measurement was AUTHORIZED, not whether the write changed the stored value:
+// a result that is older than evidence already stored is authorized but loses on ordering. Those are
+// different facts, and the caller needs the first one to decide whether to report the result at all.
+func (s *HistoryStorage) StoreHealthHistoryOwned(tag string, scope MeasurementScope, history *adapter.URLTestHistory, ownership EvidenceOwnership) bool {
+	if s == nil || history == nil {
+		return false
+	}
+	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return false
+	}
+	if !ownership.authorizesLocked(s, tag, scope) {
+		s.access.Unlock()
+		return false
+	}
+	healthUpdated, displayUpdated := s.storeHealthLocked(tag, scope, history)
+	s.access.Unlock()
+	if healthUpdated || displayUpdated {
+		s.notifyUpdated()
+	}
+	return true
+}
+
+// storeHealthLocked writes one health measurement into BOTH layers. Caller holds the write lock.
+func (s *HistoryStorage) storeHealthLocked(tag string, scope MeasurementScope, history *adapter.URLTestHistory) (healthUpdated bool, displayUpdated bool) {
+	if existing, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded || isNewerEvidence(history.Time, existing.Time) {
+		s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}] = *history
+		healthUpdated = true
+	}
+	if existing, loaded := s.displayHistory[tag]; !loaded || isNewerEvidence(history.Time, existing.History.Time) {
+		s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
+		displayUpdated = true
+	}
+	return
+}
+
+// StoreDisplayHistoryOwned is the display-layer counterpart: a manual probe that started before an
+// evidence drop must not recreate the entry the drop removed.
+func (s *HistoryStorage) StoreDisplayHistoryOwned(tag string, scope MeasurementScope, history *adapter.URLTestHistory, ownership EvidenceOwnership) bool {
+	if s == nil || history == nil {
+		return false
+	}
+	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return false
+	}
+	if !ownership.authorizesLocked(s, tag, scope) {
+		s.access.Unlock()
+		return false
+	}
+	s.storeDisplayLocked(tag, scope, history)
+	s.access.Unlock()
+	s.notifyUpdated()
+	return true
 }
 
 // isNewerEvidence reports whether a measurement is newer evidence than the one already stored.
@@ -233,12 +478,16 @@ func (s *HistoryStorage) DeleteHealthHistory(tag string, scope MeasurementScope)
 		return
 	}
 	delete(s.healthHistory, scopedHistoryKey{Tag: tag, Scope: scope})
+	// This is an evidence DROP for THIS node and target, not the failure path of one attempt: an
+	// in-flight probe for them that started before it must not store its result afterwards. Other
+	// targets of the same node are untouched on purpose.
+	s.bumpScopeEpochLocked(tag, scope)
 	s.access.Unlock()
 	s.notifyUpdated()
 }
 
-// DeleteHealthHistoryIfOlderThan removes one failed attempt's health entry, unless newer evidence
-// has been stored since that attempt started.
+// DeleteHealthHistoryOlderThanOwned removes one failed attempt's health entry, unless newer evidence
+// has been stored since that attempt started or the attempt no longer owns the evidence.
 //
 // # Why a failure needs an ordering too
 //
@@ -247,23 +496,44 @@ func (s *HistoryStorage) DeleteHealthHistory(tag string, scope MeasurementScope)
 // nothing about the new network, and deleting the entry the newer attempt just wrote would remove
 // correct evidence - and, because the group selects from this layer, could move the selection on
 // the strength of a path that no longer exists.
-func (s *HistoryStorage) DeleteHealthHistoryIfOlderThan(tag string, scope MeasurementScope, attemptStart time.Time) {
+//
+// # Why it needs the ownership as well
+//
+// Ordering alone compares clock readings, and a failure from the PREVIOUS network can carry a later
+// timestamp than evidence stored on the new one (coarse clocks, or a probe that started later and
+// failed). The ownership check is what makes "this failure describes the current state" a fact
+// rather than an inference from time.
+//
+// It reports whether this failure is the CURRENT verdict for the (node, target): true when the
+// attempt owns the evidence and no newer result has been stored since it started. That is true even
+// when there was nothing to delete - a member that has already failed must be able to fail again on
+// the next round - and false when a newer success supersedes it or the attempt no longer owns the
+// evidence.
+func (s *HistoryStorage) DeleteHealthHistoryOlderThanOwned(tag string, scope MeasurementScope, attemptStart time.Time, ownership EvidenceOwnership) bool {
 	if s == nil {
-		return
+		return false
 	}
 	s.access.Lock()
 	if s.closed {
 		s.access.Unlock()
-		return
+		return false
+	}
+	if !ownership.authorizesLocked(s, tag, scope) {
+		s.access.Unlock()
+		return false
 	}
 	key := scopedHistoryKey{Tag: tag, Scope: scope}
 	if existing, loaded := s.healthHistory[key]; loaded && existing.Time.After(attemptStart) {
 		s.access.Unlock()
-		return
+		return false
 	}
+	_, loaded := s.healthHistory[key]
 	delete(s.healthHistory, key)
 	s.access.Unlock()
-	s.notifyUpdated()
+	if loaded {
+		s.notifyUpdated()
+	}
+	return true
 }
 
 // DeleteURLTestHistory removes every measurement for a tag, in both layers.
@@ -284,6 +554,10 @@ func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
 			delete(s.healthHistory, key)
 		}
 	}
+	// The node is gone or its evidence was dropped: any probe for this node that started before
+	// this point describes a member the drop was meant to forget. A probe for a DIFFERENT node is
+	// unaffected - that is why the epoch is per node rather than per storage.
+	s.bumpTagEpochLocked(tag)
 	s.access.Unlock()
 	s.notifyUpdated()
 }
@@ -393,6 +667,11 @@ func (s *HistoryStorage) Close() error {
 	// maps would let a late writer - or a reader that raced Close - still observe live state.
 	clear(s.displayHistory)
 	clear(s.healthHistory)
+	// The epoch book goes too. It carries no measurement, but a closed storage must not keep a
+	// growing record of drops either, and a late writer is already refused by s.closed before any
+	// stamp is compared.
+	clear(s.tagCounts)
+	clear(s.scopeCounts)
 	s.updateHooks = nil
 	return nil
 }

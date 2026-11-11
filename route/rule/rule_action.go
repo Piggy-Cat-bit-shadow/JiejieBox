@@ -18,6 +18,7 @@ import (
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 
 	"github.com/miekg/dns"
 )
@@ -460,6 +461,40 @@ func (r *RuleActionReject) Error(ctx context.Context) error {
 		return &RejectedError{ErrDrop}
 	}
 	return returnErr
+}
+
+// RejectionDetail reports how this action refuses a flow, WITHOUT the side effects of Error.
+//
+// # Why the side-effect-free form exists
+//
+// Error is the DATA-PLANE refusal: it also feeds the drop counter and the flood limiter (more than
+// 50 drops in 30 s is reported as a drop rather than a reset). A diagnostic that wants to explain a
+// REJECT must not consume that budget - an explanation is not a dropped connection - and it must not
+// panic on `method: reply`, whose Error is nil because the inbound layer writes the reply and no
+// error value exists.
+//
+// Empty network means "a connection of unknown transport": reply is then described rather than
+// declared unsupported.
+func (r *RuleActionReject) RejectionDetail(network string) string {
+	switch r.Method {
+	case C.RuleActionRejectMethodReply:
+		switch network {
+		case N.NetworkTCP:
+			return "reject method `reply` is not supported for TCP connections"
+		case N.NetworkUDP:
+			return "reject method `reply` is not supported for UDP connections"
+		default:
+			return "reject method `reply` answers this request with a rejection reply"
+		}
+	case C.RuleActionRejectMethodDrop:
+		return "reject method `drop`"
+	case C.RuleActionRejectMethodDefault:
+		return "reject method `default`"
+	default:
+		// Production would panic on an unknown method; an explanation of a misconfiguration must
+		// not take the process down, so the raw value is reported instead.
+		return "reject method `" + r.Method + "`"
+	}
 }
 
 type RuleActionHijackDNS struct{}

@@ -39,6 +39,9 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 	if entry, ok := r.processCache.Get(key); ok {
 		return entry.result, entry.err
 	}
+	// The generation is read BEFORE the lookup: a reset that lands while it runs invalidates the
+	// answer, and caching it would preserve the pre-reset fact for the cache lifetime.
+	epoch := r.processCacheEpoch.Load()
 	var (
 		result *adapter.ConnectionOwner
 		err    error
@@ -50,7 +53,22 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 		// socket diag table is enough; do not pay for a /proc walk.
 		result, err = process.FindProcessOwner(r.processSearcher, ctx, network, source, destination)
 	}
-	r.processCache.Add(key, processCacheEntry{result: result, err: err})
+	// The COMPARISON and the WRITE are one commit step.
+	//
+	// Re-reading the epoch and then calling Add leaves a window between the two: a reset that lands
+	// inside it advances the generation and purges the cache, and the write then restores exactly
+	// the pre-reset answer the purge removed. The commit lock is what makes "the generation is
+	// unchanged" and "the entry is in the cache" a single decision, and the reset takes the same
+	// lock, so the two cannot interleave. The lookup above is deliberately outside it: a blocked
+	// system call must not hold the boundary a reset needs.
+	if r.processCacheAboutToPublish != nil {
+		r.processCacheAboutToPublish()
+	}
+	r.processCacheCommit.Lock()
+	if r.processCacheEpoch.Load() == epoch {
+		r.processCache.Add(key, processCacheEntry{result: result, err: err})
+	}
+	r.processCacheCommit.Unlock()
 	return result, err
 }
 

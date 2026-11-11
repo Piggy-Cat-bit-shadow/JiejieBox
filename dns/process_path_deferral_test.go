@@ -70,6 +70,7 @@ func newDeferralFixture(t *testing.T, raw []option.DNSRule) *deferralFixture {
 	rules := previewTestRules(t, raw)
 	fixture.router.rules = rules
 	fixture.router.ruleNeedsPaths = processPathRuleFlags(raw)
+	fixture.router.ruleProcessNeeds = processNeedFlags(raw)
 	return fixture
 }
 

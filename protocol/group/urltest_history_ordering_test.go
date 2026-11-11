@@ -121,6 +121,11 @@ func TestASlowerPreChangeAttemptCannotOverwriteTheNewerRoundsResult(t *testing.T
 	case <-time.After(10 * time.Second):
 		t.Fatal("the stale attempt never dialled")
 	}
+	// Separate the two attempts in wall-clock time. Evidence ordering uses the attempt's START
+	// instant, and Windows' clock granularity can return the same tick for two attempts started a
+	// fraction of a millisecond apart - equal timestamps are accepted by design, which would let the
+	// stale attempt win. A real separation makes the ordering fact observable on every platform.
+	time.Sleep(20 * time.Millisecond)
 
 	// The replacement object carries the SAME tag, so both attempts write to one history entry -
 	// which is exactly what a same-tag member replacement or a network change produces.

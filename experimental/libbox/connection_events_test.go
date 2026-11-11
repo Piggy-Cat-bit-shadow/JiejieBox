@@ -240,6 +240,23 @@ func TestConnectionReconnectSnapshotDropsRowsAndStaleUpdatesCannotRevive(t *test
 		"a late close for a dropped id must not become an active row either")
 }
 
+// The wire identity and gap accounting must survive the gRPC→binding copy: a consumer that only
+// sees them in the proto cannot reject a superseded instance's batch or notice a loss.
+func TestTheWireIdentityAndGapAccountingReachTheConsumer(t *testing.T) {
+	delivered, _ := connectionEventsForDelivery(&daemon.ConnectionEvents{
+		InstanceId: "instance-7",
+		Sequence:   12,
+		Dropped:    3,
+		Events: []*daemon.ConnectionEvent{
+			{Type: daemon.ConnectionEventType_CONNECTION_EVENT_NEW, Id: "a"},
+		},
+	}, false)
+	require.Equal(t, "instance-7", delivered.InstanceId)
+	require.EqualValues(t, 12, delivered.Sequence())
+	require.EqualValues(t, 3, delivered.Dropped())
+	require.Equal(t, 1, len(delivered.events))
+}
+
 // O02/O05 — the consumer's first batch is always a baseline.
 //
 // The server sends a reset snapshot first, so this normally just confirms the flag. The rule exists

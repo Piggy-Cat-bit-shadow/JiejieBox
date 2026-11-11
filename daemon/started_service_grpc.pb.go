@@ -66,6 +66,12 @@ const (
 	StartedService_SubmitOpenVPNChallengeResponse_FullMethodName = "/daemon.StartedService/SubmitOpenVPNChallengeResponse"
 	StartedService_CancelOpenVPNChallenge_FullMethodName         = "/daemon.StartedService/CancelOpenVPNChallenge"
 	StartedService_SubscribeNotifications_FullMethodName         = "/daemon.StartedService/SubscribeNotifications"
+	StartedService_DNSHistoryEnable_FullMethodName               = "/daemon.StartedService/DNSHistoryEnable"
+	StartedService_DNSHistoryDisable_FullMethodName              = "/daemon.StartedService/DNSHistoryDisable"
+	StartedService_DNSHistoryQuery_FullMethodName                = "/daemon.StartedService/DNSHistoryQuery"
+	StartedService_DNSHistoryStats_FullMethodName                = "/daemon.StartedService/DNSHistoryStats"
+	StartedService_DNSHistoryTopK_FullMethodName                 = "/daemon.StartedService/DNSHistoryTopK"
+	StartedService_DNSHistoryClear_FullMethodName                = "/daemon.StartedService/DNSHistoryClear"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -122,6 +128,14 @@ type StartedServiceClient interface {
 	SubmitOpenVPNChallengeResponse(ctx context.Context, in *OpenVPNChallengeSubmission, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	CancelOpenVPNChallenge(ctx context.Context, in *OpenVPNChallengeCancel, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SubscribeNotifications(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NotificationEvent], error)
+	// DNS history management. The response JSON is the SAME document the gomobile binding returns,
+	// so a platform has one contract for both transports.
+	DNSHistoryEnable(ctx context.Context, in *DNSHistoryEnableRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	DNSHistoryDisable(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	DNSHistoryQuery(ctx context.Context, in *DNSHistoryQueryRequest, opts ...grpc.CallOption) (*DNSHistoryQueryResponse, error)
+	DNSHistoryStats(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DNSHistoryStatsResponse, error)
+	DNSHistoryTopK(ctx context.Context, in *DNSHistoryTopKRequest, opts ...grpc.CallOption) (*DNSHistoryTopKResponse, error)
+	DNSHistoryClear(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DNSHistoryClearResponse, error)
 }
 
 type startedServiceClient struct {
@@ -754,6 +768,66 @@ func (c *startedServiceClient) SubscribeNotifications(ctx context.Context, in *e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeNotificationsClient = grpc.ServerStreamingClient[NotificationEvent]
 
+func (c *startedServiceClient) DNSHistoryEnable(ctx context.Context, in *DNSHistoryEnableRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, StartedService_DNSHistoryEnable_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) DNSHistoryDisable(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, StartedService_DNSHistoryDisable_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) DNSHistoryQuery(ctx context.Context, in *DNSHistoryQueryRequest, opts ...grpc.CallOption) (*DNSHistoryQueryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DNSHistoryQueryResponse)
+	err := c.cc.Invoke(ctx, StartedService_DNSHistoryQuery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) DNSHistoryStats(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DNSHistoryStatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DNSHistoryStatsResponse)
+	err := c.cc.Invoke(ctx, StartedService_DNSHistoryStats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) DNSHistoryTopK(ctx context.Context, in *DNSHistoryTopKRequest, opts ...grpc.CallOption) (*DNSHistoryTopKResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DNSHistoryTopKResponse)
+	err := c.cc.Invoke(ctx, StartedService_DNSHistoryTopK_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) DNSHistoryClear(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DNSHistoryClearResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DNSHistoryClearResponse)
+	err := c.cc.Invoke(ctx, StartedService_DNSHistoryClear_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -808,6 +882,14 @@ type StartedServiceServer interface {
 	SubmitOpenVPNChallengeResponse(context.Context, *OpenVPNChallengeSubmission) (*emptypb.Empty, error)
 	CancelOpenVPNChallenge(context.Context, *OpenVPNChallengeCancel) (*emptypb.Empty, error)
 	SubscribeNotifications(*emptypb.Empty, grpc.ServerStreamingServer[NotificationEvent]) error
+	// DNS history management. The response JSON is the SAME document the gomobile binding returns,
+	// so a platform has one contract for both transports.
+	DNSHistoryEnable(context.Context, *DNSHistoryEnableRequest) (*emptypb.Empty, error)
+	DNSHistoryDisable(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	DNSHistoryQuery(context.Context, *DNSHistoryQueryRequest) (*DNSHistoryQueryResponse, error)
+	DNSHistoryStats(context.Context, *emptypb.Empty) (*DNSHistoryStatsResponse, error)
+	DNSHistoryTopK(context.Context, *DNSHistoryTopKRequest) (*DNSHistoryTopKResponse, error)
+	DNSHistoryClear(context.Context, *emptypb.Empty) (*DNSHistoryClearResponse, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -955,6 +1037,24 @@ func (UnimplementedStartedServiceServer) CancelOpenVPNChallenge(context.Context,
 }
 func (UnimplementedStartedServiceServer) SubscribeNotifications(*emptypb.Empty, grpc.ServerStreamingServer[NotificationEvent]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeNotifications not implemented")
+}
+func (UnimplementedStartedServiceServer) DNSHistoryEnable(context.Context, *DNSHistoryEnableRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DNSHistoryEnable not implemented")
+}
+func (UnimplementedStartedServiceServer) DNSHistoryDisable(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DNSHistoryDisable not implemented")
+}
+func (UnimplementedStartedServiceServer) DNSHistoryQuery(context.Context, *DNSHistoryQueryRequest) (*DNSHistoryQueryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DNSHistoryQuery not implemented")
+}
+func (UnimplementedStartedServiceServer) DNSHistoryStats(context.Context, *emptypb.Empty) (*DNSHistoryStatsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DNSHistoryStats not implemented")
+}
+func (UnimplementedStartedServiceServer) DNSHistoryTopK(context.Context, *DNSHistoryTopKRequest) (*DNSHistoryTopKResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DNSHistoryTopK not implemented")
+}
+func (UnimplementedStartedServiceServer) DNSHistoryClear(context.Context, *emptypb.Empty) (*DNSHistoryClearResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DNSHistoryClear not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1653,6 +1753,114 @@ func _StartedService_SubscribeNotifications_Handler(srv interface{}, stream grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeNotificationsServer = grpc.ServerStreamingServer[NotificationEvent]
 
+func _StartedService_DNSHistoryEnable_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DNSHistoryEnableRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).DNSHistoryEnable(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_DNSHistoryEnable_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).DNSHistoryEnable(ctx, req.(*DNSHistoryEnableRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_DNSHistoryDisable_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).DNSHistoryDisable(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_DNSHistoryDisable_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).DNSHistoryDisable(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_DNSHistoryQuery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DNSHistoryQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).DNSHistoryQuery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_DNSHistoryQuery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).DNSHistoryQuery(ctx, req.(*DNSHistoryQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_DNSHistoryStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).DNSHistoryStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_DNSHistoryStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).DNSHistoryStats(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_DNSHistoryTopK_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DNSHistoryTopKRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).DNSHistoryTopK(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_DNSHistoryTopK_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).DNSHistoryTopK(ctx, req.(*DNSHistoryTopKRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_DNSHistoryClear_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).DNSHistoryClear(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_DNSHistoryClear_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).DNSHistoryClear(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1763,6 +1971,30 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelOpenVPNChallenge",
 			Handler:    _StartedService_CancelOpenVPNChallenge_Handler,
+		},
+		{
+			MethodName: "DNSHistoryEnable",
+			Handler:    _StartedService_DNSHistoryEnable_Handler,
+		},
+		{
+			MethodName: "DNSHistoryDisable",
+			Handler:    _StartedService_DNSHistoryDisable_Handler,
+		},
+		{
+			MethodName: "DNSHistoryQuery",
+			Handler:    _StartedService_DNSHistoryQuery_Handler,
+		},
+		{
+			MethodName: "DNSHistoryStats",
+			Handler:    _StartedService_DNSHistoryStats_Handler,
+		},
+		{
+			MethodName: "DNSHistoryTopK",
+			Handler:    _StartedService_DNSHistoryTopK_Handler,
+		},
+		{
+			MethodName: "DNSHistoryClear",
+			Handler:    _StartedService_DNSHistoryClear_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

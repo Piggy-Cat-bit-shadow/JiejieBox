@@ -75,15 +75,19 @@ func requireNoUpstreamExchange(t *testing.T, fixture *deferralFixture) {
 // The history's subscription is drained on its own goroutine by design (a slow reader must lose
 // events instead of blocking a query), so a record is observable a moment after the exchange
 // returns. The wait is on that fact, not on a fixed sleep.
-func awaitHistory(t *testing.T, router *Router, want int) []HistoryRecord {
+func awaitHistory(t *testing.T, router *Router, want int, why ...string) []HistoryRecord {
 	t.Helper()
+	reason := "the expected records did not appear"
+	if len(why) > 0 && why[0] != "" {
+		reason = why[0]
+	}
 	var records []HistoryRecord
 	require.Eventually(t, func() bool {
 		var err error
 		records, err = router.QueryHistory(HistoryQuery{})
 		require.NoError(t, err)
 		return len(records) == want
-	}, 5*time.Second, time.Millisecond, "the history never held %d record(s)", want)
+	}, 5*time.Second, time.Millisecond, "the history never held %d record(s): %s", want, reason)
 	return records
 }
 
@@ -250,7 +254,35 @@ func TestAMalformedQuestionIsRecordedLocally(t *testing.T) {
 	require.NotNil(t, response)
 	require.Equal(t, mDNS.RcodeFormatError, response.Rcode)
 
-	records := awaitHistory(t, fixture.router, 1)
+	records := awaitHistory(t, fixture.router, 1, "the structural early answer is the query's only record")
 	require.True(t, records[0].Event.Final)
 	require.Equal(t, mDNS.RcodeFormatError, records[0].Event.RCode)
+}
+
+// TestALocalRejectOnTheDialerLookupIsRecorded covers the second production entry: the dialer's
+// complete Lookup asks both families, and each family's local verdict is its own termination.
+func TestALocalRejectOnTheDialerLookupIsRecorded(t *testing.T) {
+	fixture := newVerdictFixture(t, []option.DNSRule{
+		rejectTestRule(t, "example.org", C.RuleActionRejectMethodDefault),
+	})
+
+	addresses, err := fixture.router.Lookup(context.Background(), "race.example.org", adapter.DNSQueryOptions{})
+	require.Error(t, err, "a local reject surfaces to the dialer as an error")
+	require.Empty(t, addresses)
+	requireNoUpstreamExchange(t, fixture)
+
+	records := awaitHistory(t, fixture.router, 2, "a complete lookup asks both families; each local verdict is recorded")
+	for _, record := range records {
+		require.True(t, record.Event.Final)
+		require.Equal(t, QuerySourceRejected, record.Event.Source)
+		require.Equal(t, mDNS.RcodeRefused, record.Event.RCode)
+		require.NotEmpty(t, record.Event.Rule)
+		require.Equal(t, "race.example.org.", record.Event.Name)
+	}
+	qTypes := map[uint16]bool{}
+	for _, record := range records {
+		qTypes[record.Event.QType] = true
+	}
+	require.True(t, qTypes[mDNS.TypeA] && qTypes[mDNS.TypeAAAA],
+		"each family's decision is named by the query type it asked")
 }

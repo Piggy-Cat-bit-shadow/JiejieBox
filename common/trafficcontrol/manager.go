@@ -7,7 +7,6 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/compatible"
-	"github.com/sagernet/sing/common/cleanup"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/common/x/list"
 
@@ -22,18 +21,20 @@ const (
 )
 
 type ConnectionEvent struct {
+	// Sequence is assigned at emission and increases by one per event.
+	//
+	// # Why the source counts, not the consumer
+	//
+	// The observable bus drops silently when a subscriber's buffer is full (`Subscriber.Emit` has
+	// a default branch), so a consumer cannot see how many events it missed - it only sees that the
+	// next one arrived. A per-event sequence lets the consumer measure the gap exactly, which is
+	// what the platform's `dropped` counter needs; counting at the consumer without a sequence
+	// would report zero forever.
+	Sequence uint64
 	Type     ConnectionEventType
 	ID       uuid.UUID
 	Metadata *TrackerMetadata
 	ClosedAt time.Time
-	// Sequence is the manager's monotonic counter for every event it emits.
-	//
-	// The pipe to a subscriber is lossy on purpose: a slow reader's buffer is full and the event
-	// is dropped rather than blocking a connection. Without a sequence, the reader cannot tell a
-	// dropped event from a connection that never existed - the stream just looks shorter. With it,
-	// a gap is the drop, and the consumer can resynchronise from a fresh snapshot instead of
-	// applying a delta to a model it no longer has.
-	Sequence uint64
 }
 
 const closedConnectionsLimit = 1000
@@ -50,34 +51,24 @@ type Manager struct {
 	closedUploadTotal       int64
 	closedDownloadTotal     int64
 
-	eventSubscriber *observable.Subscriber[ConnectionEvent]
-	eventObserver   *observable.Observer[ConnectionEvent]
-	eventSequence   atomic.Uint64
-	// publishAccess makes "take the next number AND enqueue it" one step.
+	events *eventFanout
+	// eventSequence stamps every emitted event; see ConnectionEvent.Sequence.
+	eventSequence atomic.Uint64
+	// eventPublish serialises "assign the sequence, publish the event".
 	//
-	// The stamp used to be taken on the caller goroutine and the enqueue attempted right after, so
-	// two producers could take 23 and 24 and then race for the channel: a consumer that counts gaps
-	// saw 24 first and reported a permanent loss of 23, which a later 23 cannot retract. MEASURED
-	// before the fix: 128 concurrent joins produced 22 -> 24 in the first round. The critical
-	// section stays short - Emit is a non-blocking send - so a slow consumer still cannot couple
-	// back to the data path.
-	publishAccess sync.Mutex
-}
-
-// publish stamps one event and enqueues it under the same lock, so number order IS delivery order.
-//
-// A full queue still drops (that is Subscriber.Emit's contract), but the number is already spent,
-// so the next delivered event names the gap.
-func (m *Manager) publish(event ConnectionEvent) {
-	m.publishAccess.Lock()
-	event.Sequence = m.eventSequence.Add(1)
-	m.eventSubscriber.Emit(event)
-	m.publishAccess.Unlock()
+	// The increment and the channel send used to be two separate steps, so two goroutines could
+	// allocate 1 and 2 and then publish 2 before 1. The subscriber then saw a descending sequence,
+	// and the daemon's gap accounting read that as a real loss - a false `dropped` makes the client
+	// discard a complete snapshot and resynchronise on a busy second. Holding this mutex across both
+	// steps makes the delivered order the assigned order. The send itself stays non-blocking: the
+	// observable bus drops on a full subscriber instead of blocking the data plane, and a dropped
+	// event is exactly what a LATER sequence gap reveals.
+	eventPublish sync.Mutex
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		eventSubscriber: observable.NewSubscriber[ConnectionEvent](256),
+		events: newEventFanout(),
 	}
 }
 
@@ -87,11 +78,16 @@ func (m *Manager) Name() string {
 
 func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage == adapter.StartStateInitialize {
-		m.eventObserver = observable.NewObserver(m.eventSubscriber, 64)
-		scope.Add(m.eventObserver.Close)
-		cleaner := cleanup.Add(m.Clear)
+		scope.Add(m.events.close)
+		// Register Clear DIRECTLY on the scope.
+		//
+		// cleanup.Add is finalizer-backed: the cleanup object can be collected before the scope
+		// closes, and its finalizer then runs Clear at an arbitrary GC point. In the full-chain test
+		// that wiped half the closed-connection window while a consumer was recovering, so the
+		// recovery snapshot looked empty. The scope runs its cleanups once, in registration order,
+		// which is the lifetime this belongs to.
 		scope.Add(func() error {
-			cleaner.Close()
+			m.Clear()
 			return nil
 		})
 	}
@@ -99,17 +95,34 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (m *Manager) SubscribeEvents() (observable.Subscription[ConnectionEvent], <-chan struct{}, error) {
-	return m.eventObserver.Subscribe()
+	listener, err := m.events.subscribe()
+	if err != nil {
+		return nil, nil, err
+	}
+	return observable.Subscription[ConnectionEvent](listener.channel), listener.done, nil
+}
+
+// SubscribeEventsWithLoss is SubscribeEvents plus the subscription's exact drop counter.
+//
+// The counter is what makes a SILENT tail loss recoverable: a subscriber that fell behind learns how
+// many events it never received even when no later event arrives to reveal a sequence gap. Events that
+// are merely queued (not dropped) do not move it.
+func (m *Manager) SubscribeEventsWithLoss() (observable.Subscription[ConnectionEvent], <-chan struct{}, func() uint64, error) {
+	listener, err := m.events.subscribe()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return observable.Subscription[ConnectionEvent](listener.channel), listener.done, listener.Dropped, nil
 }
 
 func (m *Manager) UnSubscribeEvents(subscription observable.Subscription[ConnectionEvent]) {
-	m.eventObserver.UnSubscribe(subscription)
+	m.events.unsubscribe(subscription)
 }
 
 func (m *Manager) join(tracker Tracker) {
 	metadata := tracker.Metadata()
 	m.connections.Store(metadata.ID, tracker)
-	m.publish(ConnectionEvent{
+	m.publishEvent(ConnectionEvent{
 		Type:     ConnectionEventNew,
 		ID:       metadata.ID,
 		Metadata: metadata,
@@ -141,12 +154,22 @@ func (m *Manager) leave(tracker Tracker) {
 	}
 	m.closedConnections.PushBack(metadataCopy)
 	m.closedConnectionsAccess.Unlock()
-	m.publish(ConnectionEvent{
+	m.publishEvent(ConnectionEvent{
 		Type:     ConnectionEventClosed,
 		ID:       metadata.ID,
 		Metadata: &metadataCopy,
 		ClosedAt: closedAt,
 	})
+}
+
+// publishEvent assigns the sequence and publishes the event as one step.
+//
+// See Manager.eventPublish: the order of the assigned sequences is the order the subscriber receives.
+func (m *Manager) publishEvent(event ConnectionEvent) {
+	m.eventPublish.Lock()
+	event.Sequence = m.eventSequence.Add(1)
+	m.events.publish(event)
+	m.eventPublish.Unlock()
 }
 
 func (m *Manager) Total() (uplinkTotal int64, downlinkTotal int64) {

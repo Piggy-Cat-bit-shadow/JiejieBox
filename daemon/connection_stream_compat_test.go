@@ -20,7 +20,7 @@ import (
 
 // legacyConnectionEventsBytes is what a daemon built BEFORE this window sends: `events` (field 1)
 // whose elements carry type (1) and id (2) but no sequence (7), and `reset` (field 2) but no
-// instance (3) or dropped (4).
+// instanceId (3), sequence (4) or dropped (5).
 func legacyConnectionEventsBytes(t *testing.T) []byte {
 	t.Helper()
 	var event []byte
@@ -46,7 +46,8 @@ func TestAnOlderDaemonsConnectionEventsStillDecode(t *testing.T) {
 	require.True(t, decoded.Reset_)
 	// The new fields default to zero, which is what "this producer does not report identity or
 	// loss" has to mean: a client must not read 0 as a real instance or a real drop count.
-	require.Zero(t, decoded.Instance)
+	require.Empty(t, decoded.InstanceId)
+	require.Zero(t, decoded.Sequence)
 	require.Zero(t, decoded.Dropped)
 	require.Zero(t, decoded.Events[0].Sequence)
 }
@@ -74,8 +75,9 @@ func TestANewMessageIsReadableByAnOlderDecoder(t *testing.T) {
 	encoded, err := proto.Marshal(&ConnectionEvents{
 		Events:   []*ConnectionEvent{{Type: ConnectionEventType_CONNECTION_EVENT_NEW, Id: "new"}},
 		Reset_:   true,
-		Instance: 42,
-		Dropped:  7,
+		InstanceId: "instance-42",
+		Sequence:   1,
+		Dropped:    7,
 	})
 	require.NoError(t, err)
 

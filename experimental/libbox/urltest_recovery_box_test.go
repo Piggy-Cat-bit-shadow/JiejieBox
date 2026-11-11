@@ -62,6 +62,13 @@ type recoverySnapshotter interface {
 	HealthSnapshot() group.HealthSnapshot
 }
 
+// recoveryQueueSampler samples ONLY the admission counters: HealthSnapshot builds the next probe
+// set, which is O(members), and a per-millisecond sampler of a large member set would distort the
+// round it measures.
+type recoveryQueueSampler interface {
+	QueueSnapshot() (inFlight int, queued int, limit int, sharedInFlight int, participants int)
+}
+
 // recoveryWindow is one named phase of the run.
 type recoveryWindow struct {
 	name       string
@@ -80,7 +87,7 @@ func (w recoveryWindow) log(t *testing.T) {
 }
 
 // samplePeaks watches one group while a round runs and records the queue peaks.
-func samplePeaks(ctx context.Context, snapshotter recoverySnapshotter, window *recoveryWindow) {
+func samplePeaks(ctx context.Context, sampler recoveryQueueSampler, window *recoveryWindow) {
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -88,12 +95,12 @@ func samplePeaks(ctx context.Context, snapshotter recoverySnapshotter, window *r
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			snapshot := snapshotter.HealthSnapshot()
-			if snapshot.CoordinatorInFlight > window.peakFlight {
-				window.peakFlight = snapshot.CoordinatorInFlight
+			inFlight, queued, _, _, _ := sampler.QueueSnapshot()
+			if inFlight > window.peakFlight {
+				window.peakFlight = inFlight
 			}
-			if snapshot.CoordinatorQueued > window.peakQueued {
-				window.peakQueued = snapshot.CoordinatorQueued
+			if queued > window.peakQueued {
+				window.peakQueued = queued
 			}
 		}
 	}
@@ -107,11 +114,13 @@ func runManualWindow(t *testing.T, scale *scaleProviderServer, runners []recover
 	sampleCtx, stopSampling := context.WithCancel(context.Background())
 	var samplers sync.WaitGroup
 	for _, snapshotter := range snapshotters {
+		sampler, canSample := snapshotter.(recoveryQueueSampler)
+		require.True(t, canSample, "the group must expose the cheap queue sampler")
 		samplers.Add(1)
-		go func(snapshotter recoverySnapshotter) {
+		go func(sampler recoveryQueueSampler) {
 			defer samplers.Done()
-			samplePeaks(sampleCtx, snapshotter, &window)
-		}(snapshotter)
+			samplePeaks(sampleCtx, sampler, &window)
+		}(sampler)
 	}
 
 	started := time.Now()
@@ -181,7 +190,7 @@ func TestRealBoxProviderRecovery(t *testing.T) {
 	}
 
 	scale := newScaleProviderServer(t, nodes)
-	server := startBoxTestCommandServer(t, providerScaleConfig(scale.server.URL))
+	server := startDiagnoseTestCommandServer(t, providerScaleConfig(scale.server.URL))
 
 	refreshUntilPublished := func(providerTag string) {
 		deadline := time.Now().Add(300 * time.Second)
