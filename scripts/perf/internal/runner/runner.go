@@ -216,6 +216,9 @@ func Run(opts Options) (*Outcome, error) {
 	// Record the parameters that actually run, after scenario defaults and CLI
 	// overrides have been resolved. The raw options are kept too, so a default is
 	// distinguishable from an explicit value.
+	if run.Scenario.Extra == nil {
+		run.Scenario.Extra = map[string]any{}
+	}
 	run.Scenario.Extra["requested_parameters"] = map[string]any{
 		"patterns": opts.Patterns, "streams": opts.Streams, "reps": opts.Reps,
 		"duration_s": opts.Duration.Seconds(), "warmup_s": opts.Warmup.Seconds(),
