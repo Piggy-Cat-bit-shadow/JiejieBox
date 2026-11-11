@@ -5,8 +5,8 @@
 
 ## 0. 现场
 
-- 主仓 `Piggy-Cat-bit-shadow/JiejieBox`，`testing` = `integration/0.1.45-final` = `4ec0decd9f2`。
-- `HEAD...upstream/testing` = **3736 / 0**；`upstream/testing` = `a13dbe1f785f`（本轮观测窗口内未再前进）。
+- 主仓 `Piggy-Cat-bit-shadow/JiejieBox`，`testing` = `integration/0.1.45-final` = `2528511d90ab876c6c853f23d6ae1deee083027e`。
+- `HEAD...upstream/testing` = **3737 / 0**；`upstream/testing` = `a13dbe1f785f`（本轮观测窗口内未再前进）。
 - merge commit `303fbb47dfd`：parents `48103716845e`（合并前 fork）+ `a13dbe1f785f`（上游）。
 - 审计期间发现新远端分支 `feature/proxy-group-hidden`（11:31 推送，5 个 hidden-group 提交）。它不是本轮产物，基于当前 `testing`，保留给对应工作，不删除/不覆盖。
 

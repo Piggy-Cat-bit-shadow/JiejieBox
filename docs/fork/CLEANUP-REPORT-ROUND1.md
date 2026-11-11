@@ -6,8 +6,8 @@
 
 | 分支 | SHA | 处理 |
 |---|---|---|
-| `testing` | `4ec0decd9f2` | 默认分支，保留 |
-| `integration/0.1.45-final` | `4ec0decd9f2` | 产品施工线，保留 |
+| `testing` | `2528511d90ab876c6c853f23d6ae1deee083027e` | 默认分支，保留 |
+| `integration/0.1.45-final` | `2528511d90ab876c6c853f23d6ae1deee083027e` | 产品施工线，保留 |
 | `feature/proxy-group-hidden` | `9ac536420993` | **本轮审计期间出现的新分支**（2026-11-11 11:31 推送，5 个 hidden-group 提交，基于当前 testing）。归属其他工作，保留，不删除、不覆盖 |
 
 上一轮删除的 5 个分支与 archive tag：
