@@ -119,6 +119,7 @@ configuration field.
 | `detour` pointing at a hidden group | `direct` refuses `detour` outright, so a `socks` outbound dials its server through the hidden group and the group's default member receives the connection |
 | hidden URLTest | it measures its members at start with nothing touching it; `URLTest.Selected` is a pure preview and deliberately does not start the ticker, a real flow through it does, and the history timestamp then keeps advancing; the `URLTest` RPC resolves it by tag and re-measures |
 | hidden LoadBalance | candidate set unchanged; six round-robin flows over three members reach all three |
+| inline provider feeding a hidden selector | both nodes publish with `<provider>/<node>` tags and join the hidden group, are registered outbounds, and the parent's flow leaves through one of them; the group stays unlisted |
 | expand cache | `SetGroupExpand` stores for a hidden group, and the value survives a reload |
 | `hidden: null` | decodes as unset (visible) - the same as every non-pointer field in this tree |
 | `"true"`, `1`, `{}`, `[true]` | refused with the field named (`cannot unmarshal ... into Go struct field ... of type bool`); no silent coercion |

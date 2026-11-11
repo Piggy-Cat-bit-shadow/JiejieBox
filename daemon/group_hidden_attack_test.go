@@ -436,6 +436,53 @@ func TestHiddenGroupKeepsItsExpandState(t *testing.T) {
 	require.True(t, restoredExpand)
 }
 
+// TestHiddenProviderBackedGroupStillPublishes is the section-5/acceptance "Provider" row: a provider
+// feeds a HIDDEN group, and neither the publication nor the group's use of it may depend on display.
+func TestHiddenProviderBackedGroupStillPublishes(t *testing.T) {
+	members := map[string]*memberListener{
+		"node-1": startMemberListener(t),
+		"node-2": startMemberListener(t),
+	}
+	profile := fmt.Sprintf(`{
+  "log": {"level": "error"},
+  "providers": [
+    {"type": "inline", "tag": "pool", "outbounds": [
+      {"type": "probe-member", "tag": "node-1", "destination": "%s"},
+      {"type": "probe-member", "tag": "node-2", "destination": "%s"}
+    ]}
+  ],
+  "outbounds": [
+    {"type": "selector", "tag": "REGION", "providers": ["pool"], "hidden": true},
+    {"type": "selector", "tag": "MAIN", "outbounds": ["REGION"], "default": "REGION"}
+  ]
+}`, members["node-1"].target(), members["node-2"].target())
+	started := newHiddenGroupService(t, profile)
+
+	// The provider's nodes joined the hidden group, with the rendered "<provider>/<node>" tags.
+	membersOfRegion := liveGroupMembers(t, started, "REGION")
+	require.ElementsMatch(t, []string{"pool/node-1", "pool/node-2"}, membersOfRegion,
+		"a hidden group must still take its membership from a provider")
+
+	// They are real outbounds, and the group is still absent from the display.
+	for _, published := range membersOfRegion {
+		_, isLoaded := started.Instance().outboundManager.Outbound(published)
+		require.True(t, isLoaded, "the provider's node %s must be registered", published)
+	}
+	require.Equal(t, []string{"MAIN"}, reportedGroupTags(t, started))
+	require.ElementsMatch(t,
+		[]string{"REGION", "MAIN", "pool/node-1", "pool/node-2"},
+		reportedOutboundTags(t, started))
+
+	// The parent still reaches the hidden group, and the flow leaves through a provider node.
+	_, err := started.SelectOutbound(context.Background(), &SelectOutboundRequest{
+		GroupTag:    "MAIN",
+		OutboundTag: "REGION",
+	})
+	require.NoError(t, err)
+	require.Contains(t, []string{"node-1", "node-2"}, dialThroughNamedGroup(t, started, "MAIN", members),
+		"a flow through the parent must leave through one of the provider's nodes")
+}
+
 // liveGroupMembers reads a group's member list from the RUNNING object, which is the only way to
 // read it for a hidden group: it deliberately has no entry in the reported list.
 func liveGroupMembers(t *testing.T, started *StartedService, groupTag string) []string {

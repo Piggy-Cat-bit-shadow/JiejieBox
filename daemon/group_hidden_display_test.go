@@ -40,6 +40,7 @@ import (
 	"github.com/sagernet/sing-box/protocol/direct"
 	"github.com/sagernet/sing-box/protocol/group"
 	"github.com/sagernet/sing-box/protocol/socks"
+	providerlocal "github.com/sagernet/sing-box/provider/local"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -70,12 +71,16 @@ func groupDisplayContext(t *testing.T) context.Context {
 	socks.RegisterOutbound(outboundRegistry)
 	outbound.Register[probeMemberOptions](outboundRegistry, "probe-member", newProbeMember)
 	outbound.Register[capabilityFreeGroupOptions](outboundRegistry, "capability-free-group", newCapabilityFreeGroup)
+	// The inline provider is here for the provider-backed attack: it publishes nodes during
+	// box.New, so a hidden group fed by it has membership before the group starts.
+	providerRegistry := boxprovider.NewRegistry()
+	providerlocal.RegisterProviderInline(providerRegistry)
 	dnsRegistry := dns.NewTransportRegistry()
 	local.RegisterTransport(dnsRegistry)
 	ctx := box.Context(context.Background(),
 		inbound.NewRegistry(),
 		outboundRegistry,
-		boxprovider.NewRegistry(),
+		providerRegistry,
 		endpoint.NewRegistry(),
 		dnsRegistry,
 		boxservice.NewRegistry(),
