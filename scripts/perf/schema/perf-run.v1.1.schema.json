@@ -804,6 +804,36 @@
             "number",
             "null"
           ]
+        },
+        "returned": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "all_returned": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "aborted": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "sent_window_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "send_end_to_last_reply_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       }
     },

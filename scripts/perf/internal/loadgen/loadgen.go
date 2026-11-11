@@ -87,19 +87,25 @@ type Result struct {
 	DatagramSkipped    int64
 	DatagramUnique     int64
 	DatagramDuplicate  int64
+	DatagramReturned   int64
 	DatagramOutOfOrder int64
 	DatagramForeign    int64
 	DatagramStale      int64
 	SendWindow         time.Duration
 	DrainDuration      time.Duration
 	DrainLastReply     time.Duration
-	DrainComplete      bool
-	Paced              bool
-	Jitter             time.Duration
-	VerifiedBytes      int64
-	MismatchedBytes    int64
-	Connections        int64
-	Errors             []string
+	// DrainComplete says the drain window was long enough to observe the tail
+	// (it ran in full and the last reply was not still arriving at its edge).
+	// AllReturned is the separate fact "every write came back".
+	DrainComplete   bool
+	AllReturned     bool
+	Aborted         bool
+	Paced           bool
+	Jitter          time.Duration
+	VerifiedBytes   int64
+	MismatchedBytes int64
+	Connections     int64
+	Errors          []string
 }
 
 func (c *Config) normalize() {
@@ -439,6 +445,9 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 	if epoch == 0 {
 		epoch = uint32(time.Now().UnixNano())
 	}
+	// The reader must validate against the epoch that was actually stamped, not
+	// the zero value that means "pick one".
+	cfg.UDPEpoch = epoch
 
 	template := make([]byte, cfg.PacketSize)
 	for offset := udpHeaderSize; offset < len(template); offset += len(target.PatternPage) {
@@ -554,49 +563,17 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 
 	var senders sync.WaitGroup
 	if paced {
-		interval := time.Second / time.Duration(rate)
-		if interval <= 0 {
-			interval = time.Microsecond
-		}
 		senders.Add(1)
 		go func() {
 			defer senders.Done()
 			buffer := append([]byte(nil), template...)
-			next := start
-			timer := time.NewTimer(0)
-			defer timer.Stop()
-			for {
-				if ctx.Err() != nil {
-					recordErr(ctx.Err())
-					break
-				}
-				now := time.Now()
-				if !now.Before(deadline) {
-					break
-				}
-				if now.Before(next) {
-					if !timer.Stop() {
-						select {
-						case <-timer.C:
-						default:
-						}
-					}
-					timer.Reset(minDuration(next.Sub(now), time.Until(deadline)))
-					select {
-					case <-ctx.Done():
-					case <-timer.C:
-					}
-					continue
-				}
-				if lag := now.Sub(next); lag >= interval {
-					missed := int64(lag / interval)
-					skipped.Add(missed)
-					scheduled.Add(missed)
-					next = next.Add(time.Duration(missed) * interval)
-				}
-				scheduled.Add(1)
+			paced := runPacer(ctx, start, deadline, rate, func() {
 				sendOne(buffer)
-				next = next.Add(interval)
+			})
+			scheduled.Add(paced.scheduled)
+			skipped.Add(paced.skipped)
+			if paced.aborted {
+				recordErr(ctx.Err())
 			}
 			sendEnd.Store(time.Now().UnixNano())
 		}()
@@ -635,6 +612,10 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		timer.Stop()
 	}
 	drainDuration := time.Since(drainStart)
+	close(stop)
+	<-done
+
+	// The reader has returned: its lastReplyAt is now immutable and can be read.
 	drainLastReply := time.Duration(0)
 	if !lastReplyAt.IsZero() {
 		drainLastReply = lastReplyAt.Sub(sendWindowEnd)
@@ -642,8 +623,14 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 			drainLastReply = 0
 		}
 	}
-	close(stop)
-	<-done
+	drainComplete := ctx.Err() == nil
+	if drainComplete && drain > 0 && !lastReplyAt.IsZero() {
+		// A reply still arriving at the very edge of the window means the window
+		// may have truncated the tail: do not claim a loss it might have cut off.
+		if drainLastReply > drain-50*time.Millisecond {
+			drainComplete = false
+		}
+	}
 
 	written := writes.Load()
 	returned := unique + duplicate
@@ -660,16 +647,17 @@ func runUDP(ctx context.Context, cfg Config) (Result, error) {
 		DatagramSkipped:    skipped.Load(),
 		DatagramUnique:     unique,
 		DatagramDuplicate:  duplicate,
+		DatagramReturned:   returned,
 		DatagramOutOfOrder: outOfOrder,
 		DatagramForeign:    foreign,
 		DatagramStale:      stale,
 		SendWindow:         sendWindow,
 		DrainDuration:      drainDuration,
 		DrainLastReply:     drainLastReply,
-		// The drain completed when its window ran in full; loss is a separate
-		// fact (unique vs writes) and must not make this read as a truncation.
-		DrainComplete: ctx.Err() == nil,
-		Paced:         paced,
+		DrainComplete:      drainComplete,
+		AllReturned:        written > 0 && unique >= written,
+		Aborted:            ctx.Err() != nil,
+		Paced:              paced,
 	}
 	if jitterN > 0 {
 		result.Jitter = jitterSum / time.Duration(jitterN)
@@ -756,6 +744,62 @@ func (w *udpSeqWindow) add(sequence uint32) bool {
 		w.truncated = true
 	}
 	return true
+}
+
+// runPacer drives send at a fixed offered rate on an absolute schedule. It
+// never bursts to catch up: a slot missed by the scheduler is counted as
+// skipped, not sent late. The schedule stops at deadline or when ctx is done.
+func runPacer(ctx context.Context, start, deadline time.Time, rate int, send func()) (out struct {
+	scheduled int64
+	skipped   int64
+	aborted   bool
+}) {
+	interval := time.Second / time.Duration(rate)
+	if interval <= 0 {
+		interval = time.Microsecond
+	}
+	next := start
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		if ctx.Err() != nil {
+			out.aborted = true
+			return out
+		}
+		now := time.Now()
+		if !now.Before(deadline) {
+			return out
+		}
+		if now.Before(next) {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			wait := next.Sub(now)
+			if remaining := time.Until(deadline); remaining < wait {
+				wait = remaining
+			}
+			timer.Reset(wait)
+			select {
+			case <-ctx.Done():
+				out.aborted = true
+				return out
+			case <-timer.C:
+			}
+			continue
+		}
+		if lag := now.Sub(next); lag >= interval {
+			missed := int64(lag / interval)
+			out.skipped += missed
+			out.scheduled += missed
+			next = next.Add(time.Duration(missed) * interval)
+		}
+		out.scheduled++
+		send()
+		next = next.Add(interval)
+	}
 }
 
 func minDuration(a, b time.Duration) time.Duration {

@@ -220,23 +220,26 @@ type UDP struct {
 	PacketSize  *int     `json:"packet_size"`
 
 	// Paced separates a fixed offered rate from the historical saturation mode.
-	Mode           string   `json:"mode,omitempty"`
-	Attempts       *int64   `json:"attempts,omitempty"`
-	Writes         *int64   `json:"writes,omitempty"`
-	Scheduled      *int64   `json:"scheduled,omitempty"`
-	Skipped        *int64   `json:"skipped,omitempty"`
-	Unique         *int64   `json:"unique,omitempty"`
-	Duplicate      *int64   `json:"duplicate,omitempty"`
-	OutOfOrder     *int64   `json:"out_of_order,omitempty"`
-	Foreign        *int64   `json:"foreign,omitempty"`
-	Stale          *int64   `json:"stale,omitempty"`
-	TargetReceived *int64   `json:"target_received,omitempty"`
-	Echoed         *int64   `json:"echoed,omitempty"`
-	DrainMS        *float64 `json:"drain_ms,omitempty"`
-	DrainLastMS    *float64 `json:"drain_last_ms,omitempty"`
-	DrainComplete  *bool    `json:"drain_complete,omitempty"`
-	SendWindowMS   *float64 `json:"send_window_ms,omitempty"`
-	AchievedPPS    *float64 `json:"achieved_pps,omitempty"`
+	Mode                 string   `json:"mode,omitempty"`
+	Attempts             *int64   `json:"attempts,omitempty"`
+	Writes               *int64   `json:"writes,omitempty"`
+	Scheduled            *int64   `json:"scheduled,omitempty"`
+	Skipped              *int64   `json:"skipped,omitempty"`
+	Returned             *int64   `json:"returned,omitempty"`
+	Unique               *int64   `json:"unique,omitempty"`
+	Duplicate            *int64   `json:"duplicate,omitempty"`
+	OutOfOrder           *int64   `json:"out_of_order,omitempty"`
+	Foreign              *int64   `json:"foreign,omitempty"`
+	Stale                *int64   `json:"stale,omitempty"`
+	TargetReceived       *int64   `json:"target_received,omitempty"`
+	Echoed               *int64   `json:"echoed,omitempty"`
+	DrainMS              *float64 `json:"drain_ms,omitempty"`
+	SendEndToLastReplyMS *float64 `json:"send_end_to_last_reply_ms,omitempty"`
+	DrainComplete        *bool    `json:"drain_complete,omitempty"`
+	SentWindowMS         *float64 `json:"sent_window_ms,omitempty"`
+	AllReturned          *bool    `json:"all_returned,omitempty"`
+	Aborted              *bool    `json:"aborted,omitempty"`
+	AchievedPPS          *float64 `json:"achieved_pps,omitempty"`
 }
 
 // Proc is one process's resource cost.

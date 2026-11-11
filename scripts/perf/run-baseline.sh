@@ -19,6 +19,9 @@
 #   --duration DURATION    measured window (default 5s)
 #   --warmup DURATION      warmup window (default 1s)
 #   --streams LIST         concurrency levels (default 1,4)
+#   --udp-rate PPS         paced UDP offered rate; 0 keeps unpaced saturation
+#   --udp-drain DURATION   UDP post-send read window; 0 = auto (paced 500ms)
+#   --udp-packet-size N    UDP datagram bytes including the 20-byte header
 #   --only LIST            comma-separated scenario ids to run
 #   --smoke                1 rep, 1 stream, 2s: a wiring check, never a result
 #
@@ -42,6 +45,9 @@ duration="5s"
 warmup="1s"
 streams="1,4"
 only=""
+udp_rate=0
+udp_drain=0
+udp_packet_size=0
 smoke=0
 
 while [ $# -gt 0 ]; do
@@ -54,6 +60,9 @@ while [ $# -gt 0 ]; do
     --duration) duration="$2"; shift 2 ;;
     --warmup) warmup="$2"; shift 2 ;;
     --streams) streams="$2"; shift 2 ;;
+    --udp-rate) udp_rate="$2"; shift 2 ;;
+    --udp-drain) udp_drain="$2"; shift 2 ;;
+    --udp-packet-size) udp_packet_size="$2"; shift 2 ;;
     --only) only="$2"; shift 2 ;;
     --smoke) smoke=1; shift ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
@@ -147,7 +156,7 @@ for scenario in "${scenarios[@]}"; do
     continue
   fi
   started=$(date +%s)
-  extra_args=()
+  extra_args=(-udp-rate "$udp_rate" -udp-drain "$udp_drain" -udp-packet-size "$udp_packet_size")
   [ -n "$xray" ] && extra_args+=(-bin-xray "$xray")
   # Shaped profiles run the whole cell inside netlab; unshaped ones do not pay
   # for a namespace they would not use.

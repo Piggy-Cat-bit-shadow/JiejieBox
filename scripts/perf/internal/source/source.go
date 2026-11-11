@@ -44,7 +44,7 @@ func Collect(repoDir, binaryPath string) schema.Source {
 			// A cache is a speed contract, not a truth claim: enrich it from the
 			// binary and report when its commit is no longer the checked-out one.
 			if head := git(repoDir, "rev-parse", "HEAD"); head != "" && fromEnv.Commit != "" && fromEnv.Commit != head {
-				fromEnv.Warnings = append(fromEnv.Warnings,
+				addSourceWarning(&fromEnv,
 					"source_cache_stale: cached commit "+fromEnv.Commit+" but HEAD is "+head)
 			}
 			return enrichSource(fromEnv, repoDir, binaryPath)
@@ -102,13 +102,13 @@ func enrichSource(s schema.Source, repoDir, binaryPath string) schema.Source {
 	s.Binary = &binary
 	s.BinarySHA256 = binary.SHA256
 	if binary.ReadError != "" {
-		s.Warnings = append(s.Warnings, "binary_unreadable: "+binary.ReadError)
+		addSourceWarning(&s, "binary_unreadable: "+binary.ReadError)
 		return s
 	}
 	sidecar := buildTags(binaryPath)
 	tags, tagsSource := TagsSource(binary, sidecar)
 	if len(binary.BuildTags) > 0 && len(sidecar) > 0 && !sameStrings(binary.BuildTags, sidecar) {
-		s.Warnings = append(s.Warnings, "tag_sidecar_mismatch: buildinfo="+joinTags(binary.BuildTags)+" sidecar="+joinTags(sidecar))
+		addSourceWarning(&s, "tag_sidecar_mismatch: buildinfo="+joinTags(binary.BuildTags)+" sidecar="+joinTags(sidecar))
 	}
 	if len(tags) > 0 {
 		s.BuildTags = tags
@@ -121,10 +121,10 @@ func enrichSource(s schema.Source, repoDir, binaryPath string) schema.Source {
 		s.CGOEnabled = binary.CGOEnabled
 	}
 	if binary.VCSRevision == "" {
-		s.Warnings = append(s.Warnings, "vcs_unavailable: the binary carries no vcs.revision (linked worktree cannot be stamped by buildvcs)")
+		addSourceWarning(&s, "vcs_unavailable: the binary carries no vcs.revision (linked worktree cannot be stamped by buildvcs)")
 	}
 	if binary.MainPath != "" && binary.MainPath != "github.com/sagernet/sing-box" {
-		s.Warnings = append(s.Warnings, "binary_main_module_mismatch: "+binary.MainPath)
+		addSourceWarning(&s, "binary_main_module_mismatch: "+binary.MainPath)
 	}
 	for _, dep := range binary.Deps {
 		treeVersion, tracked := s.Modules[dep.Module]
@@ -136,11 +136,22 @@ func enrichSource(s schema.Source, repoDir, binaryPath string) schema.Source {
 			builtVersion = dep.ReplaceVersion
 		}
 		if treeVersion != builtVersion {
-			s.Warnings = append(s.Warnings,
+			addSourceWarning(&s,
 				"module_pin_drift: "+dep.Module+" tree="+treeVersion+" binary="+builtVersion)
 		}
 	}
 	return s
+}
+
+// addSourceWarning keeps a cached record from duplicating the same warning when
+// it is enriched again at run time.
+func addSourceWarning(s *schema.Source, message string) {
+	for _, existing := range s.Warnings {
+		if existing == message {
+			return
+		}
+	}
+	s.Warnings = append(s.Warnings, message)
 }
 
 func sameStrings(left, right []string) bool {

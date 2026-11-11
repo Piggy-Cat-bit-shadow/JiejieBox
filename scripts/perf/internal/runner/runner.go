@@ -661,57 +661,7 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 		record.GoodputMiBPerS = &goodput
 	}
 	if loadgen.Pattern(pattern) == loadgen.UDP {
-		mode := "unpaced"
-		if result.Paced {
-			mode = "paced"
-		}
-		udpRecord := &schema.UDP{
-			Sent:       result.DatagramsSent,
-			Received:   result.DatagramsReceived,
-			PacketSize: intPtr(packetSize),
-			Mode:       mode,
-		}
-		writes := result.DatagramWrites
-		unique := result.DatagramUnique
-		if writes > 0 {
-			lost := writes - unique
-			if lost < 0 {
-				lost = 0
-			}
-			udpRecord.Lost = int64Ptr(lost)
-			loss := float64(lost) / float64(writes) * 100
-			udpRecord.LossPercent = &loss
-			if seconds := result.SendWindow.Seconds(); seconds > 0 {
-				pps := float64(writes) / seconds
-				udpRecord.AchievedPPS = &pps
-			}
-		}
-		udpRecord.Attempts = int64Ptr(result.DatagramAttempts)
-		udpRecord.Writes = int64Ptr(writes)
-		udpRecord.Scheduled = int64Ptr(result.DatagramScheduled)
-		udpRecord.Skipped = int64Ptr(result.DatagramSkipped)
-		udpRecord.Unique = int64Ptr(unique)
-		udpRecord.Duplicate = int64Ptr(result.DatagramDuplicate)
-		udpRecord.OutOfOrder = int64Ptr(result.DatagramOutOfOrder)
-		udpRecord.Foreign = int64Ptr(result.DatagramForeign)
-		udpRecord.Stale = int64Ptr(result.DatagramStale)
-		if statsErr == nil {
-			udpRecord.TargetReceived = int64Ptr(stats.Datagrams)
-			udpRecord.Echoed = int64Ptr(stats.Echoed)
-		}
-		drainMS := float64(result.DrainDuration) / float64(time.Millisecond)
-		udpRecord.DrainMS = &drainMS
-		drainLastMS := float64(result.DrainLastReply) / float64(time.Millisecond)
-		udpRecord.DrainLastMS = &drainLastMS
-		drainComplete := result.DrainComplete
-		udpRecord.DrainComplete = &drainComplete
-		sendWindowMS := float64(result.SendWindow) / float64(time.Millisecond)
-		udpRecord.SendWindowMS = &sendWindowMS
-		if result.Jitter > 0 {
-			jitter := float64(result.Jitter) / float64(time.Millisecond)
-			udpRecord.JitterMS = &jitter
-		}
-		record.UDP = udpRecord
+		record.UDP = udpRecordFrom(result, stats, statsErr, packetSize)
 	}
 	if runErr != nil {
 		record.Warnings = append(record.Warnings, runErr.Error())
@@ -1210,6 +1160,70 @@ func envFloat(name string) *float64 {
 }
 
 func intPtr(value int) *int { return &value }
+
+// udpRecordFrom turns the loader's UDP accounting into the schema block. Loss is
+// only claimed when the drain was demonstrably long enough to see the tail; with
+// a truncated drain the lost/loss fields stay null rather than invent a number.
+func udpRecordFrom(result loadgen.Result, stats target.Stats, statsErr error, packetSize int) *schema.UDP {
+	mode := "unpaced"
+	if result.Paced {
+		mode = "paced"
+	}
+	record := &schema.UDP{
+		Sent:       result.DatagramsSent,
+		Received:   result.DatagramsReceived,
+		PacketSize: intPtr(packetSize),
+		Mode:       mode,
+	}
+	writes := result.DatagramWrites
+	unique := result.DatagramUnique
+	if result.DrainComplete && writes > 0 {
+		lost := writes - unique
+		if lost < 0 {
+			lost = 0
+		}
+		record.Lost = int64Ptr(lost)
+		loss := float64(lost) / float64(writes) * 100
+		record.LossPercent = &loss
+	}
+	if seconds := result.SendWindow.Seconds(); seconds > 0 && writes > 0 && result.Paced {
+		pps := float64(writes) / seconds
+		record.AchievedPPS = &pps
+	}
+	record.Attempts = int64Ptr(result.DatagramAttempts)
+	record.Writes = int64Ptr(writes)
+	if result.Paced {
+		record.Scheduled = int64Ptr(result.DatagramScheduled)
+		record.Skipped = int64Ptr(result.DatagramSkipped)
+	}
+	record.Returned = int64Ptr(result.DatagramReturned)
+	record.Unique = int64Ptr(unique)
+	record.Duplicate = int64Ptr(result.DatagramDuplicate)
+	record.OutOfOrder = int64Ptr(result.DatagramOutOfOrder)
+	record.Foreign = int64Ptr(result.DatagramForeign)
+	record.Stale = int64Ptr(result.DatagramStale)
+	if statsErr == nil {
+		record.TargetReceived = int64Ptr(stats.Datagrams)
+		record.Echoed = int64Ptr(stats.Echoed)
+	}
+	drainMS := float64(result.DrainDuration) / float64(time.Millisecond)
+	record.DrainMS = &drainMS
+	sendEndToLastReplyMS := float64(result.DrainLastReply) / float64(time.Millisecond)
+	record.SendEndToLastReplyMS = &sendEndToLastReplyMS
+	drainComplete := result.DrainComplete
+	record.DrainComplete = &drainComplete
+	sentWindowMS := float64(result.SendWindow) / float64(time.Millisecond)
+	record.SentWindowMS = &sentWindowMS
+	allReturned := result.AllReturned
+	record.AllReturned = &allReturned
+	aborted := result.Aborted
+	record.Aborted = &aborted
+	if result.Jitter > 0 {
+		jitter := float64(result.Jitter) / float64(time.Millisecond)
+		record.JitterMS = &jitter
+	}
+	return record
+}
 
 // quiesceTarget waits until the target's datagram counter has been unchanged for
 // a short window, so warmup traffic still in flight cannot be counted as part of
