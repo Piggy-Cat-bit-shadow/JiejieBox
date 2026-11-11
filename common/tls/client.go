@@ -208,6 +208,23 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	return conn, dialErr
 }
 
+// connectionHandoff is implemented by a handshake error whose connection is still
+// owned by the handshake implementation and must not be closed by the caller.
+//
+// REALITY needs it: when verification fails it answers like the camouflage site and
+// performs that exchange on the same socket after the failure is reported, so the
+// caller closing the socket would abort the very exchange that makes the failure look
+// like an ordinary TLS client. The handshake implementation closes the socket when
+// its fallback ends.
+type connectionHandoff interface {
+	ConnectionHandedOff() bool
+}
+
+func isHandedOff(err error) bool {
+	var handoff connectionHandoff
+	return errors.As(err, &handoff) && handoff.ConnectionHandedOff()
+}
+
 func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {
 	conn, err := d.dialer.DialContext(ctx, N.NetworkTCP, destination)
 	if err != nil {
@@ -215,7 +232,9 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	}
 	tlsConn, err := aTLS.ClientHandshake(ctx, conn, d.config)
 	if err != nil {
-		conn.Close()
+		if !isHandedOff(err) {
+			conn.Close()
+		}
 		var echErr *tls.ECHRejectionError
 		if echRetry && errors.As(err, &echErr) && len(echErr.RetryConfigList) > 0 {
 			if echConfig, isECH := d.config.(ECHCapableConfig); isECH {

@@ -241,11 +241,29 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 
 	if !verifier.verified {
 		go realityClientFallback(e.ctx, uConn, e.uClient.ServerName(), e.uClient.id)
-		return nil, E.New("reality verification failed")
+		return nil, &realityFallbackError{cause: E.New("reality verification failed")}
 	}
 
 	return &realityClientConnWrapper{uConn}, nil
 }
+
+// realityFallbackError reports a failed REALITY verification whose connection is
+// still alive: the camouflage exchange runs on it, and the caller must not close it.
+//
+// The fallback closes the socket when it finishes. Without the handoff marker the
+// shared TLS dialer closed the connection immediately after this error, so the
+// camouflage request raced a closed socket - the failure a prober would see was an
+// abrupt close, which is exactly what REALITY's fallback exists to avoid.
+type realityFallbackError struct {
+	cause error
+}
+
+func (e *realityFallbackError) Error() string { return e.cause.Error() }
+
+func (e *realityFallbackError) Unwrap() error { return e.cause }
+
+// ConnectionHandedOff reports that the connection has another owner.
+func (e *realityFallbackError) ConnectionHandedOff() bool { return true }
 
 // prepareFirstFlight completes the REALITY greeting: ALPN, the sealed session_id and the auth key.
 //
@@ -338,6 +356,14 @@ func (e *RealityClientConfig) prepareFirstFlight(uConn *utls.UConn, uConfig *utl
 
 func realityClientFallback(ctx context.Context, uConn net.Conn, serverName string, fingerprint utls.ClientHelloID) {
 	defer uConn.Close()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// The fallback now owns the socket, so it also owns the bound on it: a stalled
+	// camouflage site must not keep a connection (and this goroutine) alive past the
+	// ordinary connect budget.
+	ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
+	defer cancel()
 	client := &http.Client{
 		Transport: &http2.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string, config *tls.Config) (net.Conn, error) {
@@ -358,6 +384,7 @@ func realityClientFallback(ctx context.Context, uConn net.Conn, serverName strin
 	if err != nil {
 		return
 	}
+	request = request.WithContext(ctx)
 	request.Header.Set("User-Agent", fingerprint.Client)
 	request.AddCookie(&http.Cookie{Name: "padding", Value: strings.Repeat("0", mRand.Intn(32)+30)})
 	response, err := client.Do(request)

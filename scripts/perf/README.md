@@ -38,6 +38,13 @@ cd scripts/perf && go build -o "$HOME/perf/bin/perflab" ./cmd/perflab
 scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --out "$HOME/perf/results" \
   --reps 5 --streams 1,4 --duration 5s
 
+# 5a. diagnostic: space stream starts inside one phase. A cell that fails only at
+#     zero spacing is failing because the handshakes overlap, not because of the
+#     transfer path (this is how stage 2 narrowed the userspace WireGuard failure)
+"$HOME/perf/bin/perflab" run -scenario scripts/perf/scenarios/wireguard-endpoint \
+  -out /tmp/perf -bin-lab "$HOME/perf/bin/sing-box" \
+  -pattern upload -streams 2 -duration 5s -warmup 1s -reps 2 -stagger 1s
+
 # 5b. XHTTP cells need a reference Xray server; without --xray they are recorded
 #     as skipped instead of being run against no server
 scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --out "$HOME/perf/results" \

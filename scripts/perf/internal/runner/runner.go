@@ -34,8 +34,11 @@ type Options struct {
 	Warmup      time.Duration
 	Reps        int
 	Verify      bool
-	Quiet       bool
-	Logf        func(format string, args ...any)
+	// Stagger spaces stream starts inside one phase; a diagnostic for "does the
+	// failure need simultaneous handshakes". Zero means all streams start together.
+	Stagger time.Duration
+	Quiet   bool
+	Logf    func(format string, args ...any)
 }
 
 // Outcome is what a run produced.
@@ -563,6 +566,7 @@ func measureRep(sess *session, runID, pattern string, streams, rep int, duration
 		PingPongBytes: 1024,
 		PacketSize:    1200,
 		Verify:        opts.Verify,
+		Stagger:       opts.Stagger,
 	}
 
 	if warmup > 0 {

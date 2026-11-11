@@ -137,6 +137,7 @@ func runScenario(args []string) error {
 	warmup := flags.Duration("warmup", 0, "warmup window per repetition")
 	reps := flags.Int("reps", 0, "repetitions per cell")
 	verify := flags.Bool("verify", true, "verify payload integrity")
+	stagger := flags.Duration("stagger", 0, "space stream starts by this much (diagnostic: does the failure need simultaneous handshakes)")
 	quiet := flags.Bool("quiet", false, "only print the run directory")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -158,6 +159,7 @@ func runScenario(args []string) error {
 		Warmup:      *warmup,
 		Reps:        *reps,
 		Verify:      *verify,
+		Stagger:     *stagger,
 	}
 	if !*quiet {
 		started := time.Now()

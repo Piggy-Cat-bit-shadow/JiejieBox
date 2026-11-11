@@ -51,6 +51,10 @@ type Config struct {
 	// before its socket deadline fires. A probe sets it low so a stalled tunnel
 	// fails fast instead of looking like a slow one.
 	IOGrace time.Duration
+	// Stagger delays stream N by N*Stagger before it starts, so a diagnostic run
+	// can separate "concurrent handshakes fail" from "the transfer path fails".
+	// Zero starts every stream together, which is what a throughput cell wants.
+	Stagger time.Duration
 }
 
 // Result is what one load phase observed.
@@ -140,6 +144,15 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		wg.Add(1)
 		go func(stream int) {
 			defer wg.Done()
+			if cfg.Stagger > 0 && stream > 0 {
+				startTimer := time.NewTimer(time.Duration(stream) * cfg.Stagger)
+				select {
+				case <-ctx.Done():
+					startTimer.Stop()
+					return
+				case <-startTimer.C:
+				}
+			}
 			switch cfg.Pattern {
 			case Upload:
 				record(uploadStream(cfg, deadline, stream, &sent, latencies))
