@@ -187,12 +187,16 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 		class = resourceguard.ClassInteractive
 	}
-	started := time.Now()
 	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, class)
 	if err != nil {
 		return nil, err
 	}
 	defer permit.Release()
+	// The clock starts after the permit, not before it: queueing at the gate is this process's own
+	// backpressure, and counting it as creation time would hide a genuinely fast failure behind a
+	// wait the far side never caused. With the clock outside, a queued refusal looked slower than
+	// the fast-fail window and never armed the rate limit.
+	started := time.Now()
 	// The marker goes into the context the dial runs with, not just the one this function
 	// returns. A detour, chain or fallback makes one logical dial re-enter this seam: the outer
 	// outbound's handshake dials through another outbound, which performs its own handshake.

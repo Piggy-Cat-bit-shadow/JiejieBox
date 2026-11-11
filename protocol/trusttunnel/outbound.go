@@ -164,11 +164,14 @@ func admitSession(guard *resourceguard.Guard) func(context.Context) (context.Con
 		if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 			class = resourceguard.ClassInteractive
 		}
-		started := time.Now()
 		permit, err := guard.Acquire(ctx, class)
 		if err != nil {
 			return nil, nil, err
 		}
+		// Start the creation clock after the permit: time spent queueing at the gate is this
+		// process's backpressure, and charging it to the far side keeps the fast-fail rate limit
+		// disarmed while the gate is saturated.
+		started := time.Now()
 		return resourceguard.WithHeldPermit(ctx), func(dialErr error) {
 			guard.ObserveOutcome(started, dialErr)
 			permit.Release()
