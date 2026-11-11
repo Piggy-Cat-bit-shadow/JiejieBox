@@ -598,10 +598,11 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 				continue
 			}
 			//goland:noinspection GoDeprecation
-			if action.OverrideDestination && M.IsDomainName(metadata.Domain) {
-				metadata.Destination = M.Socksaddr{
-					Fqdn: metadata.Domain,
-					Port: metadata.Destination.Port,
+			if action.OverrideDestination {
+				// A rewritten destination is a different target: the address evidence produced for the
+				// previous one (matching-only and dial candidates alike) stops describing this flow.
+				if _, dropped := applySniffOverride(&metadata); dropped {
+					r.logger.DebugContext(ctx, "sniff override to ", metadata.Domain, " dropped the address evidence of the previous target")
 				}
 			}
 			if metadata.Domain != "" && metadata.Client != "" {
@@ -742,6 +743,58 @@ func applyActionRouteOptions(metadata *adapter.InboundContext, action adapter.Ru
 	return true
 }
 
+// invalidateResolvedAddressEvidence drops the per-flow address evidence that belongs to the target
+// the flow HAD, and reports whether there was any.
+//
+// # Why both lists move together
+//
+// Address evidence describes ONE destination. `DestinationAddresses` is the dial candidate list a
+// plain `resolve` published, `MatchAddresses` is what a `match_only` resolve published for rule
+// matching - two publications of the same observation, not two independent caches. When a rule
+// changes the flow's destination, neither describes the flow any more:
+//
+//   - a stale `MatchAddresses` would let `ip_cidr` / `ip_is_private` judge the NEW target with the
+//     OLD target's addresses (the same flow could be rejected or routed by a name it no longer
+//     dials);
+//   - a stale `DestinationAddresses` would keep dialling the old name's address for the new name.
+//
+// # What it deliberately does not touch
+//
+// Only the two address lists. `OriginDestination`, `RouteOriginalDestination`, `Domain`, the DNS
+// response cache (`DNSResponse` / `NamedDNSResponses`) and the source metadata all describe
+// different facts and keep their meaning across a rewrite.
+func invalidateResolvedAddressEvidence(metadata *adapter.InboundContext) bool {
+	hadEvidence := len(metadata.DestinationAddresses) > 0 || len(metadata.MatchAddresses) > 0
+	metadata.DestinationAddresses = nil
+	metadata.MatchAddresses = nil
+	return hadEvidence
+}
+
+// applySniffOverride applies the legacy `override_destination` rewrite to the flow's destination and
+// reports whether the destination's IDENTITY changed and whether the previous target's address
+// evidence had to be dropped.
+//
+// The two questions are separate on purpose. A sniff that merely confirms the name the client already
+// used rewrites nothing (`rewritten == metadata.Destination`), so the evidence produced for that same
+// name is still valid and must not be thrown away; a sniff that replaces the target makes every
+// address observation about the previous target stale. The port is preserved, which is what makes the
+// comparison meaningful: only the name decides whether this is the same target.
+func applySniffOverride(metadata *adapter.InboundContext) (targetChanged bool, evidenceDropped bool) {
+	if !M.IsDomainName(metadata.Domain) {
+		return false, false
+	}
+	rewritten := M.Socksaddr{
+		Fqdn: metadata.Domain,
+		Port: metadata.Destination.Port,
+	}
+	if rewritten == metadata.Destination {
+		return false, false
+	}
+	evidenceDropped = invalidateResolvedAddressEvidence(metadata)
+	metadata.Destination = rewritten
+	return true, evidenceDropped
+}
+
 func applyRouteOptionsMetadata(metadata *adapter.InboundContext, routeOptions *R.RuleActionRouteOptions) {
 	// The original destination is captured before any rewrite, and only the first time: it records
 	// what the application asked for, which later rules must not overwrite.
@@ -749,11 +802,10 @@ func applyRouteOptionsMetadata(metadata *adapter.InboundContext, routeOptions *R
 		metadata.RouteOriginalDestination = metadata.Destination
 	}
 	if routeOptions.OverrideAddress.IsValid() {
-		// A resolved address list belongs to the pre-rewrite destination.
-		metadata.DestinationAddresses = nil
-		// So does an address published for matching only: after the rewrite it describes a target
-		// this flow no longer has, and leaving it would let an IP rule match the OLD destination.
-		metadata.MatchAddresses = nil
+		// A resolved address list belongs to the pre-rewrite destination, and so does an address
+		// published for matching only: after the rewrite they describe a target this flow no longer
+		// has, and leaving them would let an IP rule match the OLD destination or dial it.
+		invalidateResolvedAddressEvidence(metadata)
 	}
 	if routeOptions.OverrideAddress.IsValid() {
 		metadata.Destination = M.Socksaddr{
@@ -1506,10 +1558,11 @@ func (r *Router) actionSniff(
 		metadata.SniffError = err
 		if err == nil {
 			//goland:noinspection GoDeprecation
-			if action.OverrideDestination && M.IsDomainName(metadata.Domain) {
-				metadata.Destination = M.Socksaddr{
-					Fqdn: metadata.Domain,
-					Port: metadata.Destination.Port,
+			if action.OverrideDestination {
+				// Same target identity rule as the packet arm: evidence about the previous target must
+				// not judge (or dial) the rewritten one.
+				if _, dropped := applySniffOverride(metadata); dropped {
+					r.logger.DebugContext(ctx, "sniff override to ", metadata.Domain, " dropped the address evidence of the previous target")
 				}
 			}
 			if metadata.Domain != "" && metadata.Client != "" {
@@ -1712,10 +1765,11 @@ func (r *Router) actionSniff(
 	finally:
 		if err == nil {
 			//goland:noinspection GoDeprecation
-			if action.OverrideDestination && M.IsDomainName(metadata.Domain) {
-				metadata.Destination = M.Socksaddr{
-					Fqdn: metadata.Domain,
-					Port: metadata.Destination.Port,
+			if action.OverrideDestination {
+				// The packet arm of the same rewrite. A UoT/TUN datagram whose payload revealed a name
+				// gets a new target, so the previous target's address evidence is dropped here too.
+				if _, dropped := applySniffOverride(metadata); dropped {
+					r.logger.DebugContext(ctx, "sniff override to ", metadata.Domain, " dropped the address evidence of the previous target")
 				}
 			}
 			if metadata.Domain != "" && metadata.Client != "" {

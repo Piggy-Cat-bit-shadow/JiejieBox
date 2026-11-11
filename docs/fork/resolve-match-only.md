@@ -76,7 +76,8 @@ DNS 答案"看起来是公网"而丢失 `ip_is_private` 命中。
 | --- | --- |
 | 同一流再次普通 `resolve` | 清除 `MatchAddresses`（新的、用于拨号的答案更晚更权威）后写候选 |
 | 同一流再次 `resolve(match_only)` | 覆盖（最近一次匹配答案生效） |
-| `override_address` 改写目标 | 与 `DestinationAddresses` 一起清除（旧目标的地址不得judge新目标） |
+| sniff `override_destination` 改写目标（packet / stream / packet 全匹配三条执行点，当前配置面已移除该选项，代码保留防御） | 与 `DestinationAddresses` 一起清除；只有目标身份真的变了才清（同名确认不清） |
+| `override_address` 改写目标 | 与 `DestinationAddresses` 一起清除（旧目标的地址不得 judge 新目标） |
 | `override_port` | 保留（地址未变，仍描述同一目标） |
 | UoT / 每数据报目标（`packet_destination_guard`） | `childMetadata.MatchAddresses = nil`，会话的匹配证据不得用于另一个数据报 |
 | 解析失败 / 空回答 | `dns.Lookup` 把它们作为错误返回，动作报错、不发布任何结果；不会把空结果当成"任意匹配" |
@@ -110,20 +111,50 @@ DNS 答案"看起来是公网"而丢失 `ip_is_private` 命中。
 `proxy` 是 SOCKS/VMess/AnyTLS 等支持域名目标的出站时，`198.51.100.10` 只用于选中第一条规则，
 代理最终的请求仍是原始域名。若把 `match_only` 去掉，同一份配置下代理会收到 `198.51.100.10`。
 
-## 8. 已知局限与风险
+## 8. 语义边界与动作顺序
+
+`match_only` 的承诺是精确的，**不是**"启用后代理一定收到域名"：
+
+1. 它不发布新的 `DestinationAddresses`；
+2. 它自己的 `MatchAddresses` 绝不作为拨号候选；
+3. 此前已有动作发布的合法候选 **不会** 被它删除；
+4. 只有当"没有其他拨号候选 + 目标仍是域名 + 出站本身支持域名寻址"同时成立时，域名才直接进入该出站。
+
+因此出站的实际目标取决于该出站的能力和当前候选状态，而不是只看 `match_only`：
+
+- **命名目标 + 支持域名寻址的出站**：代理出站（SOCKS/VMess/AnyTLS 等）会把域名交给代理端解析；
+  带 `domain_resolver` 的 `direct` 也可以收到域名并用自己的解析器连接（e2e 的"不命中兜底"子用例就是
+  这个形态）。
+- **需要真实地址的路径**（FakeIP 占位地址交给 flow outbound、TUN native pre-match 的提交）：
+  `MatchAddresses` 不是拨号地址，不能伪装成 `DestinationAddresses`；这种组合会安全拒绝或继续用户态
+  处理，而不是把占位地址或匹配地址发出去。
+- **其他出站**：以它自己的 `DialContext`/域名能力为准，不要按类别名称猜测。
+
+### 连续 resolve 的顺序语义
+
+| 顺序 | `DestinationAddresses` | `MatchAddresses` | IP 规则依据 | 拨号依据 |
+| --- | --- | --- | --- | --- |
+| 普通 → `match_only` | 保留第一条的答案 | 覆盖为最新的匹配答案 | `MatchAddresses`（更新） | 仍是第一条的候选 |
+| `match_only` → 普通 | 由普通 resolve 重写 | 清除（被更晚的拨号解析取代） | `DestinationAddresses` | 普通 resolve 的候选 |
+
+两条顺序都有测试（`route::TestMatchOnlyAfterDialResolveKeepsCandidatesAndReplacesMatchingEvidence`、
+`route::TestDialResolveSupersedesMatchOnlyAnswer`）。这是刻意的：`match_only` 只改变"本动作的发布
+用途"，不追溯删除另一个合法动作的产物；文档必须让配置作者能预期这种结果。
+
+## 9. 已知局限与风险
 
 1. **本地答案不等于远端答案。** 匹配只代表"本地解析器观察到的结果"。代理端最终解析到的 IP 可能
    不同，因此基于 IP 的规则（尤其是私网/内网拒绝）不能当作远端目的的强制边界；需要强制阻断时应
    依赖真正的出站目标边界。
-2. **不能用于需要本地地址的出站。** `direct` 等流式出站、FakeIP 目标需要可拨号地址；`match_only`
-   不会提供，用户不能在这种组合上启用它（日志会明确说明）。
+2. **出站是否收到域名取决于能力与候选状态**，见 §8。`match_only` 本身不提供可拨号地址：FakeIP /
+   需要真实 IP 的 flow 路径会安全拒绝而不是伪装。
 3. **IP 字面量目标上相当于"不改变匹配"。** 嗅探域名解析出的地址不会取代真实目标，这是保守选择，
    见 §3。
 4. **`ip_version` 不参与。** 与既有 resolve 行为保持一致，避免 true/false 分叉。
 5. **没有新增缓存。** 每次 `resolve(match_only)` 仍然是一次真实的 DNS 查询（受既有 DNS 缓存约束）；
    本功能不引入第二次查询，也不引入全局状态。
 
-## 9. 证据（测试）
+## 10. 证据（测试）
 
 | 用例 | 断言 |
 | --- | --- |
@@ -143,12 +174,17 @@ DNS 答案"看起来是公网"而丢失 `ip_is_private` 命中。
 | `experimental/libbox::TestResolveActionStageTellsMatchingEvidenceFromDialCandidates` | 诊断报告的 resolve 阶段区分"匹配证据"与"拨号候选"，不把成功的匹配解析显示为"无地址" |
 | `route::TestFakeIPFlowRejectionExplainsMatchOnly` | FakeIP + 流式出站的拒绝原因区分"缺少 resolve 动作"与"resolve 用了 match_only" |
 | `route/rule::rule_match_addresses_test.go` | 正/反/优先级：CIDR、私网、字面量优先、来源规则、DNS 响应规则、`ip_version`、`preferred_by`、规则组、空证据 |
+| `route::TestMatchOnlyAfterDialResolveKeepsCandidatesAndReplacesMatchingEvidence` | 反向顺序：普通 resolve → match_only，候选保留、匹配用最新答案 |
+| `route::TestApplySniffOverrideDropsEvidenceOnlyWhenTheTargetChanges` 等 | 目标身份：sniff 改写才清证据；同名确认/无域名/端口改写不清 |
+| `route::TestSniffOverrideInvalidatesEvidenceOnTheStreamArm` / `OnThePacketArm` | 两条 sniff 改写执行点（TLS ClientHello / QUIC Initial）都清除旧目标证据；关闭重写时保留 |
+| `route::TestPreMatchSniffOverrideDropsEvidenceBeforeTheNextRule` | 预匹配 walk：改写后旧答案不再触发 CIDR 规则；对照（规则在改写前）仍触发 |
+| `route::TestSniffActionFromConfigurationNeverEnablesOverrideDestination` | 可达性事实：当前配置面无法打开该重写，三个分支属于防御性保留 |
 | `option::TestResolveActionMatchOnlyDecodes/Roundtrips/Omitted` | JSON 解析、roundtrip、非法类型与省略/`false` 等价 |
 
 运行侧证据：`go test ./route`（446s）、`./e2e` 全包、`-race`（route/rule、route 定向、e2e 定向）全部通过；
 `IPCIDRItem.Match` 三条路径 0 allocs/op；25s fuzz（12.5 万次执行）未发现 panic 或 `match_only` 误置位。
 
-## 10. 与 donor 的关系
+## 11. 与 donor 的关系
 
 `match_only` 这个字段名与"匹配/拨号分离"的思路来自
 [reF1nd/sing-box](https://github.com/reF1nd/sing-box)（分支 `reF1nd-testing`，GPL-3.0-or-later）：
