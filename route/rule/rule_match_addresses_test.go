@@ -195,6 +195,30 @@ func TestIPVersionIgnoresMatchOnlyAddresses(t *testing.T) {
 		"a named destination has no family of its own; ip_version must not read matching evidence")
 }
 
+// An IP `rule_set` compiles to the same IPCIDRItem, so the answer must select the SET too - the
+// modern rule syntax is where most users express "route cn IPs directly", and a feature that only
+// worked for inline `ip_cidr` would be half a feature.
+func TestRuleSetIPConditionReadsMatchOnlyAddresses(t *testing.T) {
+	ipItem := mustCIDRItem(t, "198.51.100.0/24")
+	ruleSet := newLocalRuleSetForTest("match-only-set", headlessDefaultRule(t, func(rule *abstractDefaultRule) {
+		rule.destinationIPCIDRItems = append(rule.destinationIPCIDRItems, ipItem)
+		rule.allItems = append(rule.allItems, ipItem)
+	}))
+	item := &RuleSetItem{setList: []adapter.RuleSet{ruleSet}}
+
+	matching := &adapter.InboundContext{
+		Destination:    domainDestination("ruleset.example"),
+		MatchAddresses: []netip.Addr{netip.MustParseAddr("198.51.100.10")},
+	}
+	require.True(t, item.Match(matching), "a matching answer must select the rule set")
+
+	notMatching := &adapter.InboundContext{
+		Destination:    domainDestination("ruleset.example"),
+		MatchAddresses: []netip.Addr{netip.MustParseAddr("203.0.113.9")},
+	}
+	require.False(t, item.Match(notMatching), "a non-matching answer must not select it")
+}
+
 // preferredAddressOutbound is only the PreferredAddress half of an outbound; the embedded interface
 // supplies the rest, which this test never reaches.
 type preferredAddressOutbound struct {

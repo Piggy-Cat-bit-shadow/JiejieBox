@@ -2,6 +2,7 @@ package route
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"testing"
 
@@ -25,6 +26,7 @@ import (
 type countingDNS struct {
 	adapter.DNSRouter
 	addresses []netip.Addr
+	err       error
 	calls     int
 	domains   []string
 }
@@ -32,7 +34,7 @@ type countingDNS struct {
 func (r *countingDNS) Lookup(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
 	r.calls++
 	r.domains = append(r.domains, domain)
-	return r.addresses, nil
+	return r.addresses, r.err
 }
 
 func newResolveTestRouter(resolver adapter.DNSRouter) *Router {
@@ -210,6 +212,40 @@ func TestNewRuleActionCarriesAndDescribesMatchOnly(t *testing.T) {
 		"an action without the option must not claim it")
 	require.Equal(t, "resolve", plainAction.String(),
 		"and the default form must stay exactly what it was")
+}
+
+// A failed lookup publishes NOTHING. The action's error aborts the flow (the existing contract for
+// every resolve action), and a half-published or retained answer would be worse than the error:
+// rules would decide on evidence this target never produced.
+func TestResolveMatchOnlyFailurePublishesNothing(t *testing.T) {
+	resolver := &countingDNS{err: errors.New("lookup failed")}
+	router := newResolveTestRouter(resolver)
+	metadata := &adapter.InboundContext{
+		Destination:          M.Socksaddr{Fqdn: "fails.example", Port: 443},
+		DestinationAddresses: []netip.Addr{netip.MustParseAddr("203.0.113.9")},
+	}
+
+	err := router.actionResolve(context.Background(), metadata, &R.RuleActionResolve{MatchOnly: true})
+	require.Error(t, err, "the lookup's failure must reach the caller")
+	require.Empty(t, metadata.MatchAddresses, "a failed lookup must not publish matching evidence")
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("203.0.113.9")}, metadata.DestinationAddresses,
+		"and must not touch candidates another action legitimately produced")
+}
+
+// An EMPTY answer replaces the old evidence instead of leaving it in place. The production DNS
+// router reports "empty result" as an error, so this shape is what a different resolver
+// implementation can produce - and the field must not become "keep whatever matched last time".
+func TestResolveMatchOnlyEmptyAnswerClearsStaleEvidence(t *testing.T) {
+	resolver := &countingDNS{addresses: []netip.Addr{}}
+	router := newResolveTestRouter(resolver)
+	metadata := &adapter.InboundContext{
+		Destination:    M.Socksaddr{Fqdn: "empty.example", Port: 443},
+		MatchAddresses: []netip.Addr{netip.MustParseAddr("10.0.0.7")},
+	}
+
+	require.NoError(t, router.actionResolve(context.Background(), metadata, &R.RuleActionResolve{MatchOnly: true}))
+	require.Empty(t, metadata.MatchAddresses,
+		"an empty answer must clear the previous one, not leave a stale address matching rules")
 }
 
 // Matching evidence must never be what lets a flow skip the userspace path: a bypass would hand the
