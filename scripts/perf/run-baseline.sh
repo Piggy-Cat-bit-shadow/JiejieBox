@@ -177,5 +177,17 @@ done
 echo "" >> "$matrix"
 echo "]" >> "$matrix"
 
+# Every run this matrix produced must satisfy the run schema before the matrix is
+# handed to a report. A missing validator is reported as unavailable, not as a
+# pass: the data is not claimed valid without a validation result.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import jsonschema' >/dev/null 2>&1; then
+  if ! python3 "$here/validate_runs.py" "$root"; then
+    echo "schema validation failed for run(s) under $root" >&2
+    exit 1
+  fi
+else
+  echo "warning: python3-jsonschema unavailable; run.json schema validation NOT performed" >&2
+fi
+
 echo "matrix: $matrix"
 echo "log:    $log"
