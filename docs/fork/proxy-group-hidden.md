@@ -92,14 +92,17 @@ Measured on `go1.25.5 windows/amd64`, build tags `release/DEFAULT_BUILD_TAGS_OTH
 | `go test ./route` (full package) | pass (one Windows `TempDir` cleanup flake on the first run, `TestAnUnreferencedRuleSetDropsItsRulesAtStartup`; passes alone on this tree and on the pristine tree, and the package passes on re-run) |
 | `go test -race` on the same packages | pass, no data race |
 | `staticcheck` on the touched packages | 21 findings, byte-identical to the pristine tree except two pre-existing line-number shifts; no new finding |
+| `golangci-lint` 2.14.0 with this repository's `.golangci.yml` | the finding set is byte-identical to the pristine tree, except two pre-existing `unused` findings whose line numbers moved because fields were inserted above them; no new finding |
 | `go test -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box` | pass; `docs/schema.json` regenerated, delta is `"hidden": {"type": "boolean"}` on the three group variants |
 | Mutation: filter condition forced false | the four daemon tests that assert the omission fail |
 | Mutation: capability *presence* used instead of its value | the tests that assert visible groups are listed fail |
 | `"route": {"final": "does-not-exist"}` | refused at start (`default outbound not found`), which is what makes `final` naming a hidden group evidence that it resolved |
 
-Not run here: `golangci-lint` (not installed on this host, and no workflow in this repository runs
-it; the components that matter were covered with `staticcheck` and `gofumpt`, whose only differences
-on the touched files are pre-existing at the baseline).
+`gofumpt` would reformat `protocol/group/selector.go` and `protocol/group/urltest.go`, and does so on
+the pristine tree as well; the only hunks are a blank line before `DialContext`, unrelated to this
+change, so those files were left as they are. No workflow in this repository runs the linter or the
+formatters, so none of the above is a gate; they were run because the Makefile exposes them and a
+display-only feature should not arrive with formatting or dead-code debt.
 
 ## Limits
 
