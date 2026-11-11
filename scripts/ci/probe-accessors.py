@@ -265,6 +265,26 @@ def compile_receiver(pattern, owner, method):
         )
 
 
+def declared_function_names(path, lang):
+    """Function names declared in one file, to reject local-shadow false positives.
+
+    Swift `func message(...)` and Kotlin `fun Foo.message(...)` both declare a name that the
+    unqualified-call branch cannot attribute to libbox: the sweep is lexical and does not
+    resolve types, so a test helper named `message` was reported as a call to
+    DeprecatedNote.Message. This only suppresses the bare-call shape inside the file that
+    declares the name; a dotted receiver must still classify.
+    """
+    if lang == "swift":
+        pattern = r"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)"
+    else:
+        pattern = r"\bfun\s+(?:<[^>]*>\s*)?(?:[A-Za-z_][A-Za-z0-9_.<>?]*\.)?([A-Za-z_][A-Za-z0-9_]*)"
+    names = set()
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            names.update(re.findall(pattern, line))
+    return names
+
+
 def is_comment(text):
     """True for a line whose content is a comment or a doc-comment continuation.
 
@@ -345,6 +365,7 @@ def probe(root, lang, records):
     call_args = r"\(([^()]*(?:\([^()]*\)[^()]*)*)\)"
 
     violations = []
+    declared_by_path = {path: declared_function_names(path, lang) for path in sources}
     for record in records:
         method = record["javamethod"]
         res_pattern = record["kotlin_res"] if lang == "kotlin" else record["swift_res"]
@@ -371,6 +392,8 @@ def probe(root, lang, records):
                         qualified = head.endswith(".")
                         argument = bool(re.search(r"[(,]\s*$", head))
                         if not (qualified or argument):
+                            continue
+                        if not qualified and method in declared_by_path[path]:
                             continue
                         if not receiver_is_bound(compiled, prefix, method):
                             continue
