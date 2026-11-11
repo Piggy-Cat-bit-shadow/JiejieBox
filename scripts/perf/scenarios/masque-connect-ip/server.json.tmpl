@@ -1,0 +1,33 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "endpoints": [
+    {
+      "type": "masque-server",
+      "tag": "masque",
+      "listen": "__SERVER_ADDR__",
+      "listen_port": __SERVER_PORT__,
+      "system": false,
+      "mtu": 1400,
+      "users": [
+        {"username": "bench", "password": "__PASSWORD__"}
+      ],
+      "address": ["10.8.0.1/24"],
+      "version": [3],
+      "tls": {
+        "enabled": true,
+        "server_name": "__SERVER_NAME__",
+        "certificate_path": "__CERT__",
+        "key_path": "__KEY__",
+        "alpn": ["h3"]
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {
+    "rules": [
+      {"inbound": ["masque"], "action": "route", "outbound": "direct"}
+    ]
+  }
+}

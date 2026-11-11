@@ -1,0 +1,23 @@
+{
+  "id": "trusttunnel-h2",
+  "protocol": "trusttunnel",
+  "mode": "h2",
+  "transport": "http2",
+  "security": "tls",
+  "description": "TrustTunnel over HTTP/2 with TLS. The udp pattern is TrustTunnel's UDP-over-HTTP-stream framing, which is a reliable stream carrying datagrams and not QUIC datagrams.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"tcp": "__SERVER_ADDR__:__SERVER_PORT__"}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "udp"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

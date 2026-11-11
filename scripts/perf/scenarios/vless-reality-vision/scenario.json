@@ -1,0 +1,27 @@
+{
+  "id": "vless-reality-vision",
+  "protocol": "vless",
+  "mode": "reality-vision",
+  "transport": "tcp",
+  "security": "reality",
+  "description": "VLESS + REALITY + XTLS Vision over TCP. The REALITY handshake target is a local TLS cover server started by the lab, so the cell needs no public site and the camouflage path is exercised with a real certificate. Compare against vless-vision-tcp for the cost of REALITY itself.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"tcp": "__SERVER_ADDR__:__SERVER_PORT__"}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "extra": {
+    "handshake_target": "lab TLS cover server",
+    "comparison": "vless-vision-tcp"
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "connect"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

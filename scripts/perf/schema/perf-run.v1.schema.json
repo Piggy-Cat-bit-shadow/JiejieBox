@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jiejiebox.local/schema/perf-run.v1.schema.json",
+  "title": "JiejieBox performance run",
+  "description": "One performance run: one scenario, one kernel build, one network profile. A null value means 'not measured'; it never means zero.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "kind", "started_at", "source", "host", "network", "scenario", "reps"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "perf-run/v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["e2e", "micro"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": ["string", "null"], "format": "date-time"},
+    "method": {"type": "string"},
+    "source": {"$ref": "#/$defs/source"},
+    "host": {"$ref": "#/$defs/host"},
+    "network": {"$ref": "#/$defs/network"},
+    "scenario": {"$ref": "#/$defs/scenario"},
+    "environment": {
+      "type": "array",
+      "items": {"type": "object", "required": ["name", "value"],
+                "properties": {"name": {"type": "string"}, "value": {"type": "string"}},
+                "additionalProperties": false}
+    },
+    "reps": {"type": "array", "items": {"$ref": "#/$defs/rep"}},
+    "summary": {"type": "array", "items": {"$ref": "#/$defs/summary"}},
+    "artifacts": {"$ref": "#/$defs/artifacts"},
+    "failures": {"type": "array", "items": {"$ref": "#/$defs/failure"}},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["dirty", "cgo_enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "repo": {"type": "string"},
+        "branch": {"type": "string"},
+        "commit": {"type": "string"},
+        "commit_subject": {"type": "string"},
+        "commit_time": {"type": "string"},
+        "dirty": {"type": ["boolean", "null"]},
+        "dirty_files": {"type": "array", "items": {"type": "string"}},
+        "go_version": {"type": "string"},
+        "build_tags": {"type": "array", "items": {"type": "string"}},
+        "cgo_enabled": {"type": ["boolean", "null"]},
+        "modules": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "host": {
+      "type": "object",
+      "required": ["os", "arch", "wsl", "sampling_interval_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "os": {"type": "string"},
+        "arch": {"type": "string"},
+        "kernel": {"type": "string"},
+        "distro": {"type": "string"},
+        "distro_version": {"type": "string"},
+        "wsl": {"type": "boolean"},
+        "wsl_kernel_release": {"type": "string"},
+        "glibc": {"type": "string"},
+        "cpu_model": {"type": "string"},
+        "cpu_cores": {"type": "integer"},
+        "mem_total_bytes": {"type": ["integer", "null"]},
+        "clk_tck": {"type": ["integer", "null"]},
+        "sampling_interval_ms": {"type": "integer"},
+        "sample_limit_note": {"type": "string"}
+      }
+    },
+    "network": {
+      "type": "object",
+      "required": ["topology"],
+      "additionalProperties": false,
+      "properties": {
+        "topology": {"type": "string"},
+        "profile": {"type": "string"},
+        "delay_ms": {"type": ["number", "null"], "description": "one-way delay applied per direction"},
+        "jitter_ms": {"type": ["number", "null"]},
+        "loss_percent": {"type": ["number", "null"], "description": "loss applied per direction"},
+        "bandwidth_mbps": {"type": ["number", "null"]},
+        "mtu": {"type": ["integer", "null"]},
+        "qdiscs": {"type": "array", "items": {"$ref": "#/$defs/qdisc"}},
+        "interfaces": {"type": "array", "items": {"$ref": "#/$defs/interface"}},
+        "namespace": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    },
+    "qdisc": {
+      "type": "object",
+      "required": ["device", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "device": {"type": "string"},
+        "kind": {"type": "string"},
+        "parent": {"type": "string"},
+        "args": {"type": "string"}
+      }
+    },
+    "interface": {
+      "type": "object",
+      "required": ["name", "mtu"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "mtu": {"type": "integer"},
+        "addresses": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["id", "protocol"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "protocol": {"type": "string"},
+        "mode": {"type": "string"},
+        "transport": {"type": "string"},
+        "security": {"type": "string"},
+        "server_version": {"type": "string"},
+        "client_version": {"type": "string"},
+        "server_config": {"type": "string"},
+        "client_config": {"type": "string"},
+        "extra": {"type": "object"}
+      }
+    },
+    "rep": {
+      "type": "object",
+      "required": ["index", "streams", "pattern", "payload_bytes", "duration_seconds", "goodput_mib_per_s"],
+      "additionalProperties": false,
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "streams": {"type": "integer", "minimum": 1},
+        "pattern": {"enum": ["upload", "download", "duplex", "pingpong", "connect", "udp"]},
+        "payload_bytes": {"type": "integer", "minimum": 0},
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "goodput_mib_per_s": {"type": ["number", "null"]},
+        "wire": {"$ref": "#/$defs/wire"},
+        "latency": {"$ref": "#/$defs/latency"},
+        "udp": {"$ref": "#/$defs/udp"},
+        "client": {"$ref": "#/$defs/proc"},
+        "server": {"$ref": "#/$defs/proc"},
+        "loadgen": {"$ref": "#/$defs/proc"},
+        "integrity": {"$ref": "#/$defs/integrity"},
+        "extra": {"type": "object"},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "wire": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tx_bytes": {"type": ["integer", "null"]},
+        "rx_bytes": {"type": ["integer", "null"]},
+        "tx_packets": {"type": ["integer", "null"]},
+        "rx_packets": {"type": ["integer", "null"]},
+        "gbit_per_s": {"type": ["number", "null"]},
+        "pps": {"type": ["number", "null"]},
+        "overhead_ratio": {"type": ["number", "null"]},
+        "source": {"type": "string"}
+      }
+    },
+    "latency": {
+      "type": "object",
+      "required": ["count"],
+      "additionalProperties": false,
+      "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "min_ms": {"type": ["number", "null"]},
+        "p50_ms": {"type": ["number", "null"]},
+        "p95_ms": {"type": ["number", "null"]},
+        "p99_ms": {"type": ["number", "null"]},
+        "max_ms": {"type": ["number", "null"]},
+        "mean_ms": {"type": ["number", "null"]}
+      }
+    },
+    "udp": {
+      "type": "object",
+      "required": ["sent", "received"],
+      "additionalProperties": false,
+      "properties": {
+        "sent": {"type": "integer"},
+        "received": {"type": "integer"},
+        "lost": {"type": ["integer", "null"]},
+        "loss_percent": {"type": ["number", "null"]},
+        "jitter_ms": {"type": ["number", "null"]},
+        "packet_size": {"type": ["integer", "null"]}
+      }
+    },
+    "proc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pid": {"type": "integer"},
+        "cpu_seconds": {"type": ["number", "null"]},
+        "user_seconds": {"type": ["number", "null"]},
+        "sys_seconds": {"type": ["number", "null"]},
+        "cpu_seconds_per_gib": {"type": ["number", "null"]},
+        "rss_start_bytes": {"type": ["integer", "null"]},
+        "rss_end_bytes": {"type": ["integer", "null"]},
+        "rss_peak_bytes": {"type": ["integer", "null"]},
+        "threads_peak": {"type": ["integer", "null"]},
+        "fds_peak": {"type": ["integer", "null"]},
+        "samples": {"type": "integer"},
+        "cpu_source": {"type": "string"},
+        "go_heap_peak_bytes": {"type": ["integer", "null"]},
+        "exit_code": {"type": ["integer", "null"]}
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["verified_bytes", "ok"],
+      "additionalProperties": false,
+      "properties": {
+        "verified_bytes": {"type": "integer"},
+        "ok": {"type": "boolean"},
+        "detail": {"type": "string"}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["metric", "unit", "n"],
+      "additionalProperties": false,
+      "properties": {
+        "metric": {"type": "string"},
+        "unit": {"type": "string"},
+        "streams": {"type": "integer"},
+        "pattern": {"type": "string"},
+        "n": {"type": "integer"},
+        "median": {"type": ["number", "null"]},
+        "mad": {"type": ["number", "null"]},
+        "min": {"type": ["number", "null"]},
+        "max": {"type": ["number", "null"]},
+        "p95": {"type": ["number", "null"]},
+        "p99": {"type": ["number", "null"]}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_json": {"type": "string"},
+        "summary_md": {"type": "string"},
+        "client_config": {"type": "string"},
+        "server_config": {"type": "string"},
+        "client_log": {"type": "string"},
+        "server_log": {"type": "string"},
+        "profiles": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": ["stage", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "stage": {"type": "string"},
+        "message": {"type": "string"},
+        "exit_code": {"type": ["integer", "null"]},
+        "log_path": {"type": "string"},
+        "class": {"type": "string"}
+      }
+    }
+  }
+}

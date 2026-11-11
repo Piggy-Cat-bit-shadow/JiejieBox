@@ -1,0 +1,47 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "wg",
+      "system": false,
+      "mtu": 1280,
+      "address": ["198.18.17.2/32"],
+      "private_key": "__WG_CLIENT_PRIVATE__",
+      "jc": 5,
+      "jmin": 50,
+      "jmax": 100,
+      "s1": 24,
+      "s2": 24,
+      "h1": 1234567890,
+      "h2": 1234567891,
+      "h3": 1234567892,
+      "h4": 1234567893,
+      "peers": [
+        {
+          "address": "__SERVER_ADDR__",
+          "port": __SERVER_PORT__,
+          "public_key": "__WG_SERVER_PUBLIC__",
+          "allowed_ips": ["198.18.17.1/32"],
+          "persistent_keepalive_interval": 1
+        }
+      ]
+    }
+  ],
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "__CLIENT_ADDR__",
+      "listen_port": __CLIENT_PORT__
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {
+    "rules": [
+      {"inbound": ["socks-in"], "action": "route", "outbound": "wg", "override_address": "198.18.17.1"}
+    ]
+  }
+}

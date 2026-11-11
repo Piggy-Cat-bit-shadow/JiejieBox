@@ -1,0 +1,30 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "__SERVER_ADDR__",
+      "listen_port": __SERVER_PORT__,
+      "users": [
+        {"name": "bench", "uuid": "__UUID__", "flow": "xtls-rprx-vision"}
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "__SERVER_NAME__",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "127.0.0.1",
+            "server_port": __COVER_PORT__
+          },
+          "private_key": "__REALITY_PRIVATE__",
+          "short_id": ["__SHORT_ID__"]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}

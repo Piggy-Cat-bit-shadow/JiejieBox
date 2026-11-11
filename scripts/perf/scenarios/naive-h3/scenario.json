@@ -1,0 +1,28 @@
+{
+  "id": "naive-h3",
+  "protocol": "naive",
+  "mode": "h3",
+  "transport": "http3",
+  "security": "tls",
+  "description": "Naive over HTTP/3 and QUIC. The server side is this repository's in-repo Naive inbound; the client is the Cronet-backed outbound carrying a QUIC tunnel. Same native engine as naive-h2 with a different transport; the pair is the native-dependency comparison.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"tcp": "__SERVER_ADDR__:__SERVER_PORT__"}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "extra": {
+    "native_dependency": "libcronet.so (Cronet 154.0.8037.49 via with_purego)",
+    "insecure_concurrency": 1,
+    "comparison": "naive-h2"
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "connect"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

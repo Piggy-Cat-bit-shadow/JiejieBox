@@ -1,0 +1,23 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "__SERVER_ADDR__",
+      "listen_port": __SERVER_PORT__,
+      "users": [
+        {"name": "bench", "uuid": "__UUID__", "flow": "xtls-rprx-vision"}
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "__SERVER_NAME__",
+        "certificate_path": "__CERT__",
+        "key_path": "__KEY__"
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}

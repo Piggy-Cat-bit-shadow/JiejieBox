@@ -1,0 +1,23 @@
+{
+  "id": "mieru-tcp-underlay",
+  "protocol": "mieru",
+  "mode": "multiplexed",
+  "transport": "__TRANSPORT__",
+  "description": "Mieru through this repository's inbound, which embeds the official mieru server SDK. This places mieru next to the official implementation instead of only the framing codec.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"tcp": "__SERVER_ADDR__:__SERVER_PORT__"}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "vars": {},
+  "defaults": {
+    "patterns": ["upload", "download", "connect"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

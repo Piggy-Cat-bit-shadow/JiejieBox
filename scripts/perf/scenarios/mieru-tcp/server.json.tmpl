@@ -1,0 +1,18 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "mieru",
+      "tag": "mieru-in",
+      "listen": "__SERVER_ADDR__",
+      "listen_port": __SERVER_PORT__,
+      "users": [
+        {"name": "bench", "password": "__PASSWORD__"}
+      ],
+      "transport": "tcp"
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"}
+  ]
+}

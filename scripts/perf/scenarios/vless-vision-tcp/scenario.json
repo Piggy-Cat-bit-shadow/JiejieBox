@@ -1,0 +1,23 @@
+{
+  "id": "vless-vision-tcp",
+  "protocol": "vless",
+  "mode": "vision",
+  "transport": "tcp",
+  "security": "tls",
+  "description": "VLESS + XTLS Vision over TCP with TLS. Both ends are this repository's own inbound and outbound, so the cell measures the in-repo data path end to end rather than a micro-benchmark.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"tcp": "__SERVER_ADDR__:__SERVER_PORT__"}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "defaults": {
+    "patterns": ["upload", "download"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}

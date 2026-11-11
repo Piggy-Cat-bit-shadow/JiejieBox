@@ -1,0 +1,23 @@
+{
+  "id": "anytls-tcp",
+  "protocol": "anytls",
+  "mode": "tcp",
+  "transport": "tcp",
+  "security": "tls",
+  "description": "AnyTLS over TCP with TLS. Both ends are in-repo; the UDP pattern rides AnyTLS UoT over the same stream, which makes this the UDP-over-Stream cell as well as a TCP cell.",
+  "server": {
+    "config": "server.json.tmpl",
+    "ready": {"tcp": "__SERVER_ADDR__:__SERVER_PORT__"}
+  },
+  "client": {
+    "config": "client.json.tmpl",
+    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+  },
+  "defaults": {
+    "patterns": ["upload", "download", "udp"],
+    "streams": [1, 4],
+    "duration": "5s",
+    "warmup": "1s",
+    "reps": 3
+  }
+}
