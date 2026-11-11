@@ -42,7 +42,9 @@ var (
 	// per-flow behaviour of its own, so a chain through it is transparent and it may carry the
 	// fast_path group policy. See adapter.FastPathAuthorizedGroup.
 	_ adapter.FastPathAuthorizedGroup = (*Selector)(nil)
-	_ D.ParallelNetworkDialer         = (*Selector)(nil)
+	// A selector may be kept out of the client's group list while staying a full group.
+	_ adapter.HiddenOutboundGroup = (*Selector)(nil)
+	_ D.ParallelNetworkDialer     = (*Selector)(nil)
 )
 
 // FastPathTransparent implements adapter.FastPathAuthorizedGroup.
@@ -67,6 +69,9 @@ type Selector struct {
 	history                      *urltest.HistoryStorage
 	interruptGroup               *interrupt.Group
 	interruptExternalConnections bool
+	// hidden is configuration-only and immutable, like interruptExternalConnections above: it is
+	// read by the daemon's group listing and by nothing on the traffic path.
+	hidden bool
 	// preference is the evidence Start gathered about the PREFERENCE it did not commit to, in one
 	// immutable value so a reader never sees half of an update and never races Start. It is nil
 	// until Start has looked.
@@ -191,6 +196,7 @@ func NewSelector(ctx context.Context, router adapter.Router, logger log.ContextL
 		history:                      service.PtrFromContext[urltest.HistoryStorage](ctx),
 		interruptGroup:               interrupt.NewGroup(),
 		interruptExternalConnections: options.InterruptExistConnections,
+		hidden:                       options.Hidden,
 
 		provider:        service.FromContext[adapter.ProviderManager](ctx),
 		providers:       make(map[string]adapter.Provider),
@@ -208,6 +214,12 @@ func NewSelector(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	return outbound, nil
 }
+
+// Hidden implements adapter.HiddenOutboundGroup.
+//
+// It answers a DISPLAY question only: the selector is still registered, started, selectable, and
+// still usable as another group's member or as a route target.
+func (s *Selector) Hidden() bool { return s.hidden }
 
 func (s *Selector) Network() []string {
 	selected := s.selected.Load()

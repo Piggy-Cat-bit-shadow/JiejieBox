@@ -212,6 +212,42 @@ type OutboundGroup interface {
 	AttachConnection(closer io.Closer) (detach func())
 }
 
+// HiddenOutboundGroup is an OPTIONAL capability of a group that must not be presented as a group of
+// its own, while remaining a fully functional group.
+//
+// # What it separates
+//
+// The group's EXISTENCE and the group's DISPLAY CARD are two different facts, and this capability is
+// the only place the second one is stated. A hidden group is created, registered, started, closed,
+// routable, resolvable by tag, usable as another group's member or as a detour, and it keeps its
+// selection, its health evidence and its persisted state exactly as a visible one does. The one thing
+// it does not get is an entry in the list a client builds its group screen from.
+//
+// # What reads it
+//
+// The daemon's group listing only: daemon.StartedService.readGroups builds the payload that the
+// existing SubscribeGroups stream pushes, and the daemon tests call that builder directly. There is
+// no other group RPC - no unary GetGroups exists - so that one builder is the whole display surface.
+// It is deliberately NOT read by the router, the outbound manager, the provider path, the Clash API
+// or the outbound list, because none of those is a group DISPLAY.
+//
+// # Why it is a capability and not a method on OutboundGroup
+//
+// OutboundGroup's method set is exactly what a group-shaped test double or any future group type
+// provides, so adding a method there would force every implementation - including the doubles in
+// this tree and any extension outside it - to state a display property it may have no opinion about.
+// A group that does not implement this interface is simply visible, which is the behaviour every
+// group had before this capability existed.
+type HiddenOutboundGroup interface {
+	OutboundGroup
+
+	// Hidden reports that this group must not be listed as a group of its own.
+	//
+	// It is fixed at construction from the configuration and never changes, so it may be read without
+	// synchronisation and must never be used to suppress the group's own operation.
+	Hidden() bool
+}
+
 // ProviderBackedGroup is a group whose membership can be extended AFTER Start by outbound providers.
 //
 // # Why an empty group is not always a broken group

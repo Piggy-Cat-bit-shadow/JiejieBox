@@ -16,6 +16,18 @@ type SelectorOutboundOptions struct {
 	Exclude                   *badoption.Regexp `json:"exclude,omitempty"`
 	Default                   string            `json:"default,omitempty" reference:"outbound"`
 	InterruptExistConnections bool              `json:"interrupt_exist_connections,omitempty"`
+	// Hidden keeps this group out of the client's GROUP LIST without taking the group away.
+	//
+	// The group is still created, registered, started, closed, referenced by tag, usable as another
+	// group's member or as a detour, and it still selects, measures and persists exactly as it did.
+	// Only the list a client builds its group screen from omits it - so a wrapper group whose members
+	// are visible through their parent does not get a card of its own.
+	//
+	// It is a DISPLAY property, not a runtime policy: see adapter.HiddenOutboundGroup. It is
+	// deliberately declared on the group options rather than on the shared outbound envelope, so a
+	// leaf protocol that names it is refused by the decoder instead of silently accepting a key the
+	// core would ignore.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 type URLTestOutboundOptions struct {
@@ -41,6 +53,9 @@ type URLTestOutboundOptions struct {
 	Tolerance                 uint16                 `json:"tolerance,omitempty"`
 	IdleTimeout               badoption.Duration     `json:"idle_timeout,omitempty"`
 	InterruptExistConnections bool                   `json:"interrupt_exist_connections,omitempty"`
+	// Hidden is the same display-only property as SelectorOutboundOptions.Hidden: the group keeps
+	// probing, switching and serving its members, and only its own group card is omitted.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // FailoverPolicyOptions configures the stable/failover probing policy of a URLTest group.
@@ -122,4 +137,7 @@ type LoadBalanceOutboundOptions struct {
 	// capability dial and consumed by every nested one, so nesting depth cannot multiply
 	// the cost of one outage.
 	Failover bool `json:"failover,omitempty"`
+	// Hidden is the same display-only property as SelectorOutboundOptions.Hidden: the group keeps
+	// balancing its flows over the same member set, and only its own group card is omitted.
+	Hidden bool `json:"hidden,omitempty"`
 }

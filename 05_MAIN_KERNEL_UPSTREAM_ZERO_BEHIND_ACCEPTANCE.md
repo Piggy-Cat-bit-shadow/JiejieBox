@@ -12,10 +12,11 @@
 |---|---|
 | origin | `Piggy-Cat-bit-shadow/JiejieBox` |
 | upstream | `SagerNet/sing-box:testing` |
-| canonical/default | `testing` = `integration/0.1.45-final` = **`b6c2bc1f0fe787949d218c93a27342639d9aaeb9`** |
+| canonical/default | `testing` = `integration/0.1.45-final` = **`2528511d90ab876c6c853f23d6ae1deee083027e`** |
 | 最后观察 upstream | `a13dbe1f785f66c86acbf3985c33fdafea0cbfd6`（2026-11-10 11:23 UTC，Fix platform auto-redirect close order） |
-| merge-base | `8eb4395a391b775ad240433a7009f39357c1eba0` |
-| ahead / behind | **3735 / 0** |
+| pre-merge merge-base | `8eb4395a391b775ad240433a7009f39357c1eba0`（合并前共同祖先） |
+| final merge-base at observation | `a13dbe1f785f66c86acbf3985c33fdafea0cbfd6`（上游已并入 HEAD，因此最终共同祖先就是被合并的上游 HEAD） |
+| ahead / behind | **3737 / 0** |
 | 真实 merge | `303fbb47dfdca4520dd201fea8bd48b3db1f1010`（parents `48103716845e` + `a13dbe1f785f`） |
 | 后续提交 | docs/testing merge `03620f67fc0`、bridge 去重 `f4331ac5a18`、module tidy `08b52a30b4d`、source-lock `a9a0cb0c093` |
 
@@ -116,7 +117,7 @@ Archive tags（annotated，已推送）：`archive/0.1.45/main/{backup-02,docs-0
 2. **既有基线失败**：`common/tls`、`common/tlsspoof`、`common/windivert` 在 Windows 上失败，非本轮引入；`common/httpclient` 的 race test 在全量并发下偶发，单独 5/5。
 3. **Dashboard `lint:css`**：4 个 fork-only 规则错误（2px/600），非合并引入，未改设计值。
 4. **Cronet `go` 的 2 个平行 generation 提交**：不合并，理由与证据见 §C；若未来要统一，需要重新走受控 native 构建流程。
-5. **CI**：Verify 与 Mobile contract 在报告时仍 in_progress；Android Core 已 PASS final SHA。未把 queued/in_progress 写成 PASS。
+5. **CI**：Verify `42945339834`、Android Core `42945339735` 在 `b473c21` success；Mobile contract `42942954909` 在 `08b52a3` success（之后仅 CI 脚本/文档变化）。
 6. **`go vet ./...`** 仍有既有 unsafe.Pointer 警告（daemon/managed_service.go、experimental/libbox/debug.go、experimental/boxdd/authenticode_windows.go），非本轮冲突文件。
 7. **未提交/未推送**：无；主工作树与 testing 工作树干净（`_p01_main` 的 submodule 状态除外，见备注）。
 

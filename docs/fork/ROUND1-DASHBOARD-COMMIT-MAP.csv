@@ -1,0 +1,96 @@
+commit,date,subject,files,exact_files,fork_edited_files,superseded_files,status,notes
+0ff3e359171e,2026-06-12,Init commit,0,0,0,0,PRESENT_EXACT,
+8b4cfd1c6f95,2026-06-12,Redesign setup screen footer,6,2,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+9170740cab15,2026-06-12,Improve Tailscale interface,14,9,4,1,PRESENT_RENAMED_OR_SUPERSEDED,edited:src/App.tsx; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/TerminalDialog.tsx->src/views/TerminalView.tsx; removed-intentional:tsconfig.tsbuildinfo
+e7f195993662,2026-06-12,Minor fixes,7,3,4,0,PRESENT_WITH_FORK_EDITS,edited:index.html; edited:src/App.tsx; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css
+b9a88c2ebc5a,2026-06-12,Add theme picker & Refactor server picker,9,4,5,0,PRESENT_WITH_FORK_EDITS,edited:index.html; edited:src/App.tsx; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+f679da9d40d5,2026-06-12,Move server management to a settings sub-page,3,0,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+699d2a15c851,2026-06-12,Stop translating STUN test result values,3,2,1,0,PRESENT_WITH_FORK_EDITS,edited:src/app/translations.ts
+95ff916818e3,2026-06-12,Add theme picker to the setup screen & Rework its layout,5,2,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+a65bca078b75,2026-06-12,Minor fixes,27,23,3,1,PRESENT_RENAMED_OR_SUPERSEDED,edited:.github/workflows/ci.yml; edited:src/App.tsx; edited:src/styles/global.css->src/styles/globals.css; removed-intentional:tsconfig.tsbuildinfo
+3c21f1f741fc,2026-06-12,Minor refactors,21,17,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+15077b844fc9,2026-06-12,Remove the icon from server list items,1,0,1,0,PRESENT_WITH_FORK_EDITS,edited:src/views/SettingsView.tsx
+a6b51a1416f9,2026-06-12,Update sing-box,1,0,0,1,PRESENT_RENAMED_OR_SUPERSEDED,removed-intentional:sing-box
+228f37b0a29a,2026-06-12,Deploy to GitHub Pages on push to main,1,0,1,0,PRESENT_WITH_FORK_EDITS,edited:.github/workflows/deploy.yml
+16b397030584,2026-06-12,Make back buttons icon-only with a larger arrow,4,2,2,0,PRESENT_WITH_FORK_EDITS,edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+33aa70f87d89,2026-06-13,Improve mobile experience,16,10,5,1,PRESENT_RENAMED_OR_SUPERSEDED,edited:index.html; removed-intentional:sing-box; edited:src/App.tsx; edited:src/api/daemon.ts; edited:src/app/translations.ts
+86ddcca826e1,2026-06-13,Accept an injected transport in DaemonApi,1,0,1,0,PRESENT_WITH_FORK_EDITS,edited:src/api/daemon.ts
+449ce810e89c,2026-06-13,Improve Settings,8,4,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+9b30024481e8,2026-06-13,Cleanup comments,34,29,5,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/api/daemon.ts; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+a6f5c83a899c,2026-06-13,Create release branch,2,0,2,0,PRESENT_WITH_FORK_EDITS,edited:.github/workflows/deploy.yml; edited:vite.config.ts
+9748b21caab0,2026-06-13,Update dependencies,5,5,0,0,PRESENT_EXACT,
+809e215eab9a,2026-06-13,Improve Tailscale features & Minor fixes,25,18,4,3,PRESENT_RENAMED_OR_SUPERSEDED,removed-intentional:sing-box; edited:src/App.tsx; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+0970326306cc,2026-06-13,Add live server reachability indicator,14,9,5,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/api/daemon.ts; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+9ab68deb50e4,2026-06-13,Refactor menu picker,6,4,2,0,PRESENT_WITH_FORK_EDITS,edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx
+07976642d276,2026-06-15,Fix render icon glyphs at correct size on old iOS Safari,1,1,0,0,PRESENT_EXACT,
+3adbbe7938ff,2026-06-15,Fix Anadroid tap highlight,1,0,1,0,PRESENT_WITH_FORK_EDITS,edited:src/styles/global.css->src/styles/globals.css
+c48aeab20ba9,2026-06-15,Improve server probe,1,1,0,0,PRESENT_EXACT,
+8096ca70c55d,2026-06-15,Unified tools title,1,1,0,0,PRESENT_EXACT,
+d8e677f9bffc,2026-06-16,Add PWA support,9,5,3,1,PRESENT_RENAMED_OR_SUPERSEDED,edited:index.html; edited:src/api/daemon.ts; removed-intentional:vendor/sing-box; edited:vite.config.ts
+187a199d163c,2026-06-17,Add USB/IP service support,16,12,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/api/daemon.ts; edited:src/app/translations.ts; edited:src/styles/global.css->src/styles/globals.css
+af3900a94e22,2026-06-19,Fix missing auth banner in tailssh,2,1,1,0,PRESENT_WITH_FORK_EDITS,edited:src/styles/global.css->src/styles/globals.css
+f16b9e22d8de,2026-06-19,Refactor css,39,34,5,0,PRESENT_WITH_FORK_EDITS,edited:.github/workflows/ci.yml; edited:src/App.tsx; edited:src/styles/global.css->src/styles/globals.css; edited:src/views/SettingsView.tsx; edited:vite.config.ts
+c9eb6c0a2589,2026-06-19,Fix logs pause not freezing content,1,1,0,0,PRESENT_EXACT,
+e5ccc9573775,2026-06-19,Fix Maximum update depth exceeded in logs under message bursts,3,3,0,0,PRESENT_EXACT,
+9647eccf30f6,2026-06-19,Show raw error in stream banner without action prefix,8,7,1,0,PRESENT_WITH_FORK_EDITS,edited:src/app/translations.ts
+ff5d364b0f78,2026-06-19,Fix Safari blank flicker when entering logs view,2,2,0,0,PRESENT_EXACT,
+babaf3a9e474,2026-07-14,Update dashboard icon,4,4,0,0,PRESENT_EXACT,
+75fca1058600,2026-07-17,Add desktop files,32,26,6,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/app/translations.ts; edited:src/views/ProfileViews.module.css; edited:src/views/ProfileViews.tsx
+d447d5faccb2,2026-07-17,Fix desktop-host gating and web regressions,7,4,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/views/SettingsView.tsx
+1c6bce8f7408,2026-07-17,Remove sponsors page,4,1,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/translations.ts; edited:src/views/SettingsView.tsx
+c4ed7a3bbc69,2026-07-17,Remove sing-box submodule,5,3,1,1,PRESENT_RENAMED_OR_SUPERSEDED,edited:proto/daemon/started_service.proto; removed-intentional:vendor/sing-box
+a742fa013578,2026-07-17,Improve desktop profile interactions,13,10,3,0,PRESENT_WITH_FORK_EDITS,edited:src/app/translations.ts; edited:src/views/ProfileViews.module.css; edited:src/views/ProfileViews.tsx
+a4be606198c0,2026-07-17,Add standalone tools and diagnostic reports,8,5,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/app/translations.ts
+fff2bc0742ee,2026-07-17,Add tray menu and polish desktop chrome,11,8,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/app/translations.ts
+d8e174b74431,2026-07-17,Drop the app version and speed rows and restyle the settings actions,3,1,2,0,PRESENT_WITH_FORK_EDITS,edited:src/app/translations.ts; edited:src/views/SettingsView.tsx
+cd2801a1939b,2026-07-17,Finish aligning desktop setup and settings,5,2,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/app/translations.ts
+8aaf3ad1cb5f,2026-07-17,Fix connect flicker,2,2,0,0,PRESENT_EXACT,
+b91ff27a4175,2026-07-17,Persist desktop servers through the host,2,0,2,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts
+11a6dd7dfb33,2026-07-17,Handle desktop service ownership and package repair,3,1,2,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts; edited:src/app/translations.ts
+74cfb5146ce2,2026-07-17,Align core settings with the packaged daemon,2,0,2,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts; edited:src/views/SettingsView.tsx
+6237c9625db8,2026-07-17,Show a single desktop startup spinner,2,1,1,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx
+955a86c92543,2026-07-17,Render tray groups as a stable three-level cascade,2,2,0,0,PRESENT_EXACT,
+8dd55f14efb7,2026-07-17,Prefer Apple emoji with a bundled Noto fallback,5,4,1,0,PRESENT_WITH_FORK_EDITS,edited:vite.config.ts
+ce584c0331e2,2026-07-17,Persist desktop preferences through the host,11,9,2,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts
+774fa128e453,2026-07-17,Animate tray menu content on entry,1,1,0,0,PRESENT_EXACT,
+8879a487ee80,2026-07-17,Keep desktop streams synchronized while hidden,6,4,2,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/api/daemon.ts
+1c93c17812f8,2026-07-17,Keep the service toggle background while busy,1,1,0,0,PRESENT_EXACT,
+6c64362f4731,2026-07-17,Disable the tray switch while transitioning,2,2,0,0,PRESENT_EXACT,
+06602faebd85,2026-07-17,Fix desktop spinner color,1,1,0,0,PRESENT_EXACT,
+435542df2238,2026-07-17,Cleanup comments,32,26,6,0,PRESENT_WITH_FORK_EDITS,edited:.github/workflows/ci.yml; edited:.github/workflows/deploy.yml; edited:index.html; edited:src/App.tsx; edited:src/views/ProfileViews.tsx
+6dbf60f6273d,2026-07-17,fix: resolve react doctor diagnostics,46,42,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/views/ProfileViews.tsx; edited:src/views/SettingsView.tsx
+4a28606ccc5f,2026-07-17,Update dependencies,2,2,0,0,PRESENT_EXACT,
+dfa351777360,2026-07-17,Add settings for Tray,3,0,3,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts; edited:src/app/translations.ts; edited:src/views/SettingsView.tsx
+3a0ecad5b765,2026-07-17,Cleanup code,24,20,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/api/daemon.ts; edited:src/views/ProfileViews.tsx; edited:src/views/SettingsView.tsx
+ed4affb2e71c,2026-07-17,Refresh login item state after updates,1,0,1,0,PRESENT_WITH_FORK_EDITS,edited:src/views/SettingsView.tsx
+055d88d046a5,2026-07-17,desktop: Add updater,10,6,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/app/translations.ts; edited:src/views/SettingsView.tsx
+0fb8ff3b0cc8,2026-07-17,Fix service failure reporting,4,3,1,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx
+7925a540df46,2026-07-17,desktop: Add share support,7,4,3,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts; edited:src/app/translations.ts; edited:src/views/ProfileViews.tsx
+d2f9b6e30785,2026-07-17,desktop: Fix Tailscale,14,12,2,0,PRESENT_WITH_FORK_EDITS,edited:src/api/daemon.ts; edited:src/app/desktop.ts
+ba26bed75b60,2026-07-17,desktop: Add insecure mode,4,1,3,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts; edited:src/app/translations.ts; edited:src/views/SettingsView.tsx
+d15a293fe40f,2026-07-17,desktop: Fix update view,2,2,0,0,PRESENT_EXACT,
+ccc79a764a66,2026-07-17,desktop: Fix missing copy/paste for terminal,2,1,1,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts
+79d6f2df972a,2026-07-17,Fix pnpm lockfile configuration,1,1,0,0,PRESENT_EXACT,
+87e810ae8420,2026-07-17,Add openvpn and openconnect,17,13,4,0,PRESENT_WITH_FORK_EDITS,edited:proto/daemon/started_service.proto; edited:src/App.tsx; edited:src/api/daemon.ts; edited:src/app/translations.ts
+0f950a0b3af4,2026-07-18,Refactor endpoint in started interface,16,12,4,0,PRESENT_WITH_FORK_EDITS,edited:proto/daemon/started_service.proto; edited:src/App.tsx; edited:src/api/daemon.ts; edited:src/app/translations.ts
+926abf4c78c0,2026-07-19,desktop: Fix SSO support for anyconnect,4,1,3,0,PRESENT_WITH_FORK_EDITS,edited:proto/daemon/started_service.proto; edited:src/app/desktop.ts; edited:src/app/translations.ts
+375014aa068c,2026-07-19,desktop: Fix linux toolbar,2,2,0,0,PRESENT_EXACT,
+b44bea289a65,2026-07-19,desktop: Fix tray,2,2,0,0,PRESENT_EXACT,
+d251fedb1121,2026-07-19,desktop: Fix log,1,0,1,0,PRESENT_WITH_FORK_EDITS,edited:src/api/daemon.ts
+66115761ecfc,2026-07-21,desktop: Improve profile editor,5,1,4,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/views/ProfileViews.module.css; edited:src/views/ProfileViews.tsx
+311b03180509,2026-07-23,desktop: Fix Fortinet SSO again,3,1,2,0,PRESENT_WITH_FORK_EDITS,edited:proto/daemon/started_service.proto; edited:src/app/desktop.ts
+1f7906c485fc,2026-07-24,desktop: Add JSON completion,7,5,2,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts; edited:src/views/ProfileViews.tsx
+f2e702cfd798,2026-07-25,Fix urltest,5,3,2,0,PRESENT_WITH_FORK_EDITS,edited:src/api/daemon.ts; edited:src/views/SettingsView.tsx
+5a8c3aeafb56,2026-07-31,Fix hover affordance mismatches,6,5,1,0,PRESENT_WITH_FORK_EDITS,edited:src/views/ProfileViews.module.css
+7021b7332b2b,2026-08-03,Fix Tailscale SSH auth banner loss,2,2,0,0,PRESENT_EXACT,
+9242620c8395,2026-08-12,Improve groups,2,2,0,0,PRESENT_EXACT,
+e5b293de743b,2026-08-12,desktop: Fix terminal layout,5,5,0,0,PRESENT_EXACT,
+4f29dcc7b932,2026-08-15,Add Taildrop support,21,17,4,0,PRESENT_WITH_FORK_EDITS,edited:proto/daemon/started_service.proto; edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/app/translations.ts
+96b91aab307d,2026-08-15,Fix menu dismissed by unrelated scroll,1,1,0,0,PRESENT_EXACT,
+b656fe013820,2026-08-23,desktop: Add power report,11,8,3,0,PRESENT_WITH_FORK_EDITS,edited:src/App.tsx; edited:src/app/desktop.ts; edited:src/app/translations.ts
+564dd76b2382,2026-08-23,Update dependencies,2,2,0,0,PRESENT_EXACT,
+c4c39ac92c74,2026-09-03,desktop: Always show the update track selector,2,0,2,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts; edited:src/views/SettingsView.tsx
+9c498355c997,2026-09-19,Fix dashboard cards pairing traffic charts with compact cards,2,2,0,0,PRESENT_EXACT,
+a9b1dd7595cc,2026-09-28,Improve connections empty state,2,1,1,0,PRESENT_WITH_FORK_EDITS,edited:src/app/translations.ts
+f231354bc786,2026-09-28,desktop: Remove remote control retries,1,0,1,0,PRESENT_WITH_FORK_EDITS,edited:src/app/desktop.ts
+3e4bf08e5bf5,2026-10-11,desktop: Fix tray submenu alignment under top panels,1,1,0,0,PRESENT_EXACT,

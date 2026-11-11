@@ -301,7 +301,22 @@ VERIFIED_ANDROID_SHA="ba5c6b161827a830cb7343850bf547156fbfdfee"
 # ran this same layer-4 scan against that checkout and succeeded, and the iOS app target compiled
 # (unsigned IPA step success). macOS was skipped in that dispatch (build_macos=false); the macOS
 # product is built separately and its result is recorded with the candidate, not assumed here.
-VERIFIED_APPLE_SHA="7fce7117b33a38ef4c73c81db67c49f0be7a7dad"
+# Moved to 9330d90 on 2026-11-11: the Apple NE fusion line
+# (integration/0.1.45-ne-fusion) was merged into main, so main, the fusion tip and the
+# superproject gitlink are now one commit instead of the gitlink naming an intermediate
+# commit that was on no branch tip. Layer 4 was RUN against a checkout of this revision
+# (`git -c core.longpaths=true clone` then checkout 9330d90), not reasoned about:
+#
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <checkout at 9330d90>
+#   {"scanned": 461, "violations": [], "interface_methods": 3, "error": ""}
+#
+# The sweep gained one precision rule in the same change: an unqualified call whose name is
+# declared in the same file is a local function, not a libbox accessor. Without it a test
+# helper named `message` in ExtensionApplyReceiptTests.swift was reported as a call to
+# DeprecatedNote.Message. Dotted receivers are still classified, and the rule suppresses
+# only the bare-call shape inside the file that declares the name.
+VERIFIED_APPLE_SHA="9330d9018c95231ac9b5d8abb6244dcc33c95830"
 
 client_root=""
 skip_client=0

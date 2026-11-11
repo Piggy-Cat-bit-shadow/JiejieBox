@@ -1,21 +1,23 @@
 {
   "schema": 3,
-  "stage": "upstream-sync-2026-11-11-final",
-  "generated_at": "2026-11-11T10:15:00+08:00",
+  "stage": "branch-consolidation-2026-11-11",
+  "generated_at": "2026-11-11T14:10:00+08:00",
   "release_version": "0.1.45",
   "main_repo": {
     "name": "Piggy-Cat-bit-shadow/JiejieBox",
     "origin": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git",
     "upstream": "SagerNet/sing-box:testing",
-    "integration_branch": "integration/0.1.45-final",
+    "integration_branch": null,
     "default_branch": "testing",
-    "head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
+    "head": "f1bab7eb7e641552592ee19551dc3c6d6e44038b",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
-    "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
-    "ahead": 3735,
+    "ahead": 3749,
     "behind": 0,
     "merge_commit": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
-    "pushed": true
+    "pushed": true,
+    "pre_merge_merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
+    "upstream_merged_sha": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "final_merge_base_at_observation": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6"
   },
   "go_modules": [
     {
@@ -70,9 +72,9 @@
   "clients": [
     {
       "path": "clients/apple",
-      "final_sha": "7fce7117b33a38ef4c73c81db67c49f0be7a7dad",
+      "final_sha": "9330d9018c95231ac9b5d8abb6244dcc33c95830",
       "upstream": "SagerNet/sing-box-for-apple:dev",
-      "state": "0 behind, NOT_VERIFIED_ON_DEVICE (no Xcode)"
+      "state": "0 behind main; NE fusion merged into main (2026-11-11); NOT_VERIFIED_ON_DEVICE (no local Xcode)"
     },
     {
       "path": "clients/android",
@@ -106,8 +108,8 @@
     "linux_build": "PASS (GOOS=linux, CGO_ENABLED=0, profile tags)",
     "darwin_build": "PASS (GOOS=darwin/arm64, profile tags)",
     "race": "PASS (route, common/dialer, dns/fakeip, transport/http, protocol/masque, protocol/http)",
-    "android_core_ci": "PASS run 42945339735 (b473c21f4803)",
-    "verify_ci": "PASS run 42945339834 (b473c21f4803)",
+    "android_core_ci": "PASS run 42953972663 (2528511d90ab)",
+    "verify_ci": "PASS run 42953972668 (2528511d90ab)",
     "mobile_contract_ci": "PASS run 42942954909 (08b52a3; later changes are CI script/docs only)"
   }
 }

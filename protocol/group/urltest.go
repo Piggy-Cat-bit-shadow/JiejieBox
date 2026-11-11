@@ -48,6 +48,8 @@ var (
 	// in the background dial the members directly and never pass through the router, so they cannot
 	// inherit a business flow's policy. See adapter.FastPathAuthorizedGroup.
 	_ adapter.FastPathAuthorizedGroup = (*URLTest)(nil)
+	// A urltest may be kept out of the client's group list while staying a full group.
+	_ adapter.HiddenOutboundGroup = (*URLTest)(nil)
 )
 
 // FastPathTransparent implements adapter.FastPathAuthorizedGroup.
@@ -57,6 +59,12 @@ var (
 // outbound's DialContext directly rather than going through the router - so they neither inherit nor
 // need a fast_path policy.
 func (s *URLTest) FastPathTransparent() bool { return true }
+
+// Hidden implements adapter.HiddenOutboundGroup.
+//
+// It answers a DISPLAY question only: the group keeps building, probing, switching and serving its
+// members, and remains a legal member of another group and a legal route target.
+func (s *URLTest) Hidden() bool { return s.hidden }
 
 type URLTest struct {
 	outbound.Adapter
@@ -94,6 +102,12 @@ type URLTest struct {
 	closed                       bool
 	checkAccess                  sync.Mutex
 	interruptExternalConnections bool
+	// hidden is a display-only, immutable configuration fact.
+	//
+	// It lives on the wrapper rather than on the URLTestGroup the wrapper publishes, for the same
+	// reason failoverConfigured does: a provider publication REPLACES the published group, so a
+	// property stored there would be silently lost on the first republication.
+	hidden bool
 
 	// Provider membership. stateAccess guards tags; providerAccess serialises rebuilds;
 	// lifecycleAccess (above) guards the published group pointer, started and scope.
@@ -133,6 +147,7 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		tolerance:                    options.Tolerance,
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		interruptExternalConnections: options.InterruptExistConnections,
+		hidden:                       options.Hidden,
 		provider:                     service.FromContext[adapter.ProviderManager](ctx),
 		providers:                    make(map[string]adapter.Provider),
 		outboundsCache:               make(map[string][]adapter.Outbound),

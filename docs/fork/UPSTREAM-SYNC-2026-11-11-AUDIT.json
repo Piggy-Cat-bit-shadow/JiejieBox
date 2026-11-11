@@ -5,19 +5,22 @@
   "canonical": {
     "repo": "Piggy-Cat-bit-shadow/JiejieBox",
     "working_branch": "integration/0.1.45-final",
-    "working_head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
+    "working_head": "2528511d90ab876c6c853f23d6ae1deee083027e",
     "default_branch": "testing",
-    "default_head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
+    "default_head": "2528511d90ab876c6c853f23d6ae1deee083027e",
     "upstream": "SagerNet/sing-box:testing",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
-    "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
     "upstream_rewritten": true,
     "old_audit_upstream": "a6952ccf6907c18e18917fcb763a433e8e36937b",
     "old_audit_note": "a6952cc is no longer an ancestor of upstream/testing; its code conclusions remain historical only",
     "fork_ahead": 3363,
     "fork_behind": 0,
     "working_ahead": 3705,
-    "working_behind": 0
+    "working_behind": 0,
+    "pre_merge_merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
+    "upstream_merged_sha": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "final_merge_base_at_observation": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
+    "merge_base_note": "8eb4395 is the common ancestor before the merge; after 303fbb4 merged a13dbe1, the final merge-base is a13dbe1"
   },
   "repos": [
     {
@@ -483,9 +486,9 @@
   "stage05": {
     "status": "DONE_WITH_LIMITATIONS",
     "main_merge": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
-    "main_final_head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
+    "main_final_head": "2528511d90ab876c6c853f23d6ae1deee083027e",
     "default_branch": "testing",
-    "default_sha": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
+    "default_sha": "2528511d90ab876c6c853f23d6ae1deee083027e",
     "upstream": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
     "behind": 0,
     "source_lock": "PASS (release-freeze.py verify)",
@@ -494,8 +497,8 @@
       "linux_build": "PASS",
       "darwin_build": "PASS",
       "race": "PASS on route/common/dialer/fakeip/transport-http/masque/http",
-      "android_core_ci": "PASS run 42945339735 (b473c21f4803)",
-      "verify_ci": "PASS run 42945339834 (b473c21f4803)",
+      "android_core_ci": "PASS run 42953972663 (2528511d90ab)",
+      "verify_ci": "PASS run 42953972668 (2528511d90ab)",
       "mobile_contract_ci": "PASS run 42942954909 (08b52a3; later changes are CI script/docs only)"
     },
     "cleanup": {
