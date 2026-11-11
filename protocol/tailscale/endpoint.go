@@ -85,6 +85,7 @@ type Endpoint struct {
 	network           adapter.NetworkManager
 	platformInterface adapter.PlatformInterface
 	detour            string
+	binding           systemBinding
 	server            *tsnet.Server
 	stack             *tun.Go
 	returnAccess      sync.Mutex

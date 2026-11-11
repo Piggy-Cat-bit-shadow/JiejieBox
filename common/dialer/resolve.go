@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	_ N.Dialer                = (*resolveDialer)(nil)
-	_ ParallelInterfaceDialer = (*resolveParallelNetworkDialer)(nil)
+	_ ResolveDialer                  = (*resolveDialer)(nil)
+	_ ParallelInterfaceResolveDialer = (*resolveParallelNetworkDialer)(nil)
 )
 
 type ResolveDialer interface {
@@ -33,6 +33,12 @@ type ResolveDialer interface {
 	// so a profile that assumed "a literal needs no resolver" would bypass a connection the
 	// userspace path would have refused to dial.
 	EffectiveFamilyStrategy() C.DomainStrategy
+}
+
+type ParallelInterfaceResolveDialer interface {
+	ParallelInterfaceDialer
+	PacketDialerWithDestination
+	QueryOptions() adapter.DNSQueryOptions
 }
 
 type resolveDialer struct {
@@ -907,9 +913,29 @@ type localFamilyOwner interface {
 }
 
 func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	err := d.initialize()
+	conn, destinationAddress, err := d.ListenPacketWithDestination(ctx, destination)
 	if err != nil {
 		return nil, err
+	}
+	// Upstream ddf3d10b19b: report the address the resolver chose instead of wrapping the
+	// connection unconditionally. The direct outbound asks for it so a flow can honour
+	// udp_disable_domain_unmapping; a connection that has forgotten its address cannot.
+	if !destinationAddress.IsValid() {
+		return conn, nil
+	}
+	return bufio.NewNATPacketConn(bufio.NewPacketConn(conn), M.SocksaddrFrom(destinationAddress, destination.Port), destination), nil
+}
+
+// ListenPacketWithDestination creates the packet connection and reports the address the resolver
+// chose, or an invalid address when the destination was a literal or the socket is wildcard.
+//
+// The admission policy is captured once for the whole flow and applied to BOTH arms here, which is
+// the fork's contract; the split into a separate method is upstream's, and it exists so a caller can
+// see the resolved address without re-reading the connection.
+func (d *resolveDialer) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
+	err := d.initialize()
+	if err != nil {
+		return nil, netip.Addr{}, err
 	}
 	// ONE admission policy for this packet flow, exactly as for a stream: both arms below ask it, and
 	// neither reads the network again.
@@ -944,16 +970,17 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 		if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
 			familyStrategy := admission.strategy
 			if !AddressAllowedByStrategy(destination.Addr, familyStrategy) {
-				return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(familyStrategy),
+				return nil, netip.Addr{}, E.New("destination ", destination, " excluded by strategy ", strategyName(familyStrategy),
 					": this packet connection names a destination of the family the policy forbids")
 			}
 		}
-		return d.dialer.ListenPacket(ctx, destination)
+		conn, listenErr := d.dialer.ListenPacket(ctx, destination)
+		return conn, netip.Addr{}, listenErr
 	}
 	ctx = log.ContextWithOverrideLevel(ctx, log.LevelDebug)
 	addresses, err := d.router.Lookup(ctx, destination.Fqdn, d.queryOptions)
 	if err != nil {
-		return nil, err
+		return nil, netip.Addr{}, err
 	}
 	// The admission policy applies to this arm too, and it did not.
 	//
@@ -973,13 +1000,9 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	// and no scheduler here to catch it later: the list handed to N.ListenSerial IS the decision.
 	admitted, refused, strategyExcludedAll := admission.admitCandidates(addresses)
 	if refusal := admission.emptiedListRefusal(destination, admitted, refused, strategyExcludedAll); refusal != nil {
-		return nil, refusal
+		return nil, netip.Addr{}, refusal
 	}
-	conn, destinationAddress, err := N.ListenSerial(ctx, d.dialer, destination, admitted)
-	if err != nil {
-		return nil, err
-	}
-	return bufio.NewNATPacketConn(bufio.NewPacketConn(conn), M.SocksaddrFrom(destinationAddress, destination.Port), destination), nil
+	return N.ListenSerial(ctx, d.dialer, destination, admitted)
 }
 
 func (d *resolveDialer) QueryOptions() adapter.DNSQueryOptions {

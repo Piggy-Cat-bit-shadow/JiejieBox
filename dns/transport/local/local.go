@@ -137,10 +137,11 @@ func (t *Transport) PreferredDomain(domain string) bool {
 }
 
 func (t *Transport) ServerAddresses() []netip.Addr {
-	if t.resolved != nil {
+	systemConfig := t.configSource.Configuration()
+	if t.resolved != nil && systemConfig.SystemdResolved {
 		return t.resolved.ServerAddresses()
 	}
-	return common.Map(t.configSource.Configuration().Servers, func(it M.Socksaddr) netip.Addr {
+	return common.Map(systemConfig.Servers, func(it M.Socksaddr) netip.Addr {
 		return it.Addr
 	})
 }

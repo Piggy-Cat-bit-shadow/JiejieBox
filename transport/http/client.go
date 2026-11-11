@@ -381,6 +381,12 @@ func ResolveVersion(version int, path string, host string) int {
 	return 2
 }
 
+// MultiplexEnabled reports whether this client can carry more than one logical stream on a
+// connection: HTTP/3, or HTTP/2 when the TLS dialer and the HTTP/2 support are present.
+func (c *Client) MultiplexEnabled() bool {
+	return c.http3Available() || (c.tlsDialer != nil && !c.http2Unsupported.Load())
+}
+
 func (c *Client) http3Available() bool {
 	return c.http3BaseAvailable() && !c.http3ExtendedConnectUnsupported.Load()
 }

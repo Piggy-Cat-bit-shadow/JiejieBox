@@ -788,6 +788,9 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		if err != nil {
 			return E.Cause(err, "starting TUN interface")
 		}
+		if routedPort, isRoutedPort := t.tunStack.(tun.RoutedPort); isRoutedPort {
+			t.networkManager.RegisterHostPort(routedPort)
+		}
 		if t.autoRedirect != nil {
 			// Closing the auto-redirect is the last cleanup registered and therefore the first to run,
 			// and it releases the route-set callbacks before it tears anything down. Ordering the

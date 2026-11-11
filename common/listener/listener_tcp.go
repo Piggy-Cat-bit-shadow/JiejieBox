@@ -23,9 +23,22 @@ import (
 )
 
 func (l *Listener) ListenTCP() (net.Listener, error) {
-	tcpListener, err := ListenTCPWithOptions(l.ctx, l.listenOptions, l.listenOptions.ListenPort, l.tproxy)
+	// Upstream e3ca1835ae5: an interface-bound listener registers itself with the network
+	// manager so it can be re-bound when the interface is recreated. The bind func and the
+	// follower are produced together because they share the recorded interface name.
+	var (
+		bindFunc        control.Func
+		followInterface func(conn syscall.Conn)
+	)
+	if l.listenOptions.BindInterface != "" {
+		bindFunc, followInterface = l.followBindInterface()
+	}
+	tcpListener, err := listenTCPWithOptions(l.ctx, l.listenOptions, l.listenOptions.ListenPort, l.tproxy, bindFunc)
 	if err != nil {
 		return nil, err
+	}
+	if followInterface != nil {
+		followInterface(tcpListener.(syscall.Conn))
 	}
 	l.logger.Info("tcp server started at ", tcpListener.Addr())
 	l.tcpListener = tcpListener
@@ -44,7 +57,17 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 // field), not from a caller-supplied address: a factory receives the SDK's
 // resolved endpoint, whose IP is derived from the same field a moment earlier,
 // and honouring one of them here would be a second source of truth.
+//
+// It has no Listener, so it cannot register for interface re-bind: a socket this
+// function creates belongs to its caller, and following an interface is the
+// caller's lifecycle decision.
 func ListenTCPWithOptions(ctx context.Context, listenOptions option.ListenOptions, port uint16, tproxy bool) (net.Listener, error) {
+	return listenTCPWithOptions(ctx, listenOptions, port, tproxy, nil)
+}
+
+// listenTCPWithOptions is the shared implementation. bindFunc, when non-nil, is the caller's
+// interface bind func (the Listener passes the one that also registers for re-bind).
+func listenTCPWithOptions(ctx context.Context, listenOptions option.ListenOptions, port uint16, tproxy bool, bindFunc control.Func) (net.Listener, error) {
 	//nolint:staticcheck
 	if listenOptions.ProxyProtocol || listenOptions.ProxyProtocolAcceptNoHeader {
 		return nil, E.New("Proxy Protocol is deprecated and removed in sing-box 1.6.0")
@@ -53,7 +76,10 @@ func ListenTCPWithOptions(ctx context.Context, listenOptions option.ListenOption
 	bindAddr := M.SocksaddrFrom(listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), port)
 	var listenConfig net.ListenConfig
 	if listenOptions.BindInterface != "" {
-		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(), listenOptions.BindInterface, -1))
+		if bindFunc == nil {
+			bindFunc = control.BindToInterface(service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(), listenOptions.BindInterface, -1)
+		}
+		listenConfig.Control = control.Append(listenConfig.Control, bindFunc)
 	}
 	if listenOptions.RoutingMark != 0 {
 		listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(listenOptions.RoutingMark)))

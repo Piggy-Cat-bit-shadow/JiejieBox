@@ -9,12 +9,14 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/iponly"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/ping"
 	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -192,7 +194,12 @@ func (h *Outbound) fetchMyAddresses() {
 			continue
 		}
 		found = true
-		myAddresses = append(myAddresses, myInterface.Addresses...)
+		for _, prefix := range myInterface.Addresses {
+			if prefix.Addr().Is6() && prefix.Addr().IsLinkLocalUnicast() {
+				prefix = netip.PrefixFrom(prefix.Addr(), prefix.Addr().BitLen())
+			}
+			myAddresses = append(myAddresses, prefix)
+		}
 	}
 	if !found {
 		return
@@ -251,6 +258,42 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return nil, err
 	}
 	return conn, nil
+}
+
+// ListenPacketWithDestination creates a packet connection and reports the address the resolver
+// chose, or an invalid address when the chain has no resolver (a literal destination).
+//
+// Upstream ddf3d10b19b: the reported address is what lets a flow honour
+// udp_disable_domain_unmapping instead of receiving a connection that has already forgotten
+// which address it resolved to. The capability is asserted on the surface resolved at
+// construction rather than on a separately stored dialer, which is what the surface exists to
+// prevent.
+func (h *Outbound) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
+	if h.isMyLoopbackAddress(destination.Addr) {
+		return nil, netip.Addr{}, E.New("loopback connection to TUN range")
+	}
+	ctx, metadata := adapter.ExtendContext(ctx)
+	metadata.Outbound = h.Tag()
+	metadata.Destination = destination
+	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+	var (
+		conn               net.PacketConn
+		destinationAddress netip.Addr
+		err                error
+	)
+	if packetDialer, withDestination := h.surface.Attempt.(dialer.PacketDialerWithDestination); withDestination {
+		conn, destinationAddress, err = packetDialer.ListenPacketWithDestination(ctx, destination)
+	} else {
+		conn, err = h.surface.Attempt.ListenPacket(ctx, destination)
+	}
+	if err != nil {
+		return nil, netip.Addr{}, err
+	}
+	packetConn := iponly.NewPacketConn(h.logger, conn)
+	if destinationAddress.IsValid() && !metadata.UDPDisableDomainUnmapping {
+		return bufio.NewNATPacketConn(packetConn, M.SocksaddrFrom(destinationAddress, destination.Port), destination), netip.Addr{}, nil
+	}
+	return packetConn, destinationAddress, nil
 }
 
 func (h *Outbound) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {

@@ -27,12 +27,24 @@ func (l *Listener) ListenUDP() (net.PacketConn, error) {
 }
 
 func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.PacketConn, error) {
-	udpConn, err := ListenUDPWithOptions(l.ctx, l.listenOptions, l.listenOptions.ListenPort, l.tproxy, listenConfig)
+	// Upstream e3ca1835ae5: an interface-bound socket registers itself so it can be re-bound
+	// when its interface is recreated. The bind func and the follower come from one call.
+	var (
+		bindFunc        control.Func
+		followInterface func(conn syscall.Conn)
+	)
+	if l.listenOptions.BindInterface != "" {
+		bindFunc, followInterface = l.followBindInterface()
+	}
+	udpConn, err := listenUDPWithOptions(l.ctx, l.listenOptions, l.listenOptions.ListenPort, l.tproxy, listenConfig, bindFunc)
 	if err != nil {
 		return nil, err
 	}
 	l.udpConn = udpConn.(*net.UDPConn)
 	l.udpAddr = M.SocksaddrFrom(l.listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), l.listenOptions.ListenPort)
+	if followInterface != nil {
+		followInterface(l.udpConn)
+	}
 	l.logger.Info("udp server started at ", udpConn.LocalAddr())
 	return udpConn, nil
 }
@@ -45,10 +57,20 @@ func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.Packe
 // the same reason as ListenTCPWithOptions: a protocol SDK that creates its own
 // sockets through a listener factory must still be governed by the inbound's
 // listen options.
+//
+// It has no Listener, so it cannot register for interface re-bind; the socket it
+// creates belongs to its caller.
 func ListenUDPWithOptions(ctx context.Context, listenOptions option.ListenOptions, port uint16, tproxy bool, listenConfig net.ListenConfig) (net.PacketConn, error) {
+	return listenUDPWithOptions(ctx, listenOptions, port, tproxy, listenConfig, nil)
+}
+
+func listenUDPWithOptions(ctx context.Context, listenOptions option.ListenOptions, port uint16, tproxy bool, listenConfig net.ListenConfig, bindFunc control.Func) (net.PacketConn, error) {
 	bindAddr := M.SocksaddrFrom(listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), port)
 	if listenOptions.BindInterface != "" {
-		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(), listenOptions.BindInterface, -1))
+		if bindFunc == nil {
+			bindFunc = control.BindToInterface(service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(), listenOptions.BindInterface, -1)
+		}
+		listenConfig.Control = control.Append(listenConfig.Control, bindFunc)
 	}
 	if listenOptions.RoutingMark != 0 {
 		listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(listenOptions.RoutingMark)))
@@ -86,7 +108,7 @@ func ListenUDPWithOptions(ctx context.Context, listenOptions option.ListenOption
 func (l *Listener) DialContext(dialer net.Dialer, ctx context.Context, network string, address string) (net.Conn, error) {
 	return ListenNetworkNamespace[net.Conn](l.ctx, l.listenOptions.NetNs, func() (net.Conn, error) {
 		if l.listenOptions.BindInterface != "" {
-			dialer.Control = control.Append(dialer.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
+			dialer.Control = control.Append(dialer.Control, l.bindInterfaceFunc())
 		}
 		if l.listenOptions.RoutingMark != 0 {
 			dialer.Control = control.Append(dialer.Control, control.RoutingMark(uint32(l.listenOptions.RoutingMark)))
@@ -102,7 +124,7 @@ func (l *Listener) ListenPacket(listenConfig net.ListenConfig, ctx context.Conte
 	return ListenNetworkNamespace[net.PacketConn](l.ctx, l.listenOptions.NetNs, func() (net.PacketConn, error) {
 		listenConfig.Control = control.Append(listenConfig.Control, control.UDPSocketBuffer(UDPSocketBufferSize()))
 		if l.listenOptions.BindInterface != "" {
-			listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
+			listenConfig.Control = control.Append(listenConfig.Control, l.bindInterfaceFunc())
 		}
 		if l.listenOptions.RoutingMark != 0 {
 			listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(l.listenOptions.RoutingMark)))
