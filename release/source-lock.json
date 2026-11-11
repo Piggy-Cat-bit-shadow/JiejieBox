@@ -74,7 +74,7 @@
     {
       "parent": "clients/desktop",
       "path": "dashboard",
-      "pinned": null
+      "pinned": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
     }
   ],
   "release_version": "0.1.45",
