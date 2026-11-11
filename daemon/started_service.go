@@ -991,9 +991,25 @@ func (s *StartedService) readGroups() *Groups {
 	outbounds := boxService.outboundManager.Outbounds()
 	var iGroups []adapter.OutboundGroup
 	for _, it := range outbounds {
-		if group, isGroup := it.(adapter.OutboundGroup); isGroup {
-			iGroups = append(iGroups, group)
+		outboundGroup, isGroup := it.(adapter.OutboundGroup)
+		if !isGroup {
+			continue
 		}
+		// A hidden group is skipped HERE and nowhere else.
+		//
+		// This loop is the one place that decides whether a group becomes a card of its own, and
+		// readGroups() is the only builder of the list SubscribeGroups emits, so every consumer of
+		// that stream sees the same decision. Nothing above it is touched: the group is still in the
+		// outbound manager, still resolvable by tag, still a legal member of its parent and still a
+		// legal route target - and readOutbounds() keeps listing it, because the outbound list is not
+		// a group DISPLAY.
+		//
+		// The check is a capability assertion, not a type switch: a group that does not implement
+		// adapter.HiddenOutboundGroup is visible, which is what every group was before this existed.
+		if hiddenGroup, isHidden := outboundGroup.(adapter.HiddenOutboundGroup); isHidden && hiddenGroup.Hidden() {
+			continue
+		}
+		iGroups = append(iGroups, outboundGroup)
 	}
 	var gs Groups
 	for _, iGroup := range iGroups {
@@ -1051,7 +1067,7 @@ func (s *StartedService) readGroups() *Groups {
 			}
 			g.Items = append(g.Items, &item)
 		}
-		// Every group is emitted, whatever its size.
+		// Every group that is not explicitly hidden is emitted, whatever its size.
 		//
 		// This used to `continue` on len(g.Items) == 0, which silently hides
 		// single-node selectors whose only member failed to resolve AND empty groups.
@@ -1060,10 +1076,15 @@ func (s *StartedService) readGroups() *Groups {
 		// SPEC 015 §3.5): the UI then shows a proxy list that is missing groups the
 		// configuration demonstrably defines, with no error to explain the absence.
 		//
-		// readGroups() is the single source feeding both SubscribeGroups and
-		// GetGroups, so emitting every group fixes the stream and the unary snapshot
-		// together — which is why this is the right place for the fix rather than a
-		// filter in either caller.
+		// Size is still NOT a filter, and the hidden check above is not a return of
+		// one: that check reads a property the configuration stated, and a group with
+		// one member or none is emitted exactly as before unless it asks not to be.
+		//
+		// readGroups() is the single source feeding SubscribeGroups - the only group
+		// RPC the current proto declares - so this list is what every command client
+		// renders. That is why the hidden check above belongs in this function and
+		// not in a caller: a filter added downstream would let a second consumer
+		// disagree with the first.
 		gs.Group = append(gs.Group, &g)
 	}
 	return &gs

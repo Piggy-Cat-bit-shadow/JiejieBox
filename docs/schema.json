@@ -14000,6 +14000,9 @@
             },
             "failover": {
               "type": "boolean"
+            },
+            "hidden": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -14468,6 +14471,9 @@
               "x-tag-reference": "outbound"
             },
             "interrupt_exist_connections": {
+              "type": "boolean"
+            },
+            "hidden": {
               "type": "boolean"
             }
           },
@@ -16629,6 +16635,9 @@
               "$ref": "#/$defs/Duration"
             },
             "interrupt_exist_connections": {
+              "type": "boolean"
+            },
+            "hidden": {
               "type": "boolean"
             }
           },

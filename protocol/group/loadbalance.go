@@ -36,7 +36,9 @@ var (
 	_ adapter.FlowAwareOutboundGroup = (*LoadBalance)(nil)
 	_ adapter.FailoverOutboundGroup  = (*LoadBalance)(nil)
 	_ adapter.Referrer               = (*LoadBalance)(nil)
-	_ D.ParallelNetworkDialer        = (*LoadBalance)(nil)
+	// A balancing group may be kept out of the client's group list while staying a full group.
+	_ adapter.HiddenOutboundGroup = (*LoadBalance)(nil)
+	_ D.ParallelNetworkDialer     = (*LoadBalance)(nil)
 )
 
 // LoadBalance distributes new flows over its members and keeps each flow on the member it
@@ -87,6 +89,10 @@ type LoadBalance struct {
 	// to make one attempt. It is read once at construction and never changes, which is why it
 	// is a plain field and not an atomic.
 	failover bool
+
+	// hidden is a display-only, immutable configuration fact: it is read by the daemon's group
+	// listing and by nothing on the selection or dial path.
+	hidden bool
 
 	history *urltest.HistoryStorage
 
@@ -205,6 +211,7 @@ func NewLoadBalance(ctx context.Context, router adapter.Router, logger log.Conte
 		tolerance:      options.Tolerance,
 		idleTimeout:    idleTimeout,
 		failover:       options.Failover,
+		hidden:         options.Hidden,
 		history:        service.PtrFromContext[urltest.HistoryStorage](ctx),
 		runtime:        service.FromContext[*runtimecoord.Coordinator](ctx),
 		now:            time.Now,
@@ -238,6 +245,12 @@ func (g *LoadBalance) Network() []string {
 	}
 	return published.networks
 }
+
+// Hidden implements adapter.HiddenOutboundGroup.
+//
+// It answers a DISPLAY question only: the group keeps distributing flows over the same member set,
+// keeps its cursor, its affinity pins, its health filter and its failure ledger.
+func (g *LoadBalance) Hidden() bool { return g.hidden }
 
 func (g *LoadBalance) All() []string {
 	return g.tags
