@@ -139,25 +139,62 @@ type StartedService struct {
 	logSubscriber           *observable.Subscriber[*log.Entry]
 	logObserver             *observable.Observer[*log.Entry]
 	instance                *Instance
-	startedAt               time.Time
+	// instanceID identifies the running instance for the connection-event stream. It is written
+	// under serviceAccess together with instance, and a stream captures it at subscribe time so a
+	// batch produced by a replaced instance can be told apart from the current one.
+	instanceID             string
+	startedAt              time.Time
 	// beforeInstanceStart is a test seam for the interruption window: the instance is published
-	// and the service is STARTING, but Start has not returned yet. A test uses it to call
-	// interruptStart at the exact instant the concurrent CloseService/SetError does. Nil in
-	// production.
+	// and the service is STARTING, but Start has not returned yet. Nil in production.
 	beforeInstanceStart func()
-	// beforeSelectionInstanceCheck is a test seam for the reload-during-selection window: it runs
-	// after the selector moved and before the handler re-reads the published instance. A test uses
-	// it to reload the service at that exact instant. Nil in production.
+	// beforeSelectionInstanceCheck is a test seam for the reload-during-selection window. Nil in
+	// production.
 	beforeSelectionInstanceCheck func()
-	urlTestSubscriber            *observable.Subscriber[struct{}]
-	urlTestObserver              *observable.Observer[struct{}]
-	clashModeSubscriber          *observable.Subscriber[struct{}]
-	clashModeObserver            *observable.Observer[struct{}]
-	notificationSubscriber       *observable.Subscriber[*NotificationEvent]
-	notificationObserver         *observable.Observer[*NotificationEvent]
-	// connectionStreamInstance identifies the Box generation this service's connection streams
-	// belong to. See connectionStreamInstanceCounter.
-	connectionStreamInstance uint64
+	urlTestSubscriber      *observable.Subscriber[struct{}]
+	urlTestObserver        *observable.Observer[struct{}]
+	clashModeSubscriber    *observable.Subscriber[struct{}]
+	clashModeObserver      *observable.Observer[struct{}]
+	notificationSubscriber *observable.Subscriber[*NotificationEvent]
+	notificationObserver   *observable.Observer[*NotificationEvent]
+}
+
+// setInstanceLocked records the running instance and the identity a connection-event stream
+// reports. Caller holds serviceAccess.
+//
+// A new identity per instance (not per process) is what lets a client discard a batch produced by
+// an instance that a reload already replaced, instead of applying an old snapshot over the new
+// state.
+func (s *StartedService) setInstanceLocked(instance *Instance) {
+	s.instance = instance
+	if instance == nil {
+		s.instanceID = ""
+		return
+	}
+	s.instanceID = uuid.Must(uuid.NewV4()).String()
+}
+
+// connectionStreamBinding returns the running instance and its identity from ONE read.
+//
+// They are written together under serviceAccess (setInstanceLocked), so a reload can never be
+// observed halfway: a stream either belongs to the old instance with the old identity, or to the new
+// one. The nil window during STOPPING is the same boundary and is reported as "not running" rather
+// than producing a snapshot from a manager that is being torn down.
+func (s *StartedService) connectionStreamBinding() (*Instance, string, error) {
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	instanceID := s.instanceID
+	s.serviceAccess.RUnlock()
+	if boxService == nil || instanceID == "" {
+		return nil, "", status.Error(codes.FailedPrecondition, "service is not running")
+	}
+	return boxService, instanceID, nil
+}
+
+// currentInstanceID returns the identity of the running instance, or "" when none is running.
+func (s *StartedService) currentInstanceID() string {
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	return s.instanceID
 }
 
 type ServiceOptions struct {
@@ -252,7 +289,6 @@ func NewStartedService(options ServiceOptions) *StartedService {
 	s := &StartedService{
 		ctx:                      startedCtx,
 		fakeIPIssuanceLedger:     fakeIPIssuanceLedger,
-		connectionStreamInstance: connectionStreamInstanceCounter.Add(1),
 		// platform:                options.Platform,
 		handler:           options.Handler,
 		debug:             options.Debug,
@@ -544,7 +580,7 @@ func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent 
 	}
 	oldInstance := s.instance
 	if oldInstance != nil {
-		s.instance = nil
+		s.setInstanceLocked(nil)
 		s.updateStatus(ServiceStatus_STOPPING)
 		s.serviceAccess.Unlock()
 		oomRecorder := service.FromContext[*oomkiller.Recorder](s.ctx)
@@ -640,11 +676,7 @@ func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option
 		instance.clashMode.AddUpdateHook(s.clashModeSubscriber)
 	}
 	s.serviceAccess.Lock()
-	s.instance = instance
-	// A new Box is a new stream instance: a client that kept rows from the previous Box must be
-	// able to tell the events apart even if it ignored the snapshot reset. The counter is
-	// process-wide, so two services never share an id either.
-	s.connectionStreamInstance = connectionStreamInstanceCounter.Add(1)
+	s.setInstanceLocked(instance)
 	s.serviceAccess.Unlock()
 	if s.beforeInstanceStart != nil {
 		s.beforeInstanceStart()
@@ -653,14 +685,14 @@ func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option
 	s.serviceAccess.Lock()
 	if s.startInterrupted {
 		s.startInterrupted = false
-		s.instance = nil
+		s.setInstanceLocked(nil)
 		s.serviceAccess.Unlock()
 		_ = instance.Close()
 		runtimeDebug.FreeOSMemory()
 		return nil, nil
 	}
 	if err != nil {
-		s.instance = nil
+		s.setInstanceLocked(nil)
 		s.serviceAccess.Unlock()
 		_ = instance.Close()
 		runtimeDebug.FreeOSMemory()
@@ -735,7 +767,7 @@ func (s *StartedService) CloseService() error {
 		s.serviceAccess.Unlock()
 		return nil
 	}
-	s.instance = nil
+	s.setInstanceLocked(nil)
 	s.updateStatus(ServiceStatus_STOPPING)
 	s.serviceAccess.Unlock()
 	if instance != nil {
@@ -1313,17 +1345,25 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	if err != nil {
 		return err
 	}
-	s.serviceAccess.RLock()
-	boxService := s.instance
-	boxInstance := s.connectionStreamInstance
-	s.serviceAccess.RUnlock()
+	// The instance AND its identity are read at ONE lock boundary.
+	//
+	// Reading the manager first and the identity later let a reload land in between: the stream then
+	// published a snapshot built from the OLD manager stamped with the NEW identity, and a consumer
+	// that trusts the identity would apply that stale table as the current instance's state. Both
+	// values are written together under serviceAccess, so they are read together.
+	boxService, instanceID, err := s.connectionStreamBinding()
+	if err != nil {
+		return err
+	}
 
 	trafficManager := boxService.trafficManager
 	if trafficManager == nil {
 		return status.Error(codes.Unimplemented, "connection tracking not available")
 	}
 
-	subscription, done, err := trafficManager.SubscribeEvents()
+	// The subscription's exact loss counter is what makes SILENT tail loss recoverable: the queue can
+	// drop while no source event follows to reveal a gap, and the counter is still the truth.
+	subscription, done, dropped, err := trafficManager.SubscribeEventsWithLoss()
 	if err != nil {
 		return err
 	}
@@ -1334,14 +1374,25 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 	// cumulative count travels with every message so the consumer can decide to resynchronise.
 	var emitted connectionStreamSequence
 	initialEvents := s.buildInitialConnectionState(trafficManager, connectionSnapshots)
-	err = server.Send(&ConnectionEvents{
-		Events:   initialEvents,
-		Reset_:   true,
-		Instance: boxInstance,
-	})
+	// The stream's identity and loss accounting belong to this subscription: a reload replaces the
+	// instance for later streams, and a loss is only meaningful against the source sequence.
+	envelope := &connectionEventEnvelope{instanceID: instanceID, loss: dropped}
+	// send returns the drop count THE ENVELOPE CARRIED. That, and only that, may be recorded as
+	// notified: a drop that lands while Send blocks is not in the message anyone received.
+	send := func(events []*ConnectionEvent, reset bool) (uint64, error) {
+		batch, batchDropped := envelope.wrap(events, reset)
+		return batchDropped, server.Send(batch)
+	}
+	sendBatch := func(batch *ConnectionEvents) error {
+		return server.Send(batch)
+	}
+	sentDropped, err := sendConnectionSnapshot(envelope, initialEvents, sendBatch)
 	if err != nil {
 		return err
 	}
+	// A baseline carries zero, so any drop the snapshot could not prove stays on the counter and is
+	// announced by the next batch or the ticker.
+	lastReportedLoss := sentDropped
 
 	// apply translates one received emission and advances the gap tracker. An event the snapshot
 	// already knows is suppressed from the message but still counts as observed: suppressing it is
@@ -1371,44 +1422,46 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 			return nil
 
 		case event := <-subscription:
+			envelope.observe(event)
 			var pendingEvents []*ConnectionEvent
 			pendingEvents = apply(event, pendingEvents)
 		drain:
 			for {
 				select {
 				case event = <-subscription:
-					pendingEvents = apply(event, pendingEvents)
+					envelope.observe(event)
+					if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
+						pendingEvents = append(pendingEvents, protoEvent)
+					}
 				default:
 					break drain
 				}
 			}
 			if len(pendingEvents) > 0 {
-				err = server.Send(&ConnectionEvents{
-					Events:   pendingEvents,
-					Instance: boxInstance,
-					Dropped:  emitted.Dropped(),
-				})
+				var sent uint64
+				sent, err = send(pendingEvents, false)
 				if err != nil {
 					return err
 				}
+				lastReportedLoss = sent
 			}
 
 		case <-ticker.C:
 			protoEvents := s.buildTrafficUpdates(trafficManager, connectionSnapshots)
-			if len(protoEvents) == 0 {
+			currentLoss := dropped()
+			if !shouldSendConnectionBatch(len(protoEvents), currentLoss, lastReportedLoss) {
 				continue
 			}
-			// The reconcile events are synthesised from the live table, not received from the
-			// emitter, so they carry no Sequence of their own. Dropped is still reported: it is a
-			// property of the stream, not of one message.
-			err = server.Send(&ConnectionEvents{
-				Events:   protoEvents,
-				Instance: boxInstance,
-				Dropped:  emitted.Dropped(),
-			})
+			// A batch with no events but a RAISED drop count is the silent-tail recovery signal: the
+			// consumer sees `dropped` grow, refuses the increment and takes a fresh snapshot. Sending
+			// it needs no business traffic and no unbounded refresh - one small message per tick while
+			// the loss is new, and nothing at all when the queue is merely slow but complete.
+			var sent uint64
+			sent, err = send(protoEvents, false)
 			if err != nil {
 				return err
 			}
+			lastReportedLoss = sent
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -76,10 +77,27 @@ type Router struct {
 	ruleSetUpdater     *R.RuleSetUpdater
 	processSearcher    process.Searcher
 	processCache       *freelru.Cache[processCacheKey, processCacheEntry]
-	neighborResolver   adapter.NeighborResolver
-	pauseManager       pause.Manager
-	trackers           []adapter.ConnectionTracker
-	platformInterface  adapter.PlatformInterface
+	// processCacheEpoch is bumped by every cache reset. A lookup that was already running when the
+	// reset happened must not add its (pre-reset) answer afterwards: the reset exists because the
+	// network generation changed, and re-adding the old generation's fact would make the purge
+	// ineffective for exactly the lookup that raced it.
+	//
+	// The epoch ALONE is not the commit boundary - the comparison and the write have to be one step
+	// (processCacheCommit), or a reset can land between them and the write proceeds anyway.
+	processCacheEpoch atomic.Uint64
+	// processCacheCommit serialises the epoch comparison with the cache write, and both against a
+	// reset. The lookup itself (the /proc walk, the socket table) runs OUTSIDE it: this is a commit
+	// lock, not a search lock, so a blocked system call cannot stall a reset and a reset cannot stall
+	// a search.
+	processCacheCommit sync.Mutex
+	// processCacheAboutToPublish is a test seam: it runs immediately before the commit lock is
+	// taken, which is the exact instant a reset used to be able to slip between the check and the
+	// write. Production leaves it nil.
+	processCacheAboutToPublish func()
+	neighborResolver           adapter.NeighborResolver
+	pauseManager               pause.Manager
+	trackers                   []adapter.ConnectionTracker
+	platformInterface          adapter.PlatformInterface
 
 	// trafficClassPolicies holds the per-outbound explicit traffic class from the configuration.
 	// It is set once during box setup and only read at flow setup.
@@ -431,12 +449,30 @@ func (r *Router) TrimExpiredCaches() int {
 func (r *Router) ResetNetwork() {
 	r.httpClientManager.ResetNetwork()
 	r.dns.ResetNetwork()
-	if r.processCache != nil {
-		r.processCache.Purge()
-	}
+	r.resetProcessCaches()
+}
+
+// resetProcessCaches is the process-cache half of a network reset, separate so the interleaving can
+// be exercised without a full manager set.
+//
+// # The order is the contract
+//
+// The searcher's own cache is reset FIRST, then the epoch moves, then the outer cache is purged -
+// all under the commit lock. A lookup that observes the new epoch afterwards therefore cannot have
+// reached the inner cache before it was emptied: it either started before the epoch moved (and its
+// write is refused) or after (and the inner cache it consults is already the new generation's).
+// Doing the inner reset last leaves exactly the reverse window: a query that starts during the reset
+// reads the new epoch and stores an old inner answer under it.
+func (r *Router) resetProcessCaches() {
+	r.processCacheCommit.Lock()
 	if r.processSearcher != nil {
 		r.processSearcher.ResetCache()
 	}
+	r.processCacheEpoch.Add(1)
+	if r.processCache != nil {
+		r.processCache.Purge()
+	}
+	r.processCacheCommit.Unlock()
 }
 
 // debugLogging reports whether a debug-level message would actually be emitted.

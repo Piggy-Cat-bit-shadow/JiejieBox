@@ -14,12 +14,17 @@ package libbox
 
 import (
 	"context"
+	"net/netip"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/physicalpath"
+	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/route"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
+
+	mDNS "github.com/miekg/dns"
 )
 
 // boxConnectionTestPath is the running box seen through the slices the runner needs.
@@ -40,23 +45,112 @@ func (p *boxConnectionTestPath) Outbound() adapter.OutboundManager {
 }
 
 // PreviewRouteRule explains which route rule decides a request for this host, if this build can.
+//
+// The destination is parsed, not assumed to be a name: a literal target used to be handed to the
+// rule matcher as an FQDN, so an `ip_cidr` rule never matched and the report said "no rule matched"
+// for a request production rejects. `Domain` carries only a real sniffed/asked name; a literal has
+// none.
 func (p *boxConnectionTestPath) PreviewRouteRule(network string, domain string, port uint16) (connectionTestRulePreview, bool) {
 	routeRouter, isRouteRouter := p.box.Router().(*route.Router)
 	if !isRouteRouter || routeRouter == nil {
 		return connectionTestRulePreview{}, false
 	}
+	destination := M.ParseSocksaddrHostPort(domain, port)
+	previewDomain := ""
+	if destination.IsDomain() {
+		previewDomain = destination.Fqdn
+	}
 	result := routeRouter.PreviewRoute(context.Background(), route.RoutePreviewRequest{
 		Network:     network,
-		Destination: M.Socksaddr{Fqdn: domain, Port: port},
-		Domain:      domain,
+		Destination: destination,
+		Domain:      previewDomain,
 		UserId:      -1,
 	})
 	return connectionTestRulePreview{
+		Matched:          result.Matched,
+		RuleIndex:        result.RuleIndex,
+		Rule:             result.Rule,
+		ActionType:       result.ActionType,
+		Outbound:         result.ActionOutbound,
+		Unknown:          result.Unknown,
+		FinalDestination: result.FinalDestination,
+	}, true
+}
+
+// DialRoute runs the PRODUCTION route decision for one socketless request and dials its result.
+//
+// It is the active counterpart of PreviewRouteRule: the preview explains what would happen, this
+// entry actually runs the walk (including `resolve` actions, which name their own DNS server and
+// strategy) and then dials through the outbound that decision selected. The runner builds its
+// report from this one execution, so the rule it names, the DNS server it names, the address it
+// names and the connection it made cannot disagree.
+func (p *boxConnectionTestPath) DialRoute(ctx context.Context, request route.RouteDiagnoseRequest) (route.RouteDiagnoseResult, error, bool) {
+	routeRouter, isRouteRouter := p.box.Router().(*route.Router)
+	if !isRouteRouter || routeRouter == nil {
+		return route.RouteDiagnoseResult{}, nil, false
+	}
+	result, err := routeRouter.DiagnoseRoute(ctx, request)
+	if err != nil {
+		return result, err, true
+	}
+	return result, nil, true
+}
+
+// ResolveDomain resolves a name through the box's real DNS path, so the diagnostic dials the
+// address production would dial. It is the ACTIVE counterpart of the passive DNS stage.
+func (p *boxConnectionTestPath) ResolveDomain(ctx context.Context, domain string) (netip.Addr, error) {
+	routeRouter, isRouteRouter := p.box.Router().(*route.Router)
+	if !isRouteRouter || routeRouter == nil {
+		return netip.Addr{}, E.New("the running box has no route router")
+	}
+	addresses, err := routeRouter.LookupDomain(ctx, domain, adapter.DNSQueryOptions{})
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	if len(addresses) == 0 {
+		return netip.Addr{}, E.New("no address for ", domain)
+	}
+	return addresses[0], nil
+}
+
+// PreviewDNSRule explains which DNS rule and server would answer the target's address query.
+//
+// It goes through the ROUTE router, which already drives the DNS router: a Box accessor for the DNS
+// router would be a shared-interface change for one explanation stage. The preview itself is
+// read-only (it runs the same rule matcher on a private metadata copy, with no query, no walk and
+// no cache write), so adding this stage cannot change what the test then measures.
+func (p *boxConnectionTestPath) PreviewDNSRule(network string, domain string, port uint16) (connectionTestDNSPreview, bool) {
+	routeRouter, isRouteRouter := p.box.Router().(*route.Router)
+	if !isRouteRouter || routeRouter == nil {
+		return connectionTestDNSPreview{}, false
+	}
+	// The eventual dial resolves an address record. `network` and `port` describe the CONNECTION,
+	// not the query, so they are deliberately not passed into the DNS question.
+	_ = network
+	_ = port
+	result, previewed := routeRouter.PreviewDNSLookup(context.Background(), dns.PreviewQuery{
+		Name:  domain,
+		QType: mDNS.TypeA,
+	})
+	if !previewed {
+		return connectionTestDNSPreview{}, false
+	}
+	unknown := ""
+	if result.Unknown {
+		// The preview states a BOOLEAN plus the name of the missing fact; this report wants the
+		// sentence a reader can act on.
+		unknown = "the DNS decision depends on " + result.DependsOn + " this preview was not given"
+		if result.DependsOn == "" {
+			unknown = "the DNS decision depends on a fact this preview was not given"
+		}
+	}
+	return connectionTestDNSPreview{
 		Matched:    result.Matched,
 		RuleIndex:  result.RuleIndex,
 		Rule:       result.Rule,
 		ActionType: result.ActionType,
-		Outbound:   result.ActionOutbound,
-		Unknown:    result.Unknown,
+		Server:     result.Server,
+		ServerType: result.ServerType,
+		Unknown:    unknown,
 	}, true
 }

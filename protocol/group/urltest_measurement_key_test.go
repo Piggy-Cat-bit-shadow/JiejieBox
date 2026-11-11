@@ -39,13 +39,16 @@ func (o *keyTestOutbound) ListenPacket(context.Context, M.Socksaddr) (net.Packet
 	return nil, net.ErrClosed
 }
 
-// epochOnlyManager is a NetworkManager with one working method: the epoch is all the key reads.
+// epochOnlyManager is a NetworkManager with two working methods: the environment fingerprint and the
+// reset generation, the two facts the key reads.
 type epochOnlyManager struct {
 	adapter.NetworkManager
-	epoch uint64
+	epoch           uint64
+	resetGeneration uint64
 }
 
-func (m *epochOnlyManager) NetworkEnvironment() uint64 { return m.epoch }
+func (m *epochOnlyManager) NetworkEnvironment() uint64     { return m.epoch }
+func (m *epochOnlyManager) NetworkResetGeneration() uint64 { return m.resetGeneration }
 
 func TestTheProductionMeasurementKeyNamesEveryFactThatCanVary(t *testing.T) {
 	expected, err := urltest.ParseExpectedStatus("204")
@@ -104,9 +107,20 @@ func TestTheProductionMeasurementKeyNamesEveryFactThatCanVary(t *testing.T) {
 	require.Empty(t, key.TLSFingerprint)
 
 	// The epoch is the one dimension that comes from the Box, and it is carried.
-	epochCtx := service.ContextWith[adapter.NetworkManager](context.Background(), &epochOnlyManager{epoch: 12})
+	epochCtx := service.ContextWith[adapter.NetworkManager](context.Background(), &epochOnlyManager{epoch: 12, resetGeneration: 3})
 	epochKey := batch.measurementKey(epochCtx, link, outbound)
 	require.EqualValues(t, 12, epochKey.NetworkEpoch)
+	require.EqualValues(t, 3, epochKey.NetworkResetGeneration,
+		"the reset generation names the boundary the probe belongs to, and a fingerprint cannot: A -> B -> A returns the same fingerprint")
 	require.False(t, key.SharesEvidenceWith(*epochKey),
 		"an answer measured on the previous network must not answer a question about this one")
+
+	// The two identities are independent: the SAME fingerprint in a later generation is a different
+	// question, because the device went somewhere and came back.
+	sameEnvironmentLater := batch.measurementKey(service.ContextWith[adapter.NetworkManager](
+		context.Background(), &epochOnlyManager{epoch: 12, resetGeneration: 5}), link, outbound)
+	require.EqualValues(t, epochKey.NetworkEpoch, sameEnvironmentLater.NetworkEpoch)
+	require.NotEqual(t, epochKey.NetworkResetGeneration, sameEnvironmentLater.NetworkResetGeneration)
+	require.False(t, epochKey.SharesEvidenceWith(*sameEnvironmentLater),
+		"returning to the same network is not returning to the same probe generation")
 }

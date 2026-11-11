@@ -63,6 +63,14 @@ service StartedService {
   rpc CancelOpenVPNChallenge(OpenVPNChallengeCancel) returns (google.protobuf.Empty) {}
   rpc SubscribeNotifications(google.protobuf.Empty) returns (stream NotificationEvent) {}
 
+  // DNS history management. The response JSON is the SAME document the gomobile binding returns,
+  // so a platform has one contract for both transports.
+  rpc DNSHistoryEnable(DNSHistoryEnableRequest) returns (google.protobuf.Empty) {}
+  rpc DNSHistoryDisable(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  rpc DNSHistoryQuery(DNSHistoryQueryRequest) returns (DNSHistoryQueryResponse) {}
+  rpc DNSHistoryStats(google.protobuf.Empty) returns (DNSHistoryStatsResponse) {}
+  rpc DNSHistoryTopK(DNSHistoryTopKRequest) returns (DNSHistoryTopKResponse) {}
+  rpc DNSHistoryClear(google.protobuf.Empty) returns (DNSHistoryClearResponse) {}
 }
 
 message Version {
@@ -197,6 +205,43 @@ message SubscribeConnectionsRequest {
   int64 interval = 1;
 }
 
+message DNSHistoryEnableRequest {
+  int32 maxEntries = 1;   // 0 keeps the server default
+  int64 maxBytes = 2;     // 0 keeps the server default; the ring charges every retained field
+  int64 ttlMs = 3;        // 0 keeps the server default
+}
+
+message DNSHistoryQueryRequest {
+  uint64 since = 1;       // exclusive cursor; take it from the previous response
+  int32 limit = 2;        // 0 keeps the server default, capped server-side
+  string transport = 3;   // optional filter
+  string source = 4;      // optional filter (upstream / cached / blocked ...)
+  int32 maxBytes = 5;     // the ENCODED response budget requested by the caller; clamped
+}
+
+message DNSHistoryQueryResponse {
+  // {"records":[...],"stats":{...},"truncated":bool,"nextSequence":n}: the exact document the
+  // gomobile binding returns. truncated plus nextSequence is the pagination contract.
+  string recordsJson = 1;
+}
+
+message DNSHistoryStatsResponse {
+  string statsJson = 1;   // {"stats":{...}}
+}
+
+message DNSHistoryTopKRequest {
+  string field = 1;       // "transport" or "source"
+  int32 limit = 2;        // 0 keeps the server default, capped at the top-k bucket bound
+}
+
+message DNSHistoryTopKResponse {
+  string entriesJson = 1; // {"field":...,"entries":[...]}
+}
+
+message DNSHistoryClearResponse {
+  int32 cleared = 1;
+}
+
 enum ConnectionEventType {
   CONNECTION_EVENT_NEW = 0;
   CONNECTION_EVENT_UPDATE = 1;
@@ -219,11 +264,30 @@ message ConnectionEvent {
 message ConnectionEvents {
   repeated ConnectionEvent events = 1;
   bool reset = 2;
-  // The Box instance that produced this stream. A new instance invalidates any state the
-  // consumer built from an older stream.
-  uint64 instance = 3;
-  // How many events the producer knows it lost for this stream, cumulative.
-  uint64 dropped = 4;
+  // instanceId identifies the Box instance that produced this batch.
+  //
+  // A reload replaces the running instance while a subscription can still be open; without this
+  // field a client cannot tell "the table was cleared" from "a different instance is answering",
+  // and applying a batch from the superseded instance rolls the table back.
+  string instanceId = 3;
+  // sequence is per-subscription and strictly increasing; a gap is a lost batch.
+  uint64 sequence = 4;
+  // dropped is the number of events lost since the subscription started (gap accounting across
+  // every delivered batch), so a client can tell "no events" from "events were lost".
+  uint64 dropped = 5;
+  // snapshotPart and snapshotParts describe a snapshot split across several messages because one
+  // Reset can exceed the default gRPC receive limit: 1,000 closed records with ~5 KiB rule
+  // descriptions is ~5.4 MiB, above the 4 MiB default. The contract:
+  //
+  //   - 0/0: a single-message snapshot or an ordinary increment (also what older daemons send);
+  //   - part 1..parts: part 1 carries reset=true and starts the group; the last part completes it.
+  //
+  // A consumer must apply the snapshot only after the last part; an interrupted group is not a
+  // baseline and must not be treated as successful recovery. The fields are additive: an older
+  // reader sees part 1 as a Reset and the rest as increments, which converges to the same rows but
+  // without atomic completion, so a mixed-version pair cannot claim the interrupted-group guarantee.
+  uint32 snapshotPart = 6;
+  uint32 snapshotParts = 7;
 }
 
 message Connection {

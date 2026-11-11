@@ -15,6 +15,7 @@ package libbox
 
 import (
 	stdjson "encoding/json"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/dns"
@@ -564,4 +565,31 @@ func marshalBindingJSON(value any) string {
 // timeMilliseconds converts a millisecond count to a duration for the history's TTL.
 func timeMilliseconds(milliseconds int64) time.Duration {
 	return time.Duration(milliseconds) * time.Millisecond
+}
+
+// parseDNSHistoryEnableOptions decodes the binding's enable body.
+//
+// The command server takes the JSON directly; the daemon client forwards the same document as gRPC
+// fields. Keeping one decoder here means both transports accept one shape.
+func parseDNSHistoryEnableOptions(optionsJSON string) (commandServerDNSHistoryOptions, error) {
+	var options commandServerDNSHistoryOptions
+	if strings.TrimSpace(optionsJSON) == "" {
+		return options, nil
+	}
+	if err := stdjson.Unmarshal([]byte(optionsJSON), &options); err != nil {
+		return options, E.Cause(err, "decode dns history enable options")
+	}
+	return options, nil
+}
+
+// parseDNSHistoryQueryOptions decodes the binding's query body; see parseDNSHistoryEnableOptions.
+func parseDNSHistoryQueryOptions(queryJSON string) (commandServerDNSHistoryQuery, error) {
+	var query commandServerDNSHistoryQuery
+	if strings.TrimSpace(queryJSON) == "" {
+		return query, nil
+	}
+	if err := stdjson.Unmarshal([]byte(queryJSON), &query); err != nil {
+		return query, E.Cause(err, "decode dns history query options")
+	}
+	return query, nil
 }

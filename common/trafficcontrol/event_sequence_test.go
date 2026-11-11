@@ -2,10 +2,10 @@ package trafficcontrol
 
 // The producer half of the connection-event loss signal.
 //
-// The subscriber pipe is deliberately lossy: `Subscriber.Emit` drops an event when the buffer is
-// full instead of blocking a connection. That is the right trade for a data path, but it means the
-// consumer's view can be missing events with no other trace. `Sequence` is that trace: the manager
-// stamps every emission, so a gap the consumer observes is a drop it can count.
+// The per-subscription pipe is deliberately lossy: a full queue drops an event instead of blocking a
+// connection. That is the right trade for a data path, but it means the consumer's view can be
+// missing events with no other trace. `Sequence` is that trace: the manager stamps every emission
+// under the publish lock, so a gap the consumer observes is a drop it can count.
 
 import (
 	"testing"
@@ -19,13 +19,11 @@ import (
 // TestEveryEmissionAdvancesTheSequence pins the producer's ordering.
 func TestEveryEmissionAdvancesTheSequence(t *testing.T) {
 	manager := NewManager()
-	subscriber := observable.NewSubscriber[ConnectionEvent](8)
-	manager.eventSubscriber = subscriber
-	subscription, _ := subscriber.Subscription()
-	require.NotNil(t, subscription)
+	subscription, _, err := manager.SubscribeEvents()
+	require.NoError(t, err)
 
 	for index := 0; index < 4; index++ {
-		manager.publish(ConnectionEvent{})
+		manager.publishEvent(ConnectionEvent{})
 	}
 	var observed []uint64
 	for index := 0; index < 4; index++ {
@@ -39,12 +37,9 @@ func TestEveryEmissionAdvancesTheSequence(t *testing.T) {
 	require.Equal(t, []uint64{1, 2, 3, 4}, observed, "the sequence is monotonic and gap-free")
 }
 
-// TestASlowSubscriberSeesTheGapItsBufferCaused is the failure this field exists for: the buffer is
-// full, an event is dropped, and the next delivered event names the gap.
-//
-// It drives the Subscriber directly rather than through an Observer, because the observer forwards
-// on its own goroutine and the drop would then depend on when that goroutine ran. The drop itself is
-// synchronous: a full buffer drops inside Emit.
+// TestASlowSubscriberSeesTheGapItsBufferCaused documents the queue semantics the fanout relies on
+// with the library primitive it is built from: a full buffer drops inside Emit, and the next
+// delivered event names the gap.
 func TestASlowSubscriberSeesTheGapItsBufferCaused(t *testing.T) {
 	subscriber := observable.NewSubscriber[ConnectionEvent](2)
 	subscription, _ := subscriber.Subscription()

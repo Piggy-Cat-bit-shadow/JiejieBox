@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/daemon"
@@ -36,7 +37,18 @@ type CommandClient struct {
 	clientAccess      sync.RWMutex
 	connectAccess     sync.Mutex
 	standalone        bool
+
+	// connectionGeneration identifies the client's CURRENT connection. A stream delivers events
+	// through a handler the platform may block in, so a cancellation alone cannot stop a batch that
+	// is already in flight: every delivery re-checks this generation, and a newer connect makes the
+	// older stream's remaining batches and its Disconnected callback stale.
+	connectionGeneration atomic.Uint64
 }
+
+// connectionSubscriptionID numbers connection subscriptions PROCESS-WIDE, so two clients (or one
+// client reconnecting) can never share an identity. The consumer uses it to reject a batch that
+// belongs to a subscription which has already been superseded.
+var connectionSubscriptionID atomic.Uint64
 
 type CommandClientOptions struct {
 	commands       []int32
@@ -288,6 +300,14 @@ func (c *CommandClient) ConnectWithFD(fd int32) error {
 
 func (c *CommandClient) connect(dial func(context.Context) (*grpc.ClientConn, daemon.StartedServiceClient, error)) error {
 	ctx, cancel := context.WithCancel(context.Background())
+	// A new connection attempt invalidates every stream of the previous one AT ONCE: a handler that
+	// is already running an old batch must not apply it after this point.
+	//
+	// The value is the connection's IDENTITY, and it is carried to every stream handler this connect
+	// starts. Reading the current generation later, inside a handler, is not equivalent: a handler
+	// whose Subscribe call blocked across the next connect would read the NEW generation and claim
+	// the old subscription as current.
+	generation := c.connectionGeneration.Add(1)
 	c.clientAccess.Lock()
 	c.cancel()
 	previousConnection := c.grpcConn
@@ -324,24 +344,24 @@ func (c *CommandClient) connect(dial func(context.Context) (*grpc.ClientConn, da
 	c.connectAccess.Unlock()
 
 	c.handler.Connected()
-	return c.dispatchCommands(client, ctx)
+	return c.dispatchCommands(client, ctx, generation)
 }
 
-func (c *CommandClient) dispatchCommands(client daemon.StartedServiceClient, ctx context.Context) error {
+func (c *CommandClient) dispatchCommands(client daemon.StartedServiceClient, ctx context.Context, generation uint64) error {
 	for _, command := range c.options.commands {
 		switch command {
 		case CommandLog:
-			go c.handleLogStream(client, ctx)
+			go c.handleLogStream(client, ctx, generation)
 		case CommandStatus:
-			go c.handleStatusStream(client, ctx)
+			go c.handleStatusStream(client, ctx, generation)
 		case CommandGroup:
-			go c.handleGroupStream(client, ctx)
+			go c.handleGroupStream(client, ctx, generation)
 		case CommandClashMode:
-			go c.handleClashModeStream(client, ctx)
+			go c.handleClashModeStream(client, ctx, generation)
 		case CommandConnections:
-			go c.handleConnectionsStream(client, ctx)
+			go c.handleConnectionsStream(client, ctx, generation)
 		case CommandOutbounds:
-			go c.handleOutboundsStream(client, ctx)
+			go c.handleOutboundsStream(client, ctx, generation)
 		default:
 			return E.New("unknown command: ", command)
 		}
@@ -349,7 +369,29 @@ func (c *CommandClient) dispatchCommands(client daemon.StartedServiceClient, ctx
 	return nil
 }
 
+// stillConnected reports whether generation is still the client's current connection.
+func (c *CommandClient) stillConnected(generation uint64) bool {
+	return c.connectionGeneration.Load() == generation
+}
+
+// reportDisconnected reports a stream failure to the platform handler ONLY while the connection that
+// produced it is still the current one.
+//
+// Every stream handler holds the generation of the connection it was started for. A failure that
+// arrives after a newer connect describes a connection that no longer exists, and telling the
+// platform "the current connection failed" is a fact about the wrong object: on the platform side
+// that clears the new session's state and shows an error for a tunnel that is up.
+func (c *CommandClient) reportDisconnected(generation uint64, cause error) {
+	if !c.stillConnected(generation) {
+		return
+	}
+	c.handler.Disconnected(cause.Error())
+}
+
 func (c *CommandClient) Disconnect() error {
+	if c == nil {
+		return nil
+	}
 	c.clientAccess.Lock()
 	c.cancel()
 	connection := c.grpcConn
@@ -411,6 +453,12 @@ func (c *CommandClient) closeConnection() {
 }
 
 func callWithResult[T any](c *CommandClient, call func(ctx context.Context, client daemon.StartedServiceClient) (T, error)) (T, error) {
+	if c == nil {
+		// The bound type can reach the platform as a typed nil pointer. Every client call goes
+		// through here, so one guard keeps a nil client from dereferencing on the binding surface.
+		var zero T
+		return zero, E.New("command client is nil")
+	}
 	client, ctx, err := c.getClientForCall()
 	if err != nil {
 		var zero T
@@ -423,6 +471,10 @@ func callWithResult[T any](c *CommandClient, call func(ctx context.Context, clie
 }
 
 func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Context, client daemon.ManagedServiceClient) (T, error)) (T, error) {
+	if c == nil {
+		var zero T
+		return zero, E.New("command client is nil")
+	}
 	_, ctx, err := c.getClientForCall()
 	if err != nil {
 		var zero T
@@ -441,22 +493,31 @@ func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Contex
 	return call(ctx, client)
 }
 
-func (c *CommandClient) handleLogStream(client daemon.StartedServiceClient, ctx context.Context) {
+func (c *CommandClient) handleLogStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {
 	stream, err := client.SubscribeLog(ctx, &emptypb.Empty{})
 	if err != nil {
-		c.handler.Disconnected(E.Cause(err, "subscribe log").Error())
+		c.reportDisconnected(generation, E.Cause(err, "subscribe log"))
+		return
+	}
+	if !c.stillConnected(generation) {
 		return
 	}
 	defaultLogLevel, err := client.GetDefaultLogLevel(ctx, &emptypb.Empty{})
 	if err != nil {
-		c.handler.Disconnected(E.Cause(err, "get default log level").Error())
+		c.reportDisconnected(generation, E.Cause(err, "get default log level"))
+		return
+	}
+	if !c.stillConnected(generation) {
 		return
 	}
 	c.handler.SetDefaultLogLevel(int32(defaultLogLevel.Level))
 	for {
 		logMessage, err := stream.Recv()
 		if err != nil {
-			c.handler.Disconnected(E.Cause(err, "log stream recv").Error())
+			c.reportDisconnected(generation, E.Cause(err, "log stream recv"))
+			return
+		}
+		if !c.stillConnected(generation) {
 			return
 		}
 		if logMessage.Reset_ {
@@ -473,52 +534,67 @@ func (c *CommandClient) handleLogStream(client daemon.StartedServiceClient, ctx 
 	}
 }
 
-func (c *CommandClient) handleStatusStream(client daemon.StartedServiceClient, ctx context.Context) {
+func (c *CommandClient) handleStatusStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {
 	interval := c.options.StatusInterval
 
 	stream, err := client.SubscribeStatus(ctx, &daemon.SubscribeStatusRequest{
 		Interval: interval,
 	})
 	if err != nil {
-		c.handler.Disconnected(E.Cause(err, "subscribe status").Error())
+		c.reportDisconnected(generation, E.Cause(err, "subscribe status"))
+		return
+	}
+	if !c.stillConnected(generation) {
 		return
 	}
 
 	for {
 		status, err := stream.Recv()
 		if err != nil {
-			c.handler.Disconnected(E.Cause(err, "status stream recv").Error())
+			c.reportDisconnected(generation, E.Cause(err, "status stream recv"))
+			return
+		}
+		if !c.stillConnected(generation) {
 			return
 		}
 		c.handler.WriteStatus(statusMessageFromGRPC(status))
 	}
 }
 
-func (c *CommandClient) handleGroupStream(client daemon.StartedServiceClient, ctx context.Context) {
+func (c *CommandClient) handleGroupStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {
 	stream, err := client.SubscribeGroups(ctx, &emptypb.Empty{})
 	if err != nil {
-		c.handler.Disconnected(E.Cause(err, "subscribe groups").Error())
+		c.reportDisconnected(generation, E.Cause(err, "subscribe groups"))
+		return
+	}
+	if !c.stillConnected(generation) {
 		return
 	}
 
 	for {
 		groups, err := stream.Recv()
 		if err != nil {
-			c.handler.Disconnected(E.Cause(err, "groups stream recv").Error())
+			c.reportDisconnected(generation, E.Cause(err, "groups stream recv"))
+			return
+		}
+		if !c.stillConnected(generation) {
 			return
 		}
 		c.handler.WriteGroups(outboundGroupIteratorFromGRPC(groups))
 	}
 }
 
-func (c *CommandClient) handleClashModeStream(client daemon.StartedServiceClient, ctx context.Context) {
+func (c *CommandClient) handleClashModeStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {
 	modeStatus, err := client.GetClashModeStatus(ctx, &emptypb.Empty{})
 	if err != nil {
 		if status.Code(err) != codes.NotFound {
-			c.handler.Disconnected(E.Cause(err, "get clash mode status").Error())
+			c.reportDisconnected(generation, E.Cause(err, "get clash mode status"))
 			return
 		}
 		modeStatus = &daemon.ClashModeStatus{}
+	}
+	if !c.stillConnected(generation) {
+		return
 	}
 
 	if sFixAndroidStack {
@@ -536,7 +612,10 @@ func (c *CommandClient) handleClashModeStream(client daemon.StartedServiceClient
 		if status.Code(err) == codes.NotFound {
 			return
 		}
-		c.handler.Disconnected(E.Cause(err, "subscribe clash mode").Error())
+		c.reportDisconnected(generation, E.Cause(err, "subscribe clash mode"))
+		return
+	}
+	if !c.stillConnected(generation) {
 		return
 	}
 
@@ -546,41 +625,153 @@ func (c *CommandClient) handleClashModeStream(client daemon.StartedServiceClient
 			if status.Code(err) == codes.NotFound {
 				return
 			}
-			c.handler.Disconnected(E.Cause(err, "clash mode stream recv").Error())
+			c.reportDisconnected(generation, E.Cause(err, "clash mode stream recv"))
+			return
+		}
+		if !c.stillConnected(generation) {
 			return
 		}
 		c.handler.UpdateClashMode(mode.Mode)
 	}
 }
 
-func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClient, ctx context.Context) {
+// connectionResyncAttempts bounds how many times a lost increment is repaired by resubscribing
+// before the client reports the stream as failed. A repair costs one snapshot, so a stream that keeps
+// losing events must not spin: the backoff doubles per attempt.
+const connectionResyncAttempts = 4
+
+// handleConnectionsStream delivers the connection-event stream, and repairs a lost increment by
+// resubscribing for a fresh snapshot.
+//
+// # Why the wire fields matter here
+//
+// The subscription identity can only tell "this batch belongs to an older stream" apart; it cannot
+// tell "batches 7 and 8 never arrived". The daemon stamps each batch with its instanceId, sequence and
+// cumulative dropped count for exactly that question. A gap, a rising drop count, or an increment
+// from a different instance without a Reset means the consumer's table is missing a change (the
+// reviewed symptom: a CLOSED event was lost and the row stayed forever). The incomplete batch is NOT
+// delivered; the stream is cancelled and a new subscription is opened, whose first batch is the
+// daemon's snapshot. That snapshot is delivered with `Resynced` set, so the platform can tell a
+// repair from an ordinary connect.
+func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {
 	interval := c.options.StatusInterval
+	stillCurrent := func() bool { return c.stillConnected(generation) }
 
-	stream, err := client.SubscribeConnections(ctx, &daemon.SubscribeConnectionsRequest{
-		Interval: interval,
-	})
-	if err != nil {
-		c.handler.Disconnected(E.Cause(err, "subscribe connections").Error())
-		return
+	resynced := false
+	for attempt := 0; attempt <= connectionResyncAttempts; attempt++ {
+		if !stillCurrent() {
+			return
+		}
+		// The subscription's identity is bound BEFORE the call that can block.
+		//
+		// It used to be taken after SubscribeConnections returned, and that is the reviewed failure:
+		// a call parked in establishment across the next connect would come back, read the CURRENT
+		// generation, and claim the old subscription as the new one - including a subscription
+		// NUMBER higher than the new stream's, which made the consumer accept its snapshot as
+		// fresher. The identity belongs to the subscription's creation, so it is taken here,
+		// together with the connection it belongs to.
+		subscription := connectionSubscriptionID.Add(1)
+		streamCtx, cancelStream := context.WithCancel(ctx)
+		stream, err := client.SubscribeConnections(streamCtx, &daemon.SubscribeConnectionsRequest{
+			Interval: interval,
+		})
+		if err != nil {
+			cancelStream()
+			if stillCurrent() {
+				c.handler.Disconnected(E.Cause(err, "subscribe connections").Error())
+			}
+			return
+		}
+		if !stillCurrent() {
+			// Established late: this stream belongs to a connection a newer one has replaced.
+			// Nothing it carries may be applied, and its termination says nothing about the current
+			// state.
+			cancelStream()
+			return
+		}
+		lost := c.consumeConnectionsStream(stream, subscription, stillCurrent, resynced)
+		cancelStream()
+		if !lost {
+			return
+		}
+		if attempt == connectionResyncAttempts {
+			if stillCurrent() {
+				c.handler.Disconnected("connection event stream could not be resynchronised after a lost increment")
+			}
+			return
+		}
+		resynced = true
+		select {
+		case <-time.After(time.Duration(attempt+1) * 20 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
 	}
+}
 
-	// Every subscription starts from a baseline, whatever the peer sent.
-	//
-	// The server's first message IS the snapshot (daemon: buildInitialConnectionState with Reset), so
-	// this normally only confirms it. It exists for the two cases where the flag cannot be relied on:
-	//   - an older daemon that never set it, and
-	//   - a RECONNECT, where the platform may still hold rows from the stream that just died. Marking
-	//     the first batch as a reset tells the consumer to discard them before this stream's events
-	//     apply, so a stale row cannot be carried into the new session.
-	baselinePending := true
+// consumeConnectionsStream reads one subscription until it ends, and reports whether the stream
+// should be replaced by a fresh subscription (a lost increment).
+//
+// The accept/stale/resync decision is the SHARED classifier used by Connections.ApplyEvents. The
+// client's own responsibility is narrower than it used to be: it no longer keeps a second, subtly
+// different watermark. A stale duplicate is skipped without delivery and WITHOUT moving the
+// watermark (the reviewed `1R,2,1,3` failure turned 3 into a gap and resubscribed for nothing), and
+// only an accepted batch advances the state.
+func (c *CommandClient) consumeConnectionsStream(stream daemon.StartedService_SubscribeConnectionsClient, subscription uint64, stillCurrent func() bool, resynced bool) bool {
+	state := connectionBatchState{subscription: subscription}
+	var assembly *connectionSnapshotAssembly
 	for {
 		events, err := stream.Recv()
 		if err != nil {
+			if !stillCurrent() {
+				// A reconnect already replaced this stream; its termination says nothing about the
+				// new state and must not clear it.
+				return false
+			}
 			c.handler.Disconnected(E.Cause(err, "connections stream recv").Error())
-			return
+			return false
 		}
-		libboxEvents, nextBaseline := connectionEventsForDelivery(events, baselinePending)
-		baselinePending = nextBaseline
+		if !stillCurrent() {
+			return false
+		}
+		libboxEvents := connectionEventsFromGRPC(events)
+		if libboxEvents == nil {
+			libboxEvents = &ConnectionEvents{}
+		}
+		if libboxEvents.snapshotParts > 1 {
+			if libboxEvents.snapshotPart == 1 {
+				var ok bool
+				assembly, ok = startSnapshot(libboxEvents, subscription)
+				if !ok {
+					return true
+				}
+			} else if !assembly.add(libboxEvents, subscription) {
+				return true
+			}
+			if !assembly.complete() {
+				continue
+			}
+			libboxEvents = assembly.finish()
+			assembly = nil
+		} else if assembly != nil {
+			// A non-fragment arrived in the middle of a group: the stream cannot be ordered.
+			return true
+		}
+		// Every subscription starts from a baseline, whatever the peer sent. The server's first
+		// message IS the snapshot; forcing Reset covers an older daemon that never set it and a
+		// reconnect where the platform still holds rows from the stream that just died.
+		baselinePending := !state.hasBaseline
+		libboxEvents = connectionEventsForDeliveryFrom(libboxEvents, baselinePending, subscription)
+		switch classifyConnectionBatch(&state, libboxEvents) {
+		case batchStale:
+			continue
+		case batchResync:
+			return true
+		}
+		if baselinePending {
+			libboxEvents.Resynced = resynced
+		}
+		state.apply(libboxEvents)
 		c.handler.WriteConnectionEvents(libboxEvents)
 	}
 }
@@ -590,29 +781,42 @@ func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClie
 // It is a function rather than two inline statements so the rule can be pinned without a gRPC
 // stream: the batch a consumer receives first must ALWAYS be a reset, because the consumer's duty is
 // to discard whatever it held before this subscription.
-func connectionEventsForDelivery(events *daemon.ConnectionEvents, baselinePending bool) (*ConnectionEvents, bool) {
-	libboxEvents := connectionEventsFromGRPC(events)
-	if baselinePending {
-		if libboxEvents == nil {
-			libboxEvents = &ConnectionEvents{}
-		}
-		libboxEvents.Reset = true
-		return libboxEvents, false
-	}
-	return libboxEvents, false
+func connectionEventsForDelivery(events *daemon.ConnectionEvents, baselinePending bool, subscriptions ...uint64) (*ConnectionEvents, bool) {
+	return connectionEventsForDeliveryFrom(connectionEventsFromGRPC(events), baselinePending, subscriptions...), false
 }
 
-func (c *CommandClient) handleOutboundsStream(client daemon.StartedServiceClient, ctx context.Context) {
+// connectionEventsForDeliveryFrom applies the first-batch baseline rule to an already converted batch
+// (the assembled snapshot is one such batch).
+func connectionEventsForDeliveryFrom(libboxEvents *ConnectionEvents, baselinePending bool, subscriptions ...uint64) *ConnectionEvents {
+	if libboxEvents == nil {
+		libboxEvents = &ConnectionEvents{}
+	}
+	if len(subscriptions) > 0 {
+		libboxEvents.subscription = subscriptions[0]
+	}
+	if baselinePending {
+		libboxEvents.Reset = true
+	}
+	return libboxEvents
+}
+
+func (c *CommandClient) handleOutboundsStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {
 	stream, err := client.SubscribeOutbounds(ctx, &emptypb.Empty{})
 	if err != nil {
-		c.handler.Disconnected(E.Cause(err, "subscribe outbounds").Error())
+		c.reportDisconnected(generation, E.Cause(err, "subscribe outbounds"))
+		return
+	}
+	if !c.stillConnected(generation) {
 		return
 	}
 
 	for {
 		list, err := stream.Recv()
 		if err != nil {
-			c.handler.Disconnected(E.Cause(err, "outbounds stream recv").Error())
+			c.reportDisconnected(generation, E.Cause(err, "outbounds stream recv"))
+			return
+		}
+		if !c.stillConnected(generation) {
 			return
 		}
 		c.handler.WriteOutbounds(outboundGroupItemListFromGRPC(list))

@@ -85,13 +85,13 @@ func TestAFailedOlderAttemptCannotDeleteNewerEvidence(t *testing.T) {
 
 	// The failure belongs to an attempt that started BEFORE the stored result: it says nothing
 	// about the path that result measured.
-	storage.DeleteHealthHistoryIfOlderThan("node-a", scope, attemptStart)
+	storage.DeleteHealthHistoryOlderThanOwned("node-a", scope, attemptStart, EvidenceOwnership{})
 	require.NotNil(t, storage.LoadURLTestHistoryFor("node-a", scope),
 		"a failed attempt must not remove evidence that started after it")
 
 	// The same failure, from an attempt that started later than the stored result, IS the newer
 	// fact and removes it.
-	storage.DeleteHealthHistoryIfOlderThan("node-a", scope, newer.Add(2*time.Second))
+	storage.DeleteHealthHistoryOlderThanOwned("node-a", scope, newer.Add(2*time.Second), EvidenceOwnership{})
 	require.Nil(t, storage.LoadURLTestHistoryFor("node-a", scope))
 }
 
@@ -117,6 +117,6 @@ func TestAnOldNetworkResultCannotOverwriteNewEvidence(t *testing.T) {
 	require.EqualValues(t, 30, stored.Delay)
 
 	// A late FAILURE from the pre-switch probe must not delete it either.
-	storage.DeleteHealthHistoryIfOlderThan("node-a", scope, oldEpochStart)
+	storage.DeleteHealthHistoryOlderThanOwned("node-a", scope, oldEpochStart, EvidenceOwnership{})
 	require.NotNil(t, storage.LoadURLTestHistoryFor("node-a", scope))
 }

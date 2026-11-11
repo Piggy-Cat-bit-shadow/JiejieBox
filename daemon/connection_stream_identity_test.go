@@ -78,13 +78,16 @@ func TestTheAppliedEventCarriesItsEmissionSequence(t *testing.T) {
 }
 
 func TestEachServiceHasItsOwnStreamInstance(t *testing.T) {
-	first := NewStartedService(ServiceOptions{Context: context.Background()})
-	t.Cleanup(first.Close)
-	second := NewStartedService(ServiceOptions{Context: context.Background()})
-	t.Cleanup(second.Close)
+	// The identity belongs to the RUNNING instance, so two services are compared after each has
+	// started: a stream can only exist against a running Box.
+	first := startedForChange(t, minimalConfig)
+	second := startedForChange(t, minimalConfig)
 
-	require.NotZero(t, first.connectionStreamInstance)
-	require.NotEqual(t, first.connectionStreamInstance, second.connectionStreamInstance,
+	firstID := first.currentInstanceID()
+	secondID := second.currentInstanceID()
+	require.NotEmpty(t, firstID)
+	require.NotEmpty(t, secondID)
+	require.NotEqual(t, firstID, secondID,
 		"two services are two Box generations; a client must be able to tell their streams apart")
 }
 
@@ -93,11 +96,11 @@ func TestEachServiceHasItsOwnStreamInstance(t *testing.T) {
 // different instance rather than assume the ids it has never seen are new connections.
 func TestAReloadGivesTheStreamANewInstance(t *testing.T) {
 	service := startedForChange(t, minimalConfig)
-	first := service.connectionStreamInstance
-	require.NotZero(t, first)
+	first := service.currentInstanceID()
+	require.NotEmpty(t, first)
 
 	require.NoError(t, service.StartOrReloadService(context.Background(), modeConfig("Direct"), nil))
-	second := service.connectionStreamInstance
-	require.NotZero(t, second)
+	second := service.currentInstanceID()
+	require.NotEmpty(t, second)
 	require.NotEqual(t, first, second, "a new Box is a new stream instance")
 }

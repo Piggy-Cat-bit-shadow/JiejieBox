@@ -1,33 +1,56 @@
 package trafficcontrol
 
-// The review's "22 -> 24" counterexample: concurrent producers can invert the order of two events
-// even though both reached the queue.
+// The producer's ordering and loss contract, adapted from the observable-based tests to the
+// fanout implementation that replaced it.
 //
-// The manager stamped an event with the next sequence INSIDE Emit, so two goroutines could take 23
-// and 24 and then race for the channel: 24 landed first. A consumer that counts gaps then reports a
-// permanent loss of 23 - and a late 23 cannot retract the count. Sequence order has to BE delivery
-// order, at the one publish boundary.
+// The reviewed failure: the manager stamped an event with the next sequence INSIDE Emit, so two
+// goroutines could take 23 and 24 and then race for the channel: 24 landed first and a consumer
+// that counts gaps reported a permanent loss of 23. `publishEvent` now assigns the number and hands
+// the event to the fanout under one lock, so number order IS delivery order.
+//
+// The second half is the loss that is real: a full per-subscription queue drops, but the number is
+// already spent, so the next delivered event names the gap. The fanout counts that drop per
+// subscription (`SubscribeEventsWithLoss`), which is what makes a silent tail recoverable.
 
 import (
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/sagernet/sing/common/observable"
-
 	"github.com/stretchr/testify/require"
 )
 
-// publishOrderManager wires a manager to a queue the test can read directly, which is the producer
-// queue the observer forwards from.
-func publishOrderManager(t *testing.T) (*Manager, <-chan ConnectionEvent) {
+func orderSubscriptionWithLoss(t *testing.T, manager *Manager) (<-chan ConnectionEvent, func() uint64) {
 	t.Helper()
-	manager := NewManager()
-	subscriber := observable.NewSubscriber[ConnectionEvent](256)
-	manager.eventSubscriber = subscriber
-	subscription, _ := subscriber.Subscription()
-	require.NotNil(t, subscription)
-	return manager, subscription
+	subscription, _, dropped, err := manager.SubscribeEventsWithLoss()
+	require.NoError(t, err)
+	return subscription, dropped
+}
+
+// drainUntilIdle reads everything already delivered, stopping after a short quiet window. The
+// producers have finished by the time this is called, so the quiet window means "the queue is
+// empty", not "a producer is slow".
+func drainUntilIdle(subscription <-chan ConnectionEvent) []uint64 {
+	sequences := make([]uint64, 0, eventListenerBuffer)
+	quiet := time.NewTimer(100 * time.Millisecond)
+	defer quiet.Stop()
+	for {
+		select {
+		case event := <-subscription:
+			sequences = append(sequences, event.Sequence)
+			quiet.Reset(100 * time.Millisecond)
+		case <-quiet.C:
+			return sequences
+		}
+	}
+}
+
+func requireStrictlyIncreasing(t *testing.T, sequences []uint64, message string) {
+	t.Helper()
+	for index := 1; index < len(sequences); index++ {
+		require.Greater(t, sequences[index], sequences[index-1],
+			"%s: position %d carried %d after %d", message, index, sequences[index], sequences[index-1])
+	}
 }
 
 func TestConcurrentJoinsKeepTheEmissionOrder(t *testing.T) {
@@ -36,7 +59,9 @@ func TestConcurrentJoinsKeepTheEmissionOrder(t *testing.T) {
 		producer = 128
 	)
 	for round := 0; round < rounds; round++ {
-		manager, subscription := publishOrderManager(t)
+		manager := NewManager()
+		subscription, dropped := orderSubscriptionWithLoss(t, manager)
+
 		var waitGroup sync.WaitGroup
 		for index := 0; index < producer; index++ {
 			waitGroup.Add(1)
@@ -47,47 +72,45 @@ func TestConcurrentJoinsKeepTheEmissionOrder(t *testing.T) {
 		}
 		waitGroup.Wait()
 
-		seen := make([]uint64, producer)
-		for index := range seen {
-			select {
-			case event := <-subscription:
-				seen[index] = event.Sequence
-			default:
-				t.Fatalf("round %d: only %d of %d events arrived", round, index, producer)
-			}
-		}
-		for index, sequence := range seen {
-			require.EqualValues(t, index+1, sequence,
-				"round %d: event %d arrived as sequence %d - the number must be the delivery order", round, index+1, sequence)
-		}
+		seen := drainUntilIdle(subscription)
+		requireStrictlyIncreasing(t, seen, "delivery order must be sequence order")
+		require.Equal(t, producer, len(seen)+int(dropped()),
+			"round %d: every produced event is either delivered or counted as dropped", round)
+		require.EqualValues(t, 1, seen[0], "the first delivered event carries the first number")
 	}
 }
 
-// TestADroppedEventStillConsumesItsSequence is the other half: a full queue drops, but the number is
-// spent, so the next delivered event names the gap.
+// TestADroppedEventStillConsumesItsSequence is the other half: a full queue drops, but the number
+// is spent, so the next delivered event names the gap.
 func TestADroppedEventStillConsumesItsSequence(t *testing.T) {
 	manager := NewManager()
-	subscriber := observable.NewSubscriber[ConnectionEvent](2)
-	manager.eventSubscriber = subscriber
-	subscription, _ := subscriber.Subscription()
+	// Subscribe and do not read: the queue holds eventListenerBuffer events, the rest drop.
+	subscription, dropped := orderSubscriptionWithLoss(t, manager)
 
-	for index := 0; index < 2; index++ {
+	// Fill the queue and overflow it by three events.
+	total := eventListenerBuffer + 3
+	for index := 0; index < total; index++ {
 		manager.join(newRaceTestTracker(manager))
 	}
-	// The queue is full: these three are dropped, but each still takes a number.
-	for index := 0; index < 3; index++ {
-		manager.join(newRaceTestTracker(manager))
+	require.EqualValues(t, 3, dropped(), "the overflow is counted immediately, before any read")
+
+	seen := drainUntilIdle(subscription)
+	require.Len(t, seen, eventListenerBuffer, "the queued prefix is bounded by the listener buffer")
+	requireStrictlyIncreasing(t, seen, "the surviving prefix keeps its order")
+	for index, sequence := range seen {
+		require.EqualValues(t, index+1, sequence, "queued events keep their assigned numbers")
 	}
 
-	require.EqualValues(t, 1, (<-subscription).Sequence)
-	require.EqualValues(t, 2, (<-subscription).Sequence)
-
-	// One slot is free now; the next event is number 6, which is how the consumer sees 3, 4 and 5
-	// were lost.
+	// One slot is free now; the next event is number total+1, which is how the consumer sees that
+	// three numbers are missing.
 	manager.join(newRaceTestTracker(manager))
-	next := <-subscription
-	require.EqualValues(t, 6, next.Sequence)
-	require.EqualValues(t, 3, next.Sequence-2-1)
+	select {
+	case next := <-subscription:
+		require.EqualValues(t, total+1, next.Sequence)
+		require.EqualValues(t, 3, next.Sequence-uint64(eventListenerBuffer)-1)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the post-overflow event never arrived")
+	}
 }
 
 // TestConcurrentJoinsAndLeavesKeepTheEmissionOrder includes the OTHER producer: `leave` publishes a
@@ -100,7 +123,10 @@ func TestConcurrentJoinsAndLeavesKeepTheEmissionOrder(t *testing.T) {
 		perProducer = 2 // one join + one leave
 	)
 	for round := 0; round < rounds; round++ {
-		manager, subscription := publishOrderManager(t)
+		manager := NewManager()
+		subscription, dropped := orderSubscriptionWithLoss(t, manager)
+		total := producer * perProducer
+
 		var waitGroup sync.WaitGroup
 		for index := 0; index < producer; index++ {
 			waitGroup.Add(1)
@@ -113,85 +139,42 @@ func TestConcurrentJoinsAndLeavesKeepTheEmissionOrder(t *testing.T) {
 		}
 		waitGroup.Wait()
 
-		total := producer * perProducer
-		var previous uint64
-		for index := 0; index < total; index++ {
-			select {
-			case event := <-subscription:
-				require.Greater(t, event.Sequence, previous,
-					"round %d: event %d arrived as sequence %d after %d", round, index+1, event.Sequence, previous)
-				previous = event.Sequence
-			default:
-				t.Fatalf("round %d: only %d of %d events arrived", round, index, total)
-			}
-		}
-		require.EqualValues(t, total, previous, "the numbers are exactly 1..N with nothing missing")
+		seen := drainUntilIdle(subscription)
+		requireStrictlyIncreasing(t, seen, "mixed join/leave delivery order")
+		require.Equal(t, total, len(seen)+int(dropped()),
+			"round %d: the two producers are fully accounted for", round)
+		require.EqualValues(t, 1, seen[0])
 	}
 }
 
 // TestAFastSubscriberIsNotDampedByASlowOne is the fan-out half of "a slow consumer cannot couple
-// back to the data path": two listeners of the same manager, one drained, one left full. The fast
-// one must keep receiving contiguous numbers while the slow one drops - and the drop must not make
-// the fast one's stream shorter or gappy.
+// back to the data path": two subscriptions of the same manager, one drained, one left full. The
+// fast one must keep receiving contiguous numbers while the slow one drops - and the drop must not
+// make the fast one's stream shorter or gappy.
 func TestAFastSubscriberIsNotDampedByASlowOne(t *testing.T) {
 	manager := NewManager()
-	manager.eventObserver = observable.NewObserver(manager.eventSubscriber, 64)
-	t.Cleanup(func() { manager.eventObserver.Close() })
-	fast, _, err := manager.eventObserver.Subscribe()
-	require.NoError(t, err)
-	slow, _, err := manager.eventObserver.Subscribe()
-	require.NoError(t, err)
+	fast, _ := orderSubscriptionWithLoss(t, manager)
+	slow, slowDropped := orderSubscriptionWithLoss(t, manager)
 
-	const firstBatch = 64 // fills both listener buffers
-	for index := 0; index < firstBatch; index++ {
-		manager.publish(ConnectionEvent{})
-	}
-	require.Eventually(t, func() bool { return len(fast) == firstBatch && len(slow) == firstBatch },
-		5*time.Second, time.Millisecond, "both listeners must have their buffers full")
+	collected := make(chan []uint64, 1)
+	go func() {
+		collected <- drainUntilIdle(fast)
+	}()
 
-	// Drain the fast one; the slow one stays full, so the next publications are dropped for it.
-	var fastSequences []uint64
-	for index := 0; index < firstBatch; index++ {
-		fastSequences = append(fastSequences, (<-fast).Sequence)
+	// Exactly one buffer of events: the fast subscriber drains them, the stalled one fills its
+	// queue. The number is small enough that the fast reader cannot fall behind by more than the
+	// buffer, so this test is about DAMPING, not about scheduling.
+	for index := 0; index < eventListenerBuffer; index++ {
+		manager.join(newRaceTestTracker(manager))
 	}
-	const secondBatch = 10
-	for index := 0; index < secondBatch; index++ {
-		manager.publish(ConnectionEvent{})
-	}
-	require.Eventually(t, func() bool { return len(fast) == secondBatch }, 5*time.Second, time.Millisecond)
-	for index := 0; index < secondBatch; index++ {
-		fastSequences = append(fastSequences, (<-fast).Sequence)
-	}
-	require.Len(t, fastSequences, firstBatch+secondBatch)
-	for index, sequence := range fastSequences {
+
+	seen := <-collected
+	require.Len(t, seen, eventListenerBuffer, "the drained subscriber receives every event")
+	for index, sequence := range seen {
 		require.EqualValues(t, index+1, sequence,
-			"the drained listener must see a contiguous stream (position %d was %d)", index+1, sequence)
+			"the drained subscriber keeps every number; the stalled one must not damp it")
 	}
-
-	// The slow listener still holds exactly the first batch, with the dropped numbers spent.
-	for index := 0; index < firstBatch; index++ {
-		require.EqualValues(t, index+1, (<-slow).Sequence)
-	}
-	manager.publish(ConnectionEvent{})
-	require.Eventually(t, func() bool { return len(slow) == 1 }, 5*time.Second, time.Millisecond)
-	require.EqualValues(t, firstBatch+secondBatch+1, (<-slow).Sequence,
-		"the slow listener's next event names everything it lost")
-}
-
-// TestClosingTheBusEndsTheSubscription is the stop path: closing the observer must release every
-// subscriber (the daemon blocks on that done channel) and refuse new ones.
-func TestClosingTheBusEndsTheSubscription(t *testing.T) {
-	manager := NewManager()
-	manager.eventObserver = observable.NewObserver(manager.eventSubscriber, 4)
-	_, done, err := manager.eventObserver.Subscribe()
-	require.NoError(t, err)
-
-	require.NoError(t, manager.eventObserver.Close())
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("closing the bus must signal every subscriber's done channel")
-	}
-	_, _, err = manager.eventObserver.Subscribe()
-	require.Error(t, err, "a closed bus must refuse new subscriptions")
+	require.Equal(t, eventListenerBuffer, len(slow),
+		"the stalled subscriber's queue is bounded, and it stopped at that bound")
+	require.Zero(t, slowDropped(), "the stalled queue is full but nothing overflowed yet")
 }

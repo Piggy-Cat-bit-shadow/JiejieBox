@@ -325,6 +325,9 @@ func ensureURLTestServices(ctx context.Context) (context.Context, *urltest.Histo
 	if urltest.CoordinatorFromContext(ctx) == nil {
 		ctx = urltest.ContextWithCoordinator(ctx, urltest.NewCoordinator(C.URLTestConcurrencyLimit))
 	}
+	// The measurement share is the third independent service. Without it every group measures on
+	// its own, so two groups asking the same health question open two connections for one answer.
+	// It carries no goroutine and needs no Close: entries exist only while participants are present.
 	if urltest.MeasurementShareFromContext(ctx) == nil {
 		ctx = urltest.ContextWithMeasurementShare(ctx, urltest.NewMeasurementShare())
 	}

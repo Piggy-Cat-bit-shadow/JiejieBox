@@ -15,6 +15,7 @@ import (
 	"net/netip"
 
 	"github.com/sagernet/sing-box/adapter"
+	R "github.com/sagernet/sing-box/route/rule"
 	M "github.com/sagernet/sing/common/metadata"
 
 	mDNS "github.com/miekg/dns"
@@ -70,6 +71,64 @@ type PreviewResult struct {
 	DependsOn string
 }
 
+// previewModernWalk mirrors the MODERN rule walk's decision points without any of its work.
+//
+// The modern walk is what production uses unless the configuration selected legacy mode, and its
+// rule semantics are not the legacy matcher's: `evaluate` launches a real query, `respond` answers
+// from a response another rule produced, and `match_response` conditions read that response. Those
+// decisions cannot be made from the caller's facts, so the preview reports the dependency instead
+// of walking past them to a default server - the reviewed failure was a preview saying
+// "Server=final, Unknown=false" for a configuration whose real exchange returned the evaluate
+// rule's answer.
+func (r *Router) previewModernWalk(ctx context.Context, rules []adapter.DNSRule, allowFakeIP bool, isAddressQuery bool, options *adapter.DNSQueryOptions) (adapter.DNSTransport, adapter.DNSRule, int, string) {
+	metadata := adapter.ContextFrom(ctx)
+	if metadata == nil {
+		return nil, nil, -1, ""
+	}
+	_ = ctx // the walk performs no I/O
+	for index, rule := range rules {
+		if rule.WithAddressLimit() && !isAddressQuery {
+			continue
+		}
+		// A rule bound to a response cannot be evaluated without one. The production walk waits for
+		// that response; a preview has none, so whether the rule would match is unknown.
+		if len(rule.MatchResponseTags()) > 0 || rule.MatchResponseAnonymous() {
+			return nil, rule, index, "dns_response"
+		}
+		if need := r.processNeedAt(index); need != dnsNeedNone && !metadataHasProcessNeed(metadata, need) {
+			return nil, rule, index, processNeedDependency(need)
+		}
+		metadata.ResetRuleCache()
+		metadata.DNSResponse = nil
+		metadata.NamedDNSResponses = nil
+		metadata.DestinationAddressMatchFromResponse = false
+		if !rule.Match(metadata) {
+			continue
+		}
+		switch action := rule.Action().(type) {
+		case *R.RuleActionDNSRouteOptions:
+			routeOptions := *options
+			r.applyDNSRouteOptions(&routeOptions, *action)
+			continue
+		case *R.RuleActionDNSRoute:
+			routeOptions := *options
+			transport, status := r.resolveDNSRoute(action.Server, action.RuleActionDNSRouteOptions, allowFakeIP, &routeOptions)
+			switch status {
+			case dnsRouteStatusMissing, dnsRouteStatusSkipped:
+				continue
+			}
+			return transport, rule, index, ""
+		case *R.RuleActionReject, *R.RuleActionPredefined, *R.RuleActionAdblock:
+			// A local verdict: decided without any upstream exchange, so the preview can name it.
+			return nil, rule, index, ""
+		case *R.RuleActionEvaluate, *R.RuleActionRespond:
+			// Reached only when the rule matched; both need a real response to continue.
+			return nil, rule, index, "dns_response"
+		}
+	}
+	return r.transport.Default(), nil, -1, ""
+}
+
 // PreviewLookup explains which rule decides the query and which server would answer it.
 func (r *Router) PreviewLookup(ctx context.Context, query PreviewQuery) PreviewResult {
 	result := PreviewResult{RuleIndex: -1}
@@ -118,13 +177,26 @@ func (r *Router) PreviewLookup(ctx context.Context, query PreviewQuery) PreviewR
 
 	options := adapter.DNSQueryOptions{}
 	isAddress := query.QType == mDNS.TypeA || query.QType == mDNS.TypeAAAA || query.QType == mDNS.TypeHTTPS
-	transport, rule, index, unknown := r.matchDNS(previewContext, rules, query.AllowFakeIP, -1, isAddress, &options, false)
-	if unknown {
+	r.rulesAccess.RLock()
+	legacyMode := r.legacyDNSMode
+	r.rulesAccess.RUnlock()
+	var (
+		transport adapter.DNSTransport
+		rule      adapter.DNSRule
+		index     int
+		dependsOn string
+	)
+	if legacyMode {
+		transport, rule, index, dependsOn = r.matchDNS(previewContext, rules, query.AllowFakeIP, -1, isAddress, &options, false)
+	} else {
+		transport, rule, index, dependsOn = r.previewModernWalk(previewContext, rules, query.AllowFakeIP, isAddress, &options)
+	}
+	if dependsOn != "" {
 		// The walk reached a rule it cannot decide from the stated facts. Reporting the default
 		// server here would be a guess that disagrees with the exchange this explains, so the
 		// dependency is reported instead.
 		result.Unknown = true
-		result.DependsOn = "process_path"
+		result.DependsOn = dependsOn
 		result.RuleIndex = index
 		if rule != nil {
 			result.Rule = rule.String()

@@ -69,7 +69,7 @@ func (o *switchableProbeOutbound) dialCount() int { return int(o.dials.Load()) }
 
 // newFailoverWiringGroup builds the minimum a health round needs, without starting the group's
 // tickers: the round is driven directly so the test owns the sequence.
-func newFailoverWiringGroup(t *testing.T, policy urltest.FailoverPolicy, outbounds ...*switchableProbeOutbound) (*URLTestGroup, *urltest.HistoryStorage, *httptest.Server) {
+func newFailoverWiringGroup(t *testing.T, policy urltest.FailoverPolicy, outbounds ...adapter.Outbound) (*URLTestGroup, *urltest.HistoryStorage, *httptest.Server) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusNoContent)
