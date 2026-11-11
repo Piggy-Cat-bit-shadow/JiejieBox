@@ -38,6 +38,11 @@ cd scripts/perf && go build -o "$HOME/perf/bin/perflab" ./cmd/perflab
 scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --out "$HOME/perf/results" \
   --reps 5 --streams 1,4 --duration 5s
 
+# 5b. XHTTP cells need a reference Xray server; without --xray they are recorded
+#     as skipped instead of being run against no server
+scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --out "$HOME/perf/results" \
+  --xray "$HOME/perf/bin/xray" --reps 5 --streams 1,4
+
 # 6. one document out of many runs
 scripts/perf/summarize.py "$HOME/perf/results" --out matrix.md --json matrix.json
 ```

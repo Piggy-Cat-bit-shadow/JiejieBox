@@ -204,7 +204,11 @@ func Run(opts Options) (*Outcome, error) {
 		writeRun(runDir, run)
 		return outcome, err
 	}
-	defer sess.close()
+	defer func() {
+		if sess != nil {
+			sess.close()
+		}
+	}()
 
 	run.Scenario.ServerConfig = relative(runDir, filepath.Join(runDir, "configs", "server.json"))
 	run.Scenario.ClientConfig = relative(runDir, filepath.Join(runDir, "configs", "client.json"))
@@ -229,7 +233,22 @@ func Run(opts Options) (*Outcome, error) {
 	// the time until a real proxied request completed.
 	run.Scenario.Extra["first_request_ms"] = float64(sess.firstRequest.Microseconds()) / 1000
 
-	for _, pattern := range patterns {
+	for patternIndex, pattern := range patterns {
+		if patternIndex > 0 && scenario.Defaults.RestartPerPattern {
+			sess.close()
+			opts.Logf("restarting the process pair for pattern %s", pattern)
+			sess, err = prepare(scenario, runDir, opts, duration)
+			if err != nil {
+				failure := schema.Failure{Stage: "prepare", Message: err.Error(), Class: "environment"}
+				run.Failures = append(run.Failures, failure)
+				run.Summary = summarise(run.Reps)
+				run.FinishedAt = time.Now()
+				outcome.Failures = run.Failures
+				writeRun(runDir, run)
+				writeSummaryMD(runDir, run)
+				return outcome, err
+			}
+		}
 		for _, streams := range streamsList {
 			for rep := 0; rep < reps; rep++ {
 				repStarted := time.Now()
@@ -374,12 +393,21 @@ func prepare(scenario *Scenario, runDir string, opts Options, duration time.Dura
 
 	sess.vars = vars
 	sess.targets = &targetSet{byKind: map[target.Kind]targetHandle{}, addr: map[target.Kind]string{}}
+	targetBind := scenario.Target.Bind
+	if targetBind == "" {
+		targetBind = siteAddress
+	}
+	targetAddress := scenario.Target.Address
+	if targetAddress == "" {
+		targetAddress = targetBind
+	}
 	for _, kind := range kindsForScenario(scenario) {
 		port, portErr := reserveServerPort(sess, net.JoinHostPort(siteAddress, "0"))
 		if portErr != nil {
 			return nil, portErr
 		}
-		address := net.JoinHostPort(siteAddress, strconv.Itoa(port))
+		address := net.JoinHostPort(targetAddress, strconv.Itoa(port))
+		bindAddress := net.JoinHostPort(targetBind, strconv.Itoa(port))
 		if sess.serverNS != "" {
 			// The target must sit behind the server, in the server's namespace.
 			// Started from the server side, "server to target" stays local and
@@ -398,7 +426,7 @@ func prepare(scenario *Scenario, runDir string, opts Options, duration time.Dura
 				verifyFlag = "-verify=true"
 			}
 			targetProcess, startErr := startProcessPrefix("target-"+string(kind), nsPrefix(sess.serverNS), self,
-				[]string{"target", "-kind", string(kind), "-addr", address, "-control", controlAddr,
+				[]string{"target", "-kind", string(kind), "-addr", bindAddress, "-control", controlAddr,
 					"-duration", duration.String(), verifyFlag},
 				runDir, filepath.Join(runDir, "logs", "target-"+string(kind)+".log"))
 			if startErr != nil {
@@ -413,7 +441,7 @@ func prepare(scenario *Scenario, runDir string, opts Options, duration time.Dura
 			sess.targets.addr[kind] = address
 			continue
 		}
-		server, startErr := target.Start(kind, address, duration, opts.Verify)
+		server, startErr := target.Start(kind, bindAddress, duration, opts.Verify)
 		if startErr != nil {
 			return nil, fmt.Errorf("start %s target: %w", kind, startErr)
 		}

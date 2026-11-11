@@ -38,13 +38,15 @@ as a low number.
 | anytls-tcp | TCP+TLS | 255.4 → 750.3 | 557.2 → 1198.2 | 4.2 / 2.8 | — |
 | trusttunnel-h2 | HTTP/2 | 176.1 → 208.5 | 134.8 → 137.8 | 9.9 / 10.0 | — |
 | naive-h2 | HTTP/2, Cronet | 89.5 → 198.0 | 219.7 → 302.9 | 14.5 / 6.7 | 4.24 ms |
+| xhttp-h2 | HTTP/2, reference Xray server | 32.6 → 125.6 | 83.8 → 213.4 | 13.0 / 16.0 | 3.12 ms |
 | trusttunnel-h3 | HTTP/3 | 119.1 → 196.5 | 195.0 → 202.2 | 16.1 / 11.0 | — |
 | naive-h3 | HTTP/3, Cronet | 47.3 → 70.5 | 70.1 → 60.9 | 24.0 / 19.5 | 3.64 ms |
+| xhttp-h3 | HTTP/3, reference Xray server | 32.6 → 121.9 | 83.3 → 169.3 | 34.3 / 24.1 | 3.57 ms |
 | masque-connect-ip | QUIC CONNECT-IP | 64.2 → 72.4 | 64.0 → 70.1 | 37.5 / 41.9 | — |
 | mieru-tcp | TCP, SDK server | 126.5 → 438.5 | 124.5 → 570.9 | 8.8 / 7.1 | 2.43 ms |
 | mieru-udp | UDP underlay | 29.0 → 71.4 | 28.5 → 34.3 | 53.6 / 60.1 | 2.80 ms |
-| wireguard-endpoint | WireGuard, userspace | 44.8 → failed | failed | 61.7 | — |
-| awg-endpoint | AWG, userspace | 49.8 (n=2) → failed | failed | 55.3 | — |
+| wireguard-endpoint | WireGuard, userspace | 49.2 (1 stream, 3/3) | 0.2 (1/3); the rest fail to dial | 54.8 | — |
+| awg-endpoint | AWG, userspace | 42.2 (1 stream, 3/3) | 1.8 (1/3); the rest fail to dial | 58.7 | — |
 
 Datagram cells are listed separately because they are not the same question:
 
@@ -72,29 +74,91 @@ Datagram cells are listed separately because they are not the same question:
    byte is a regression on a phone even if the benchmark chart goes up.
 
 3. **H3 is not automatically better than H2.** TrustTunnel H3 sits at
-   119–202 MiB/s against H2's 135–208; Cronet H2 is 90–303 against H3's 47–70.
-   On this host, with no packet loss, QUIC's userspace crypto and congestion
-   control cost more than H2 gains. This matches the direction of the historical
-   Naive observation, but the numbers here are new and measured on this build.
+   119–202 MiB/s against H2's 135–208; Cronet H2 is 90–303 against H3's 47–70;
+   XHTTP is 32.6 MiB/s on both at one stream and H3 is worse at four
+   (169 vs 213 MiB/s download). On this host, with no packet loss, QUIC's
+   userspace crypto and congestion control cost more than H2 gains. This matches
+   the direction of the historical Naive observation, but the numbers here are
+   new and measured on this build.
 
-4. **UDP-over-stream is the expensive way to carry datagrams.** The same
+4. **XHTTP's cost is in its framing, not its TLS.** A single-stream XHTTP upload
+   reaches 32.6 MiB/s against plain VLESS over the same TLS and TCP at
+   243.7 MiB/s. The gap survives at four streams (125.6 vs 608.6). A benchmark
+   that calls XHTTP "VLESS with a transport" and expects VLESS throughput is
+   measuring the transport as free.
+
+5. **UDP-over-stream is the expensive way to carry datagrams.** The same
    1200-byte datagram load costs 90–234 CPU seconds per GiB over a reliable
-   stream, against 88–94 for MASQUE's QUIC DATAGRAM, and H2 framing costs more
+   stream, against 81–94 for MASQUE's QUIC DATAGRAM, and H2 framing costs more
    than H3 framing (9.6 vs 32 MiB/s at one stream). A protocol that frames UDP
    over a stream should not be compared with a datagram transport on throughput
    alone.
 
-5. **Concurrency does not scale linearly where one process does the copying.**
+6. **Concurrency does not scale linearly where one process does the copying.**
    VLESS Vision upload gains 2.5× from 1→4 streams while download gains 2.6×;
    MASQUE gains 1.1×; WG/AWG did not survive 4 concurrent flows at all in
    userspace mode. The 4-stream column is where process-level serialisation
    shows up.
 
-6. **Connection setup is cheap on loopback and dominated by the protocol
+7. **Connection setup is cheap on loopback and dominated by the protocol
    handshake.** p50 for a fresh proxied connection is 2.4–4.2 ms at one stream
    and 8–10 ms at four; REALITY costs ~0.1 ms over plain TLS at one stream,
    which is what a session-ticket-less handshake should cost when the network
    costs nothing.
+
+## Reference-server cells (XHTTP)
+
+The fork has no XHTTP server transport, so these two cells run this repository's
+client against a reference **Xray 26.9.30** server (provenance in
+[ENVIRONMENT.md](ENVIRONMENT.md)). They are not in-fork pairs and are labelled as
+reference-server cells in `run.json`. Loopback, 1 → 4 streams:
+
+| cell | up MiB/s | down MiB/s | CPU s/GiB client | connect p50 |
+|---|---|---|---|---|
+| xhttp-h2 (packet-up) | 32.6 → 125.6 | 83.8 → 213.4 | 13.0 → 15.7 | 3.12 / 8.12 ms |
+| xhttp-h3 (packet-up) | 32.6 → 121.9 | 83.3 → 169.3 | 34.3 → 37.8 | 3.57 / 4.13 ms |
+
+Two things stand out. XHTTP upload is roughly seven times slower than plain
+VLESS over TCP+TLS on the same host (32.6 vs 243.7 MiB/s at one stream), which is
+the cost of packet-up framing and its POST-per-window shape rather than a TLS
+difference; and H3 does not help it — the two transports are identical at one
+stream and H3 is worse at four on download. The reference server's CPU is not
+attributable to this repository, so only the client column is comparable with the
+other cells.
+
+## Userspace tunnel cells
+
+WireGuard and AWG use the userspace endpoint (`system=false`, no TUN, no root),
+target on loopback, load generator dialing the tunnel address:
+
+| cell | upload | download | UDP |
+|---|---|---|---|
+| wireguard-endpoint | 49.2 MiB/s, 3/3 | 0.2 MiB/s (1/3), the rest fail to dial | 0 datagrams returned, 3/3 |
+| awg-endpoint | 42.2 MiB/s, 3/3 | 1.8 MiB/s (1/3), the rest fail to dial | 0 datagrams returned, 3/3 |
+
+These are not a WG-vs-AWG comparison: the same defect dominates both. The first
+flow a fresh client process opens carries data; later flows in the same process
+fail the inner TCP handshake (`handshake: context canceled` after the 10 s dial
+deadline) while the server sees the connections arrive and dials the target. See
+[FAILURES.md](FAILURES.md#b7). The upload numbers are therefore the only
+quantified cells, and they are reported with their sample count rather than as a
+protocol ranking.
+
+## UDP over the tunnel versus loss
+
+Same cells, UDP pattern, 80 ms RTT, only the loss rate changes (3 repetitions
+each, 5 s window):
+
+| loss per direction | TrustTunnel H2 (UDP over stream) | MASQUE (QUIC DATAGRAM) |
+|---|---|---|
+| 0 % | 10.6 MiB/s | 6.6 MiB/s |
+| 0.1 % | 0.8 MiB/s | 0.9 MiB/s |
+| 1 % | 0.03–0.15 MiB/s | < 0.05 MiB/s |
+
+The association opens at every loss level; what collapses is delivery — at 1%
+roughly one datagram in ten thousand returns. Both UDP framings degrade together,
+which is why the shaped matrix should not be read as "MASQUE handles loss better
+than TrustTunnel" from these three points.
 
 ## Shaped cells
 

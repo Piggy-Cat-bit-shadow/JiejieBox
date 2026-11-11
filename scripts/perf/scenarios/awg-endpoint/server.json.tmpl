@@ -30,9 +30,5 @@
   "outbounds": [
     {"type": "direct", "tag": "direct"}
   ],
-  "route": {
-    "rules": [
-      {"inbound": ["wg"], "action": "route", "outbound": "direct", "override_address": "__SITE_ADDR__"}
-    ]
-  }
+  "route": {"final": "direct"}
 }

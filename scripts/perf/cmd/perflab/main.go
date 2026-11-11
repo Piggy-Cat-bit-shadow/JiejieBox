@@ -64,6 +64,7 @@ func usage() {
   perflab target -kind <sink|source|echo|duplex|udp-echo> -addr <host:port>
                  -control <host:port> [-duration 5s] [-verify=true]
   perflab run -scenario <dir> -out <dir> [-bin-lab <path>] [-bin-default <path>]
+             [-bin-xray <path>]
              [-pattern upload] [-streams 1,4] [-duration 5s] [-warmup 1s] [-reps 3]
              [-run-id <id>] [-verify=true]
 
@@ -129,6 +130,7 @@ func runScenario(args []string) error {
 	runID := flags.String("run-id", "", "run identifier (defaults to scenario id + timestamp)")
 	binLab := flags.String("bin-lab", "", "binary built with the lab tag set")
 	binDefault := flags.String("bin-default", "", "binary built with the default tag set")
+	binXray := flags.String("bin-xray", "", "reference Xray binary, for cells that need a server this repository does not implement")
 	pattern := flags.String("pattern", "", "comma-separated patterns (overrides scenario defaults)")
 	streams := flags.String("streams", "", "comma-separated concurrency levels (overrides scenario defaults)")
 	duration := flags.Duration("duration", 0, "measured window per repetition")
@@ -149,7 +151,7 @@ func runScenario(args []string) error {
 		ScenarioDir: *scenarioDir,
 		OutDir:      *outDir,
 		RunID:       *runID,
-		Binaries:    map[string]string{"lab": *binLab, "default": *binDefault},
+		Binaries:    map[string]string{"lab": *binLab, "default": *binDefault, "xray": *binXray},
 		Patterns:    splitList(*pattern),
 		Streams:     parseIntList(*streams),
 		Duration:    *duration,

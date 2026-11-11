@@ -61,9 +61,19 @@ type Ready struct {
 }
 
 // Target is the far end behind the proxy.
+//
+// Bind and Address differ for tunnels: the endpoint's own stack rewrites a
+// destination that is its local tunnel address back to loopback, so the target
+// must listen on loopback while the load generator dials the tunnel address.
 type Target struct {
 	Kind    string `json:"kind"`
 	Network string `json:"network"`
+	// Bind is the address the target listens on; empty means the run's site
+	// address.
+	Bind string `json:"bind,omitempty"`
+	// Address is the address the load generator dials through the proxy; empty
+	// means the bind address.
+	Address string `json:"address,omitempty"`
 }
 
 // Defaults are the load model used when the command line does not override it.
@@ -73,6 +83,13 @@ type Defaults struct {
 	Duration string   `json:"duration"`
 	Warmup   string   `json:"warmup"`
 	Reps     int      `json:"reps"`
+	// RestartPerPattern starts a fresh process pair for every pattern instead of
+	// reusing one pair for the whole scenario. It exists for protocols whose
+	// userspace stack carries state across flows that outlives a phase: a cell
+	// that only works as the first pattern of a process is a measurement
+	// artefact, and isolating the patterns is cheaper than restarting the whole
+	// scenario by hand.
+	RestartPerPattern bool `json:"restart_per_pattern,omitempty"`
 }
 
 // LoadScenario reads scenario.json from dir.

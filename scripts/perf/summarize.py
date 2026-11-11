@@ -20,8 +20,8 @@ import sys
 # and a reliable stream carrying datagrams are never placed in one ranking.
 GROUPS = [
     ("TCP with TLS", ["vless-vision-tcp", "vless-reality-vision", "anytls-tcp"]),
-    ("HTTP/2", ["trusttunnel-h2", "naive-h2"]),
-    ("HTTP/3 and QUIC", ["trusttunnel-h3", "naive-h3", "masque-connect-ip"]),
+    ("HTTP/2", ["trusttunnel-h2", "naive-h2", "xhttp-h2"]),
+    ("HTTP/3 and QUIC", ["trusttunnel-h3", "naive-h3", "xhttp-h3", "masque-connect-ip"]),
     ("UDP underlay and userspace tunnels",
      ["mieru-tcp-underlay", "mieru-udp-underlay", "wireguard-endpoint", "awg-endpoint"]),
 ]

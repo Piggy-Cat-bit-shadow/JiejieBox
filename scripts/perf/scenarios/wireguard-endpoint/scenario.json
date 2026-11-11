@@ -5,22 +5,39 @@
   "transport": "udp",
   "security": "noise",
   "description": "WireGuard between two endpoints in this repository, userspace device (system=false, no TUN, no root). The tunnel address is a synthetic /32 pair; the server side rewrites the destination back to the lab target so the cell measures the encrypted tunnel rather than a plain loopback.",
+  "target": {
+    "bind": "127.0.0.1",
+    "address": "198.18.17.1"
+  },
   "server": {
     "config": "server.json.tmpl",
-    "ready": {"sleep_ms": 800}
+    "ready": {
+      "sleep_ms": 800
+    }
   },
   "client": {
     "config": "client.json.tmpl",
-    "ready": {"tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"}
+    "ready": {
+      "tcp": "__CLIENT_ADDR__:__CLIENT_PORT__"
+    }
   },
   "extra": {
-    "tunnel_addresses": ["198.18.17.1/32", "198.18.17.2/32"]
+    "tunnel_addresses": [
+      "198.18.17.1/32",
+      "198.18.17.2/32"
+    ],
+    "known_limits": "userspace endpoint: download and UDP do not carry traffic reliably in this configuration; see docs/perf/FAILURES.md#b7"
   },
   "defaults": {
-    "patterns": ["upload", "download", "udp"],
-    "streams": [1, 4],
+    "patterns": [
+      "upload"
+    ],
+    "streams": [
+      1
+    ],
     "duration": "5s",
     "warmup": "1s",
-    "reps": 3
+    "reps": 3,
+    "restart_per_pattern": false
   }
 }

@@ -11,6 +11,8 @@
 #
 # Options:
 #   --bin PATH             kernel binary built with the lab tag set (required)
+#   --xray PATH            reference Xray binary; without it the XHTTP cells are
+#                          recorded as skipped, not run against no server
 #   --out DIR              output root (default ./perf-results)
 #   --profile NAME         loopback (default) or a netlab profile: normal|remote|weak
 #   --reps N               repetitions per (pattern, streams) cell (default 3)
@@ -32,6 +34,7 @@ perflab="${PERFLAB:-$HOME/perf/bin/perflab}"
 netlab="$here/netlab/netlab.sh"
 
 bin=""
+xray=""
 out="./perf-results"
 profile="loopback"
 reps=3
@@ -44,6 +47,7 @@ smoke=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) bin="$2"; shift 2 ;;
+    --xray) xray="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --profile) profile="$2"; shift 2 ;;
     --reps) reps="$2"; shift 2 ;;
@@ -101,6 +105,8 @@ scenarios=(
   vless-vision-tcp
   vless-reality-vision
   anytls-tcp
+  xhttp-h2
+  xhttp-h3
   trusttunnel-h2
   trusttunnel-h3
   mieru-tcp
@@ -130,16 +136,28 @@ for scenario in "${scenarios[@]}"; do
     continue
   fi
   echo "=== $scenario ($profile) $(date -Is)" | tee -a "$log"
+  # The XHTTP scenarios use the fork's client against a reference Xray server.
+  # Without the reference binary the cell cannot be honest about what it
+  # measured, so it is recorded as skipped rather than run against nothing.
+  if [ "${scenario#xhttp}" != "$scenario" ] && [ -z "$xray" ]; then
+    echo "=== $scenario: skipped (no --xray reference server)" | tee -a "$log"
+    if [ "$first" = "1" ]; then first=0; else echo "," >> "$matrix"; fi
+    printf '  {"scenario": "%s", "profile": "%s", "status": 3, "seconds": 0, "run_dir": "", "note": "no --xray reference server"}' \
+      "$scenario" "$profile" >> "$matrix"
+    continue
+  fi
   started=$(date +%s)
+  extra_args=()
+  [ -n "$xray" ] && extra_args+=(-bin-xray "$xray")
   # Shaped profiles run the whole cell inside netlab; unshaped ones do not pay
   # for a namespace they would not use.
   if [ "$profile" = "loopback" ]; then
-    "$perflab" run -scenario "$dir" -out "$root" -bin-lab "$bin" \
+    "$perflab" run -scenario "$dir" -out "$root" -bin-lab "$bin" "${extra_args[@]}" \
       -reps "$reps" -duration "$duration" -warmup "$warmup" -streams "$streams" \
       >>"$log" 2>&1
     status=$?
   else
-    "$netlab" --profile "$profile" -- "$perflab" run -scenario "$dir" -out "$root" -bin-lab "$bin" \
+    "$netlab" --profile "$profile" -- "$perflab" run -scenario "$dir" -out "$root" -bin-lab "$bin" "${extra_args[@]}" \
       -reps "$reps" -duration "$duration" -warmup "$warmup" -streams "$streams" \
       >>"$log" 2>&1
     status=$?

@@ -20,7 +20,7 @@
 | protocol | existing measurement | strongest asset | stage-1 gap | lab scenario |
 |---|---|---|---|---|
 | MASQUE / CONNECT-IP | in-process dataplane/ingress/route benches; a VPS acceptance script with a `--stress` RSS sample | `test/masque_test.go` starts two real box instances | no real-QUIC throughput/PPS, no CPU/GiB, no netem | `masque-connect-ip` |
-| VLESS XHTTP | `test/xhttpbench/cmd/xnettool` (real A/B vs Xray, CPU, integrity, impairments) + 4 in-process benches | `xnettool` | fork has **no XHTTP server transport**; external Xray server required; CPU accounting is Windows-only | not in the default matrix (see below) |
+| VLESS XHTTP | `test/xhttpbench/cmd/xnettool` (real A/B vs Xray, CPU, integrity, impairments) + 4 in-process benches | `xnettool` | fork has **no XHTTP server transport**; external Xray server required; CPU accounting is Windows-only | `xhttp-h2`, `xhttp-h3` (reference server) |
 | VLESS REALITY / Vision | none for throughput; correctness and ABI tests only | `test/reality_test.go`, `test/interop` REALITY matrix | no cold/warm handshake or steady-state numbers | `vless-reality-vision` |
 | AnyTLS | admission-cost micro benches, session burst/census/soak pressure tests | `protocol/anytls/session_burst_test.go` | no throughput, no latency, no UoT rate | `anytls-tcp` |
 | Naive / Cronet | two Darwin-only A/B shell scripts + in-process codec and H2 benches | `test/jiejie/naive-client-it` (manual, official client) | no Linux-capable end-to-end harness | `naive-h2`, `naive-h3` |
@@ -65,12 +65,20 @@ is `procstat_windows.go`-only (`procstat_other.go` returns "implemented for
 Windows only"), and its impairments are application-layer: loss and H3
 impairment are declared blocked by its own README.
 
-Stage 1 decision: the XHTTP cell is **not** in the default matrix, because a
-cell that needs an external reference server is a different experiment from the
-in-repo process pairs, and the stage-1 acceptance criteria are already met by
-in-repo H2/H3 cells. `xnettool` is the right tool for the XHTTP A/B and is left
-intact; porting its CPU accounting to Linux is stage-2 work. This is recorded as
-a gap, not silently skipped.
+Stage 1 added `xhttp-h2` and `xhttp-h3`: this repository's XHTTP client
+(packet-up mode) against a reference Xray 26.9.30 server, measured by the same
+runner, schema and sampler as every other cell. They are labelled as
+reference-server cells in `run.json` and are not presented as in-fork pairs. Two
+things the cell needed and now has:
+
+- an explicit freedom `finalRules` allow rule for private destinations. Xray 26.x
+  blackholes private/reserved targets for VLESS-inbound traffic by default, which
+  is right for a public server and wrong for a lab that dials a private address;
+- `-bin-xray`, so the reference binary is a declared input rather than an
+  implicit one, and the matrix records the cell as skipped when it is absent.
+
+Still out of scope: a full fork-vs-Xray-client A/B (that is `xnettool`, left
+intact) and an in-fork XHTTP server transport (a product change).
 
 ### VLESS REALITY / Vision
 

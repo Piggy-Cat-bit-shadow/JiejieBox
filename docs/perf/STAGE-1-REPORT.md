@@ -35,7 +35,7 @@
 | 协议 | 原有能力 | 关键缺口 | 本次 |
 |---|---|---|---|
 | MASQUE / CONNECT-IP | 17 个 in-process dataplane/ingress 基准；VPS 验收脚本 | 真实 QUIC 吞吐/PPS、CPU/GiB、弱网 | `masque-connect-ip` |
-| VLESS XHTTP | `test/xhttpbench` 真机 A/B | 本仓库只有 client transport，必须外部 Xray 服务端；CPU 统计仅 Windows | 未进默认矩阵，列为 B1 |
+| VLESS XHTTP | `test/xhttpbench` 真机 A/B | 本仓库只有 client transport；CPU 统计仅 Windows | `xhttp-h2`/`xhttp-h3`（参考 Xray 服务端） |
 | REALITY / Vision | 正确性、ABI、tripwire | 无吞吐/握手数据 | `vless-reality-vision` |
 | AnyTLS | 准入成本微基准 + 压力测试 | 无吞吐、无延迟、无 UoT 速率 | `anytls-tcp` |
 | Naive / Cronet | 两个 Darwin-only A/B 脚本 | Linux 端到端、原生引擎资源 | `naive-h2`、`naive-h3` |
@@ -44,6 +44,9 @@
 | AWG / WireGuard | 报文开销测量、MTU 预算 | 吞吐、PPS、CPU、弱网 | `wireguard-endpoint`、`awg-endpoint` |
 
 复用顺序按提示执行：先保留 XHTTP/Mieru/Naive 原台架不动，再为其余协议补真实进程对。
+XHTTP 本仓库无服务端 transport，因此新增 `xhttp-h2`/`xhttp-h3` 两个 **参考服务端** 单元格
+（本仓库客户端 × Xray 26.9.30 服务端，二进制来源与 sha256 记在 ENVIRONMENT.md），
+在 `run.json` 中标注为 reference-server，不冒充本仓库进程对。
 
 ## 4. 基础设施
 
@@ -81,6 +84,10 @@
   目录加载 `libcronet.so`；Naive H2/H3 因此可测。
 - AWG：实现文件用 `with_awg`，注册还依赖 `with_wireguard`，两者都不在发布 tag
   集合里；lab 二进制显式加上。用户态 `system=false` 下 AWG 与普通 WG 同负载均跑通。
+- 参考服务端：XHTTP 用 Xray 26.9.30 linux-64（commit `b26a91d`，zip sha256
+  `f851110b…690e`），来源与校验值记在 ENVIRONMENT.md；首次运行零 payload 的原因
+  是 Xray 26.x 对 VLESS 入站的私有/保留地址默认黑洞，模板加 freedom `finalRules`
+  放行后才通 —— 这是产品安全默认值，不是台架 bug。
 - 明确不可在本机完成：macOS/Android/iOS 真机、需要 CAP_NET_ADMIN 的 `system=true`
   TUN 路径、`perf`/`pidstat`/`qlog` 级观测。
 
@@ -101,11 +108,16 @@ scripts/perf/netlab/netlab.sh --profile remote -- "$PERFLAB" run \
 # 矩阵
 scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --out "$HOME/perf/baseline" \
   --profile loopback --reps 5 --streams 1,4
+
+# XHTTP 单元格需要参考服务端；不提供时它们被记为 skipped 而不是悄悄跳过
+scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --out "$HOME/perf/baseline" \
+  --xray "$HOME/perf/bin/xray" --reps 5 --streams 1,4
 ```
 
-12 个场景全部跑通并产出 `run.json`（含 MASQUE UDP、TrustTunnel H2/H3、Mieru
-TCP/UDP、WG/AWG、Naive H2/H3、REALITY、AnyTLS）。shaped 路径另有一组
-`netlab` 场景（`remote` 80 ms/1%、100 Mbit/s 限速）。
+14 个场景全部跑通并产出 `run.json`（含 XHTTP H2/H3 参考服务端、MASQUE UDP、
+TrustTunnel H2/H3、Mieru TCP/UDP、WG/AWG、Naive H2/H3、REALITY、AnyTLS）。
+shaped 路径另有 netem 场景（`remote` 80 ms/1%、100 Mbit/s 限速、80 ms 下
+0%/0.1% 丢包的 UDP 阈值组）。
 
 ## 7. 当前性能摘要
 
@@ -132,17 +144,29 @@ TCP/UDP、WG/AWG、Naive H2/H3、REALITY、AnyTLS）。shaped 路径另有一组
   （class `no-payload`），不是 0 吞吐。
 - **原生依赖**：Cronet 引擎启动后首个代理请求 `first_request_ms` 已单列；其 RSS/
   线程/FD 与吞吐同记录，不能用 Go heap 解释。
+- **XHTTP（参考 Xray 服务端）**：1 流上传 32.6、下载 83.8 MiB/s，4 流 125.6/213.4；
+  H3 与 H2 在 1 流相同、4 流更差（169 vs 213 下载）。XHTTP 上传约为同机 VLESS+TLS
+  （243.7）的 1/7，代价在 packet-up 组帧而非 TLS。
+- **用户态 WG/AWG**：仅 1 流上传可稳定量化（49.2 / 42.2 MiB/s，3/3）；下载首个
+  flow 分别 0.2 / 1.8 MiB/s，其余 flow 在 10 s 内握手失败；UDP 3/3 零回收。
+  同进程第一条 flow 可用、后续失败，服务端能看到连接并已拨号目标 —— 记入 B7。
+- **UDP 与丢包阈值**（80 ms RTT，3 轮）：0% 丢包 10.6 / 6.6 MiB/s；0.1% 降到
+  0.8 / 0.9；1% 只剩万分之一量级的数据报。两种 UDP 封装同时退化，不能据此排名。
 
 ## 8. 失败与未完成
 
 完整清单见 `docs/perf/FAILURES.md`。要点：
 
-1. XHTTP 无本仓库服务端 transport，必须外部 Xray —— 未进默认矩阵（阻塞，非跳过）。
+1. XHTTP 无本仓库服务端 transport —— 已用参考 Xray 26.9.30 服务端补出
+   `xhttp-h2`/`xhttp-h3` 两个 reference-server 单元格；仍缺 in-fork 服务端与
+   参考客户端 A/B（后者留给 `xnettool`）。
 2. Cronet cgo 链接失败；改用 purego，cgo 路径未验证。
 3. 生产二进制无 pprof 端点，`go_heap_peak_bytes` 全为 null；原生内存只能看 RSS。
 4. 无 root：`system=true` 的 TUN 路径、host 级 qdisc/抓包、`perf` 计数未做。
-5. macOS/Android/iOS/Windows 真机单元格未跑。
-6. 首批 shaped 数据一度无效（单 namespace 导致本地路由短路，qdisc 不生效）；
+5. 用户态 WG/AWG 只能量化 1 流上传；下载/UDP 失败已在 B7 记录证据。
+6. UDP over tunnel 在 1% 均匀丢包下跌到万分之一量级（B8），0.1% 仍可用。
+7. macOS/Android/iOS/Windows 真机单元格未跑。
+8. 首批 shaped 数据一度无效（单 namespace 导致本地路由短路，qdisc 不生效）；
    已修复并重跑 —— 这是本次自主发现的最重要缺陷。
 
 ## 9. 是否修改生产代码
@@ -193,3 +217,13 @@ TCP/UDP、WG/AWG、Naive H2/H3、REALITY、AnyTLS）。shaped 路径另有一组
   `PERF_SOURCE_JSON` 传入。
 - **端口属于 namespace**：shaped 场景最初在客户端 namespace 里为服务端选端口，
   直接失败；现在通过 `perflab reserve` + `nsenter` 在服务端 namespace 内预留。
+- **参考服务端的私有地址黑洞**：Xray 26.x 对来自 VLESS 入站的私有/保留目标默认
+  黑洞（`blocked target ... blackholing connection`），第一版 XHTTP 单元格因此
+  72 MB 全部丢弃。加 freedom `finalRules` 放行私网段后恢复。
+- **同进程多 flow 的状态污染**：WG/AWG 台架里第一条 flow 正常、后续 flow 握手
+  超时。为此新增 `restart_per_pattern`（每个 pattern 重建进程对），把"是协议
+  限制还是台架串味"分开 —— 结果证明限制在协议端，同时避免了把前一 pattern 的
+  状态算到后一 pattern 头上。
+- **同 profile 名合并不同单元格**：`--rtt-ms 80 --loss-pct 0` 与 `0.1` 都写成
+  `custom`，汇总时被当成同一格丢掉一半数据；netlab 现按实际参数生成
+  `custom-rtt80-loss0.1` 这类标签。

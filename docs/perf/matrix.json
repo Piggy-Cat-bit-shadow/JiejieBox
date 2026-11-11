@@ -207,42 +207,201 @@
   },
   {
     "scenario": "awg-endpoint",
-    "network": "loopback",
-    "run_dir": "loopback/awg-endpoint-20261111T120712",
-    "commit": "bf0e0bec56004caf2530176a098e27c03ed66dc5",
+    "network": "tunnels",
+    "run_dir": "tunnels/awg-endpoint-20261111T131505",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
     "summary": [
       {
         "metric": "goodput",
         "unit": "MiB/s",
         "streams": 1,
         "pattern": "upload",
-        "n": 2,
-        "median": 49.78176584875986,
-        "mad": 1.388856993520168,
-        "min": 48.392908855239696,
-        "max": 51.17062284228003
+        "n": 3,
+        "median": 42.199810683230375,
+        "mad": 4.9675300214011955,
+        "min": 4.881252885772291,
+        "max": 47.16734070463157
       },
       {
         "metric": "cpu_seconds_per_gib_client",
         "unit": "s/GiB",
         "streams": 1,
         "pattern": "upload",
-        "n": 2,
-        "median": 55.34168339785536,
-        "mad": 1.570446809065313,
-        "min": 53.77123658879005,
-        "max": 56.91213020692068
+        "n": 3,
+        "median": 58.736266638590834,
+        "mad": 0.44683600517387845,
+        "min": 58.289430633416956,
+        "max": 64.28211027544408
       },
       {
         "metric": "cpu_seconds_per_gib_server",
         "unit": "s/GiB",
         "streams": 1,
         "pattern": "upload",
-        "n": 2,
-        "median": 58.424119487601374,
-        "mad": 1.6544868064996088,
-        "min": 56.76963268110176,
-        "max": 60.07860629410098
+        "n": 3,
+        "median": 61.78750126916698,
+        "mad": 0.25014545186721193,
+        "min": 61.53735581729977,
+        "max": 67.96367800787344
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "download",
+        "n": 1,
+        "median": 1.7793867619242767,
+        "mad": 0,
+        "min": 1.7793867619242767,
+        "max": 1.7793867619242767
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 1,
+        "median": 111.94693209308997,
+        "mad": 0,
+        "min": 111.94693209308997,
+        "max": 111.94693209308997
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 1,
+        "median": 116.13186413395316,
+        "mad": 0,
+        "min": 116.13186413395316,
+        "max": 116.13186413395316
+      }
+    ]
+  },
+  {
+    "scenario": "masque-connect-ip",
+    "network": "custom-rtt80-loss0",
+    "run_dir": "shaped-udp/masque-connect-ip-20261111T133100",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
+    "summary": [
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 6.6414642333984375,
+        "mad": 1.97113037109375,
+        "min": 4.6703338623046875,
+        "max": 11.566085815429688
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 233.74122715189947,
+        "mad": 76.72565653347175,
+        "min": 156.35228969056524,
+        "max": 310.4668836853712
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 175.76846896646794,
+        "mad": 57.52020634513872,
+        "min": 117.75115814748119,
+        "max": 233.28867531160665
+      },
+      {
+        "metric": "wire_gbit_per_s",
+        "unit": "Gbit/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 0.1221230656,
+        "mad": 0.036425820799999994,
+        "min": 0.0856972448,
+        "max": 0.21215996
+      },
+      {
+        "metric": "wire_overhead_ratio",
+        "unit": "ratio",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 2.1874041493098098,
+        "mad": 0.0007146757644695967,
+        "min": 2.18668947354534,
+        "max": 2.1920172083031786
+      }
+    ]
+  },
+  {
+    "scenario": "masque-connect-ip",
+    "network": "custom-rtt80-loss0.1",
+    "run_dir": "shaped-udp/masque-connect-ip-20261111T133123",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
+    "summary": [
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 0.854644775390625,
+        "mad": 0.2629852294921875,
+        "min": 0.5916595458984375,
+        "max": 1.900177001953125
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 1174.1954422424567,
+        "mad": 386.91855719016735,
+        "min": 572.3087895928692,
+        "max": 1561.113999432624
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 515.7560663313991,
+        "mad": 9.03740683410706,
+        "min": 302.8602069220268,
+        "max": 524.7934731655062
+      },
+      {
+        "metric": "wire_gbit_per_s",
+        "unit": "Gbit/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 0.0196957856,
+        "mad": 0.006405969600000002,
+        "min": 0.013289816,
+        "max": 0.0383600496
+      },
+      {
+        "metric": "wire_overhead_ratio",
+        "unit": "ratio",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 2.677670857511283,
+        "mad": 0.06957650903040591,
+        "min": 2.406551734521802,
+        "max": 2.7472473665416888
       }
     ]
   },
@@ -455,8 +614,8 @@
   {
     "scenario": "masque-connect-ip",
     "network": "remote",
-    "run_dir": "shaped-remote/masque-connect-ip-20261111T125139",
-    "commit": "bf0e0bec56004caf2530176a098e27c03ed66dc5",
+    "run_dir": "shaped-remote/masque-connect-ip-20261111T132707",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
     "summary": [
       {
         "metric": "goodput",
@@ -464,32 +623,32 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 0.30608104756772325,
-        "mad": 0.036686332608935224,
-        "min": 0.2606849887410676,
-        "max": 0.3427673801766585
+        "median": 0.20571744218746776,
+        "mad": 0.02398684058587308,
+        "min": 0.18173060160159468,
+        "max": 0.2955247839974331
       },
       {
         "metric": "cpu_seconds_per_gib_client",
         "unit": "s/GiB",
         "streams": 1,
         "pattern": "upload",
-        "n": 3,
-        "median": 243.29074887671894,
-        "mad": 35.1877855507752,
-        "min": 190.0935564084873,
-        "max": 278.47853442749414
+        "n": 2,
+        "median": 269.4120334860032,
+        "mad": 11.13868870081933,
+        "min": 258.2733447851839,
+        "max": 280.55072218682255
       },
       {
         "metric": "cpu_seconds_per_gib_server",
         "unit": "s/GiB",
         "streams": 1,
         "pattern": "upload",
-        "n": 3,
-        "median": 249.37301759863686,
-        "mad": 32.123238846079914,
-        "min": 217.24977875255695,
-        "max": 307.0404353944166
+        "n": 2,
+        "median": 260.36201018965414,
+        "mad": 2.0886654044702198,
+        "min": 258.2733447851839,
+        "max": 262.45067559412433
       },
       {
         "metric": "wire_gbit_per_s",
@@ -497,10 +656,10 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 0.002948876448091776,
-        "mad": 0.00020954954398787716,
-        "min": 0.0027393269041038988,
-        "max": 0.003290917502614297
+        "median": 0.0021347074842273297,
+        "mad": 1.3181104993719144e-05,
+        "min": 0.0021215263792336105,
+        "max": 0.0028928289126480783
       },
       {
         "metric": "wire_overhead_ratio",
@@ -508,10 +667,10 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 1.1445311314474864,
-        "mad": 0.07764634168174966,
-        "min": 1.0668847897657368,
-        "max": 1.3484990756380757
+        "median": 1.237021809563303,
+        "mad": 0.07010756702812615,
+        "min": 1.1669142425351768,
+        "max": 1.391651434611554
       },
       {
         "metric": "goodput",
@@ -519,32 +678,32 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 0.19743239283223596,
-        "mad": 0.013611011616001562,
-        "min": 0.1838213812162344,
-        "max": 0.26522805029927393
+        "median": 0.31766393597516357,
+        "mad": 0.02236297330833026,
+        "min": 0.14395612477326686,
+        "max": 0.34002690928349383
       },
       {
         "metric": "cpu_seconds_per_gib_client",
         "unit": "s/GiB",
         "streams": 4,
         "pattern": "upload",
-        "n": 3,
-        "median": 254.53144039136222,
-        "mad": 1.3620958662278326,
-        "min": 253.1693445251344,
-        "max": 280.72048628086645
+        "n": 2,
+        "median": 291.78674425425606,
+        "mad": 7.111089609982201,
+        "min": 284.67565464427383,
+        "max": 298.89783386423824
       },
       {
         "metric": "cpu_seconds_per_gib_server",
         "unit": "s/GiB",
         "streams": 4,
         "pattern": "upload",
-        "n": 3,
-        "median": 263.9585307762275,
-        "mad": 0.6624124700877587,
-        "min": 263.29611830613976,
-        "max": 322.8285592229964
+        "n": 2,
+        "median": 328.33672613577295,
+        "mad": 0.13518306915835865,
+        "min": 328.2015430666146,
+        "max": 328.4719092049313
       },
       {
         "metric": "wire_gbit_per_s",
@@ -552,10 +711,10 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 0.0023599962882904914,
-        "mad": 0.00041629419935845726,
-        "min": 0.001943702088932034,
-        "max": 0.0028472531601245817
+        "median": 0.0032229083271131842,
+        "mad": 0.00011562555929847456,
+        "min": 0.0015747125906093052,
+        "max": 0.0033385338864116588
       },
       {
         "metric": "wire_overhead_ratio",
@@ -563,10 +722,10 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 1.279725225166342,
-        "mad": 0.019222537247828297,
-        "min": 1.2605026879185137,
-        "max": 1.4249611060969485
+        "median": 1.2094561845147513,
+        "mad": 0.039006899842027654,
+        "min": 1.1704492846727237,
+        "max": 1.3040109927164822
       },
       {
         "metric": "goodput",
@@ -574,32 +733,10 @@
         "streams": 1,
         "pattern": "download",
         "n": 3,
-        "median": 0.05883161766611409,
-        "mad": 0.01260943697787812,
-        "min": 0.03560373502028362,
-        "max": 0.07144105464399221
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "download",
-        "n": 3,
-        "median": 1225.4528920337823,
-        "mad": 228.5171002453559,
-        "min": 996.9357917884264,
-        "max": 2672.9677175233505
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "download",
-        "n": 3,
-        "median": 1354.447933300496,
-        "mad": 95.16061735722064,
-        "min": 1259.2873159432754,
-        "max": 3421.3986784298886
+        "median": 0.040988736416171324,
+        "mad": 0.023908927257672255,
+        "min": 0.01707980915849907,
+        "max": 0.08727926113138332
       },
       {
         "metric": "wire_gbit_per_s",
@@ -607,10 +744,10 @@
         "streams": 1,
         "pattern": "download",
         "n": 3,
-        "median": 0.003944074136292714,
-        "mad": 0.00060901612313296,
-        "min": 0.003293854527098636,
-        "max": 0.004553090259425674
+        "median": 0.004489598230895543,
+        "mad": 0.00012048682067418697,
+        "min": 0.002912133944201257,
+        "max": 0.00461008505156973
       },
       {
         "metric": "wire_overhead_ratio",
@@ -618,10 +755,10 @@
         "streams": 1,
         "pattern": "download",
         "n": 3,
-        "median": 6.6742692728168285,
-        "mad": 0.09303558210444862,
-        "min": 6.58123369071238,
-        "max": 15.244767291338896
+        "median": 13.057289935445496,
+        "mad": 6.7606628026947675,
+        "min": 6.296627132750729,
+        "max": 20.325368705434254
       },
       {
         "metric": "goodput",
@@ -629,32 +766,10 @@
         "streams": 4,
         "pattern": "download",
         "n": 3,
-        "median": 0.055856235956495096,
-        "mad": 0.002339159407831977,
-        "min": 0.05351707654866312,
-        "max": 0.09794881720171952
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "download",
-        "n": 3,
-        "median": 1495.6946870019308,
-        "mad": 37.40328252987206,
-        "min": 1007.2125823351174,
-        "max": 1533.0979695318028
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "download",
-        "n": 3,
-        "median": 1866.3801368213253,
-        "mad": 11.934121274122617,
-        "min": 1216.256703197123,
-        "max": 1878.314258095448
+        "median": 0.028509435549142727,
+        "mad": 0.010746551983845044,
+        "min": 0.017762883565297684,
+        "max": 0.07338552588953867
       },
       {
         "metric": "wire_gbit_per_s",
@@ -662,10 +777,10 @@
         "streams": 4,
         "pattern": "download",
         "n": 3,
-        "median": 0.004590468398241793,
-        "mad": 0.00019495251656164673,
-        "min": 0.0043955158816801464,
-        "max": 0.005669102700755506
+        "median": 0.004009688230391294,
+        "mad": 5.3987695988404194e-05,
+        "min": 0.0039557005344028895,
+        "max": 0.005005618580798489
       },
       {
         "metric": "wire_overhead_ratio",
@@ -673,120 +788,76 @@
         "streams": 4,
         "pattern": "download",
         "n": 3,
-        "median": 9.791011752815104,
-        "mad": 0.006040753299641821,
-        "min": 6.899620890323677,
-        "max": 9.797052506114746
+        "median": 16.54035729921681,
+        "mad": 10.02691913179728,
+        "min": 6.513438167419531,
+        "max": 33.59343276589099
       },
       {
         "metric": "goodput",
         "unit": "MiB/s",
         "streams": 1,
         "pattern": "udp",
-        "n": 2,
-        "median": 0.03032684326171875,
-        "mad": 0.01453399658203125,
-        "min": 0.0157928466796875,
-        "max": 0.04486083984375
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "udp",
-        "n": 2,
-        "median": 33644.41332213349,
-        "mad": 16022.62998607907,
-        "min": 17621.78333605442,
-        "max": 49667.04330821256
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "udp",
-        "n": 2,
-        "median": 4249.963402385882,
-        "mad": 2104.305845923297,
-        "min": 2145.657556462585,
-        "max": 6354.269248309179
+        "n": 1,
+        "median": 0.0254058837890625,
+        "mad": 0,
+        "min": 0.0254058837890625,
+        "max": 0.0254058837890625
       },
       {
         "metric": "wire_gbit_per_s",
         "unit": "Gbit/s",
         "streams": 1,
         "pattern": "udp",
-        "n": 2,
-        "median": 0.0047065504000000005,
-        "mad": 2.0799999999997903e-06,
-        "min": 0.004704470400000001,
-        "max": 0.0047086304
+        "n": 1,
+        "median": 0.005542902400000001,
+        "mad": 0,
+        "min": 0.005542902400000001,
+        "max": 0.005542902400000001
       },
       {
         "metric": "wire_overhead_ratio",
         "unit": "ratio",
         "streams": 1,
         "pattern": "udp",
-        "n": 2,
-        "median": 24.021724033816426,
-        "mad": 11.520474033816427,
-        "min": 12.50125,
-        "max": 35.54219806763285
+        "n": 1,
+        "median": 26.00836336336336,
+        "mad": 0,
+        "min": 26.00836336336336,
+        "max": 26.00836336336336
       },
       {
         "metric": "goodput",
         "unit": "MiB/s",
         "streams": 4,
         "pattern": "udp",
-        "n": 3,
-        "median": 0.01007080078125,
-        "mad": 0.009613037109375,
-        "min": 0.000457763671875,
-        "max": 0.0354766845703125
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "udp",
-        "n": 3,
-        "median": 80530.6368,
-        "mad": 57901.239218924726,
-        "min": 22629.397581075267,
-        "max": 1762726.1610666667
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "udp",
-        "n": 3,
-        "median": 11591.531054545454,
-        "mad": 8705.128301857283,
-        "min": 2886.402752688172,
-        "max": 192378.74346666667
+        "n": 1,
+        "median": 0.0025177001953125,
+        "mad": 0,
+        "min": 0.0025177001953125,
+        "max": 0.0025177001953125
       },
       {
         "metric": "wire_gbit_per_s",
         "unit": "Gbit/s",
         "streams": 4,
         "pattern": "udp",
-        "n": 3,
-        "median": 0.0047619856,
-        "mad": 0.000510992,
-        "min": 0.0042509936,
-        "max": 0.0054887872
+        "n": 1,
+        "median": 0.0051620832000000005,
+        "mad": 0,
+        "min": 0.0051620832000000005,
+        "max": 0.0051620832000000005
       },
       {
         "metric": "wire_overhead_ratio",
         "unit": "ratio",
         "streams": 4,
         "pattern": "udp",
-        "n": 3,
-        "median": 64.97143939393939,
-        "mad": 48.970143695014656,
-        "min": 16.001295698924732,
-        "max": 1107.0295833333332
+        "n": 1,
+        "median": 244.41681818181817,
+        "mad": 0,
+        "min": 244.41681818181817,
+        "max": 244.41681818181817
       }
     ]
   },
@@ -1616,6 +1687,132 @@
   },
   {
     "scenario": "trusttunnel-h2",
+    "network": "custom-rtt80-loss0",
+    "run_dir": "shaped-udp/trusttunnel-h2-20261111T133015",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
+    "summary": [
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 10.557174682617188,
+        "mad": 0.1849365234375,
+        "min": 10.372238159179688,
+        "max": 11.00830078125
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 128.55462692392993,
+        "mad": 12.741823142900131,
+        "min": 115.8128037810298,
+        "max": 165.2657771344087
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 151.25168117099136,
+        "mad": 25.157338695833275,
+        "min": 126.09434247515809,
+        "max": 195.67310052592478
+      },
+      {
+        "metric": "wire_gbit_per_s",
+        "unit": "Gbit/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 0.201815264,
+        "mad": 0.0007730095999999853,
+        "min": 0.2010422544,
+        "max": 0.2114366496
+      },
+      {
+        "metric": "wire_overhead_ratio",
+        "unit": "ratio",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 2.2896551688290088,
+        "mad": 0.01953034498077022,
+        "min": 2.2701248238482385,
+        "max": 2.319485329273047
+      }
+    ]
+  },
+  {
+    "scenario": "trusttunnel-h2",
+    "network": "custom-rtt80-loss0.1",
+    "run_dir": "shaped-udp/trusttunnel-h2-20261111T133038",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
+    "summary": [
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 0.7889556884765625,
+        "mad": 0.224761962890625,
+        "min": 0.5641937255859375,
+        "max": 3.3519744873046875
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 98.64178829900396,
+        "mad": 10.660211733623285,
+        "min": 87.98157656538068,
+        "max": 112.52872394861393
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 88.25844216226672,
+        "mad": 0.887848767478971,
+        "min": 87.37059339478775,
+        "max": 112.52872394861393
+      },
+      {
+        "metric": "wire_gbit_per_s",
+        "unit": "Gbit/s",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 0.015706664,
+        "mad": 0.0033598191999999975,
+        "min": 0.012346844800000001,
+        "max": 0.063115464
+      },
+      {
+        "metric": "wire_overhead_ratio",
+        "unit": "ratio",
+        "streams": 1,
+        "pattern": "udp",
+        "n": 3,
+        "median": 2.373238806691809,
+        "mad": 0.12860667968600525,
+        "min": 2.244632127005804,
+        "max": 2.608782285327924
+      }
+    ]
+  },
+  {
+    "scenario": "trusttunnel-h2",
     "network": "loopback",
     "run_dir": "loopback/trusttunnel-h2-20261111T114529",
     "commit": "bf0e0bec56004caf2530176a098e27c03ed66dc5",
@@ -2103,8 +2300,8 @@
   {
     "scenario": "trusttunnel-h2",
     "network": "remote",
-    "run_dir": "shaped-remote/trusttunnel-h2-20261111T124834",
-    "commit": "bf0e0bec56004caf2530176a098e27c03ed66dc5",
+    "run_dir": "shaped-remote/trusttunnel-h2-20261111T132425",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
     "summary": [
       {
         "metric": "goodput",
@@ -2112,10 +2309,10 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 0.3264474846036835,
-        "mad": 0.048313353135987835,
-        "min": 0.27813413146769567,
-        "max": 0.4044510944211633
+        "median": 0.27306901635845743,
+        "mad": 0.04813745085416807,
+        "min": 0.22493156550428936,
+        "max": 0.33738608232937767
       },
       {
         "metric": "cpu_seconds_per_gib_client",
@@ -2123,10 +2320,10 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 13.809195534553368,
-        "mad": 2.405317559897517,
-        "min": 11.40387797465585,
-        "max": 26.775034979246854
+        "median": 24.828218420616537,
+        "mad": 2.442938926587626,
+        "min": 22.070916764517712,
+        "max": 27.271157347204163
       },
       {
         "metric": "cpu_seconds_per_gib_server",
@@ -2134,10 +2331,10 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 20.081276234435137,
-        "mad": 1.6690155216973146,
-        "min": 18.412260712737822,
-        "max": 34.21163392396755
+        "median": 34.0889466840052,
+        "mad": 0.9825715372286368,
+        "min": 33.106375146776564,
+        "max": 41.3803640343609
       },
       {
         "metric": "wire_gbit_per_s",
@@ -2145,10 +2342,10 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 0.002725938172214491,
-        "mad": 0.0005774959292093387,
-        "min": 0.0021484422430051524,
-        "max": 0.0034199990832218434
+        "median": 0.0023509510745516695,
+        "mad": 0.00010991334768619375,
+        "min": 0.0018784857547847582,
+        "max": 0.0024608644222378633
       },
       {
         "metric": "wire_overhead_ratio",
@@ -2156,10 +2353,10 @@
         "streams": 1,
         "pattern": "upload",
         "n": 3,
-        "median": 0.9954346968350878,
-        "mad": 0.012587451204045141,
-        "min": 0.9208300760429252,
-        "max": 1.008022148039133
+        "median": 0.9955603685819,
+        "mad": 0.030756022429153318,
+        "min": 0.869502077354142,
+        "max": 1.0263163910110533
       },
       {
         "metric": "goodput",
@@ -2167,10 +2364,10 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 0.2626524780832643,
-        "mad": 0.006667908960747759,
-        "min": 0.25598456912251655,
-        "max": 0.28363983341366483
+        "median": 0.33622208729911135,
+        "mad": 0.019894553764999934,
+        "min": 0.30022265428894107,
+        "max": 0.3561166410641113
       },
       {
         "metric": "cpu_seconds_per_gib_client",
@@ -2178,10 +2375,10 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 14.54342539386063,
-        "mad": 0.3686906861891188,
-        "min": 14.174734707671512,
-        "max": 24.419706574665174
+        "median": 20.90881397683315,
+        "mad": 4.299815984623006,
+        "min": 16.608997992210146,
+        "max": 31.004415697666026
       },
       {
         "metric": "cpu_seconds_per_gib_server",
@@ -2189,10 +2386,10 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 29.08685078772126,
-        "mad": 5.100738416809982,
-        "min": 21.262102061507264,
-        "max": 34.18758920453124
+        "median": 44.290661312560395,
+        "mad": 5.316403803705242,
+        "min": 31.363220965249724,
+        "max": 49.60706511626564
       },
       {
         "metric": "wire_gbit_per_s",
@@ -2200,10 +2397,10 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 0.0020372903783691227,
-        "mad": 3.1809440222439495e-05,
-        "min": 0.002005480938146683,
-        "max": 0.0024076777690985427
+        "median": 0.0028190813864901803,
+        "mad": 6.854832586708276e-05,
+        "min": 0.0025108494096432576,
+        "max": 0.002887629712357263
       },
       {
         "metric": "wire_overhead_ratio",
@@ -2211,230 +2408,109 @@
         "streams": 4,
         "pattern": "upload",
         "n": 3,
-        "median": 0.9487444475521823,
-        "mad": 0.03852285136259126,
-        "min": 0.9102215961895911,
-        "max": 1.0119084927780797
+        "median": 0.9969819732674211,
+        "mad": 0.002537992743491313,
+        "min": 0.9666279156942412,
+        "max": 0.9995199660109124
       },
       {
         "metric": "goodput",
         "unit": "MiB/s",
         "streams": 1,
         "pattern": "download",
-        "n": 1,
-        "median": 0.0028919526091903927,
-        "mad": 0,
-        "min": 0.0028919526091903927,
-        "max": 0.0028919526091903927
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "download",
-        "n": 1,
-        "median": 3276.8,
-        "mad": 0,
-        "min": 3276.8,
-        "max": 3276.8
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "download",
-        "n": 1,
-        "median": 3932.16,
-        "mad": 0,
-        "min": 3932.16,
-        "max": 3932.16
+        "n": 3,
+        "median": 0.04627715499673534,
+        "mad": 0.02673385552321219,
+        "min": 0.003025452597707681,
+        "max": 0.07301101051994753
       },
       {
         "metric": "wire_gbit_per_s",
         "unit": "Gbit/s",
         "streams": 1,
         "pattern": "download",
-        "n": 1,
-        "median": 0.004328357059632828,
-        "mad": 0,
-        "min": 0.004328357059632828,
-        "max": 0.004328357059632828
+        "n": 3,
+        "median": 0.004396938120184301,
+        "mad": 0.00019258933608637483,
+        "min": 0.003963457918603017,
+        "max": 0.004589527456270676
       },
       {
         "metric": "wire_overhead_ratio",
         "unit": "ratio",
         "streams": 1,
         "pattern": "download",
-        "n": 1,
-        "median": 178.41937255859375,
-        "mad": 0,
-        "min": 178.41937255859375,
-        "max": 178.41937255859375
+        "n": 3,
+        "median": 11.32644972541841,
+        "mad": 3.8328634356306113,
+        "min": 7.493586289787799,
+        "max": 156.168701171875
       },
       {
         "metric": "goodput",
         "unit": "MiB/s",
         "streams": 4,
         "pattern": "download",
-        "n": 2,
-        "median": 0.02982596422382884,
-        "mad": 0.018464673330529653,
-        "min": 0.011361290893299188,
-        "max": 0.048290637554358494
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "download",
-        "n": 2,
-        "median": 462.6070588235294,
-        "mad": 192.75294117647059,
-        "min": 269.85411764705884,
-        "max": 655.36
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "download",
-        "n": 2,
-        "median": 664.9976470588235,
-        "mad": 318.04235294117643,
-        "min": 346.95529411764704,
-        "max": 983.04
+        "n": 3,
+        "median": 0.08544430004942816,
+        "mad": 0.033009547907323855,
+        "min": 0.03124193733074918,
+        "max": 0.11845384795675201
       },
       {
         "metric": "wire_gbit_per_s",
         "unit": "Gbit/s",
         "streams": 4,
         "pattern": "download",
-        "n": 2,
-        "median": 0.005962542649680937,
-        "mad": 0.0008358104873209186,
-        "min": 0.005126732162360019,
-        "max": 0.006798353137001856
+        "n": 3,
+        "median": 0.005360272655740662,
+        "mad": 0.0002220266823564701,
+        "min": 0.004024514839951678,
+        "max": 0.0055822993380971325
       },
       {
         "metric": "wire_overhead_ratio",
         "unit": "ratio",
         "streams": 4,
         "pattern": "download",
-        "n": 2,
-        "median": 35.28747020048254,
-        "mad": 18.505193373736212,
-        "min": 16.782276826746322,
-        "max": 53.79266357421875
-      },
-      {
-        "metric": "goodput",
-        "unit": "MiB/s",
-        "streams": 1,
-        "pattern": "udp",
         "n": 3,
-        "median": 0.109405517578125,
-        "mad": 0.014190673828125,
-        "min": 0.0299835205078125,
-        "max": 0.12359619140625
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "udp",
-        "n": 3,
-        "median": 224.63218075313807,
-        "mad": 25.791102234619558,
-        "min": 198.84107851851851,
-        "max": 546.4334982188295
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 1,
-        "pattern": "udp",
-        "n": 3,
-        "median": 336.9482711297071,
-        "mad": 88.39692298155896,
-        "min": 248.55134814814815,
-        "max": 751.3460600508906
-      },
-      {
-        "metric": "wire_gbit_per_s",
-        "unit": "Gbit/s",
-        "streams": 1,
-        "pattern": "udp",
-        "n": 3,
-        "median": 0.0034183088,
-        "mad": 0.0007062687999999998,
-        "min": 0.00271204,
-        "max": 0.004138984
-      },
-      {
-        "metric": "wire_overhead_ratio",
-        "unit": "ratio",
-        "streams": 1,
-        "pattern": "udp",
-        "n": 3,
-        "median": 3.9920756172839504,
-        "mad": 0.2674539296967815,
-        "min": 3.724621687587169,
-        "max": 10.782601781170483
+        "median": 7.788254310344827,
+        "mad": 2.3937964171523394,
+        "min": 5.394457893192488,
+        "max": 15.356267755681818
       },
       {
         "metric": "goodput",
         "unit": "MiB/s",
         "streams": 4,
         "pattern": "udp",
-        "n": 3,
-        "median": 0.145111083984375,
-        "mad": 0.0011444091796875,
-        "min": 0.0904083251953125,
-        "max": 0.1462554931640625
-      },
-      {
-        "metric": "cpu_seconds_per_gib_client",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "udp",
-        "n": 3,
-        "median": 181.22224877637132,
-        "mad": 2.2509861342491035,
-        "min": 140.028928534168,
-        "max": 183.47323491062042
-      },
-      {
-        "metric": "cpu_seconds_per_gib_server",
-        "unit": "s/GiB",
-        "streams": 4,
-        "pattern": "udp",
-        "n": 3,
-        "median": 282.2665152471083,
-        "mad": 12.219639014495044,
-        "min": 196.04049994783517,
-        "max": 294.48615426160336
+        "n": 1,
+        "median": 0.0377655029296875,
+        "mad": 0,
+        "min": 0.0377655029296875,
+        "max": 0.0377655029296875
       },
       {
         "metric": "wire_gbit_per_s",
         "unit": "Gbit/s",
         "streams": 4,
         "pattern": "udp",
-        "n": 3,
-        "median": 0.0039227103999999995,
-        "mad": 0.00039275200000000055,
-        "min": 0.0027160912,
-        "max": 0.0043154624
+        "n": 1,
+        "median": 0.0040799904,
+        "mad": 0,
+        "min": 0.0040799904,
+        "max": 0.0040799904
       },
       {
         "metric": "wire_overhead_ratio",
         "unit": "ratio",
         "streams": 4,
         "pattern": "udp",
-        "n": 3,
-        "median": 3.545168243953733,
-        "mad": 0.03617563790280709,
-        "min": 3.197305685967658,
-        "max": 3.58134388185654
+        "n": 1,
+        "median": 12.878757575757575,
+        "mad": 0,
+        "min": 12.878757575757575,
+        "max": 12.878757575757575
       }
     ]
   },
@@ -3445,42 +3521,487 @@
   },
   {
     "scenario": "wireguard-endpoint",
-    "network": "loopback",
-    "run_dir": "loopback/wireguard-endpoint-20261111T120039",
-    "commit": "bf0e0bec56004caf2530176a098e27c03ed66dc5",
+    "network": "tunnels",
+    "run_dir": "tunnels/wireguard-endpoint-20261111T131338",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
     "summary": [
       {
         "metric": "goodput",
         "unit": "MiB/s",
         "streams": 1,
         "pattern": "upload",
-        "n": 5,
-        "median": 44.80132954502079,
-        "mad": 0.5855995626711206,
-        "min": 43.86093163580751,
-        "max": 45.928892419530996
+        "n": 3,
+        "median": 49.21045719119899,
+        "mad": 1.0009166016221158,
+        "min": 48.209540589576875,
+        "max": 50.42053377807015
       },
       {
         "metric": "cpu_seconds_per_gib_client",
         "unit": "s/GiB",
         "streams": 1,
         "pattern": "upload",
-        "n": 5,
-        "median": 61.69129172658025,
-        "mad": 0.9348361476460241,
-        "min": 60.108640413529855,
-        "max": 62.805239052669755
+        "n": 3,
+        "median": 54.8157406557701,
+        "mad": 1.1821032341659077,
+        "min": 53.63363742160419,
+        "max": 56.45428665337159
       },
       {
         "metric": "cpu_seconds_per_gib_server",
         "unit": "s/GiB",
         "streams": 1,
         "pattern": "upload",
-        "n": 5,
-        "median": 65.20477505716212,
-        "mad": 0.5852285194767717,
-        "min": 62.73172457358774,
-        "max": 65.7900035766389
+        "n": 3,
+        "median": 57.59805476481298,
+        "mad": 1.3512153436514396,
+        "min": 55.94263842842552,
+        "max": 58.94927010846442
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "download",
+        "n": 1,
+        "median": 0.22186759528579011,
+        "mad": 0,
+        "min": 0.22186759528579011,
+        "max": 0.22186759528579011
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 1,
+        "median": 293.6710268688813,
+        "mad": 0,
+        "min": 293.6710268688813,
+        "max": 293.6710268688813
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 1,
+        "median": 344.01463147497526,
+        "mad": 0,
+        "min": 344.01463147497526,
+        "max": 344.01463147497526
+      }
+    ]
+  },
+  {
+    "scenario": "xhttp-h2",
+    "network": "reference",
+    "run_dir": "reference/xhttp-h2-20261111T132001",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
+    "summary": [
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "upload",
+        "n": 3,
+        "median": 32.59885318010882,
+        "mad": 0.08439537653582363,
+        "min": 32.514457803572995,
+        "max": 32.71887620195191
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "upload",
+        "n": 3,
+        "median": 12.956796510644432,
+        "mad": 0.29004717382043665,
+        "min": 12.666749336823996,
+        "max": 14.278337799507058
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "upload",
+        "n": 3,
+        "median": 8.089161705199484,
+        "mad": 0.24033304971295344,
+        "min": 7.84882865548653,
+        "max": 8.64215182601743
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 4,
+        "pattern": "upload",
+        "n": 3,
+        "median": 125.6173213443067,
+        "mad": 0.24389192558818706,
+        "min": 125.37342941871852,
+        "max": 126.5172191248849
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "upload",
+        "n": 3,
+        "median": 15.684476619078103,
+        "mad": 0.16885591373968545,
+        "min": 15.515620705338417,
+        "max": 18.034288662802407
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "upload",
+        "n": 3,
+        "median": 12.53141173173766,
+        "mad": 0.026045611129502433,
+        "min": 12.505366120608157,
+        "max": 12.620770112588422
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "download",
+        "n": 3,
+        "median": 83.83501363749821,
+        "mad": 0.8137122359371318,
+        "min": 79.15934823888612,
+        "max": 84.64872587343534
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 3,
+        "median": 16.02430802489843,
+        "mad": 0.008644102273009935,
+        "min": 16.01566392262542,
+        "max": 16.790172114321805
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 3,
+        "median": 18.68688359610869,
+        "mad": 0.22774224722168768,
+        "min": 18.459141348887,
+        "max": 19.713576504026527
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 4,
+        "pattern": "download",
+        "n": 3,
+        "median": 213.37533531045943,
+        "mad": 42.779546902608274,
+        "min": 170.59578840785116,
+        "max": 336.29935759161816
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "download",
+        "n": 3,
+        "median": 15.009236086785698,
+        "mad": 3.416105732894689,
+        "min": 11.515010755086017,
+        "max": 18.425341819680387
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "download",
+        "n": 3,
+        "median": 15.930519120245691,
+        "mad": 2.9723261605296436,
+        "min": 12.958192959716047,
+        "max": 19.6857072210266
+      },
+      {
+        "metric": "latency_p50",
+        "unit": "ms",
+        "streams": 1,
+        "pattern": "connect",
+        "n": 3,
+        "median": 3.1196,
+        "mad": 0.21879999999999988,
+        "min": 2.6668,
+        "max": 3.3384
+      },
+      {
+        "metric": "latency_p95",
+        "unit": "ms",
+        "streams": 1,
+        "pattern": "connect",
+        "n": 3,
+        "median": 4.0754,
+        "mad": 0.37709999999999955,
+        "min": 3.5547,
+        "max": 4.4525
+      },
+      {
+        "metric": "latency_p99",
+        "unit": "ms",
+        "streams": 1,
+        "pattern": "connect",
+        "n": 3,
+        "median": 4.8482,
+        "mad": 0.4490999999999996,
+        "min": 4.1513,
+        "max": 5.2973
+      },
+      {
+        "metric": "latency_p50",
+        "unit": "ms",
+        "streams": 4,
+        "pattern": "connect",
+        "n": 3,
+        "median": 8.120901,
+        "mad": 0.2069989999999997,
+        "min": 3.257,
+        "max": 8.3279
+      },
+      {
+        "metric": "latency_p95",
+        "unit": "ms",
+        "streams": 4,
+        "pattern": "connect",
+        "n": 3,
+        "median": 10.388701,
+        "mad": 0.5180990000000012,
+        "min": 5.089601,
+        "max": 10.9068
+      },
+      {
+        "metric": "latency_p99",
+        "unit": "ms",
+        "streams": 4,
+        "pattern": "connect",
+        "n": 3,
+        "median": 13.117502,
+        "mad": 0.38640099999999933,
+        "min": 6.983301,
+        "max": 13.503903
+      }
+    ]
+  },
+  {
+    "scenario": "xhttp-h3",
+    "network": "reference",
+    "run_dir": "reference/xhttp-h3-20261111T132150",
+    "commit": "49679c0e92735a0d060872247ca6f64eda2cc0e5",
+    "summary": [
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "upload",
+        "n": 3,
+        "median": 32.622173050318665,
+        "mad": 0.14970793695659523,
+        "min": 32.43242849448899,
+        "max": 32.77188098727526
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "upload",
+        "n": 3,
+        "median": 34.30523391132855,
+        "mad": 2.1943736522985873,
+        "min": 29.822346811945774,
+        "max": 36.49960756362714
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "upload",
+        "n": 3,
+        "median": 22.577484841093746,
+        "mad": 1.237420945736229,
+        "min": 19.528022075604657,
+        "max": 23.814905786829975
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 4,
+        "pattern": "upload",
+        "n": 3,
+        "median": 121.8570410880361,
+        "mad": 0.021806847423789577,
+        "min": 121.83523424061231,
+        "max": 122.41140508726524
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "upload",
+        "n": 3,
+        "median": 37.76713689993691,
+        "mad": 1.0813715371451238,
+        "min": 35.52068367024552,
+        "max": 38.84850843708203
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "upload",
+        "n": 3,
+        "median": 25.857237149474344,
+        "mad": 0.6288716823086986,
+        "min": 24.23000222231938,
+        "max": 26.486108831783042
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 1,
+        "pattern": "download",
+        "n": 3,
+        "median": 83.3458171741847,
+        "mad": 0.6784747327823908,
+        "min": 82.66734244140231,
+        "max": 90.62042628264666
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 3,
+        "median": 24.08011547906942,
+        "mad": 0.04751681606212088,
+        "min": 22.031755883113526,
+        "max": 24.12763229513154
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 1,
+        "pattern": "download",
+        "n": 3,
+        "median": 25.23497816020846,
+        "mad": 0.20555404420641565,
+        "min": 23.34236289975002,
+        "max": 25.440532204414875
+      },
+      {
+        "metric": "goodput",
+        "unit": "MiB/s",
+        "streams": 4,
+        "pattern": "download",
+        "n": 3,
+        "median": 169.32404617594648,
+        "mad": 0.8583800136791524,
+        "min": 146.64686983834866,
+        "max": 170.18242618962563
+      },
+      {
+        "metric": "cpu_seconds_per_gib_client",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "download",
+        "n": 3,
+        "median": 22.200058435111952,
+        "mad": 0.4821973237931516,
+        "min": 21.7178611113188,
+        "max": 24.870198929162974
+      },
+      {
+        "metric": "cpu_seconds_per_gib_server",
+        "unit": "s/GiB",
+        "streams": 4,
+        "pattern": "download",
+        "n": 3,
+        "median": 20.569087834272427,
+        "mad": 0.9800931825855663,
+        "min": 19.58899465168686,
+        "max": 21.574653197954405
+      },
+      {
+        "metric": "latency_p50",
+        "unit": "ms",
+        "streams": 1,
+        "pattern": "connect",
+        "n": 3,
+        "median": 3.5675,
+        "mad": 0.13110100000000013,
+        "min": 3.4172,
+        "max": 3.698601
+      },
+      {
+        "metric": "latency_p95",
+        "unit": "ms",
+        "streams": 1,
+        "pattern": "connect",
+        "n": 3,
+        "median": 4.7666,
+        "mad": 0.19310199999999966,
+        "min": 4.554902,
+        "max": 4.959702
+      },
+      {
+        "metric": "latency_p99",
+        "unit": "ms",
+        "streams": 1,
+        "pattern": "connect",
+        "n": 3,
+        "median": 5.8214,
+        "mad": 0.40439699999999945,
+        "min": 5.417003,
+        "max": 6.519202
+      },
+      {
+        "metric": "latency_p50",
+        "unit": "ms",
+        "streams": 4,
+        "pattern": "connect",
+        "n": 3,
+        "median": 4.127,
+        "mad": 0.2871999999999999,
+        "min": 3.8398,
+        "max": 8.1954
+      },
+      {
+        "metric": "latency_p95",
+        "unit": "ms",
+        "streams": 4,
+        "pattern": "connect",
+        "n": 3,
+        "median": 9.7271,
+        "mad": 1.1096000000000004,
+        "min": 6.3203,
+        "max": 10.8367
+      },
+      {
+        "metric": "latency_p99",
+        "unit": "ms",
+        "streams": 4,
+        "pattern": "connect",
+        "n": 3,
+        "median": 12.9025,
+        "mad": 1.944706,
+        "min": 9.4661,
+        "max": 14.847206
       }
     ]
   }

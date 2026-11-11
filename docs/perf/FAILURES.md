@@ -10,14 +10,19 @@
 
 `transport/v2rayxhttp/register.go:22` calls only `v2ray.RegisterClient`, and
 `transport/v2ray/transport.go:24` (`NewServerTransport`) has no `xhttp` case.
-A VLESS XHTTP cell therefore needs an external Xray server binary.
 
-Consequence: XHTTP is not in the default matrix. The existing
-`test/xhttpbench/cmd/xnettool` remains the right harness for the A/B and needs an
-Xray server plus — for CPU accounting — a Windows host
-(`procstat_other.go` returns "implemented for Windows only").
+Resolution in this stage: the XHTTP cells run this repository's **client**
+against a **reference Xray 26.9.30 server** (provenance in
+[ENVIRONMENT.md](ENVIRONMENT.md)). `xhttp-h2` and `xhttp-h3` are therefore
+reference-server cells, not in-fork pairs, and they are labelled that way in
+`run.json` (`scenario.extra.reference_server`, `server_transport_in_fork: false`).
+The first attempt moved zero payload because Xray 26.x blackholes private
+destinations by default for VLESS-inbound traffic; the template now carries an
+explicit freedom `finalRules` allow rule for the lab's private ranges.
 
-This is an environment/product boundary, not a measurement result.
+What remains blocked: an in-fork server transport (a product change, not a lab
+change), and the full A/B against a reference *client*, which is what
+`test/xhttpbench/cmd/xnettool` does on Windows. That harness is left intact.
 
 ### B2 — Cronet cgo link fails on this host
 
@@ -58,6 +63,55 @@ cannot be installed without egress to the distribution mirrors (which works) but
 also without root for the package manager. The lab's own Go load generator and
 `/proc` sampler replace them; there is no independent cross-check against
 iperf3, and no hardware-counter CPU breakdown.
+
+### B7 — Userspace WireGuard/AWG carries one flow, then fails
+
+With per-pattern process restarts, one stream, and the target on loopback while
+the load generator dials the tunnel address:
+
+| cell | result |
+|---|---|
+| WireGuard upload | 48–50 MiB/s, 3/3 repetitions |
+| WireGuard download | first repetition 0.2 MiB/s, then `sent=0` dial failures |
+| WireGuard UDP | 0 datagrams returned, 3/3 |
+| AWG upload | 42–47 MiB/s, 3/3 (one repetition flaked to 4.9) |
+| AWG download | first repetition 1.8 MiB/s, then dial failures |
+| AWG UDP | 0 datagrams returned, 3/3 |
+
+The client log carries `open connection to 198.18.17.1:... using
+outbound/wireguard[wg]: go: handshake: context canceled` after the 10 s dial
+deadline, while the server log shows the inbound connections arriving and the
+server dialing the target. So the inner TCP handshake completes on the wire in
+one direction and the client's userspace stack does not complete it for the next
+flow. The pattern is stateful: a fresh process carries the first flow, later
+flows in the same process fail, and the sequence is not identical between WG and
+AWG (an earlier AWG run carried three download repetitions at 52–59 MiB/s before
+the restart change).
+
+Stage-1 position: the quantified cell is one-stream upload, which is stable;
+download and UDP are recorded as failures with their logs under
+`docs/perf/results/tunnels/`. This is a protocol/userspace-stack defect for
+stage 2 to bisect, not a lab configuration that can be tuned around.
+
+### B8 — UDP over the tunnel collapses at 1% uniform loss
+
+Same cells, UDP pattern, 80 ms RTT, changing only the loss rate:
+
+| loss per direction | TrustTunnel H2 (UDP over stream) | MASQUE (QUIC DATAGRAM) |
+|---|---|---|
+| 0 % | 10.6 MiB/s, datagrams return | 6.6 MiB/s, datagrams return |
+| 0.1 % | 0.8 MiB/s, datagrams return | 0.9 MiB/s, datagrams return |
+| 1 % | 0.03–0.15 MiB/s: 131–639 datagrams out of ~570 000 sent | < 0.05 MiB/s: 2–196 datagrams out of ~265 000 sent |
+
+(The 0 % and 0.1 % rows are medians of three repetitions at 80 ms RTT; the 1 %
+row is the spread of six repetitions per direction from the shaped matrix.)
+
+At 1% uniform loss both a reliable-stream UDP framing and a QUIC DATAGRAM path
+deliver roughly one datagram in ten thousand, for 5 s windows, while the
+association itself still opens and the SOCKS control connection stays alive. At
+0.1% both still carry real payload. That is a threshold, not a missing
+measurement, and it is the strongest reason stage 2 needs burst loss and longer
+windows rather than one more point on this curve.
 
 ### B6 — Platform cells not run
 

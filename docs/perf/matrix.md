@@ -5,24 +5,30 @@ Every row below is a real server process and a real client process. `null` means
 | scenario | network | commit | repetitions | run dir |
 |---|---|---|---|---|
 | anytls-tcp | loopback | `bf0e0bec5600` | 30 | `loopback/anytls-tcp-20261111T114228` |
-| awg-endpoint | loopback | `bf0e0bec5600` | 30 | `loopback/awg-endpoint-20261111T120712` |
+| awg-endpoint | tunnels | `49679c0e9273` | 4 | `tunnels/awg-endpoint-20261111T131505` |
+| masque-connect-ip | custom-rtt80-loss0 | `49679c0e9273` | 3 | `shaped-udp/masque-connect-ip-20261111T133100` |
+| masque-connect-ip | custom-rtt80-loss0.1 | `49679c0e9273` | 3 | `shaped-udp/masque-connect-ip-20261111T133123` |
 | masque-connect-ip | loopback | `bf0e0bec5600` | 30 | `loopback/masque-connect-ip-20261111T115737` |
-| masque-connect-ip | remote | `bf0e0bec5600` | 17 | `shaped-remote/masque-connect-ip-20261111T125139` |
+| masque-connect-ip | remote | `49679c0e9273` | 14 | `shaped-remote/masque-connect-ip-20261111T132707` |
 | mieru-tcp-underlay | loopback | `bf0e0bec5600` | 30 | `loopback/mieru-tcp-underlay-20261111T115132` |
 | mieru-udp-underlay | loopback | `bf0e0bec5600` | 30 | `loopback/mieru-udp-underlay-20261111T115433` |
 | naive-h2 | native | `bf0e0bec5600` | 18 | `native/naive-h2-20261111T124028` |
 | naive-h3 | native | `bf0e0bec5600` | 18 | `native/naive-h3-20261111T124233` |
+| trusttunnel-h2 | custom-rtt80-loss0 | `49679c0e9273` | 3 | `shaped-udp/trusttunnel-h2-20261111T133015` |
+| trusttunnel-h2 | custom-rtt80-loss0.1 | `49679c0e9273` | 3 | `shaped-udp/trusttunnel-h2-20261111T133038` |
 | trusttunnel-h2 | loopback | `bf0e0bec5600` | 30 | `loopback/trusttunnel-h2-20261111T114529` |
 | trusttunnel-h2 | loopback-extra | `bf0e0bec5600` | 6 | `loopback-extra/trusttunnel-h2-20261111T123648` |
 | trusttunnel-h2 | normal | `bf0e0bec5600` | 9 | `shaped-100mbit/trusttunnel-h2-20261111T125505` |
-| trusttunnel-h2 | remote | `bf0e0bec5600` | 15 | `shaped-remote/trusttunnel-h2-20261111T124834` |
+| trusttunnel-h2 | remote | `49679c0e9273` | 13 | `shaped-remote/trusttunnel-h2-20261111T132425` |
 | trusttunnel-h3 | loopback | `bf0e0bec5600` | 30 | `loopback/trusttunnel-h3-20261111T114830` |
 | vless-reality-vision | loopback | `bf0e0bec5600` | 30 | `loopback/vless-reality-vision-20261111T113927` |
 | vless-vision-tcp | loopback | `bf0e0bec5600` | 20 | `loopback/vless-vision-tcp-20261111T113727` |
 | vless-vision-tcp | loopback-extra | `bf0e0bec5600` | 6 | `loopback-extra/vless-vision-tcp-20261111T123523` |
 | vless-vision-tcp | normal | `bf0e0bec5600` | 6 | `shaped-100mbit/vless-vision-tcp-20261111T125408` |
 | vless-vision-tcp | remote | `bf0e0bec5600` | 12 | `shaped-remote/vless-vision-tcp-20261111T124649` |
-| wireguard-endpoint | loopback | `bf0e0bec5600` | 30 | `loopback/wireguard-endpoint-20261111T120039` |
+| wireguard-endpoint | tunnels | `49679c0e9273` | 4 | `tunnels/wireguard-endpoint-20261111T131338` |
+| xhttp-h2 | reference | `49679c0e9273` | 18 | `reference/xhttp-h2-20261111T132001` |
+| xhttp-h3 | reference | `49679c0e9273` | 18 | `reference/xhttp-h3-20261111T132150` |
 
 ## TCP with TLS
 
@@ -123,6 +129,28 @@ Every row below is a real server process and a real client process. `null` means
 | upload | 1 | 3 | 119.4 | 10.79 | 10.93 | null | null | null | null | null |
 | upload | 4 | 3 | 224.7 | 9.99 | 9.97 | null | null | null | null | null |
 
+### trusttunnel-h2 — custom-rtt80-loss0
+
+- run dir: `shaped-udp/trusttunnel-h2-20261111T133015`
+- protocol: trusttunnel / http2 / tls
+- startup: client 102 ms, server 262 ms
+- network: custom-rtt80-loss0, one-way delay 40.0 ms, loss 0.00% per direction
+
+| pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| udp | 1 | 3 | 10.6 | 128.55 | 151.25 | 0.20 | 2.29 | null | null | null |
+
+### trusttunnel-h2 — custom-rtt80-loss0.1
+
+- run dir: `shaped-udp/trusttunnel-h2-20261111T133038`
+- protocol: trusttunnel / http2 / tls
+- startup: client 102 ms, server 262 ms
+- network: custom-rtt80-loss0.1, one-way delay 40.0 ms, loss 0.10% per direction
+
+| pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| udp | 1 | 3 | 0.8 | 98.64 | 88.26 | 0.02 | 2.37 | null | null | null |
+
 ### trusttunnel-h2 — loopback
 
 - run dir: `loopback/trusttunnel-h2-20261111T114529`
@@ -164,21 +192,57 @@ Every row below is a real server process and a real client process. `null` means
 
 ### trusttunnel-h2 — remote
 
-- run dir: `shaped-remote/trusttunnel-h2-20261111T124834`
+- run dir: `shaped-remote/trusttunnel-h2-20261111T132425`
 - protocol: trusttunnel / http2 / tls
 - startup: client 102 ms, server 262 ms
 - network: remote, one-way delay 40.0 ms, loss 1.00% per direction
 
 | pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| download | 1 | 1 | 0.0 | 3276.80 | 3932.16 | 0.00 | 178.42 | null | null | null |
-| download | 4 | 2 | 0.0 | 462.61 | 665.00 | 0.01 | 35.29 | null | null | null |
-| udp | 1 | 3 | 0.1 | 224.63 | 336.95 | 0.00 | 3.99 | null | null | null |
-| udp | 4 | 3 | 0.1 | 181.22 | 282.27 | 0.00 | 3.55 | null | null | null |
-| upload | 1 | 3 | 0.3 | 13.81 | 20.08 | 0.00 | 1.00 | null | null | null |
-| upload | 4 | 3 | 0.3 | 14.54 | 29.09 | 0.00 | 0.95 | null | null | null |
+| download | 1 | 3 | 0.0 | null | null | 0.00 | 11.33 | null | null | null |
+| download | 4 | 3 | 0.1 | null | null | 0.01 | 7.79 | null | null | null |
+| udp | 4 | 1 | 0.0 | null | null | 0.00 | 12.88 | null | null | null |
+| upload | 1 | 3 | 0.3 | 24.83 | 34.09 | 0.00 | 1.00 | null | null | null |
+| upload | 4 | 3 | 0.3 | 20.91 | 44.29 | 0.00 | 1.00 | null | null | null |
+
+### xhttp-h2 — reference
+
+- run dir: `reference/xhttp-h2-20261111T132001`
+- protocol: vless+xhttp / http2 / tls
+- startup: client 102 ms, server 102 ms
+
+| pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| connect | 1 | 0 | null | null | null | null | null | 3.12 | 4.08 | 4.85 |
+| connect | 4 | 0 | null | null | null | null | null | 8.12 | 10.39 | 13.12 |
+| download | 1 | 3 | 83.8 | 16.02 | 18.69 | null | null | null | null | null |
+| download | 4 | 3 | 213.4 | 15.01 | 15.93 | null | null | null | null | null |
+| upload | 1 | 3 | 32.6 | 12.96 | 8.09 | null | null | null | null | null |
+| upload | 4 | 3 | 125.6 | 15.68 | 12.53 | null | null | null | null | null |
 
 ## HTTP/3 and QUIC
+
+### masque-connect-ip — custom-rtt80-loss0
+
+- run dir: `shaped-udp/masque-connect-ip-20261111T133100`
+- protocol: masque / quic / tls
+- startup: client 102 ms, server 802 ms
+- network: custom-rtt80-loss0, one-way delay 40.0 ms, loss 0.00% per direction
+
+| pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| udp | 1 | 3 | 6.6 | 233.74 | 175.77 | 0.12 | 2.19 | null | null | null |
+
+### masque-connect-ip — custom-rtt80-loss0.1
+
+- run dir: `shaped-udp/masque-connect-ip-20261111T133123`
+- protocol: masque / quic / tls
+- startup: client 102 ms, server 802 ms
+- network: custom-rtt80-loss0.1, one-way delay 40.0 ms, loss 0.10% per direction
+
+| pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| udp | 1 | 3 | 0.9 | 1174.20 | 515.76 | 0.02 | 2.68 | null | null | null |
 
 ### masque-connect-ip — loopback
 
@@ -197,19 +261,19 @@ Every row below is a real server process and a real client process. `null` means
 
 ### masque-connect-ip — remote
 
-- run dir: `shaped-remote/masque-connect-ip-20261111T125139`
+- run dir: `shaped-remote/masque-connect-ip-20261111T132707`
 - protocol: masque / quic / tls
-- startup: client 102 ms, server 802 ms
+- startup: client 102 ms, server 801 ms
 - network: remote, one-way delay 40.0 ms, loss 1.00% per direction
 
 | pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| download | 1 | 3 | 0.1 | 1225.45 | 1354.45 | 0.00 | 6.67 | null | null | null |
-| download | 4 | 3 | 0.1 | 1495.69 | 1866.38 | 0.00 | 9.79 | null | null | null |
-| udp | 1 | 2 | 0.0 | 33644.41 | 4249.96 | 0.00 | 24.02 | null | null | null |
-| udp | 4 | 3 | 0.0 | 80530.64 | 11591.53 | 0.00 | 64.97 | null | null | null |
-| upload | 1 | 3 | 0.3 | 243.29 | 249.37 | 0.00 | 1.14 | null | null | null |
-| upload | 4 | 3 | 0.2 | 254.53 | 263.96 | 0.00 | 1.28 | null | null | null |
+| download | 1 | 3 | 0.0 | null | null | 0.00 | 13.06 | null | null | null |
+| download | 4 | 3 | 0.0 | null | null | 0.00 | 16.54 | null | null | null |
+| udp | 1 | 1 | 0.0 | null | null | 0.01 | 26.01 | null | null | null |
+| udp | 4 | 1 | 0.0 | null | null | 0.01 | 244.42 | null | null | null |
+| upload | 1 | 3 | 0.2 | 269.41 | 260.36 | 0.00 | 1.24 | null | null | null |
+| upload | 4 | 3 | 0.3 | 291.79 | 328.34 | 0.00 | 1.21 | null | null | null |
 
 ### naive-h3 — native
 
@@ -241,17 +305,33 @@ Every row below is a real server process and a real client process. `null` means
 | upload | 1 | 5 | 119.1 | 16.05 | 14.83 | null | null | null | null | null |
 | upload | 4 | 5 | 196.5 | 14.83 | 17.46 | null | null | null | null | null |
 
-## UDP underlay and userspace tunnels
+### xhttp-h3 — reference
 
-### awg-endpoint — loopback
-
-- run dir: `loopback/awg-endpoint-20261111T120712`
-- protocol: awg / udp / noise
-- startup: client 102 ms, server 802 ms
+- run dir: `reference/xhttp-h3-20261111T132150`
+- protocol: vless+xhttp / http3 / tls
+- startup: client 102 ms, server 800 ms
 
 | pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| upload | 1 | 2 | 49.8 | 55.34 | 58.42 | null | null | null | null | null |
+| connect | 1 | 0 | null | null | null | null | null | 3.57 | 4.77 | 5.82 |
+| connect | 4 | 0 | null | null | null | null | null | 4.13 | 9.73 | 12.90 |
+| download | 1 | 3 | 83.3 | 24.08 | 25.23 | null | null | null | null | null |
+| download | 4 | 3 | 169.3 | 22.20 | 20.57 | null | null | null | null | null |
+| upload | 1 | 3 | 32.6 | 34.31 | 22.58 | null | null | null | null | null |
+| upload | 4 | 3 | 121.9 | 37.77 | 25.86 | null | null | null | null | null |
+
+## UDP underlay and userspace tunnels
+
+### awg-endpoint — tunnels
+
+- run dir: `tunnels/awg-endpoint-20261111T131505`
+- protocol: awg / udp / noise
+- startup: client 102 ms, server 801 ms
+
+| pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| download | 1 | 1 | 1.8 | 111.95 | 116.13 | null | null | null | null | null |
+| upload | 1 | 3 | 42.2 | 58.74 | 61.79 | null | null | null | null | null |
 
 ### mieru-tcp-underlay — loopback
 
@@ -283,12 +363,13 @@ Every row below is a real server process and a real client process. `null` means
 | upload | 1 | 5 | 29.0 | 53.62 | 58.33 | null | null | null | null | null |
 | upload | 4 | 5 | 71.4 | 46.68 | 40.48 | null | null | null | null | null |
 
-### wireguard-endpoint — loopback
+### wireguard-endpoint — tunnels
 
-- run dir: `loopback/wireguard-endpoint-20261111T120039`
+- run dir: `tunnels/wireguard-endpoint-20261111T131338`
 - protocol: wireguard / udp / noise
-- startup: client 102 ms, server 802 ms
+- startup: client 102 ms, server 801 ms
 
 | pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| upload | 1 | 5 | 44.8 | 61.69 | 65.20 | null | null | null | null | null |
+| download | 1 | 1 | 0.2 | 293.67 | 344.01 | null | null | null | null | null |
+| upload | 1 | 3 | 49.2 | 54.82 | 57.60 | null | null | null | null | null |

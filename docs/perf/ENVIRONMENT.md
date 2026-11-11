@@ -122,6 +122,26 @@ and a purego binding (`libcronet_purego.go`, `with_purego`).
   ar archive with ELF64 relocatable members. The purego path is the supported
   one here; the failure is recorded rather than worked around.
 
+### Reference Xray server (XHTTP cells only)
+
+The fork registers only an XHTTP client transport (`transport/v2rayxhttp/register.go`
+calls `v2ray.RegisterClient`), so the XHTTP cells measure this repository's client
+against a reference server:
+
+| item | value |
+|---|---|
+| binary | Xray 26.9.30 (linux-64), commit `b26a91d`, built with go1.27.1 |
+| source | `https://github.com/XTLS/Xray-core/releases/download/v26.9.30/Xray-linux-64.zip` |
+| archive sha256 | `f851110beaff16e78d643f0ccfd9524b4a44dfd59bae3e34bb52bba378f7690e` |
+| location | not committed; `$HOME/perf/bin/xray`, downloaded by the runbook |
+
+The server template carries a freedom `finalRules` allow rule for the lab's
+private ranges. Xray 26.x blocks private and reserved destinations by default
+for traffic arriving from a VLESS inbound, which is correct for a public server
+and is exactly what a lab that dials `172.21.x.x` must override. Without it the
+server logs `blocked target ... blackholing connection` and the cell moves zero
+payload.
+
 ### AWG
 
 `transport/wireguard/device_awg.go` is gated by `with_awg`, which no release

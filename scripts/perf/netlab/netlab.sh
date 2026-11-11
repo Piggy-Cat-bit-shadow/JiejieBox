@@ -111,6 +111,14 @@ if [ "$unshaped" = "1" ]; then
 fi
 
 one_way=$(awk -v rtt="$rtt_ms" 'BEGIN { printf "%.3f", rtt / 2 }')
+# An explicit --rtt-ms/--loss-pct run still needs a label that distinguishes it
+# from another explicit run: without one, two loss levels collapse into the same
+# "custom" cell and a summary that keys on the profile would merge them.
+if [ -z "$profile" ]; then
+  label="custom-rtt${rtt_ms}-loss${loss_pct}"
+else
+  label="$profile"
+fi
 netem_args="delay ${one_way}ms"
 if awk -v j="$jitter_ms" 'BEGIN { exit !(j > 0) }'; then
   netem_args="$netem_args ${jitter_ms}ms"
@@ -230,7 +238,7 @@ export NL_SERVER_IP="$server_ip"
 export NL_MTU="$mtu"
 export NL_NETEM="$netem_args"
 export NL_BANDWIDTH="$bandwidth_mbps"
-export NL_PROFILE="${profile:-custom}"
+export NL_PROFILE="$label"
 export NL_RTT="$rtt_ms"
 export NL_DELAY="$one_way"
 export NL_JITTER="$jitter_ms"
