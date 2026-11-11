@@ -1,134 +1,156 @@
-# Closure report (2026-11-11, round 3.5)
+# Final evidence reconciliation report (2026-11-11)
 
-This is the targeted closure round after the three-stage programme. It is not a
-fourth phase: it fixes what could be fixed in this environment, re-verifies the
-earlier fixes, and states plainly what remains.
+## 1. Final state
 
-## Start and end state
+`READY_WITH_EXPLICIT_BLOCKERS`. Every claim below is backed by a command, a raw
+run, or a log in this directory. B8 and Mieru S3-9 remain `UNRESOLVED` with a
+bounded locus and a next step; they are not counted as fixed.
 
-- Start: `work/closure-2026-11-11` created from the stage-3 head
-  `2e0003012e1`, then merged with the current `testing` tip (`1ce3aa3a825`,
-  15+ commits: hidden-group, routing-dns, daemon/libbox, release docs). Merge
-  commit `fa256e89afd`; no conflicts with the programme's files.
-- End: this branch, HEAD `98d2b8bee1419903e983cb97a807377045a02ecf`, commits
-  `699258bfa95` (schema + wireguard pin), `227777920b8` (paced UDP + BuildInfo
-  provenance), `0dc9d011fa7` (B8 evidence), `98d2b8bee14` (pacer/UDP/runner test
-  suite). Worktree clean; pushed as `work/closure-2026-11-11`, not merged into
-  `testing`.
-- Dependency fork: `Piggy-Cat-bit-shadow/wireguard-go` branch
-  `fix/outbound-wake-2026-11-11` = `7ece3d66d79d`, one commit on the pinned
-  `a765d957fd81`. Root and test `go.mod` now pin
-  `v0.0.0-20261111081811-7ece3d66d79d`; `go.sum`, `release/source-lock.json`
-  and `release/dependency-final-shas.json` agree.
+## 2. Git
 
-## P1 outcomes
+- Main repo branch: `work/closure-final-reconcile-2026-11-11`, started from
+  `897553e81221761f2491b244cfb61332d61890e9`.
+- Prior closure branch `work/closure-2026-11-11` is unchanged at `897553e...`;
+  the audit branch `work/coupling-audit-2026-11-11` is unchanged at
+  `2e0003012e1...`; `testing` was not merged and is unchanged.
+- wireguard-go fork: default branch `awg3-inject` was fast-forwarded from
+  `a765d957fd81...` to the fix commit `7ece3d66d79dcea5bbf872ebe76b1c7863b69ea6`
+  (no merge commit), pushed to `Piggy-Cat-bit-shadow/wireguard-go`. Device tests
+  and `-race` pass before and after the merge; the fix branch still points at the
+  same commit.
+- This round's commits are listed in `GIT-STATE.txt` (locks, provenance cache,
+  drain/parameters, B8 evidence, this report, final B7 evidence).
 
-| area | status | evidence |
-|---|---|---|
-| B7 WireGuard/AWG stall | `FIXED_AND_VERIFIED` | fork wake fix + 36/36 two-process cells pass (WG and AWG, 2/4 streams, 0/200 ms/1 s, 3 reps) |
-| Run schema / data truth | `FIXED_AND_VERIFIED` | 48/48 historical files validate under v1.1; 4 valid + 3 invalid fixtures fail closed |
-| Binary provenance | `FIXED_AND_VERIFIED` (warn-only gate) | buildinfo extraction, binary sha256, tags/cgo/deps, drift and stale-cache warnings; tests in `internal/source/buildinfo_test.go` |
-| UDP measurement | `FIXED_AND_VERIFIED` | paced/sequenced/drained mode + target/echo counters + quiesce; 0 % cells clean, 0.1 % matches netem, 1 % exposes a 50-60 % amplification |
-| S3-9 Mieru recovery race | `UNRESOLVED` | 1/20 failures under `-race` (5 %), 0/20 without; test expectation is correct, pick-to-dial is in the SDK |
-| Earlier four fixes | `PREVIOUSLY_FIXED_AND_REVERIFIED` | XHTTP close, rate clock, REALITY handoff, Mieru generation tests still pass |
+## 3. Changes by commit
 
-## B7: root cause and fix
+- `428c5555c15` release: regenerate `source-lock.json` with
+  `release-freeze.py snapshot`; correct the pseudo-version in
+  `dependency-final-shas.json`; `release-freeze.py verify` PASS.
+- `96c20643048` perf(source): refresh the module view from `go.mod` on every
+  cache use; `source_cache_modules_stale` warning; tests.
+- `f03b1c72899` perf(udp): `drainCompleteFor` definition + tests; record
+  `load_parameters` (patterns, streams, reps, duration, warmup, stagger, UDP
+  rate/drain) in every run.
+- `1318fa6ff5b` evidence(b8): final paced matrix, low-rate control,
+  qdisc/socket diagnostics, manifest, recheck; Mieru brief; provenance/schema
+  reconciliation.
+- Final B7 evidence and this report follow in the last commit.
 
-The pinned fork had exactly one wake site for `waitOutboundSpace`:
-`Peer.Stop`. Normal progress (staged flush after the handshake, eviction,
-give-up drop, sequential sender release) decremented `queuedOutboundPackets`
-without waking anyone, and the space check ran before the wake channel was
-registered. A writer that parked at the 1024-packet cap therefore slept forever
-even after the backlog drained; keepalives bypass the staged path, so the tunnel
-still looked alive while every TCP flow stalled. The counter was **not** leaking
-— 1024 is a legitimate full backlog of batched containers.
+## 4. B7: FIXED_AND_VERIFIED, full chain
 
-`fix/outbound-wake-2026-11-11` adds `releaseOutboundPackets`, wakes after
-`Peer.Start` resets, and registers the wake channel before the final check. It
-carries three internal tests (park→release wakes; release above the cap keeps
-parked; Stop wakes). The two-process matrix with the new pin:
+- Source: fork `awg3-inject` = `7ece3d66d79d`; parent `a765d957fd81`; diff is
+  only `device/send.go`, `device/peer.go`, `device/outbound_space_test.go`;
+  device and `-race` suites pass.
+- Pin: root and test `go.mod`, `go.sum`, `release/source-lock.json` and
+  `release/dependency-final-shas.json` all name
+  `v0.0.0-20261111081811-7ece3d66d79d`; `go mod verify` clean.
+- Binary: rebuilt from the reconciled tree with the laboratory tags;
+  sha256 `0157e713c8e2d43fc214e949cde40b9e3fc2dc812360c64cf41ea4b91f2bd3d6`,
+  Go 1.25.5, CGO off, 19 tags, BuildInfo shows the wireguard-go pin above.
+- Runs: 6 cells (WG and AWG × stagger 0/200 ms/1 s) × 2/4 streams × 3 reps =
+  36/36 pass, upload; every run records commit, dirty=false, binary SHA,
+  `load_parameters` including stagger. Before the fix the 0/200 ms cells failed
+  2/2; after the fork fix they pass. Raw runs: `results/b7-final/`.
+- Honest caveat: the earlier `results/b7/` runs lacked binary SHA and stagger in
+  their JSON; they are kept for history but the acceptance evidence is the new
+  `b7-final` set.
 
-```
-wireguard-endpoint 0ms/200ms/1s  streams 2,4  18/18 pass (42.9-60.5 MiB/s)
-awg-endpoint       0ms/200ms/1s  streams 2,4  18/18 pass (15.4-56.2 MiB/s)
-```
+## 5. Schema: FIXED_AND_VERIFIED
 
-Before the fix the same cell failed 2/2 at 0 ms and 200 ms spacing. The 1 s
-AWG 4-stream cells show a lower goodput (15-24 MiB/s) but no stall; recorded,
-not treated as a regression (same-pin before/after is impossible because the old
-pin stalls).
+48 historical `run.json` under the published v1: 0 pass, 48 fail, 2,056 errors,
+all `wire/latency/udp: null`. v1.1 allows exactly those three to be null and
+restricts summary units; payload stays `perf-run/v1`. `validate_runs.py`
+validates history (48/48) and fixtures (4 valid + 3 invalid, 0 wrong);
+`run-baseline.sh` gates every matrix on it. Log: `evidence/final/schema.log`.
 
-## Schema: the data was right, the schema was wrong
+## 6. UDP instrument: FIXED_AND_VERIFIED; B8: UNRESOLVED
 
-48 historical `run.json` files produced 2,056 validation errors, all
-`wire/latency/udp: null` where the runner correctly did not measure. The schema's
-own rule says null never means zero, and `goodput` was already nullable. v1.1
-makes exactly those three blocks object-or-null and restricts summary units to
-what the runner emits; the payload version stays `perf-run/v1`.
-`validate_runs.py` validates history (48/48 pass) and a fixture corpus (4 valid
-pass, 3 invalid fail), and `run-baseline.sh` validates every run it produces,
-reporting a missing validator as unavailable rather than passing.
+Instrument: paced mode, 20-byte sequence header, attempts/writes/scheduled/
+skipped, unique/duplicate/out-of-order/foreign/stale, explicit drain definition,
+target received/echoed, quiesce, run parameters; tests for pacer, integration,
+runner derivation, drain edges.
 
-## UDP / B8
+Final B8 (`results/b8-final/`, 80 ms RTT, 500 pps, 1200 B, 5 s, 3 reps, drain
+2 s with a 4 s MASQUE rerun where the 2 s tail was truncated):
 
-The UDP instrument was rebuilt (paced mode, 20-byte sequence header, full drain,
-target/echo counters, quiesce) and calibrated: at 0 % loss both MASQUE and
-TrustTunnel return 2500/2500/2500 datagrams with zero loss and no duplicates.
-At 0.1 % per-direction the result matches netem (~0.2 %). At 1 % the same cells
-lose 50-60 % end to end, and roughly the same amount is already missing at the
-target, so the old explanation ("UDP has no retransmission") cannot hold: that
-predicts ~2 %. B8 is `UNRESOLVED` with a real, reproducible transport-level
-finding; the evidence table and runs are in `UDP-RETEST.md` / `results/b8/`.
+- 0 %: both cells 7500/7500/7500 over three reps, zero loss.
+- 0.1 % per direction: 0.08-0.16 % reported, matching the ~0.2 % expected.
+- 1 % per direction at 500 pps: MASQUE 40.4-47.9 % loss (4 s drain, complete);
+  TrustTunnel H2 75.2-81.6 % (complete).
+- 1 % at 50 pps: MASQUE 0.8-2.0 %, TrustTunnel 0 %; both complete.
 
-## Provenance
+Diagnostics: the veth qdisc drops only the configured ~1 % of wire packets (60-96
+per cell), no overlimits/requeues, and every UDP socket error counter is zero in
+both namespaces. The client qdisc sees 40-54 % fewer packets at 1 % than at 0 %
+(MASQUE 15.8 k → 9.2 k; TrustTunnel 17.5 k → 8.0 k), so the missing datagrams are
+dropped inside the client/tunnel queue path before the veth. MASQUE target ≈
+unique means upstream loss dominates; TrustTunnel target > unique means both
+directions are queue-limited. The exact queue (device queue vs transport send
+buffer) is `NOT_AVAILABLE` without in-process instrumentation. No production
+transport code was changed. Legacy B8 data (7/18 reps failing the final drain
+rule) is `SUPERSEDED`; the archived legacy `b8` runs are not acceptance evidence.
 
-`source.Collect` still records host `go version`, may record tags from a sidecar
-that does not exist, and records `go.mod` require pins. This environment cannot
-get a VCS revision into the binary: the worktree's `.git` is a file, and Go's
-`buildvcs` requires a `.git` directory, so `mod (devel)` with no `vcs.revision`
-is the honest result. The design in `PROVENANCE-AND-SCHEMA.md` uses
-`debug/buildinfo.ReadFile`, binary sha256, a builder sidecar, and fail-closed
-comparison; it is `DEFERRED` with concrete code paths and tests.
+## 7. Release and dependency consistency
 
-## Mieru S3-9
+Fork default = fix commit; `source-lock.json` was regenerated by the project's
+own `release-freeze.py snapshot`, not hand-edited; its version is
+`v0.0.0-20261111081811-7ece3d66d79d` with short SHA `7ece3d66d79d`.
+`dependency-final-shas.json` has no generator, so its version field was corrected
+to match; its `main_repo` fields remain the earlier testing snapshot and are
+explicitly historical. `release-freeze.py verify --lock release/source-lock.json`
+prints PASS; `go mod verify` prints "all modules verified". Logs:
+`evidence/final/release-verify.log`, `go-mod-verify.log`.
 
-`-race -count=20`: 19 pass, 1 fail (5 %), same SOCKS EOF at the post-close dial;
-`-count=20` without race: 20/20 pass. The test proxy is not the artifact: the
-failure is the client picking the underlay the server just closed. Fix needs a
-bounded, error-classified retry or an SDK change; neither was safe to land
-without a product decision. `UNRESOLVED` with the repro.
+## 8. Provenance
 
-## What was not re-measured, and why
+Binary SHA256, Go version, GOOS/GOARCH, CGO, tags with source, main module, and
+deps/replace are read from `debug/buildinfo` and stored per run. Drift, tag/sidecar
+mismatch, changed binary and stale cache produce warnings, not failures. The
+source cache now recomputes the module view from `go.mod` even when HEAD is
+unchanged, with a `source_cache_modules_stale` warning. The linked worktree
+cannot carry `vcs.revision` (Go's `buildvcs` requires a `.git` directory), so the
+chain is binary SHA → BuildInfo → build command → commit; that limitation is
+recorded, not papered over. Strict mode is not implemented.
 
-No production data path changed except the wireguard-go pin, so the stage-1/2
-matrices are not rerun. The B7 matrix is the affected path and was rerun on the
-new pin. The schema/report fixes change no measurement. This supports
-"no credible regression in the measured scope", not "no regression anywhere".
+## 9. Mieru S3-9: UNRESOLVED, root cause located upstream
 
-## The ten required answers
+Pinned SDK v3.39.0 has a pick-to-attach TOCTOU: `Mux.DialContext` picks an
+underlay, then `AddSession` has no liveness/`done` guard, and `done` closes only
+after sessions are closed and awaited — which is exactly what unblocks the app
+read with `io.EOF`. Deterministic probe: `AddSession` after `Close()` succeeds.
+Upstream has no issue/tests for this; a throwaway P1+P2 patch gave 42/42 clean
+`-race` runs. The adapter retry is rejected (cannot force a fresh underlay,
+duplicate-target risk, contradicts the fork's ambiguous-EOF policy). Status stays
+`UNRESOLVED`; next step is an upstream issue/PR and a `-race` quarantine job.
+Reproduction: 1 failure in 20 `-race` runs (2/48 aggregate), 20/20 without race.
 
-1. Start `2e0003012e1` on `work/closure-2026-11-11`, merged with `testing`
-   `1ce3aa3a825`; end at this branch's last commit, clean.
-2. Changed states: B7 → FIXED_AND_VERIFIED; schema → FIXED_AND_VERIFIED;
-   B8 → UNRESOLVED (was CONFIRMED_NOT_A_BUG); S3-9 stays UNRESOLVED with a
-   measured 1/20 distribution; provenance, UDP paced mode and the other
-   deferred items unchanged.
-3. B8: the old experiment cannot answer the question; no protocol defect is
-   claimed. The old conclusion is withdrawn, not replaced by another guess.
-4. Schema: yes, automatically — 48/48 historical files, 7 fixtures with
-   fail-closed invalid cases, and a per-matrix hook in `run-baseline.sh`.
-5. Binary/Fork pin: `go.sum`, `go.mod`, `test/go.mod`, `source-lock.json` and
-   `dependency-final-shas.json` agree on `7ece3d66d79d`; BuildInfo extraction is
-   designed but not implemented, so the report still relies on the tree pin.
-6. B7: fixed in the fork and verified by the 36-cell two-process matrix.
-7. S3-9: not fixed; 1/20 under race, 0/20 without; a retry would change
-   connection semantics and needs a product decision.
-8. No credible regression in the measured scope; only WSL2/loopback and the
-   userspace data plane were measured.
-9. Found beyond the list: the schema contradiction (2,056 false failures), the
-   provenance drift (require vs replace; sidecar/tags), the `-buildvcs`
-   worktree limitation, and the UDP instrument's false-loss mechanisms.
-10. Grade: **READY_WITH_EXPLICIT_BLOCKERS**. The user needs to decide/own:
-    wireguard-go fork merge and pin consumption; UDP paced-mode implementation
-    and B8 rerun; provenance BuildInfo implementation; Mieru retry policy or SDK
-    upstream fix; platform runs.
+## 10. NOT_RUN / BLOCKED / DEFERRED
+
+- Platform runtime: Apple, Android, Windows real devices and privileged TUN are
+  `NOT_RUN` (environment).
+- B8 root cause: `UNRESOLVED`, not `BLOCKED`; exact queue needs instrumentation.
+- Mieru retry: `DEFERRED` pending product decision/upstream.
+- F-01/F-05/F-06/F-07b/F-10/F-13/F-14/F-15/S3-7: unchanged `DEFERRED` decisions.
+- The stage-1/2 performance matrices were not rerun: the only measured data-path
+  change is the wireguard-go pin, which B7 covers; no claim of global
+  no-regression is made.
+
+## 11. Three self-check rounds
+
+`SELF-CHECK.md` records A (functional), B (negative/race/edge), C (independent
+acceptance), with command, expected result, actual result, log path and status
+for each row. Unresolved items stay `UNRESOLVED`; `NOT_RUN` is not PASS.
+
+## 12. Delivery ZIP
+
+`JiejieBox_Final_Evidence_Reconciliation_2026-11-11.zip` (Desktop), containing
+this report, self-check, GIT-STATE, commit list, closure docs, B7/B8 raw runs and
+diagnostics, schema/fixtures/validator, release logs, Mieru repro, and the file
+manifest. Size/sha256/file count are printed by the packaging command and stored
+in `ZIP-MANIFEST.json`; the README and GIT-STATE point at the same final HEAD.
+
+## 13. Stop confirmation
+
+All subagents are inactive, no background jobs or test processes remain, and the
+worktree is clean at the final HEAD. No merge to `testing`, no force-push, no
+release tag; prior branches and the old ZIP were not modified.
