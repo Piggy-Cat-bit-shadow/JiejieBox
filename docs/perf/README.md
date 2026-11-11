@@ -15,6 +15,12 @@ could not measure.
 The operating manual for the laboratory itself is
 [`scripts/perf/README.md`](../../scripts/perf/README.md).
 
+## Stage 2
+
+The runtime coupling audit that followed builds on these numbers and re-runs the
+cells its fixes touch: [`docs/coupling/`](../coupling/README.md). Its performance
+comparison is in [`STAGE-2-REPORT.md`](../coupling/STAGE-2-REPORT.md) §14.
+
 ## Rules these documents follow
 
 1. A number is attached to a commit, a binary tag set, a host and a network

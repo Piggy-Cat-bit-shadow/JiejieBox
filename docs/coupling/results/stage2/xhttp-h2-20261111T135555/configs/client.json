@@ -1,0 +1,33 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 29227
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "127.0.0.1",
+      "server_port": 29927,
+      "uuid": "3bb93dda-91c6-431c-a51a-69802eb63840",
+      "tls": {
+        "enabled": true,
+        "server_name": "perf-lab.test",
+        "certificate_path": "/home/jie/perf/stage2/xhttp-h2-20261111T135555/certs/ca.pem",
+        "alpn": ["h2"]
+      },
+      "transport": {
+        "type": "xhttp",
+        "host": "perf-lab.test",
+        "path": "/xhttp",
+        "mode": "packet-up"
+      }
+    }
+  ],
+  "route": {"final": "proxy"}
+}

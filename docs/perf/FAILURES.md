@@ -93,6 +93,15 @@ download and UDP are recorded as failures with their logs under
 `docs/perf/results/tunnels/`. This is a protocol/userspace-stack defect for
 stage 2 to bisect, not a lab configuration that can be tuned around.
 
+**Stage-2 update (2026-11-11).** The scope is narrower than "later flows in the
+same process fail". Sequential one-stream repetitions all succeed in one process,
+and a new test drives four *concurrent* SOCKS flows through the same topology in
+one process successfully (`test/wireguard_concurrent_flows_test.go`). The failure
+needs the two-process shape and overlapping flows; the in-process userspace stack
+is not the trigger by itself. Stage 2 records the mechanism candidates (silent
+drops in the memory-tun queue, peer-side 4-tuple reuse, device pause) and the
+discriminating experiments in `docs/coupling/STAGE-2-REPORT.md` §16.
+
 ### B8 — UDP over the tunnel collapses at 1% uniform loss
 
 Same cells, UDP pattern, 80 ms RTT, changing only the loss rate:
