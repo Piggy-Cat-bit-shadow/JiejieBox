@@ -14,11 +14,11 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
-	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/common/logger"
 
 	"github.com/stretchr/testify/require"
 )
@@ -82,7 +82,7 @@ func (r *countingRegistry) Create(_ context.Context, _ adapter.Router, _ log.Con
 }
 
 func (r *countingRegistry) CreateOptions(string) (any, bool) { return nil, false }
-func (r *countingRegistry) OptionTypes() []string           { return nil }
+func (r *countingRegistry) OptionTypes() []string            { return nil }
 
 // TestDuplicateTagCreateClosesTheLoserExactlyOnce: two Create calls race for one tag, exactly one
 // endpoint is installed, and the object the loser built is closed rather than leaked.
