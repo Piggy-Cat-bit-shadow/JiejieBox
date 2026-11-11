@@ -34,7 +34,10 @@ bounded locus and a next step; they are not counted as fixed.
 - `1318fa6ff5b` evidence(b8): final paced matrix, low-rate control,
   qdisc/socket diagnostics, manifest, recheck; Mieru brief; provenance/schema
   reconciliation.
-- `c4e09f41b57` docs: reconcile provenance, UDP, B8 and Mieru with the final code.\n- `067cceb562e` docs: finalize the B7 evidence chain and index.\n- `7758798ba3b` evidence(b7): clean-tree matrix with binary, pin and parameters\n  in every run; this report follows in the last docs commit.
+- `c4e09f41b57` docs: reconcile provenance, UDP, B8 and Mieru with the final code.
+- `067cceb562e` docs: finalize the B7 evidence chain and index.
+- `7758798ba3b` evidence(b7): clean-tree matrix with binary, pin and parameters
+  in every run; this report follows in the last docs commit.
 
 ## 4. B7: FIXED_AND_VERIFIED, full chain
 
