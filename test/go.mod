@@ -15,6 +15,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.13
 	github.com/sagernet/sing v0.9.7-0.20261110095940-27b73774b240
+	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
 	github.com/sagernet/sing-openvpn v0.1.1-0.20261110111939-ad7a6ce7d11b
 	github.com/sagernet/sing-quic v0.7.2-0.20261109110824-5253224b67cf
 	github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929204512-65740e0f0e3e
