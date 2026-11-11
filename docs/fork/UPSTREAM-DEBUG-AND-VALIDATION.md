@@ -205,3 +205,31 @@ go test -vet=off -count=1 -tags <windows profile> \
 ```
 
 All pass with the stage-03 pins. Full suite (`-p 1`, DLL on PATH): only the three known baseline packages (`common/tls`, `common/tlsspoof`, `common/windivert`) fail; everything else passes. Log: `kernel-windows-full-3.txt`.
+
+## Client and protocol layer (stage 04)
+
+```sh
+# Android
+JAVA_HOME=<jdk17> ANDROID_HOME=<sdk> ./gradlew --no-daemon :app:assembleDebug
+JAVA_HOME=<jdk17> ANDROID_HOME=<sdk> ./gradlew --no-daemon :app:testOtherDebugUnitTest
+
+# Dashboard (Node 26.7.0 / pnpm 11.13.0)
+pnpm install --frozen-lockfile && pnpm generate && pnpm test && pnpm build
+
+# Desktop
+pnpm test && pnpm build
+
+# Kernel consumers (DLL on PATH, windows profile tags)
+go test -vet=off -count=1 -tags <profile> \
+  ./protocol/naive ./protocol/masque ./transport/masque ./protocol/mieru
+go test -race -count=1 -tags with_xhttp ./transport/v2rayxhttp
+```
+
+Results: Android build 8m28s + unit 27s; dashboard 97/97 (main) and 98/98
+(integration), build 0; desktop 59/59 + build 0; naive 4.5s, MASQUE 8.6/7.1s,
+mieru 94.4s, XHTTP race 21.5s. `pnpm lint:css` still reports four pre-existing
+errors on the fork-only ProfileViews rules.
+
+Dashboard's worktree needs the materialised `@shared/subscription.ts` and the
+`vendor/iterm2-color-schemes` submodule before `pnpm generate`/tests; these are
+build environment setup, not tracked changes.

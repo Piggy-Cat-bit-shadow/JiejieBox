@@ -100,3 +100,29 @@ cloned extension (and covers SetTransportParameters-before-ApplyPreset, when no
 extension exists yet), so it subsumes upstream's direct `marshalResult` write.
 Keeping the stronger helper is correct; document the upstream finding instead of
 copying a weaker write.
+
+
+## 11. A grafted branding line can be a content superset
+
+The dashboard fork has no common ancestor with upstream, but its tree contains
+every upstream feature plus branding. A real two-parent merge is still correct:
+resolve the conflict hunks, verify upstream has no unique feature/field/key, and
+record the ancestry link. The merge tree may equal the fork tree; that is not a
+fake merge, it is a content-subset merge. Do not use `-s ours` — prove the subset
+per hunk and keep the commit honest.
+
+## 12. Parallel generation lines are not "behind"
+
+Cronet has a source line (`main`) and a generated line (`go`). The fork's `go`
+generation is built from `4c96192`, which already contains upstream's source
+`73349ff`; upstream's two newer `go` commits are a parallel generation from the
+older source. Ordinary branch comparison says "behind 2", but merging would
+replace the newer fork native artifacts with an older generation. Check the
+generation source ancestry, not only the branch tip.
+
+## 13. Check the consumer before writing a fix
+
+The XHTTP stream-up non-200 candidate was already fixed and covered by a
+red-first test (`96bd665`, `669fa275`). Read the current code and tests before
+turning an audit candidate into a change; otherwise the same fix is written
+twice and the test matrix is duplicated.

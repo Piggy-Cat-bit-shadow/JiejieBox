@@ -147,20 +147,22 @@
       "behind": 0,
       "subject_matched": null,
       "unmatched": 0,
-      "class": "ALREADY_ANCESTOR",
-      "note": "pin 7fce711 remains unbuilt (no Xcode)"
+      "class": "DONE_STAGE_04",
+      "note": "0 behind; Xcode unavailable, NOT_VERIFIED_ON_DEVICE"
     },
     {
       "name": "android",
       "fork_ref": "origin/main",
-      "fork_sha": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
+      "fork_sha": "ba5c6b161827a830cb7343850bf547156fbfdfee",
       "upstream_ref": "upstream/dev",
       "upstream_sha": "ab4fad3944bb49436fe38c088ec82acfd6e0f97c",
       "ahead": 14,
-      "behind": 5,
+      "behind": 0,
       "subject_matched": 4,
       "unmatched": 1,
-      "class": "ADAPT_OR_REDESIGN"
+      "class": "DONE_STAGE_04",
+      "merge_sha": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "note": "upstream/dev merged; assembleDebug + testOtherDebugUnitTest pass; compare ahead_by=0"
     },
     {
       "name": "desktop",
@@ -172,21 +174,25 @@
       "behind": 0,
       "subject_matched": null,
       "unmatched": 0,
-      "class": "ALREADY_ANCESTOR"
+      "class": "DONE_STAGE_04",
+      "note": "0 behind; 59/59 tests + build pass"
     },
     {
       "name": "dashboard",
       "fork_ref": "origin/main",
-      "fork_sha": "fc1dbb4a48bb06358d549de05eb90df17ab7110d",
+      "fork_sha": "b592c65618e13e2c7ea24a06e758db72c71f65be",
       "upstream_ref": "upstream/main",
       "upstream_sha": "3e4bf08e5bf5b9417cf9c36e5a2d5abcb21bdd34",
       "ahead": 9,
-      "behind": 95,
+      "behind": 0,
       "subject_matched": 0,
       "unmatched": 95,
-      "class": "BLOCKED_WITH_REASON",
+      "class": "DONE_STAGE_04",
       "merge_base": null,
-      "note": "no common ancestor; needs strategy decision"
+      "note": "unrelated-history two-parent merge; tree is fork superset; 97/97 tests; compare ahead_by=0",
+      "merge_sha": "b592c65618e13e2c7ea24a06e758db72c71f65be",
+      "integration_ref": "integration/0.1.45",
+      "integration_sha": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
     },
     {
       "name": "satelite-one",
@@ -215,7 +221,8 @@
       "UNKNOWN": 172,
       "OUT_OF_SCOPE": 1,
       "DONE_STAGE_02": 2,
-      "DONE_STAGE_03": 3
+      "DONE_STAGE_03": 3,
+      "DONE_STAGE_04": 4
     }
   },
   "high_risk": [
@@ -445,6 +452,27 @@
       "kernel_build": "PASS",
       "transport_tests": "PASS",
       "bridge_api_fix": "8cc1dbcc63f80a732056a67934b4b6da03c8a025"
+    }
+  },
+  "stage04": {
+    "status": "DONE",
+    "xhttp": "BEHAVIOR_ALREADY_PRESENT (96bd665, 669fa275; race pass)",
+    "cronet": "root 362e63b + all 7ce9c49 + 29 libs 362e63b; generation source 4c96192 contains upstream 73349ff; parallel upstream go generation not merged",
+    "mieru": "v3.39.0 latest, no change",
+    "masque": "no change",
+    "android": {
+      "merge": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "upstream": "ab4fad3944"
+    },
+    "dashboard": {
+      "merge": "b592c65618e13e2c7ea24a06e758db72c71f65be",
+      "integration": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
+    },
+    "desktop": "0 behind, 59/59",
+    "apple": "0 behind, NOT_VERIFIED_ON_DEVICE",
+    "gitlink_targets": {
+      "clients/android": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "desktop/dashboard": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
     }
   }
 }

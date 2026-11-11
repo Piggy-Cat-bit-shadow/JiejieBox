@@ -452,3 +452,17 @@
 - 内核全量：仅 `common/tls`/`common/tlsspoof`/`common/windivert` 三个既有基线失败。
 - 风险：Darwin msgx/sendto 路径无本机验证；sing-quic 三个 sender 的 pacing 由 quic-go 测试与消费者间接覆盖。
 
+---
+
+## 上游同步 Stage 04 — Naive/Cronet/XHTTP/Mieru 与客户端
+
+- 日期：2026-11-11
+- 报告：`04_NAIVE_CRONET_XHTTP_MIERU_CLIENTS_UPSTREAM_INTEGRATION.md`
+
+- XHTTP：stream-up 非 200 已由 `96bd665` 修复、`669fa275` 覆盖；race PASS；未改代码。
+- Naive/Cronet：root `362e63b` + all `7ce9c49` + 29 native `362e63b`；生成源 `4c96192` 已含上游 `73349ff`；上游平行 generation 不合并。
+- Mieru v3.39.0 已是最新；MASQUE 无变化；消费者测试全过。
+- Android `main` → `ba5c6b1`（upstream 5 提交），assemble 8m28s + unit 27s PASS，compare ahead_by=0。
+- Dashboard `main` → `b592c65` 双父合并，97/97 + build PASS；消费线 `9bde90e` 98/98 PASS；compare ahead_by=0。
+- Desktop 59/59 + build PASS，0 behind；Apple 0 behind，Xcode BLOCKED。
+

@@ -15,10 +15,10 @@ result is closed.
 | utls | `MetaCubeX/utls:v1.9.0-mod-meta` | `main` | behind 1 | **behind 0** | DONE (stage 03) | merge `e14b88879d80`, compare ahead_by 0 (1.9 line, not the v1.7 default) |
 | cronet-go | `SagerNet/cronet-go:main` | `main` | behind 0 | behind 0 | DONE (no work) | audit row |
 | wireguard-go | `sagernet/wireguard-go:main` | `awg3-inject` | behind 0 | behind 0 | DONE (no work, stage 03 re-verified) | ancestry + `go test ./...` device ok |
-| apple | `SagerNet/sing-box-for-apple:dev` | `main` | behind 0 | behind 0 | DONE (pin still blocked on Xcode) | audit row |
-| android | `SagerNet/sing-box-for-android:dev` | `main` | behind 5 | behind 5 | TODO (stage 04) | audit row |
-| desktop | `SagerNet/sing-box-for-desktop:main` | `main` | behind 0 | behind 0 | DONE (no work) | audit row |
-| dashboard | `SagerNet/sing-box-dashboard:main` | `main` | behind 95 (no merge base) | behind 95 | TODO (stage 04, merge `--allow-unrelated-histories`) | trial merge 13 conflicts |
+| apple | `SagerNet/sing-box-for-apple:dev` | `main` | behind 0 | behind 0 | DONE (pin still blocked on Xcode) | stage 04 re-verified 0 behind, NOT_VERIFIED_ON_DEVICE |
+| android | `SagerNet/sing-box-for-android:dev` | `main` | behind 5 | **behind 0** | DONE (stage 04) | merge `ba5c6b161827`, compare ahead_by 0 |
+| desktop | `SagerNet/sing-box-for-desktop:main` | `main` | behind 0 | behind 0 | DONE (stage 04 re-verified) | 59/59 tests, build PASS |
+| dashboard | `SagerNet/sing-box-dashboard:main` | `main` | behind 95 (no merge base) | **behind 0** | DONE (stage 04) | two-parent merge `b592c65618e`, integration `9bde90e1cd55`, compare ahead_by 0 |
 | sing-box (main) | `SagerNet/sing-box:testing` | `integration/0.1.45-final` | behind 85 | behind 85 | TODO (stage 05, 108 trial conflicts) | audit row |
 
 ## Stage 02 rows
@@ -57,3 +57,22 @@ Stage 03 rows:
 See `02_SING_SINGTUN_UPSTREAM_INTEGRATION.md` and
 `03_QUIC_TLS_WIREGUARD_UPSTREAM_INTEGRATION.md` for the reports, and
 `UPSTREAM-DEBUG-AND-VALIDATION.md` for the exact commands.
+
+### Stage 04 rows
+
+- **XHTTP / Naive / Cronet / Mieru / MASQUE**: no code change. XHTTP's
+  stream-up refusal was already fixed and tested (`96bd665`, `669fa275`);
+  Naive, MASQUE and Mieru consumer tests pass. Cronet's root + `all` + 29
+  native modules are one generation from `4c96192`, which contains upstream
+  `73349ff`; upstream's parallel `go` generation from the older `73349ff` is
+  intentionally not merged.
+- **Android** `ba5c6b161827`: upstream/dev merged, UI contrast/QR changes;
+  `assembleDebug` and `testOtherDebugUnitTest` pass; compare ahead_by 0.
+- **Dashboard** `b592c65618e`: unrelated-history two-parent merge of
+  `3e4bf08`; 13 conflicts resolved hunk by hunk, tree remains the fork superset;
+  97/97 tests and build pass; the consumed line `9bde90e1cd55` adds the fork's
+  extra commit and passes 98/98.
+- **Desktop** 0 behind, 59/59 tests and build pass. **Apple** 0 behind, but
+  Xcode remains unavailable.
+
+See `04_NAIVE_CRONET_XHTTP_MIERU_CLIENTS_UPSTREAM_INTEGRATION.md`.
