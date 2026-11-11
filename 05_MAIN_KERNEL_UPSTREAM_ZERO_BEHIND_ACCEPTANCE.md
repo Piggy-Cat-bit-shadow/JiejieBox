@@ -12,10 +12,10 @@
 |---|---|
 | origin | `Piggy-Cat-bit-shadow/JiejieBox` |
 | upstream | `SagerNet/sing-box:testing` |
-| canonical/default | `testing` = `integration/0.1.45-final` = **`b473c21f4803c0196e3eb920d530602d5f92867f`** |
+| canonical/default | `testing` = `integration/0.1.45-final` = **`b6c2bc1f0fe787949d218c93a27342639d9aaeb9`** |
 | 最后观察 upstream | `a13dbe1f785f66c86acbf3985c33fdafea0cbfd6`（2026-11-10 11:23 UTC，Fix platform auto-redirect close order） |
 | merge-base | `8eb4395a391b775ad240433a7009f39357c1eba0` |
-| ahead / behind | **3734 / 0** |
+| ahead / behind | **3735 / 0** |
 | 真实 merge | `303fbb47dfdca4520dd201fea8bd48b3db1f1010`（parents `48103716845e` + `a13dbe1f785f`） |
 | 后续提交 | docs/testing merge `03620f67fc0`、bridge 去重 `f4331ac5a18`、module tidy `08b52a30b4d`、source-lock `a9a0cb0c093` |
 

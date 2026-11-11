@@ -9,10 +9,10 @@
     "upstream": "SagerNet/sing-box:testing",
     "integration_branch": "integration/0.1.45-final",
     "default_branch": "testing",
-    "head": "b473c21f4803c0196e3eb920d530602d5f92867f",
+    "head": "b6c2bc1f0fe787949d218c93a27342639d9aaeb9",
     "upstream_head": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6",
     "merge_base": "8eb4395a391b775ad240433a7009f39357c1eba0",
-    "ahead": 3734,
+    "ahead": 3735,
     "behind": 0,
     "merge_commit": "303fbb47dfdca4520dd201fea8bd48b3db1f1010",
     "pushed": true
