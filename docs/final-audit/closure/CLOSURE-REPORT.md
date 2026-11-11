@@ -145,11 +145,15 @@ for each row. Unresolved items stay `UNRESOLVED`; `NOT_RUN` is not PASS.
 
 ## 12. Delivery ZIP
 
-`JiejieBox_Final_Evidence_Reconciliation_2026-11-11.zip` (Desktop), containing
-this report, self-check, GIT-STATE, commit list, closure docs, B7/B8 raw runs and
-diagnostics, schema/fixtures/validator, release logs, Mieru repro, and the file
-manifest. Size/sha256/file count are printed by the packaging command and stored
-in `ZIP-MANIFEST.json`; the README and GIT-STATE point at the same final HEAD.
+`JiejieBox_Final_Evidence_Reconciliation_2026-11-11.zip` on the Desktop contains
+this report, the A/B/C self-check, GIT-STATE, the commit list, all closure docs,
+the B7/B8 raw runs and diagnostics, schema/fixtures/validator, release locks and
+verify logs, the Mieru reproduction log, and the final gate logs. Its size,
+sha256 and file count are recorded in
+`JiejieBox_Final_Evidence_Reconciliation_2026-11-11.zip.sha256` /
+`ZIP-MANIFEST.json` next to the archive (the sha cannot be embedded inside the
+archive it hashes). The README and GIT-STATE inside point at the same final HEAD
+as this report; the old closure ZIP was not overwritten.
 
 ## 13. Stop confirmation
 
