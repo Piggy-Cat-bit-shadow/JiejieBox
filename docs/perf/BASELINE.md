@@ -14,7 +14,7 @@
 | remote during the work | advanced by three docs/audit commits (`2528511d90a`, `40dfed27474`, `7712bbe236c`); zero `.go` files changed, so the measured code is still current |
 | lab tooling | `bf0e0bec560` (`scripts/perf`); the worktree HEAD differs from the kernel commit only by lab and docs files |
 | binary | `go build -tags "<DEFAULT_BUILD_TAGS_OTHERS>,with_trusttunnel,with_awg,with_naive_outbound,with_purego"`, `CGO_ENABLED=0` |
-| load model | 1 s warmup, 5 s measured window, 5 repetitions per cell, 1 and 4 concurrent streams |
+| load model | 1 s warmup, 5 s measured window, 5 repetitions per cell, 1 and 4 concurrent streams (shaped and tunnel subsets use 3 repetitions) |
 | payload | 4 KiB pattern page, verified block by block at the receiving end |
 | path | loopback, unless the cell name says otherwise |
 | failures | a repetition that moves no payload is a failure, not a zero |
@@ -43,8 +43,8 @@ as a low number.
 | naive-h3 | HTTP/3, Cronet | 47.3 → 70.5 | 70.1 → 60.9 | 24.0 / 19.5 | 3.64 ms |
 | xhttp-h3 | HTTP/3, reference Xray server | 32.6 → 121.9 | 83.3 → 169.3 | 34.3 / 24.1 | 3.57 ms |
 | masque-connect-ip | QUIC CONNECT-IP | 64.2 → 72.4 | 64.0 → 70.1 | 37.5 / 41.9 | — |
-| mieru-tcp | TCP, SDK server | 126.5 → 438.5 | 124.5 → 570.9 | 8.8 / 7.1 | 2.43 ms |
-| mieru-udp | UDP underlay | 29.0 → 71.4 | 28.5 → 34.3 | 53.6 / 60.1 | 2.80 ms |
+| mieru-tcp | TCP, SDK server | 122.0 → 429.7 | 105.1 → 701.3 | 8.2 / 5.6 | 2.34 ms |
+| mieru-udp | UDP underlay | 30.5 → 73.6 | 31.5 → 39.7 | 50.2 / 53.0 | 2.48 ms |
 | wireguard-endpoint | WireGuard, userspace | 49.2 (1 stream, 3/3) | 0.2 (1/3); the rest fail to dial | 54.8 | — |
 | awg-endpoint | AWG, userspace | 42.2 (1 stream, 3/3) | 1.8 (1/3); the rest fail to dial | 58.7 | — |
 
@@ -59,13 +59,13 @@ Datagram cells are listed separately because they are not the same question:
 
 ## What the numbers say
 
-1. **Direction matters more than protocol for the Go data paths.** Every
-   stream-based protocol downloads faster than it uploads at the same stream
-   count — VLESS Vision 2.2×, AnyTLS 2.2×, Mieru TCP ~1× at one stream but 1.3×
-   at four, TrustTunnel H2 the reverse at one stream. The asymmetry is in the
-   sender's copy and write path plus the receiver's read loop, not in the
-   cipher. Any single-direction benchmark of these protocols is half a
-   measurement.
+1. **Direction matters more than protocol for the Go data paths.** Most
+   stream-based protocols download faster than they upload at the same stream
+   count — VLESS Vision 2.2×, AnyTLS 2.2×, XHTTP 2.6×. Mieru TCP is the exception
+   at one stream (105 MiB/s down against 122 up) and joins the pattern at four
+   (701 vs 430). The asymmetry is in the sender's copy and write path plus the
+   receiver's read loop, not in the cipher. Any single-direction benchmark of
+   these protocols is half a measurement.
 
 2. **The strongest differentiator is CPU per byte, not peak throughput.** The
    TCP+TLS cells need 2–4 client seconds per GiB; TrustTunnel H2 needs ~10;
@@ -140,7 +140,7 @@ These are not a WG-vs-AWG comparison: the same defect dominates both. The first
 flow a fresh client process opens carries data; later flows in the same process
 fail the inner TCP handshake (`handshake: context canceled` after the 10 s dial
 deadline) while the server sees the connections arrive and dials the target. See
-[FAILURES.md](FAILURES.md#b7). The upload numbers are therefore the only
+[FAILURES.md](FAILURES.md), section B7. The upload numbers are therefore the only
 quantified cells, and they are reported with their sample count rather than as a
 protocol ranking.
 
@@ -247,6 +247,10 @@ scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --out "$HOME/perf/b
 scripts/perf/netlab/netlab.sh --profile remote -- "$HOME/perf/bin/perflab" run \
   -scenario scripts/perf/scenarios/vless-vision-tcp -out "$HOME/perf/baseline/shaped-remote" \
   -bin-lab "$HOME/perf/bin/sing-box" -reps 3 -streams 1,4
+
+# XHTTP needs the reference server (provenance in ENVIRONMENT.md)
+scripts/perf/run-baseline.sh --bin "$HOME/perf/bin/sing-box" --xray "$HOME/perf/bin/xray" \
+  --out "$HOME/perf/baseline" --only xhttp-h2,xhttp-h3
 ```
 
 The exact configurations, certificates and logs for each cell are in

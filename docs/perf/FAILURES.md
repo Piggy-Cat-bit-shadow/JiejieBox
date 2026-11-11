@@ -162,7 +162,7 @@ was caught.
 6. **A scenario field was not rendered.** `mieru-tcp/scenario.json` used
    `__TRANSPORT__` as its `transport` label; template substitution applies to the
    config templates, not to the scenario metadata, so the run recorded the
-   placeholder. The label is fixed; the two baseline `run.json` files still carry
-   the literal string because the data is not rewritten after the fact.
+   placeholder. The label is fixed, both Mieru cells were re-taken, and the
+   exported runs now record `mieru / tcp` and `mieru / udp`.
 
 Each is recorded in the code comments at the point of the fix, not only here.

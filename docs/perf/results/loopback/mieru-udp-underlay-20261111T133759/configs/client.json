@@ -5,7 +5,7 @@
       "type": "socks",
       "tag": "socks-in",
       "listen": "127.0.0.1",
-      "listen_port": 33355
+      "listen_port": 37645
     }
   ],
   "outbounds": [
@@ -13,9 +13,9 @@
       "type": "mieru",
       "tag": "proxy",
       "server": "127.0.0.1",
-      "server_port": 25254,
+      "server_port": 26948,
       "username": "bench",
-      "password": "6854056fa318586f77f16bd47ef73c32",
+      "password": "2e2cdf442ad9cbfec71d6bffd94ef80b",
       "transport": "udp",
       "multiplexing": "default",
       "mtu": 1280

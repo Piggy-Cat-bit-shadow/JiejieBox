@@ -10,8 +10,8 @@ Every row below is a real server process and a real client process. `null` means
 | masque-connect-ip | custom-rtt80-loss0.1 | `49679c0e9273` | 3 | `shaped-udp/masque-connect-ip-20261111T133123` |
 | masque-connect-ip | loopback | `bf0e0bec5600` | 30 | `loopback/masque-connect-ip-20261111T115737` |
 | masque-connect-ip | remote | `49679c0e9273` | 14 | `shaped-remote/masque-connect-ip-20261111T132707` |
-| mieru-tcp-underlay | loopback | `bf0e0bec5600` | 30 | `loopback/mieru-tcp-underlay-20261111T115132` |
-| mieru-udp-underlay | loopback | `bf0e0bec5600` | 30 | `loopback/mieru-udp-underlay-20261111T115433` |
+| mieru-tcp-underlay | loopback | `3fb1c36233dd` | 30 | `loopback/mieru-tcp-underlay-20261111T133458` |
+| mieru-udp-underlay | loopback | `3fb1c36233dd` | 30 | `loopback/mieru-udp-underlay-20261111T133759` |
 | naive-h2 | native | `bf0e0bec5600` | 18 | `native/naive-h2-20261111T124028` |
 | naive-h3 | native | `bf0e0bec5600` | 18 | `native/naive-h3-20261111T124233` |
 | trusttunnel-h2 | custom-rtt80-loss0 | `49679c0e9273` | 3 | `shaped-udp/trusttunnel-h2-20261111T133015` |
@@ -335,33 +335,33 @@ Every row below is a real server process and a real client process. `null` means
 
 ### mieru-tcp-underlay — loopback
 
-- run dir: `loopback/mieru-tcp-underlay-20261111T115132`
-- protocol: mieru / __TRANSPORT__ /
-- startup: client 102 ms, server 102 ms
+- run dir: `loopback/mieru-tcp-underlay-20261111T133458`
+- protocol: mieru / tcp /
+- startup: client 102 ms, server 203 ms
 
 | pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| connect | 1 | 0 | null | null | null | null | null | 2.43 | 3.19 | 3.61 |
-| connect | 4 | 0 | null | null | null | null | null | 7.99 | 10.79 | 13.08 |
-| download | 1 | 5 | 124.5 | 7.07 | 6.64 | null | null | null | null | null |
-| download | 4 | 5 | 570.9 | 7.55 | 7.25 | null | null | null | null | null |
-| upload | 1 | 5 | 126.5 | 8.75 | 6.46 | null | null | null | null | null |
-| upload | 4 | 5 | 438.5 | 10.79 | 7.15 | null | null | null | null | null |
+| connect | 1 | 0 | null | null | null | null | null | 2.34 | 2.95 | 3.42 |
+| connect | 4 | 0 | null | null | null | null | null | 6.97 | 8.23 | 10.28 |
+| download | 1 | 5 | 105.1 | 5.55 | 5.48 | null | null | null | null | null |
+| download | 4 | 5 | 701.3 | 6.94 | 6.46 | null | null | null | null | null |
+| upload | 1 | 5 | 122.0 | 8.22 | 5.95 | null | null | null | null | null |
+| upload | 4 | 5 | 429.7 | 10.61 | 6.66 | null | null | null | null | null |
 
 ### mieru-udp-underlay — loopback
 
-- run dir: `loopback/mieru-udp-underlay-20261111T115433`
+- run dir: `loopback/mieru-udp-underlay-20261111T133759`
 - protocol: mieru / udp /
-- startup: client 101 ms, server 802 ms
+- startup: client 102 ms, server 802 ms
 
 | pattern | streams | n | goodput MiB/s | CPU s/GiB client | CPU s/GiB server | wire Gbit/s | overhead | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| connect | 1 | 0 | null | null | null | null | null | 2.80 | 3.67 | 4.19 |
-| connect | 4 | 0 | null | null | null | null | null | 8.69 | 10.68 | 12.18 |
-| download | 1 | 5 | 28.5 | 60.06 | 56.53 | null | null | null | null | null |
-| download | 4 | 5 | 34.3 | 64.00 | 58.10 | null | null | null | null | null |
-| upload | 1 | 5 | 29.0 | 53.62 | 58.33 | null | null | null | null | null |
-| upload | 4 | 5 | 71.4 | 46.68 | 40.48 | null | null | null | null | null |
+| connect | 1 | 0 | null | null | null | null | null | 2.48 | 3.30 | 4.00 |
+| connect | 4 | 0 | null | null | null | null | null | 7.32 | 8.85 | 11.50 |
+| download | 1 | 5 | 31.5 | 53.03 | 50.33 | null | null | null | null | null |
+| download | 4 | 5 | 39.7 | 53.68 | 50.36 | null | null | null | null | null |
+| upload | 1 | 5 | 30.5 | 50.22 | 55.10 | null | null | null | null | null |
+| upload | 4 | 5 | 73.6 | 43.08 | 39.13 | null | null | null | null | null |
 
 ### wireguard-endpoint — tunnels
 

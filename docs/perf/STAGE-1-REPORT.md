@@ -121,7 +121,7 @@ shaped 路径另有 netem 场景（`remote` 80 ms/1%、100 Mbit/s 限速、80 ms
 
 ## 7. 当前性能摘要
 
-数字、误差和表格见 `docs/perf/BASELINE.md` 与 `docs/perf/matrix.md`（19 个 run
+数字、误差和表格见 `docs/perf/BASELINE.md` 与 `docs/perf/matrix.md`（25 个 run
 目录的原始 `run.json` 在 `docs/perf/results/`）。要点：
 
 - **loopback 峰值不是结论，CPU/GiB 才是。** 4 流下载：VLESS Vision 1373、

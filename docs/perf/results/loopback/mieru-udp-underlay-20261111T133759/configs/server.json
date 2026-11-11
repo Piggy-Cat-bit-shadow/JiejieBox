@@ -5,9 +5,9 @@
       "type": "mieru",
       "tag": "mieru-in",
       "listen": "127.0.0.1",
-      "listen_port": 25254,
+      "listen_port": 26948,
       "users": [
-        {"name": "bench", "password": "6854056fa318586f77f16bd47ef73c32"}
+        {"name": "bench", "password": "2e2cdf442ad9cbfec71d6bffd94ef80b"}
       ],
       "transport": "udp",
       "mtu": 1280
