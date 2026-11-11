@@ -82,8 +82,6 @@ github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261110222329-99abf3c27666 h1
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261110222329-99abf3c27666/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80 h1:oiJWYot1KZOqcUt0dnPwDuMdgOZhMZHoqf2fjXtQ9K4=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
-github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109042158-a765d957fd81 h1:RpyC6KrhjqrjEZ24Z+LiZqB36KXL4Q9Ae989f3qa/m8=
-github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109042158-a765d957fd81/go.mod h1:er10sELpmzLXq7S7Pbc1Zsbyapcr+/gxNAHKTo6fzVA=
 github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d h1:/OAiy3sQiUYcc09cL/AHs1KSd+ozkn0zFhqpmsbPcOQ=
 github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d/go.mod h1:er10sELpmzLXq7S7Pbc1Zsbyapcr+/gxNAHKTo6fzVA=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
