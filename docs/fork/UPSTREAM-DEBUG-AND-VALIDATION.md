@@ -259,6 +259,6 @@ cross-builds pass. The generated schema test initially failed after a manual
 conflict resolution; regenerate with
 `go run -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ./cmd/sing-box schema -o docs/schema.json`.
 
-CI: Android Core ARM64 run `42942954969` PASS on `08b52a30b4d`; Verify
-`42942954927` and Mobile contract `42942954909` were still in progress at
+CI: Android Core ARM64 run `42944533147` PASS on `08b52a30b4d`; Verify
+`42944533206` and Mobile contract `42942954909` were still in progress at
 report time and are not recorded as PASS.

@@ -12,10 +12,10 @@
 |---|---|
 | origin | `Piggy-Cat-bit-shadow/JiejieBox` |
 | upstream | `SagerNet/sing-box:testing` |
-| canonical/default | `testing` = `integration/0.1.45-final` = **`08b52a30b4dbc51fdfbf1ed325e6f571c05351e7`** |
+| canonical/default | `testing` = `integration/0.1.45-final` = **`5125a13fbb5705e9e548f7d1ee149fe49dbdf49b`** |
 | 最后观察 upstream | `a13dbe1f785f66c86acbf3985c33fdafea0cbfd6`（2026-11-10 11:23 UTC，Fix platform auto-redirect close order） |
 | merge-base | `8eb4395a391b775ad240433a7009f39357c1eba0` |
-| ahead / behind | **3731 / 0** |
+| ahead / behind | **3733 / 0** |
 | 真实 merge | `303fbb47dfdca4520dd201fea8bd48b3db1f1010`（parents `48103716845e` + `a13dbe1f785f`） |
 | 后续提交 | docs/testing merge `03620f67fc0`、bridge 去重 `f4331ac5a18`、module tidy `08b52a30b4d`、source-lock `a9a0cb0c093` |
 
@@ -89,7 +89,7 @@ GitHub Compare（base=fork 正式分支, head=正确 upstream）：main、sing�
 | Dashboard main 97/97、消费线 98/98、build | PASS |
 | Desktop 59/59、build | PASS |
 | source-lock verify | PASS |
-| GitHub Actions | Android Core **success**（run `42942954969`，SHA `08b52a3`）；Verify `42942954927` 与 Mobile contract `42942954909` 在报告时 **in_progress**，不记为 PASS |
+| GitHub Actions | Android Core **success**（run `42944533147`，SHA `08b52a3`）；Verify `42944533206` 与 Mobile contract `42942954909` 在报告时 **in_progress**，不记为 PASS |
 
 ## G. Git 与分支清理
 

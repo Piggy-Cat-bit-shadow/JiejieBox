@@ -478,7 +478,7 @@
 - 依赖：sing/sing-tun/sing-quic/quic-go/utls/wireguard/cronet 矩阵与 source-lock 收敛；
   Android `ba5c6b1`、Desktop `e8b48be`、dashboard `9bde90e`、Apple `7fce711`。
 - 验证：Windows 全量 106 ok / 3 已知基线；race PASS；Linux/Darwin build PASS；
-  source-lock verify PASS；Android Core CI PASS（run 42942954969）。
+  source-lock verify PASS；Android Core CI PASS（run 42944533147）。
 - 清理：删除 5 个主仓远端分支，4 个 archive tag；仅保留 testing 与
   integration/0.1.45-final。未 force push。
 - 限制：Apple 无 Xcode；Verify/Mobile contract 报告时 in_progress；既有
