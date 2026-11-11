@@ -219,6 +219,105 @@ func TestRuleSetIPConditionReadsMatchOnlyAddresses(t *testing.T) {
 	require.False(t, item.Match(notMatching), "a non-matching answer must not select it")
 }
 
+// Mixed answers are the normal case: a dual-stack name, or an upstream that returns a private and a
+// public address for the same name. Matching is "any of", so the answer's order must not decide
+// anything.
+func TestIPCIDRMixedFamilyAnswersAreOrderIndependent(t *testing.T) {
+	v4 := netip.MustParseAddr("198.51.100.10")
+	v6 := netip.MustParseAddr("2001:db8::8")
+
+	for _, order := range [][]netip.Addr{{v4, v6}, {v6, v4}} {
+		metadata := &adapter.InboundContext{
+			Destination:    domainDestination("dual.example"),
+			MatchAddresses: order,
+		}
+		require.True(t, mustCIDRItem(t, "198.51.100.0/24").Match(metadata),
+			"the IPv4 answer must match regardless of position in %v", order)
+		require.True(t, mustCIDRItem(t, "2001:db8::/32").Match(metadata),
+			"the IPv6 answer must match regardless of position in %v", order)
+		require.False(t, mustCIDRItem(t, "203.0.113.0/24").Match(metadata))
+		require.False(t, mustCIDRItem(t, "2001:db9::/32").Match(metadata))
+	}
+}
+
+func TestIPIsPrivateMixedAnswersAreAnyOf(t *testing.T) {
+	public := netip.MustParseAddr("198.51.100.10")
+	private := netip.MustParseAddr("10.0.0.7")
+
+	for _, order := range [][]netip.Addr{{public, private}, {private, public}} {
+		metadata := &adapter.InboundContext{
+			Destination:    domainDestination("mixed.example"),
+			MatchAddresses: order,
+		}
+		require.True(t, NewIPIsPrivateItem(false).Match(metadata),
+			"one private answer is enough, in either order (%v)", order)
+	}
+
+	allPublic := &adapter.InboundContext{
+		Destination:    domainDestination("mixed.example"),
+		MatchAddresses: []netip.Addr{public, netip.MustParseAddr("203.0.113.9")},
+	}
+	require.False(t, NewIPIsPrivateItem(false).Match(allPublic))
+}
+
+// A v4-mapped IPv6 answer must be judged the SAME WAY the candidate list judges it. This is a parity
+// assertion on purpose: the feature must not become the place where 4-in-6 handling changes, because
+// that would make `true` and `false` disagree about the same answer.
+func TestMatchOnlyAndCandidatesAgreeOnMappedAnswers(t *testing.T) {
+	mapped := netip.MustParseAddr("::ffff:198.51.100.10")
+	cidrItem := mustCIDRItem(t, "198.51.100.0/24")
+
+	viaCandidates := &adapter.InboundContext{
+		Destination:          domainDestination("mapped.example"),
+		DestinationAddresses: []netip.Addr{mapped},
+	}
+	viaMatchOnly := &adapter.InboundContext{
+		Destination:    domainDestination("mapped.example"),
+		MatchAddresses: []netip.Addr{mapped},
+	}
+	require.Equal(t, cidrItem.Match(viaCandidates), cidrItem.Match(viaMatchOnly),
+		"a mapped answer must be judged identically by both publication modes")
+	require.Equal(t, NewIPIsPrivateItem(false).Match(viaCandidates), NewIPIsPrivateItem(false).Match(viaMatchOnly))
+}
+
+// The DNS-response walk marks destination-IP conditions as ignored while it evaluates a response and
+// remembers them as DEFERRED groups. That machinery must not consult match-only evidence: the route
+// action's answer says nothing about the response being matched.
+//
+// Under IgnoreDestinationIPCIDRMatch the destination group is not required at all, so the nested rule
+// tentatively matches and the deferred flag is what the DNS walk acts on. The property to pin is
+// parity: identical verdict AND identical deferred bookkeeping whether or not evidence exists.
+func TestDeferredDestinationGroupIgnoresMatchOnlyEvidence(t *testing.T) {
+	ipItem := mustCIDRItem(t, "198.51.100.0/24")
+	ruleSet := newLocalRuleSetForTest("deferred-set", headlessDefaultRule(t, func(rule *abstractDefaultRule) {
+		rule.destinationIPCIDRItems = append(rule.destinationIPCIDRItems, ipItem)
+		rule.allItems = append(rule.allItems, ipItem)
+	}))
+	item := &RuleSetItem{setList: []adapter.RuleSet{ruleSet}}
+
+	build := func(matchAddresses []netip.Addr) *adapter.InboundContext {
+		return &adapter.InboundContext{
+			Destination:                  domainDestination("deferred.example"),
+			IgnoreDestinationIPCIDRMatch: true,
+			MatchAddresses:               matchAddresses,
+		}
+	}
+	withoutEvidence := build(nil)
+	withEvidence := build([]netip.Addr{netip.MustParseAddr("198.51.100.10")})
+
+	withoutMatch := item.Match(withoutEvidence)
+	withMatch := item.Match(withEvidence)
+	require.Equal(t, withoutMatch, withMatch,
+		"match-only evidence must not change the DNS walk's verdict")
+	require.Equal(t, withoutEvidence.DeferredIPCIDRMatchGroups, withEvidence.DeferredIPCIDRMatchGroups,
+		"nor the deferred-group state it leaves behind; got %d vs %d",
+		withoutEvidence.DeferredIPCIDRMatchGroups, withEvidence.DeferredIPCIDRMatchGroups)
+
+	// The flag belongs to the RULE's group evaluation, not to the condition: the walk never calls the
+	// condition at all under IgnoreDestinationIPCIDRMatch, which is why the parity above holds. A
+	// direct call is a different question with a different answer, and it is not what this asserts.
+}
+
 // preferredAddressOutbound is only the PreferredAddress half of an outbound; the embedded interface
 // supplies the rest, which this test never reaches.
 type preferredAddressOutbound struct {

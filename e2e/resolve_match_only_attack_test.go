@@ -293,6 +293,98 @@ const resolveMatchOnlyIsolationConfig = `{
 // MUTUALLY EXCLUSIVE ranges are driven concurrently, so a shared or leaked matching list would route
 // one name's traffic to the other name's outbound. The sinks are separate servers, so the assertion
 // is on which server received which name - not on a metadata field.
+const resolveMatchOnlyNamedResolverConfig = `{
+  "log": {"level": "%s"},
+  "dns": {
+    "servers": [
+      {"tag": "dns-default", "type": "udp", "server": "127.0.0.1", "server_port": %d},
+      {"tag": "dns-named", "type": "udp", "server": "127.0.0.1", "server_port": %d}
+    ],
+    "final": "dns-default",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": %d}
+  ],
+  "outbounds": [
+    {"type": "socks", "tag": "remote", "server": "127.0.0.1", "server_port": %d, "version": "5"},
+    {"type": "direct", "tag": "direct", "domain_resolver": "dns-default"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "resolve", "match_only": true, "server": "dns-named", "strategy": "ipv4_only"},
+      {"ip_cidr": ["198.51.100.0/24"], "action": "route", "outbound": "remote"}
+    ],
+    "final": "direct"
+  }
+}`
+
+// TestResolveMatchOnlyHonoursTheActionsOwnResolver is §4.1's "the existing fields still work": the
+// option changes only where an answer is published, never which server answers it, which strategy is
+// applied, or whether the answer is cached.
+//
+// The two servers are configured to disagree, so "which server was asked" is observable in the
+// verdict: only the named server's answer is inside the rule's CIDR, so a resolve that ignored
+// `server` could not select the proxy at all.
+func TestResolveMatchOnlyHonoursTheActionsOwnResolver(t *testing.T) {
+	echo := startEchoServer(t, "tcp", "127.0.0.1:0")
+	echoPort := uint16(echo.listener.Addr().(*net.TCPAddr).Port)
+
+	sink := startSocksSink(t, "127.0.0.1:0")
+	sink.backendOverride = map[string]string{
+		"named.test:" + fmt.Sprint(echoPort): echo.listener.Addr().String(),
+	}
+	sinkPort := uint16(sink.listener.Addr().(*net.TCPAddr).Port)
+
+	// The default resolver's answer would NOT select the ip_cidr rule.
+	dnsDefault := startDNSResponder(t, "dns-default", map[string]netip.Addr{
+		"named.test": netip.MustParseAddr("203.0.113.9"),
+	})
+	// The action's named resolver's answer does.
+	dnsNamed := startDNSResponder(t, "dns-named", map[string]netip.Addr{
+		"named.test": netip.MustParseAddr("198.51.100.10"),
+	})
+
+	proxyPort := freePort(t)
+	running := startChain(t, fmt.Sprintf(resolveMatchOnlyNamedResolverConfig, chainLogLevel,
+		dnsDefault.port(), dnsNamed.port(), proxyPort, sinkPort))
+	proxyAddress := fmt.Sprintf("127.0.0.1:%d", proxyPort)
+
+	for _, attempt := range []int{1, 2} {
+		conn := dialSocks5(t, proxyAddress, 0x03, "named.test", echoPort)
+		requireEcho(t, conn, fmt.Sprintf("named-resolver-%d", attempt))
+		conn.Close()
+	}
+
+	require.Contains(t, dnsNamed.asked(), "named.test/1",
+		"the action's own `server` must still be the one asked")
+	require.NotContains(t, dnsDefault.asked(), "named.test/1",
+		"the default resolver must not be used instead of the action's server")
+	require.NotContains(t, dnsNamed.asked(), "named.test/28",
+		"the action's own `strategy` must still decide the query types (ipv4_only means A only)")
+
+	// Two connections, one answer: `match_only` must not disable the DNS cache.
+	namedQueries := 0
+	for _, question := range dnsNamed.asked() {
+		if question == "named.test/1" {
+			namedQueries++
+		}
+	}
+	require.Equal(t, 1, namedQueries,
+		"the second connection must be served from the DNS cache; match_only changes the publication "+
+			"point, not the query options")
+
+	requests := sink.waitForRequests(t, 2, 10*time.Second)
+	for _, request := range requests {
+		require.Equal(t, "named.test", request.Host,
+			"and both flows must still hand the proxy the name")
+	}
+	flows := running.tracker.waitForFlows(t, 2, 10*time.Second)
+	require.Equal(t, "remote", flows[len(flows)-1].RouteOutbound)
+	require.Contains(t, flows[len(flows)-1].RouteRule, "ip_cidr=198.51.100.0/24",
+		"the rule must be selected by the NAMED server's answer, which is the only one inside the CIDR")
+}
+
 func TestResolveMatchOnlyConcurrentFlowsStayIsolated(t *testing.T) {
 	echo := startEchoServer(t, "tcp", "127.0.0.1:0")
 	echoPort := uint16(echo.listener.Addr().(*net.TCPAddr).Port)

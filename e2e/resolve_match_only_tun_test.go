@@ -7,6 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +70,10 @@ func TestResolveMatchOnlyFakeIPFlowKeepsTheMappedDomain(t *testing.T) {
 		"fake-match.test": netip.MustParseAddr("198.51.100.10"),
 	})
 
-	running := startChain(t, fmt.Sprintf(resolveMatchOnlyTunConfig, chainLogLevel, dnsLocal.port(), sinkPort))
+	captured := &capturedPlatformLog{}
+	running := startChainWithWriter(t,
+		fmt.Sprintf(resolveMatchOnlyTunConfig, "debug", dnsLocal.port(), sinkPort),
+		captured)
 	fixture := newTunFixture(t, running, netip.MustParseAddr(tunDNSAddress), 53)
 
 	// 1. The device asks for the name and is handed a placeholder from the FakeIP range.
@@ -76,7 +84,28 @@ func TestResolveMatchOnlyFakeIPFlowKeepsTheMappedDomain(t *testing.T) {
 	require.True(t, netip.MustParsePrefix("198.19.0.0/15").Contains(fakeAddress),
 		"the device must have been handed a placeholder from the configured range, got %s", fakeAddress)
 
-	// 2. The device connects to the placeholder. The route layer must recover the name, resolve it
+	// 2. The SAME facts through the production pre-match entry, now that the mapping exists: the
+	//    placeholder is reverse-mapped, the action offers the answer for matching, the CIDR rule
+	//    selects the proxy - and the pre-match verdict must still be Continue, because only the full
+	//    match path may dial and it dials the name.
+	verdict := running.router().PreMatch(adapter.InboundContext{
+		Inbound:               "tun-in",
+		InboundType:           C.TypeTun,
+		Network:               N.NetworkTCP,
+		Source:                M.SocksaddrFrom(netip.MustParseAddr("198.18.0.2"), 42000),
+		Destination:           M.SocksaddrFrom(fakeAddress, echoPort),
+		ConsumesBypassVerdict: true,
+	}, nil)
+	require.Equal(t, adapter.PreMatchContinue, verdict.Action,
+		"pre-match must not commit a flow or a bypass for a FakeIP flow whose rule matched on "+
+			"matching-only evidence; got %v", verdict.Action)
+
+	log := captured
+	log.waitFor(t, "=> resolve(match_only)", 5*time.Second)
+	log.waitFor(t, "ip_cidr=198.51.100.0/24 => route(remote)", 5*time.Second)
+	log.waitFor(t, "for matching only", 5*time.Second)
+
+	// 3. The device connects to the placeholder. The route layer must recover the name, resolve it
 	//    for matching, select the rule and keep the name for the dial.
 	connection := &tcpOverTun{sourcePort: 41001, destination: fakeAddress, destinationPort: echoPort}
 	fixture.dialTCP(t, connection, 10*time.Second)
