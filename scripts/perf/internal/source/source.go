@@ -47,6 +47,14 @@ func Collect(repoDir, binaryPath string) schema.Source {
 				addSourceWarning(&fromEnv,
 					"source_cache_stale: cached commit "+fromEnv.Commit+" but HEAD is "+head)
 			}
+			// HEAD can stay the same while go.mod or test/go.mod changes (a pin
+			// bump or a local dependency edit). The module view is cheap to
+			// recompute and must never be served stale from the cache.
+			if fresh := modulePins(filepath.Join(repoDir, "go.mod")); len(fresh) > 0 && !samePins(fromEnv.Modules, fresh) {
+				addSourceWarning(&fromEnv,
+					"source_cache_modules_stale: cached go.mod pins differ from the tree; using the tree")
+				fromEnv.Modules = fresh
+			}
 			return enrichSource(fromEnv, repoDir, binaryPath)
 		}
 	}
@@ -152,6 +160,19 @@ func addSourceWarning(s *schema.Source, message string) {
 		}
 	}
 	s.Warnings = append(s.Warnings, message)
+}
+
+// samePins compares two module maps without caring about order.
+func samePins(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for module, version := range left {
+		if right[module] != version {
+			return false
+		}
+	}
+	return true
 }
 
 func sameStrings(left, right []string) bool {
