@@ -195,29 +195,30 @@
       "repo": "Piggy-Cat-bit-shadow/sing",
       "branch": "dev",
       "tip": "4abfaed41727e43d1d98f36385a86114925f8484",
-      "pin": "4abfaed41727e43d1d98f36385a86114925f8484",
+      "pin": "4abfaed41727",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-12"
+      "observed_at": "2026-11-13"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
-      "tip": "9f251b5e4f5c561fb55034e119efb5afe6c10a7f",
-      "pin": "99abf3c27666",
-      "relation": "behind",
+      "tip": "3c0ead27405be239176ddb857b099b957ae3a4b5",
+      "pin": "3c0ead27405b",
+      "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-12",
-      "note": "The two commits the pin lacks are test/format only; release preparation lifts the pin and the lift still has to pass the build gates."
+      "observed_at": "2026-11-13",
+      "note": "The pin the window-01/02 tree consumes is now dev's tip; the earlier observation saw it two test-only commits behind."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
-      "tip": "aa6d98964049e4a7b1446e0758dd4a6ec2e225e6",
-      "pin": "aa6d98964049",
+      "tip": "c1b074f1f86828fa968e1186ab522cc1c61aa527",
+      "pin": "c1b074f1f868",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-12"
+      "observed_at": "2026-11-13",
+      "note": "Q09's admission fix (c1b074f) is main's own tip, so the pin is identical rather than ahead; the dependencies.json note was corrected in the same window."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/quic-go",
@@ -226,7 +227,7 @@
       "pin": "158445cdda77",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-12"
+      "observed_at": "2026-11-13"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/utls",
@@ -235,7 +236,7 @@
       "pin": "e14b88879d80",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-12"
+      "observed_at": "2026-11-13"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/wireguard-go",
@@ -244,7 +245,27 @@
       "pin": "7ece3d66d79d",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-12"
+      "observed_at": "2026-11-13"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing-anytls",
+      "branch": "main",
+      "tip": "f4acc22de770e02720a5056b3a2175f7f8b7b14a",
+      "pin": "f4acc22de770",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-13",
+      "note": "Added to the observation set in window 03: the module is consumed by go.mod but had no recorded tip."
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/mieru",
+      "branch": "main",
+      "tip": "b5934f7136b4bfe15d0bd9611256c45b741b2d2c",
+      "pin": "b5934f7136b4",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-13",
+      "note": "Added to the observation set in window 03: the module is consumed by go.mod but had no recorded tip."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/cronet-go",
@@ -253,46 +274,48 @@
       "pin": "362e63b14ce2",
       "relation": "behind",
       "policy": "update",
-      "observed_at": "2026-11-12",
+      "observed_at": "2026-11-13",
       "note": "The root module pins the publish commit that carries the natives; `all` tracks the `go` branch tip 7ce9c49b, which is its own pin. The native platform modules stay controlled at 362e63b1 because their archives need a Chromium toolchain this repository does not have."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
       "tip": "45253d2ac66ae9da169f9fe0911f84ff0739fbf5",
-      "pin": "9330d9018c95",
-      "relation": "not-compared",
+      "pin": "322100096fbf",
+      "relation": "ahead",
       "policy": "update",
-      "observed_at": "2026-11-12",
-      "reason": "The pinned apple revision is the consolidated release candidate line; deciding identical/behind/ahead against `main` needs the ancestry query `release-freeze.py check` performs, and neither commit is in this checkout. The pin is what the kernel builds; no claim is made here that it is current."
+      "observed_at": "2026-11-13",
+      "note": "The pin is window 03's integrated client branch: main plus the selection/reload work. Ahead is the expected relation for an integration pin; the freeze's check reports the same."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
       "branch": "main",
       "tip": "ba5c6b161827a830cb7343850bf547156fbfdfee",
-      "pin": "ba5c6b161827",
-      "relation": "identical",
+      "pin": "9816e0068c82",
+      "relation": "ahead",
       "policy": "update",
-      "observed_at": "2026-11-12"
+      "observed_at": "2026-11-13",
+      "note": "The pin is window 03's integrated client branch for the same reason; the android branch fast-forwarded to it, so nothing else moved."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
       "branch": "main",
       "tip": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
-      "pin": "e8b48beadd7d",
-      "relation": "identical",
+      "pin": "a658231fcd97",
+      "relation": "ahead",
       "policy": "update",
-      "observed_at": "2026-11-12"
+      "observed_at": "2026-11-13",
+      "note": "The pin is window 03's integrated desktop branch, which also carries the nested dashboard pin d9fca1b1f226."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
       "branch": "main",
       "tip": "d828b130b374f21f1003017de77af065bb589f43",
-      "pin": "9bde90e1cd55",
-      "relation": "behind",
+      "pin": "d9fca1b1f226",
+      "relation": "ahead",
       "policy": "report",
-      "observed_at": "2026-11-12",
-      "note": "The dashboard fix d828b13 is on the dashboard's main but NOT in the pin the Desktop client consumes, so the shipped installer does not carry it. The tool reports this and never writes the nested gitlink: the fix has to land in the Desktop repository first."
+      "observed_at": "2026-11-13",
+      "note": "The nested pin is window 03's integrated dashboard branch: main's design-token and Pages commits plus the selection ledger. The tool still never writes this gitlink; the Desktop repository owns it."
     }
   ],
   "not_covered": [

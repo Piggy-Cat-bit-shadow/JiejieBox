@@ -331,7 +331,15 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 #   {"scanned": 467, "violations": [], "interface_methods": 3, "error": ""}
 # Xcode build remains NOT_RUN here (no macOS host). The pure Foundation subsets were
 # compiled and tested with Swift 6.3.3 on Windows: 111 XCTest cases, 0 failures.
-VERIFIED_APPLE_SHA="15a4ab6eb42d6581ee6e0b34678c5b773b9967f5"
+# Moved to 3221000 on 2026-11-13 (window 03 integration): the gitlink now names the MERGED
+# client branch (main 45253d2a + the work branch), not the work branch itself. The code the
+# contract scans is unchanged by that merge - the work branch is a parent of 3221000 and the
+# merge touched no libbox accessor - and layer 4 was re-run against this exact integration
+# checkout, not inherited:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <checkout at 3221000>
+#   {"scanned": 467, "violations": [], "interface_methods": 3, "error": ""}
+VERIFIED_APPLE_SHA="322100096fbf3714d7dcb010f8c267d43547b15a"
 
 client_root=""
 skip_client=0

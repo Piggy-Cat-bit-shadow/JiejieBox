@@ -56,7 +56,7 @@
       "slug": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
       "policy": "update",
-      "note": "The option-to-Config pass-through for QUIC; carries the owned-datagram ceiling. The pinned commit is one fix commit ahead of main for audit Q09 (per-creation admission across the three shared QUIC clients, TUIC authentication inside the creation); it is not merged to main yet, so `check` reports AHEAD until it is."
+      "note": "The option-to-Config pass-through for QUIC; carries the owned-datagram ceiling. The Q09 fix (per-creation admission across the three shared QUIC clients, TUIC authentication inside the creation) is now main's own tip: c1b074f is both the branch head and the pin, so `check` reports identical, not AHEAD. Re-verified 2026-11-13 by reading main's history in the fork; the older note that called the pin an unmerged fix commit was written while that was true."
     },
     {
       "module": "github.com/sagernet/quic-go",
@@ -113,7 +113,7 @@
     "slug": "Piggy-Cat-bit-shadow/cronet-go",
     "expected_modules": 29,
     "policy": "controlled",
-    "note": "The 29 platform archives. They are pinned to an older SHA than the root module on purpose; see go.mod's comment and release/cronet-provenance.txt."
+    "note": "The 29 platform archives. They and the root module resolve to the SAME native publish commit (362e63b14ce2) - go.mod says so and this file's earlier claim that the archives were an older SHA than the root was stale; only the `all` aggregate module is one publish commit later (7ce9c49b464a). They stay controlled: the range is never moved by a release preparation or by a branch tip. See go.mod's comment and release/cronet-provenance.txt."
   },
   "clients": [
     {
