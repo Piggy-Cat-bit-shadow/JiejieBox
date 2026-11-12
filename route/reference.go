@@ -579,6 +579,12 @@ func (m *ReferenceManager) ObjectResidencySnapshot() adapter.ResidencyObjectSnap
 			return
 		}
 		ledger := reporter.ResidencyLedger()
+		if !ledger.Answered {
+			// An owner that implements the interface but cannot observe its objects is still an
+			// unknown. Reading its zero values as a count is the precise-zero defect.
+			counts.Unknown++
+			return
+		}
 		counts.Reporting++
 		if !ledger.Exact {
 			counts.Estimated++

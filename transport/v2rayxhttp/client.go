@@ -381,6 +381,37 @@ func (c *Client) SetKeepIdleConnections(keep bool) {
 	}
 }
 
+// ResidencyLedger implements adapter.ResidencyLedgerReporter (audit Q15).
+//
+// The resident objects are the XMUX pool's connections: Active while a stream is attached, Idle
+// while pooled and unused, Draining after RetireSuspect while the last stream finishes, and
+// Terminated once the underlying close actually ran (the pool's Released total). Creating is zero
+// because this pool creates a connection synchronously inside get(); there is no window in which an
+// allocated connection is neither pooled nor closed.
+//
+// The HTTP/2 library's own idle-connection cache is a DIFFERENT owner and is not visible here. That
+// limit is stated in the Note rather than hidden, and it is the same boundary xmuxPoolStats
+// documents; the ledger is exact for the pool it owns, not for the library's cache.
+func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
+	if c == nil || c.xmux == nil {
+		return adapter.ResidencyLedger{
+			Answered: false,
+			Note:     "the XMUX pool was not constructed; this transport cannot answer",
+		}
+	}
+	stats := c.xmux.stats()
+	return adapter.ResidencyLedger{
+		Active:     uint64(stats.Active),
+		Idle:       uint64(stats.Idle),
+		Draining:   uint64(stats.Draining),
+		Terminated: stats.Released,
+		Exact:      true,
+		Answered:   true,
+		Note: "XMUX pooled connections of this transport; the HTTP/2 library's internal " +
+			"idle-connection cache is a different owner and is not counted",
+	}
+}
+
 // baseURL builds a fresh request URL targeting the normalized base path. The
 // placement engine (applyMeta) appends session/seq path segments and query params
 // as configured; applyXPadding attaches the padding. The base path is set via

@@ -1081,3 +1081,13 @@ func tunnelDialerOptions(ctx context.Context, options option.MASQUEClientEndpoin
 		NewDialer:        true,
 	}
 }
+
+// ResidencyLedger implements adapter.ResidencyLedgerReporter honestly: the MASQUE session object is
+// owned by transport/masque and the inner flows are created and released by the userspace stack, so
+// this endpoint has no object registry to count. It is reported as unknown, not as zero.
+func (c *ClientEndpoint) ResidencyLedger() adapter.ResidencyLedger {
+	return adapter.ResidencyLedger{
+		Answered: false,
+		Note:     "the MASQUE session is owned by transport/masque and inner flows by the device stack",
+	}
+}

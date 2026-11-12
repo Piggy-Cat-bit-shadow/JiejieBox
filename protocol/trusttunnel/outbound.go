@@ -330,3 +330,9 @@ func (h *Outbound) Close() error {
 	h.generation.Close()
 	return h.client.Close()
 }
+
+// ResidencyLedger implements adapter.ResidencyLedgerReporter by delegating to the client, which owns
+// the one session object this transport keeps (see transport/trusttunnel/residency.go).
+func (h *Outbound) ResidencyLedger() adapter.ResidencyLedger {
+	return h.client.ResidencyLedger()
+}

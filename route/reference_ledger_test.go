@@ -56,6 +56,7 @@ func TestTheObjectLedgerSumsEachOwnerOnceAndReportsCoverage(t *testing.T) {
 			Draining:   1,
 			Terminated: 9,
 			Exact:      true,
+			Answered:   true,
 			Note:       "test owner",
 		},
 	}
@@ -89,18 +90,19 @@ func TestAnEstimatedLedgerIsReportedAsEstimated(t *testing.T) {
 	estimated := &ledgerKeeper{
 		reuseTestKeeper: reuseTestKeeper{tag: "estimated"},
 		ledger: adapter.ResidencyLedger{
-			Active: 4,
-			Exact:  false,
-			Note:   "native objects have no observation interface",
+			Active:   4,
+			Exact:    false,
+			Answered: true,
+			Note:     "native objects have no observation interface",
 		},
 	}
 	exact := &ledgerKeeper{
 		reuseTestKeeper: reuseTestKeeper{tag: "exact"},
-		ledger:          adapter.ResidencyLedger{Idle: 1, Exact: true},
+		ledger:          adapter.ResidencyLedger{Idle: 1, Exact: true, Answered: true},
 	}
 	transport := &ledgerDNSTransport{owner: &ledgerKeeper{
 		reuseTestKeeper: reuseTestKeeper{tag: "dns"},
-		ledger:          adapter.ResidencyLedger{Idle: 2, Exact: true},
+		ledger:          adapter.ResidencyLedger{Idle: 2, Exact: true, Answered: true},
 	}}
 
 	reference := newLedgerFixture(t, []adapter.Outbound{estimated, exact}, []adapter.DNSTransport{transport})
@@ -117,6 +119,26 @@ func TestAnEstimatedLedgerIsReportedAsEstimated(t *testing.T) {
 	require.Equal(t, 1, snapshot.DNSTransports.Reporting)
 	require.Equal(t, uint64(2), snapshot.DNSTransports.Idle,
 		"a different kind was not summed into its own record")
+}
+
+// TestAReporterThatCannotAnswerIsStillUnknown is the answered boundary: implementing the interface
+// is not the same as being able to count. An owner that returns Answered=false has its zero values
+// read as "cannot say", never as "holds zero objects".
+func TestAReporterThatCannotAnswerIsStillUnknown(t *testing.T) {
+	silent := &ledgerKeeper{
+		reuseTestKeeper: reuseTestKeeper{tag: "silent"},
+		ledger: adapter.ResidencyLedger{
+			Answered: false,
+			Note:     "the dependency owns the objects and exposes no observation interface",
+		},
+	}
+	reference := newLedgerFixture(t, []adapter.Outbound{silent}, nil)
+	snapshot := reference.ObjectResidencySnapshot()
+	require.Equal(t, 1, snapshot.Outbounds.Owners)
+	require.Zero(t, snapshot.Outbounds.Reporting)
+	require.Equal(t, 1, snapshot.Outbounds.Unknown,
+		"an unanswered ledger must not be summed as a precise zero")
+	require.Zero(t, snapshot.Outbounds.Active)
 }
 
 // ledgerDNSTransport is a DNS transport owner that answers with a ledger.

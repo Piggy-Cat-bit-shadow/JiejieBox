@@ -85,6 +85,14 @@ type ResidencyLedger struct {
 	Terminated uint64
 	// Exact reports whether the counts are real object counts.
 	Exact bool
+	// Answered reports whether the owner can answer this question at all.
+	//
+	// It exists because a reporter is also how an owner that CANNOT count its objects is reached by
+	// the walk: returning an empty ledger would be read as "this owner holds zero objects", which is
+	// the precise-zero lie the audit forbids. An owner that cannot observe them returns
+	// Answered=false and says why in Note; the snapshot counts it as Unknown, exactly as if the
+	// interface were not implemented.
+	Answered bool
 	// Note names what is estimated when Exact is false, or what the ledger deliberately does not
 	// count when it is true.
 	Note string

@@ -96,6 +96,7 @@ func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 	}
 	ledger.Terminated = c.residency.terminated.Load()
 	ledger.Exact = true
+	ledger.Answered = true
 	ledger.Note = "shared QUIC connections of this transport; streams are the Active/Idle " +
 		"distinction inside one connection, not separate objects"
 	return ledger

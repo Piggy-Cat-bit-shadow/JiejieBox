@@ -144,6 +144,8 @@ type Client struct {
 	// result without a real handshake. Production never reads it from outside
 	// this package.
 	dialSession func(ctx context.Context) (sessionConn, error)
+	// residency is the session-identity ledger (audit Q15). See residency.go.
+	residency clientResidency
 }
 
 // clientOffer is one shared session creation in flight. Every demand that
@@ -389,6 +391,7 @@ func (c *Client) RetireSuspect() {
 	if session != nil {
 		c.session = nil
 		session.retiring.Store(true)
+		c.residency.noteRetired()
 	}
 	c.access.Unlock()
 	if session != nil {
@@ -635,6 +638,7 @@ func (c *Client) publishOffer(pending *clientOffer, conn sessionConn, err error)
 	var session *clientSession
 	if err == nil {
 		session = newClientSession(c.ctx, conn)
+		session.onClose = c.residency.noteReleased
 	}
 	c.access.Lock()
 	discard := pending.discarded
@@ -747,6 +751,8 @@ type clientSession struct {
 	// to it, and it closes when its last stream returns.
 	retiring  atomic.Bool
 	drainOnce sync.Once
+	// onClose reports the completed release to the client's residency ledger.
+	onClose func(wasDraining bool)
 }
 
 // drainIfUnused closes a retiring session once nothing is carried on it. The
@@ -799,6 +805,9 @@ func (s *clientSession) close() {
 	s.closeOnce.Do(func() {
 		s.cancel()
 		s.conn.close()
+		if s.onClose != nil {
+			s.onClose(s.retiring.Load())
+		}
 	})
 }
 

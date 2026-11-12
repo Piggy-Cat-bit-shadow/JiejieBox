@@ -258,3 +258,24 @@ func (h *trojanDialer) ListenPacket(ctx context.Context, destination M.Socksaddr
 	}
 	return conn.(net.PacketConn), nil
 }
+
+// ResidencyLedger implements adapter.ResidencyLedgerReporter (audit Q15) by delegating to the
+// transport that owns the pooled objects. The transport is the only layer that can count its
+// connections; when it cannot answer, this owner reports Answered=false (unknown) rather than a
+// precise zero. A transport-less outbound has no pooled objects here: its per-stream connections
+// are owned by the caller and are not residency units of this owner.
+func (h *Outbound) ResidencyLedger() adapter.ResidencyLedger {
+	if reporter, isReporter := h.transport.(adapter.ResidencyLedgerReporter); isReporter {
+		return reporter.ResidencyLedger()
+	}
+	if h.transport == nil {
+		return adapter.ResidencyLedger{
+			Answered: false,
+			Note:     "direct outbound: per-stream connections are not pooled objects of this owner",
+		}
+	}
+	return adapter.ResidencyLedger{
+		Answered: false,
+		Note:     "the configured transport owns its pooled objects and exposes no object ledger",
+	}
+}

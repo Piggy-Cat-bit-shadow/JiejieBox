@@ -598,3 +598,13 @@ func (w *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address ne
 	}
 	return w.endpoint.Lookup(address) != nil
 }
+
+// ResidencyLedger implements adapter.ResidencyLedgerReporter honestly: the pinned wireguard device
+// owns the peer and session objects and exposes no observation interface, so this endpoint cannot
+// answer. It is reported as unknown rather than as a precise zero.
+func (e *Endpoint) ResidencyLedger() adapter.ResidencyLedger {
+	return adapter.ResidencyLedger{
+		Answered: false,
+		Note:     "the pinned wireguard device owns peer/session objects and exposes no object ledger",
+	}
+}
