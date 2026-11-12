@@ -75,6 +75,7 @@ func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 	c.connAccess.Unlock()
 
 	var ledger adapter.ResidencyLedger
+	ledger.Unit = adapter.ResidencyUnitConnection
 	if pending != nil {
 		ledger.Creating = 1
 	}
@@ -93,11 +94,17 @@ func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 	}
 	if draining := c.residency.draining.Load(); draining > 0 {
 		ledger.Draining = uint64(draining)
+		// Exactly one shared connection per generation, so the draining connections ARE the retired
+		// generations still holding a stream. Reporting them separately is what makes the
+		// cross-generation account readable (audit Q15): a retired generation is not a number that
+		// disappeared, it is an object that has not been released yet.
+		ledger.RetiredGenerations = int(draining)
 	}
 	ledger.Terminated = c.residency.terminated.Load()
 	ledger.Exact = true
 	ledger.Answered = true
-	ledger.Note = "shared QUIC connections of this transport; streams are the Active/Idle " +
-		"distinction inside one connection, not separate objects"
+	ledger.Note = "shared QUIC connections of this transport (unit=connection); streams are the " +
+		"Active/Idle distinction inside one connection, not separate objects; a retired generation " +
+		"is Draining until its last stream ends and only then counted in Terminated"
 	return ledger
 }

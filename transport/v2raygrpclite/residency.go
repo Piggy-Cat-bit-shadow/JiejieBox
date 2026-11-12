@@ -1,55 +1,47 @@
 package v2raygrpclite
 
-// The transport's stream-identity ledger (audit Q15). Same boundary as v2rayhttp: the library's
-// pooled HTTP/2 connections are its owner; this wrapper counts the gRPC streams it opens and hooks
-// the conn's own onClose instead of wrapping it, so optional interfaces stay visible.
+// The transport's object-identity ledger (audit Q15), the same shape as protocol/v2rayhttp's.
+//
+// One object is one pool GENERATION: the `http2.Transport` the gRPC streams are handed out on. The
+// generation is Active while it carries a stream, Idle while it carries none, Draining once a network
+// change retired it while a stream was still running - and it is NOT subtracted at that point, which
+// is the accounting error Draining exists to prevent - and Terminated only when the transport was
+// really closed.
+//
+// Streams are not counted: a gRPC stream lives inside one generation and is that generation's
+// Active/Idle distinction, not a second resident object.
 
 import (
-	"net"
-	"sync/atomic"
-
 	"github.com/sagernet/sing-box/adapter"
 )
-
-type clientLedger struct {
-	creating   atomic.Int64
-	active     atomic.Int64
-	terminated atomic.Uint64
-}
-
-func (c *Client) attachLedger(conn net.Conn) {
-	if c == nil || conn == nil {
-		return
-	}
-	gunConn, isGunConn := conn.(*GunConn)
-	if !isGunConn {
-		return
-	}
-	var released atomic.Bool
-	previous := gunConn.onClose
-	c.ledger.active.Add(1)
-	gunConn.onClose = func() {
-		if previous != nil {
-			previous()
-		}
-		if released.CompareAndSwap(false, true) {
-			c.ledger.active.Add(-1)
-			c.ledger.terminated.Add(1)
-		}
-	}
-}
 
 func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 	if c == nil {
 		return adapter.ResidencyLedger{}
 	}
-	return adapter.ResidencyLedger{
-		Active:     uint64(max(c.ledger.active.Load(), 0)),
-		Creating:   uint64(max(c.ledger.creating.Load(), 0)),
-		Terminated: c.ledger.terminated.Load(),
-		Exact:      false,
-		Answered:   true,
-		Note: "gRPC streams opened through this transport; the library's pooled HTTP/2 " +
-			"connections are a different owner and are not counted here",
+	ledger := adapter.ResidencyLedger{
+		Unit:     adapter.ResidencyUnitGeneration,
+		Answered: true,
+		Exact:    true,
 	}
+	if c.pool == nil {
+		ledger.Note = "no pool was constructed; this transport cannot answer"
+		ledger.Answered = false
+		ledger.Exact = false
+		return ledger
+	}
+	snapshot := c.pool.Snapshot()
+	ledger.Generation = snapshot.Sequence
+	ledger.RetiredGenerations = snapshot.RetiredDraining
+	ledger.Draining = uint64(snapshot.RetiredDraining)
+	ledger.Terminated = snapshot.Terminated
+	if snapshot.CurrentInflight > 0 {
+		ledger.Active = 1
+	} else {
+		ledger.Idle = 1
+	}
+	ledger.Note = "pooled HTTP/2 generations (unit=generation); gRPC streams are the Active/Idle " +
+		"distinction inside one generation and are not separate objects; a retired generation is " +
+		"Draining until its last stream returns and only then counted in Terminated"
+	return ledger
 }

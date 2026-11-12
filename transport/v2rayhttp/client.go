@@ -40,10 +40,9 @@ type Client struct {
 	method     string
 	headers    http.Header
 	closeIdle  atomic.Bool
-	ledger     clientLedger
 	// pool owns the HTTP/2 generation. It is nil for the HTTP/1 transport, which has no pooled
 	// connection to lend.
-	pool *h2Pool
+	pool *GenerationPool
 	// newTransport builds the next HTTP/2 generation with the same dialer and TLS configuration.
 	newTransport func() *http2.Transport
 	// generation is this pool's view of the network generation. A nil coordinator yields a nil
@@ -113,7 +112,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	client.transport.Store(transport)
 	if newHTTP2 != nil {
 		client.newTransport = newHTTP2
-		client.pool = newH2Pool(transport.(*http2.Transport))
+		client.pool = NewGenerationPool(transport.(*http2.Transport))
 	}
 	// The generation the pool rebuilds itself against. A transport built in a test or by an
 	// embedder without a coordinator gets no registration and keeps its previous behaviour.
@@ -124,8 +123,6 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
-	c.ledger.creating.Add(1)
-	defer c.ledger.creating.Add(-1)
 	var (
 		conn net.Conn
 		err  error
@@ -138,7 +135,6 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	if err != nil || conn == nil {
 		return conn, err
 	}
-	c.attachLedger(conn)
 	return conn, nil
 }
 
@@ -217,29 +213,29 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 		handshakeTimedOut.Store(true)
 		cancel()
 	})
-	generation := c.pool.begin()
+	generation := c.pool.Begin()
 	go func() {
-		response, err := generation.transport.RoundTrip(request)
+		response, err := generation.Transport().RoundTrip(request)
 		handshakeTimer.Stop()
 		if err != nil {
-			c.pool.finish(generation)
+			c.pool.Finish(generation)
 			if handshakeTimedOut.Load() {
 				err = os.ErrDeadlineExceeded
 			}
 			conn.Setup(nil, err)
 		} else if response.StatusCode != 200 {
 			response.Body.Close()
-			c.pool.finish(generation)
+			c.pool.Finish(generation)
 			conn.Setup(nil, E.New("v2ray-http: unexpected status: ", response.Status))
 		} else if c.currentGeneration() != startGeneration {
 			// The result belongs to a generation that ended while it was in flight. Discard it:
 			// acknowledging it would claim the pool is current on evidence from the old network.
 			response.Body.Close()
-			c.pool.finish(generation)
+			c.pool.Finish(generation)
 			conn.Setup(nil, staleGenerationError{})
 		} else {
 			c.acknowledgeGeneration()
-			conn.Setup(&generationBody{ReadCloser: response.Body, release: func() { c.pool.finish(generation) }}, nil)
+			conn.Setup(&generationBody{ReadCloser: response.Body, release: func() { c.pool.Finish(generation) }}, nil)
 		}
 	}()
 	return conn, nil
@@ -258,7 +254,7 @@ func (c *Client) SetKeepIdleConnections(keep bool) {
 
 func (c *Client) CloseIdleConnections() {
 	if c.pool != nil {
-		c.pool.closeIdle()
+		c.pool.CloseIdle()
 		return
 	}
 	CloseIdleConnections(c.transport.Load())
@@ -266,7 +262,7 @@ func (c *Client) CloseIdleConnections() {
 
 func (c *Client) Close() error {
 	if c.pool != nil {
-		c.pool.closeAll()
+		c.pool.CloseAll()
 	} else {
 		c.transport.Store(ResetTransport(c.transport.Load()))
 	}

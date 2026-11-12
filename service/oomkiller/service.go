@@ -9,6 +9,7 @@ import (
 	boxService "github.com/sagernet/sing-box/adapter/service"
 	"github.com/sagernet/sing-box/common/buildgate"
 	"github.com/sagernet/sing-box/common/resourceguard"
+	"github.com/sagernet/sing-box/common/urltest"
 	boxConstant "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -84,6 +85,13 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 	// construction context before this service exists; a build with no gate writes no key.
 	if s.recorder != nil {
 		s.recorder.SetExtraMetadata("buildGate", s.buildGateMetadata)
+	}
+	// The queue ledger is the measurement side of the same question (audit Q08/Q15): how many rounds
+	// and probes are running, how many are WAITING, and what the round queue's bound is. Without it a
+	// reader can see the build reservation and the resident objects but not the one queue whose growth
+	// the audit measured. It is contributed as its own key for the same reason as the others.
+	if s.recorder != nil {
+		s.recorder.SetExtraMetadata("queueLedger", s.queueMetadata)
 	}
 	// The admission guard is installed ONLY for a Network Extension with a process budget.
 	//
@@ -281,18 +289,83 @@ func (s *Service) objectResidencyMetadata() any {
 }
 
 // objectResidencyCount renders one kind's object ledger.
+//
+// The per-unit records are the Q15 fix made readable: a kind can hold owners that count different
+// objects (a stream, a session, a device, a pool generation), and a reader must not add their Active
+// counts together. MixedUnits says when the flat totals below span more than one unit, and Units
+// carries the split, so a document that only shows the flat numbers cannot silently conflate them.
 func objectResidencyCount(count adapter.ResidencyObjectCounts) map[string]any {
+	units := make([]map[string]any, 0, len(count.Units))
+	for _, unit := range count.Units {
+		units = append(units, map[string]any{
+			"unit":               string(unit.Unit),
+			"owners":             unit.Owners,
+			"exact":              unit.Exact,
+			"generation":         unit.Generation,
+			"generations":        unit.Generations,
+			"retiredGenerations": unit.RetiredGenerations,
+			"creating":           unit.Creating,
+			"active":             unit.Active,
+			"idle":               unit.Idle,
+			"draining":           unit.Draining,
+			"liveObjects":        unit.Creating + unit.Active + unit.Idle + unit.Draining,
+			"terminated":         unit.Terminated,
+		})
+	}
 	return map[string]any{
-		"owners":          count.Owners,
-		"reportingOwners": count.Reporting,
-		"unknownOwners":   count.Unknown,
-		"estimatedOwners": count.Estimated,
-		"creating":        count.Creating,
-		"active":          count.Active,
-		"idle":            count.Idle,
-		"draining":        count.Draining,
-		"liveObjects":     count.Creating + count.Active + count.Idle + count.Draining,
-		"terminated":      count.Terminated,
+		"owners":             count.Owners,
+		"reportingOwners":    count.Reporting,
+		"unknownOwners":      count.Unknown,
+		"estimatedOwners":    count.Estimated,
+		"mixedUnits":         count.MixedUnits,
+		"units":              units,
+		"generations":        count.Generations,
+		"retiredGenerations": count.RetiredGenerations,
+		"creating":           count.Creating,
+		"active":             count.Active,
+		"idle":               count.Idle,
+		"draining":           count.Draining,
+		"liveObjects":        count.Creating + count.Active + count.Idle + count.Draining,
+		"terminated":         count.Terminated,
+		"mixedUnitsRule":     "when mixedUnits is true the flat totals add unlike objects; read units instead",
+	}
+}
+
+// queueMetadata renders the measurement coordinator's queue ledger for the OOM report (audit Q08/Q15).
+//
+// # Why it is a separate key
+//
+// The audit asks for three readable accounts - creation, build and queue. Creation is the admission
+// guard's, the build reservation has its own key, and this is the queue: how many rounds and probes
+// are in flight, how many are waiting, and what the round queue's bound is. The round queue is the one
+// the audit measured growing with the number of rounds (2 waiting entries for 4 rounds, 30 for 32), so
+// the document states the bound next to the two counts that can be compared with it: roundsQueued
+// (inside the bound) and roundsOverflow (demand past it, waiting without a queue entry).
+//
+// It returns nil when the context carries no coordinator (a unit test, an embedder, a process that
+// never built a box), so such a document is exactly what it was before.
+func (s *Service) queueMetadata() any {
+	if s == nil || s.ctx == nil {
+		return nil
+	}
+	coordinator := urltest.CoordinatorFromContext(s.ctx)
+	if coordinator == nil {
+		return nil
+	}
+	return map[string]any{
+		"measure":             "queue",
+		"measurementLimit":    coordinator.Limit(),
+		"measurementsInUse":   coordinator.InFlight(),
+		"measurementsQueued":  coordinator.Queued(),
+		"roundLimit":          coordinator.RoundLimit(),
+		"roundsInUse":         coordinator.RoundsInFlight(),
+		"roundsQueued":        coordinator.RoundsQueued(),
+		"roundQueueBound":     coordinator.RoundWaiterLimit(),
+		"roundsOverflow":      coordinator.RoundsOverflow(),
+		"roundsOverflowTotal": coordinator.RoundsOverflowTotal(),
+		"roundQueueRule": "roundsQueued never exceeds roundQueueBound; the demand past it waits " +
+			"without a queue entry (roundsOverflow) and is never refused, so every round still " +
+			"measures every member",
 	}
 }
 
@@ -315,27 +388,40 @@ func (s *Service) buildGateMetadata() any {
 	stats := gate.Stats()
 	budget := gate.Budget()
 	return map[string]any{
-		"measure":        "build-count",
-		"level":          budget.Level.String(),
-		"limit":          budget.Limit,
-		"queueLimit":     budget.Queue,
-		"waitBudgetMs":   budget.Wait.Milliseconds(),
-		"maxOverlapping": budget.MaxOverlappingBuilds,
-		"byteBoundKnown": budget.ByteBoundKnown,
-		"budgetNote":     budget.Note,
-		"inflight":       stats.Gate.Inflight,
-		"waiters":        stats.Gate.Waiters,
-		"maxInflight":    stats.Gate.MaxInflight,
-		"requested":      stats.Gate.Requested,
-		"admitted":       stats.Gate.Admitted,
-		"queued":         stats.Gate.Queued,
-		"refused":        stats.Gate.Refused,
-		"timedOut":       stats.Gate.TimedOut,
-		"canceled":       stats.Gate.Canceled,
-		"released":       stats.Gate.Released,
-		"admittedBuilds": stats.AdmittedBuilds,
-		"deferredBuilds": stats.Deferred,
-		"transitions":    stats.Transitions,
+		"measure": "build-count",
+		"level":   budget.Level.String(),
+		// The admission limit and the overlap are separate numbers on purpose (Q20): a permit is
+		// never revoked, so builds admitted before pressure rose are still running. "limit" is what
+		// the gate admits from now on; "maxOverlapping" is the bound that is still true now;
+		// "peakOverlapping" is the largest overlap ever observed.
+		"limit":            budget.Limit,
+		"inflightBuilds":   budget.Inflight,
+		"maxOverlapping":   budget.MaxOverlappingBuilds,
+		"peakOverlapping":  budget.PeakOverlapping,
+		"queueLimit":       budget.Queue,
+		"waitBudgetMs":     budget.Wait.Milliseconds(),
+		"oldDocumentBound": budget.MaxOldDocuments,
+		"byteBoundKnown":   budget.ByteBoundKnown,
+		"budgetNote":       budget.Note,
+		"inflight":         stats.Gate.Inflight,
+		"waiters":          stats.Gate.Waiters,
+		"maxInflight":      stats.Gate.MaxInflight,
+		"requested":        stats.Gate.Requested,
+		"admitted":         stats.Gate.Admitted,
+		"queued":           stats.Gate.Queued,
+		"refused":          stats.Gate.Refused,
+		"timedOut":         stats.Gate.TimedOut,
+		"canceled":         stats.Gate.Canceled,
+		"released":         stats.Gate.Released,
+		"admittedBuilds":   stats.AdmittedBuilds,
+		"deferredBuilds":   stats.Deferred,
+		"succeededBuilds":  stats.Succeeded,
+		"failedBuilds":     stats.Failed,
+		"abandonedBuilds":  stats.Abandoned,
+		"replacingBuilds":  stats.BuildsWithPreviousVersion,
+		"firstBuilds":      stats.BuildsWithoutPreviousVersion,
+		"transitions":      stats.Transitions,
+		"outcomes":         "admittedBuilds = succeeded + failed + abandoned + inflight; every outcome returns the slot",
 	}
 }
 

@@ -141,6 +141,97 @@ func TestAReporterThatCannotAnswerIsStillUnknown(t *testing.T) {
 	require.Zero(t, snapshot.Outbounds.Active)
 }
 
+// TestTheObjectLedgerKeepsUnlikeUnitsApart is the audit's Q15 unit rule: a transport that can only
+// count streams and one that counts sessions are both outbounds, and their Active counts must never
+// be presented as one number - that is the "stream/session/device in one physical connection count"
+// the finding names.
+func TestTheObjectLedgerKeepsUnlikeUnitsApart(t *testing.T) {
+	streams := &ledgerKeeper{
+		reuseTestKeeper: reuseTestKeeper{tag: "streams"},
+		ledger: adapter.ResidencyLedger{
+			Unit:     adapter.ResidencyUnitStream,
+			Active:   3,
+			Exact:    false,
+			Answered: true,
+			Note:     "the library owns the pooled connections; this owner can only see streams",
+		},
+	}
+	sessions := &ledgerKeeper{
+		reuseTestKeeper: reuseTestKeeper{tag: "sessions"},
+		ledger: adapter.ResidencyLedger{
+			Unit:     adapter.ResidencyUnitSession,
+			Active:   2,
+			Exact:    true,
+			Answered: true,
+		},
+	}
+	unname := &ledgerKeeper{
+		reuseTestKeeper: reuseTestKeeper{tag: "unname"},
+		ledger:          adapter.ResidencyLedger{Idle: 1, Exact: true, Answered: true},
+	}
+
+	reference := newLedgerFixture(t, []adapter.Outbound{streams, sessions, unname}, nil)
+	snapshot := reference.ObjectResidencySnapshot()
+
+	require.True(t, snapshot.Outbounds.MixedUnits, "the kind's flat totals span three units and must say so")
+	require.Len(t, snapshot.Outbounds.Units, 3)
+	units := make(map[adapter.ResidencyUnit]adapter.ResidencyUnitCounts, len(snapshot.Outbounds.Units))
+	for _, unit := range snapshot.Outbounds.Units {
+		units[unit.Unit] = unit
+	}
+	require.EqualValues(t, 3, units[adapter.ResidencyUnitStream].Active)
+	require.EqualValues(t, 2, units[adapter.ResidencyUnitSession].Active)
+	require.EqualValues(t, 1, units[adapter.ResidencyUnitUnspecified].Idle,
+		"an owner that names no unit gets its own record instead of joining a named one")
+	require.False(t, units[adapter.ResidencyUnitStream].Exact, "an estimate stays visible per unit")
+	require.True(t, units[adapter.ResidencyUnitSession].Exact)
+}
+
+// TestTheObjectLedgerCountsGenerationsAcrossOwners is the cross-generation half: a pool that retired a
+// generation while a request was still running holds TWO generations, and the retired one is Draining
+// - not a number that disappeared.
+func TestTheObjectLedgerCountsGenerationsAcrossOwners(t *testing.T) {
+	pool := &ledgerKeeper{
+		reuseTestKeeper: reuseTestKeeper{tag: "pool"},
+		ledger: adapter.ResidencyLedger{
+			Unit:               adapter.ResidencyUnitGeneration,
+			Active:             1,
+			Draining:           1,
+			Generation:         4,
+			RetiredGenerations: 1,
+			Terminated:         7,
+			Exact:              true,
+			Answered:           true,
+		},
+	}
+	fresh := &ledgerKeeper{
+		reuseTestKeeper: reuseTestKeeper{tag: "fresh"},
+		ledger: adapter.ResidencyLedger{
+			Unit:       adapter.ResidencyUnitGeneration,
+			Idle:       1,
+			Generation: 1,
+			Exact:      true,
+			Answered:   true,
+		},
+	}
+	reference := newLedgerFixture(t, []adapter.Outbound{pool, fresh}, nil)
+	snapshot := reference.ObjectResidencySnapshot()
+
+	require.Equal(t, 3, snapshot.Outbounds.Generations,
+		"two owners holding three generation instances: one current each, plus the retired one")
+	require.Equal(t, 1, snapshot.Outbounds.RetiredGenerations)
+	require.Equal(t, uint64(1), snapshot.Outbounds.Active)
+	require.Equal(t, uint64(1), snapshot.Outbounds.Draining)
+	require.Equal(t, uint64(1), snapshot.Outbounds.Idle)
+	require.False(t, snapshot.Outbounds.MixedUnits, "both owners count generations")
+
+	units := snapshot.Outbounds.Units
+	require.Len(t, units, 1)
+	require.Equal(t, adapter.ResidencyUnitGeneration, units[0].Unit)
+	require.EqualValues(t, 4, units[0].Generation, "the maximum generation ordinal reported, not a shared clock")
+	require.Equal(t, 3, units[0].Generations)
+}
+
 // ledgerDNSTransport is a DNS transport owner that answers with a ledger.
 type ledgerDNSTransport struct {
 	reuseTestDNSTransport

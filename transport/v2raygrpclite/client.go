@@ -8,10 +8,12 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -19,6 +21,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 
 	"golang.org/x/net/http2"
 )
@@ -34,12 +37,22 @@ var defaultClientHeader = http.Header{
 type Client struct {
 	ctx        context.Context
 	serverAddr M.Socksaddr
-	transport  *http2.Transport
-	options    option.V2RayGRPCOptions
-	url        *url.URL
-	host       string
-	closeIdle  atomic.Bool
-	ledger     clientLedger
+	// transport is the CURRENT generation's transport. It is kept as a field because the pool and
+	// this client are always created together; the pool is what owns the retiring.
+	transport *http2.Transport
+	options   option.V2RayGRPCOptions
+	url       *url.URL
+	host      string
+	closeIdle atomic.Bool
+	// pool owns the HTTP/2 generation. See generation.go: it is v2rayhttp's pool, not a copy.
+	pool *v2rayhttp.GenerationPool
+	// newTransport builds the next generation with the same dialer and TLS configuration.
+	newTransport func() *http2.Transport
+	// A nil coordinator yields a nil registration and every check is a no-op, which is the previous
+	// behaviour for embedders.
+	coordinator        *runtimecoord.Coordinator
+	registration       *runtimecoord.Registration
+	removeRegistration func()
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayGRPCOptions, tlsConfig tls.Config) adapter.V2RayClientTransport {
@@ -50,15 +63,41 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		host = serverAddr.String()
 	}
 	clientPath, clientRawPath := serviceURLPath(options.ServiceName)
-	client := &Client{
-		ctx:        ctx,
-		serverAddr: serverAddr,
-		options:    options,
-		transport: &http2.Transport{
+	var tlsDialer tls.Dialer
+	if tlsConfig != nil {
+		if len(tlsConfig.NextProtos()) == 0 {
+			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
+		}
+		tlsDialer = tls.NewDialer(dialer, tlsConfig)
+	}
+	// newHTTP2 is the generation constructor: the pool rebuilds a generation with the same dialer and
+	// TLS configuration, so a retired generation can be replaced without re-reading options. The dial
+	// function belongs INSIDE this constructor - a generation built without it would dial the server
+	// with the library's default TLS configuration and fail exactly where the previous network was
+	// replaced.
+	newHTTP2 := func() *http2.Transport {
+		transport := &http2.Transport{
 			ReadIdleTimeout:    time.Duration(options.IdleTimeout),
 			PingTimeout:        time.Duration(options.PingTimeout),
 			DisableCompression: true,
-		},
+		}
+		if tlsConfig == nil {
+			transport.DialTLSContext = func(ctx context.Context, network, addr string, cfg *tls.STDConfig) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
+			}
+		} else {
+			transport.DialTLSContext = func(ctx context.Context, network, addr string, cfg *tls.STDConfig) (net.Conn, error) {
+				return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
+			}
+		}
+		return transport
+	}
+	client := &Client{
+		ctx:          ctx,
+		serverAddr:   serverAddr,
+		options:      options,
+		transport:    newHTTP2(),
+		newTransport: newHTTP2,
 		// Path and RawPath together are what make the request line the reference's string; see
 		// service_name.go for why neither alone can.
 		url: &url.URL{
@@ -69,26 +108,26 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		},
 		host: host,
 	}
-	if tlsConfig == nil {
-		client.transport.DialTLSContext = func(ctx context.Context, network, addr string, cfg *tls.STDConfig) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
-		}
-	} else {
-		if len(tlsConfig.NextProtos()) == 0 {
-			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
-		}
-		tlsDialer := tls.NewDialer(dialer, tlsConfig)
-		client.transport.DialTLSContext = func(ctx context.Context, network, addr string, cfg *tls.STDConfig) (net.Conn, error) {
-			return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
-		}
-	}
-
+	client.pool = v2rayhttp.NewGenerationPool(client.transport)
+	client.coordinator = service.FromContext[*runtimecoord.Coordinator](ctx)
+	client.registration, client.removeRegistration = generationRegistration(
+		client.coordinator, "v2raygrpclite/"+serverAddr.String())
 	return client
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
-	c.ledger.creating.Add(1)
-	defer c.ledger.creating.Add(-1)
+	// The hand-out is where "this pool belongs to a previous network" must be answered: the listener
+	// phase has not run yet, and http2.Transport would otherwise reuse a connection whose path just
+	// ended. Retiring the transport removes the whole previous generation from new streams;
+	// connections that still carry a stream finish on the path they started on.
+	if c.generationStale() {
+		c.retireGeneration()
+	}
+	// The generation this stream is being built FOR. A creation that started before a network change
+	// and finished after it produced a result bound to the path that just ended; publishing it as
+	// current would hand every later demand a stream the audit called stale.
+	startGeneration := c.currentGeneration()
+
 	pipeInReader, pipeInWriter := io.Pipe()
 	requestCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	request := &http.Request{
@@ -100,9 +139,18 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	}
 	conn := newLateGunConn(pipeInWriter, cancel)
 	keepSession := adapter.KeepSessionFromContext(ctx)
+	// The generation is pinned for the whole stream and released EXACTLY once: the error paths below
+	// release it as soon as the attempt ends, and the conn's own close releases it for a stream that
+	// was published. The once guard is what keeps a late close from decrementing it twice.
+	generation := c.pool.Begin()
+	var generationOnce sync.Once
+	releaseGeneration := func() {
+		generationOnce.Do(func() { c.pool.Finish(generation) })
+	}
 	conn.onClose = func() {
+		releaseGeneration()
 		if c.closeIdle.Load() && !keepSession {
-			c.transport.CloseIdleConnections()
+			c.CloseIdleConnections()
 		}
 	}
 	handshakeTimeout := C.TCPTimeout
@@ -122,21 +170,29 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		},
 	}))
 	go func() {
-		response, err := c.transport.RoundTrip(request)
+		response, err := generation.Transport().RoundTrip(request)
 		handshakeTimer.Stop()
 		if err != nil {
+			releaseGeneration()
 			if handshakeTimedOut.Load() {
 				err = os.ErrDeadlineExceeded
 			}
 			conn.setup(nil, err)
 		} else if response.StatusCode != 200 {
 			response.Body.Close()
+			releaseGeneration()
 			conn.setup(nil, E.New("v2ray-grpc: unexpected status: ", response.Status))
+		} else if c.currentGeneration() != startGeneration {
+			// The result belongs to a generation that ended while it was in flight. Discard it:
+			// acknowledging it would claim the pool is current on evidence from the old network.
+			response.Body.Close()
+			releaseGeneration()
+			conn.setup(nil, staleGenerationError{})
 		} else {
+			c.acknowledgeGeneration()
 			conn.setup(response.Body, nil)
 		}
 	}()
-	c.attachLedger(conn)
 	return conn, nil
 }
 
@@ -152,10 +208,25 @@ func (c *Client) SetKeepIdleConnections(keep bool) {
 }
 
 func (c *Client) CloseIdleConnections() {
-	c.transport.CloseIdleConnections()
+	if c.pool != nil {
+		c.pool.CloseIdle()
+		return
+	}
+	if c.transport != nil {
+		c.transport.CloseIdleConnections()
+	}
 }
 
 func (c *Client) Close() error {
-	v2rayhttp.ResetTransport(c.transport)
+	if c.pool != nil {
+		c.pool.CloseAll()
+	} else if c.transport != nil {
+		v2rayhttp.ResetTransport(c.transport)
+	}
+	// Unregister last: a torn-down pool must never be reached by a later generation sweep.
+	if c.removeRegistration != nil {
+		c.removeRegistration()
+		c.removeRegistration = nil
+	}
 	return nil
 }

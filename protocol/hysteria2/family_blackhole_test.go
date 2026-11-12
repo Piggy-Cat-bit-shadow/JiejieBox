@@ -162,7 +162,7 @@ func TestTheSilentFirstFamilyFailsOverToTheSecond(t *testing.T) {
 	require.True(t, ledger.Answered)
 	require.EqualValues(t, 1, ledger.Active, "the established session with a live stream is Active")
 	_ = conn.Close()
-	carrier.lastDial.Store(0)
+	carrier.lastDemand.Store(0)
 	require.EqualValues(t, 1, carrier.ResidencyLedger().Idle, "a session with no recent demand is Idle")
 
 	require.Greater(t, blackholed.Load(), int64(0),

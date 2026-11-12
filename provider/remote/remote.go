@@ -607,20 +607,19 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 	// currently serving traffic is untouched, which is the whole point of charging the build
 	// rather than the download. A refusal happens before the report exists, so it is reported as
 	// "no attempt" rather than as an attempt that did nothing.
-	buildRelease, buildErr := buildgate.AcquireFromContext(ctx)
+	//
+	// The overlap shape is declared here because only this owner knows it: a provider that already
+	// published a document keeps that document resident while the new one is downloaded and
+	// applied, while the FIRST refresh of a provider replaces nothing. Q20's budget must describe
+	// both without charging every build an old document.
+	buildReservation, buildErr := buildgate.AcquireBuildFromContext(ctx, buildgate.BuildOptions{
+		HasPreviousVersion: s.lastOutOpts != nil,
+	})
 	if buildErr != nil {
 		s.logger.Debug("outbound provider ", s.Tag(), " build deferred: ", buildErr)
 		return nil, buildErr
 	}
 	buildStarted := time.Now()
-	defer func() {
-		buildRelease()
-		if gate := buildgate.FromContext(ctx); gate != nil {
-			stats := gate.Stats()
-			s.logger.Debug("outbound provider ", s.Tag(), " build finished in ", time.Since(buildStarted),
-				" inflight=", stats.Inflight, " admitted=", stats.AdmittedBuilds, " deferred=", stats.Deferred)
-		}
-	}()
 	// The report is created before anything is requested and recorded on EVERY exit path: a
 	// path that did not classify itself is honestly "unknown" rather than silently committed.
 	report := &ApplyReport{
@@ -629,6 +628,22 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 		Status:            ApplyStatusUnknown,
 	}
 	defer func() { s.recordApply(report) }()
+	// The reservation's outcome is the report's: a build that committed or confirmed the current
+	// document succeeded, a build that ended unknown or partial failed, and either way the slot is
+	// returned here. That is the same fact the report carries, so the two cannot disagree.
+	defer func() {
+		if report.Status == ApplyStatusCommitted || report.Status == ApplyStatusUnchanged {
+			buildReservation.Succeed()
+		} else {
+			buildReservation.Fail()
+		}
+		if gate := buildgate.FromContext(ctx); gate != nil {
+			stats := gate.Stats()
+			s.logger.Debug("outbound provider ", s.Tag(), " build finished in ", time.Since(buildStarted),
+				" inflight=", stats.Inflight, " admitted=", stats.AdmittedBuilds, " deferred=", stats.Deferred,
+				" succeeded=", stats.Succeeded, " failed=", stats.Failed)
+		}
+	}()
 	s.logger.Debug("updating outbound provider ", s.Tag(), " from URL: ", s.logURL)
 	req, err := http.NewRequest(http.MethodGet, s.url, nil)
 	if err != nil {
