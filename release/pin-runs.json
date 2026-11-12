@@ -1,0 +1,289 @@
+{
+  "schema": 1,
+  "comment": [
+    "The executed evidence behind release/source-lock.json (audit Q42): which runs actually built",
+    "the pin set this tree ships, and which branch tip each pin was measured against.",
+    "",
+    "Why this file exists: `release/source-lock.json` is derived from the tree and proves only that",
+    "the pins are CONSISTENT. Nothing in it says a build ever ran against them, and the review that",
+    "raised Q42 found exactly that gap - the correspondence lived in prose, and a workflow",
+    "DECLARATION was being read as if it were a run. `scripts/ci/check-pin-runs.py` re-reads the",
+    "lock out of each recorded commit: a run covers these pins only when the lock at that commit",
+    "has the same pin projection as the lock now. Move a pin without recording a new run and the",
+    "coverage disappears, offline, on the next push.",
+    "",
+    "parent_runs: completed runs of THIS repository at a commit whose lock carries the current pin",
+    "  set. `Verify` is the build/vet/test gate, `Mobile contract verification` the Apple-tag and",
+    "  libbox half, `Android Core ARM64` the cross-compile. A cancelled run is not listed: the",
+    "  parent repository cancels superseded runs on the same ref, so a cancelled run is not",
+    "  evidence about the pins either way.",
+    "child_runs: runs in a child repository that built that client at its pinned revision. Empty",
+    "  today - the three clients' own CI runs are not readable from this checkout, and inventing",
+    "  a run id would be exactly the defect this file exists to prevent. The parent runs cover the",
+    "  gitlinks the parent builds; a client's own build is additional evidence, not a substitute.",
+    "observed_tips: each repository's tracked branch tip, observed on the date given, with the",
+    "  relation the freeze's `check` would report. `not-compared` states why a relation could not",
+    "  be decided from this checkout, and never stands in for `identical`.",
+    "not_covered: pins no parent run in this repository can read, each with the workflow+job that",
+    "  does read them. The checker verifies that job still checks submodules out, so a deleted",
+    "  compensating gate fails instead of leaving a silently empty section.",
+    "",
+    "This file records OBSERVATIONS. It is not a second copy of the pins: the pins live in go.mod",
+    "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
+    "observation was about which revision."
+  ],
+  "recorded_at": "2026-11-12",
+  "parent_runs": [
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Verify",
+      "run_id": 43197054114,
+      "head_sha": "dcb38b0a579edaded147b680297792686ddbf443",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43197054114"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 43197060180,
+      "head_sha": "dcb38b0a579edaded147b680297792686ddbf443",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43197060180"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 43197067192,
+      "head_sha": "dcb38b0a579edaded147b680297792686ddbf443",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43197067192"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Verify",
+      "run_id": 43196389727,
+      "head_sha": "7887f2e6c311cfbceb06974930d58b3fc531919f",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43196389727"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 43196396147,
+      "head_sha": "7887f2e6c311cfbceb06974930d58b3fc531919f",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43196396147"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 43196404623,
+      "head_sha": "7887f2e6c311cfbceb06974930d58b3fc531919f",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43196404623"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Verify",
+      "run_id": 43188735633,
+      "head_sha": "1bececc29a54ed5296583a45081448d959dfe617",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43188735633"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 43188742398,
+      "head_sha": "1bececc29a54ed5296583a45081448d959dfe617",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43188742398"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 43188749259,
+      "head_sha": "1bececc29a54ed5296583a45081448d959dfe617",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43188749259"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Verify",
+      "run_id": 43170623453,
+      "head_sha": "3664231dfb3086db3d5e8a5723d628c98f1ce56c",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43170623453"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 43170623438,
+      "head_sha": "3664231dfb3086db3d5e8a5723d628c98f1ce56c",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43170623438"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 43170623441,
+      "head_sha": "3664231dfb3086db3d5e8a5723d628c98f1ce56c",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43170623441"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Verify",
+      "run_id": 43090341663,
+      "head_sha": "718e127e4ef9ca94cc67eddade0a63da2e41a155",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43090341663"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 43090341795,
+      "head_sha": "718e127e4ef9ca94cc67eddade0a63da2e41a155",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43090341795"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 43090341603,
+      "head_sha": "718e127e4ef9ca94cc67eddade0a63da2e41a155",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43090341603"
+    }
+  ],
+  "child_runs": [],
+  "observed_tips": [
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing",
+      "branch": "dev",
+      "tip": "4abfaed41727e43d1d98f36385a86114925f8484",
+      "pin": "4abfaed41727e43d1d98f36385a86114925f8484",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-12"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing-tun",
+      "branch": "dev",
+      "tip": "9f251b5e4f5c561fb55034e119efb5afe6c10a7f",
+      "pin": "99abf3c27666",
+      "relation": "behind",
+      "policy": "update",
+      "observed_at": "2026-11-12",
+      "note": "The two commits the pin lacks are test/format only; release preparation lifts the pin and the lift still has to pass the build gates."
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing-quic",
+      "branch": "main",
+      "tip": "aa6d98964049e4a7b1446e0758dd4a6ec2e225e6",
+      "pin": "aa6d98964049",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-12"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/quic-go",
+      "branch": "sagernet",
+      "tip": "158445cdda77c05e4430fe40721709bf7bc2ffe2",
+      "pin": "158445cdda77",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-12"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/utls",
+      "branch": "main",
+      "tip": "e14b88879d809306332be7d2c226384a6f3e8fba",
+      "pin": "e14b88879d80",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-12"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/wireguard-go",
+      "branch": "awg3-inject",
+      "tip": "7ece3d66d79dcea5bbf872ebe76b1c7863b69ea6",
+      "pin": "7ece3d66d79d",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-12"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/cronet-go",
+      "branch": "main",
+      "tip": "4c96192d73f67c48a91cba3bce358a3c91692444",
+      "pin": "362e63b14ce2",
+      "relation": "behind",
+      "policy": "update",
+      "observed_at": "2026-11-12",
+      "note": "The root module pins the publish commit that carries the natives; `all` tracks the `go` branch tip 7ce9c49b, which is its own pin. The native platform modules stay controlled at 362e63b1 because their archives need a Chromium toolchain this repository does not have."
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
+      "branch": "main",
+      "tip": "45253d2ac66ae9da169f9fe0911f84ff0739fbf5",
+      "pin": "9330d9018c95",
+      "relation": "not-compared",
+      "policy": "update",
+      "observed_at": "2026-11-12",
+      "reason": "The pinned apple revision is the consolidated release candidate line; deciding identical/behind/ahead against `main` needs the ancestry query `release-freeze.py check` performs, and neither commit is in this checkout. The pin is what the kernel builds; no claim is made here that it is current."
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
+      "branch": "main",
+      "tip": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "pin": "ba5c6b161827",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-12"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
+      "branch": "main",
+      "tip": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
+      "pin": "e8b48beadd7d",
+      "relation": "identical",
+      "policy": "update",
+      "observed_at": "2026-11-12"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
+      "branch": "main",
+      "tip": "d828b130b374f21f1003017de77af065bb589f43",
+      "pin": "9bde90e1cd55",
+      "relation": "behind",
+      "policy": "report",
+      "observed_at": "2026-11-12",
+      "note": "The dashboard fix d828b13 is on the dashboard's main but NOT in the pin the Desktop client consumes, so the shipped installer does not carry it. The tool reports this and never writes the nested gitlink: the fix has to land in the Desktop repository first."
+    }
+  ],
+  "not_covered": [
+    {
+      "pin": "nested:clients/desktop:dashboard",
+      "why": "verify.yml checks out no submodules, so the nested gitlink inside clients/desktop cannot be read on a push",
+      "checked_by": {
+        "workflow": "kernel-release.yml",
+        "job": "freeze"
+      }
+    }
+  ]
+}

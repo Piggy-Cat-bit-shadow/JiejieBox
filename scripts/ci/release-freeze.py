@@ -33,6 +33,10 @@ build only proves the pin is CONSISTENT, never that it is CURRENT.
 `verify`   recomputes those pins from the tree and compares them with the lock. It needs no
            network, so it can run on every push; the release workflow runs it again on the
            candidate commit, after which the tag may only be created at that exact commit.
+           A nested pin (the Desktop client's dashboard gitlink) can only be read where that
+           submodule is checked out. Without it `verify` reports PASS-PARTIAL and names the pins
+           it could not check - `SKIP` is not `PASS` - and `--strict`, which the release path
+           uses after `submodules: recursive`, turns that into a failure.
 
 # What it deliberately does not do
 
@@ -906,11 +910,22 @@ def cmd_verify(repo, args):
             problems.append("%s: lock says %s, the gitlink is %s"
                             % (row["path"], row.get("pinned"), actual))
 
+    unchecked = []
     for row in lock.get("nested", []):
         parent = os.path.join(repo, row["parent"])
         if not os.path.exists(os.path.join(parent, ".git")):
-            notes.append("%s:%s: SKIPPED, %s is not checked out in this workspace"
-                         % (row["parent"], row["path"], row["parent"]))
+            # Two different situations, and conflating them is what let a push-gate PASS line
+            # claim more than it had checked. When the lock records no pin there is nothing to
+            # compare and the line is a SKIP. When it DOES record a pin, a checkout without the
+            # parent submodule cannot decide it - that is an UNCHECKED pin, and a run that says
+            # "every pin in the tree is the pin the lock records" over it is overstating.
+            if row.get("pinned"):
+                unchecked.append("%s:%s" % (row["parent"], row["path"]))
+                notes.append("%s:%s: NOT CHECKED, %s is not checked out in this workspace"
+                             % (row["parent"], row["path"], row["parent"]))
+            else:
+                notes.append("%s:%s: SKIPPED, the lock records no pin for it"
+                             % (row["parent"], row["path"]))
             continue
         actual = gitlink(parent, row["path"])
         if actual != row.get("pinned"):
@@ -932,6 +947,21 @@ def cmd_verify(repo, args):
         say()
         say("FAILED: %d pin(s) disagree with the frozen lock." % len(problems))
         return 1
+    if unchecked:
+        if getattr(args, "strict", False):
+            say()
+            for pin in unchecked:
+                say("FAIL: %s: the lock records a pin this checkout cannot read (the parent "
+                    "repository is not checked out)" % pin)
+            say()
+            say("FAILED: %d frozen pin(s) were not verified; --strict requires all of them."
+                % len(unchecked))
+            return 1
+        say()
+        say("PASS-PARTIAL: every pin this checkout can read is the pin the lock records.")
+        say("  %d frozen pin(s) were NOT checked: %s" % (len(unchecked), ", ".join(unchecked)))
+        say("  the release path runs this with --strict after `submodules: recursive`")
+        return 0
     say()
     say("PASS: every pin in the tree is the pin the lock records.")
     return 0
@@ -972,6 +1002,8 @@ def main(argv):
 
     verify = sub.add_parser("verify", help="compare the tree with the frozen lock")
     verify.add_argument("--lock", required=True)
+    verify.add_argument("--strict", action="store_true",
+                        help="a pin this checkout cannot read is a failure, not a partial pass")
     verify.set_defaults(func=cmd_verify)
 
     args = parser.parse_args(argv)
