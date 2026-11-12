@@ -51,7 +51,7 @@
       "slug": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
       "policy": "update",
-      "note": "The option-to-Config pass-through for QUIC; carries the owned-datagram ceiling."
+      "note": "The option-to-Config pass-through for QUIC; carries the owned-datagram ceiling. The pinned commit is one fix commit ahead of main for audit Q09 (per-creation admission across the three shared QUIC clients, TUIC authentication inside the creation); it is not merged to main yet, so `check` reports AHEAD until it is."
     },
     {
       "module": "github.com/sagernet/quic-go",
@@ -73,6 +73,20 @@
       "branch": "awg3-inject",
       "policy": "update",
       "note": "The AmneziaWG injection line (awg3-inject) consumed through the fork replace; awg-base/awg-graft were archived and deleted on 2026-11-11 after supersession evidence."
+    },
+    {
+      "module": "github.com/sagernet/sing-anytls",
+      "slug": "Piggy-Cat-bit-shadow/sing-anytls",
+      "branch": "fix/admit-creation-only-2026-11-12",
+      "policy": "update",
+      "note": "The AnyTLS session pool. Consumed for audit Q10: the client asks AdmitCreation only on a real session creation, so reusing an idle session is neither charged nor blocked by the creation budget. Temporary fix branch; when the upstream PR lands, move the pin to main before the branch is deleted."
+    },
+    {
+      "module": "github.com/enfein/mieru/v3",
+      "slug": "Piggy-Cat-bit-shadow/mieru",
+      "branch": "fix/underlay-closed-2026-11-12",
+      "policy": "update",
+      "note": "The Mieru client SDK. Consumed for audit Q04: a session attach is refused on a closed underlay, and the stream/packet wrappers hold the lifecycle mutex across attach so a teardown cannot observe a half-attached session. Temporary fix branch; when the upstream PR lands, move the pin to main before the branch is deleted."
     },
     {
       "module": "github.com/sagernet/cronet-go",

@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -69,6 +70,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	} else {
 		receiveBps = uint64(options.DownMbps) * hysteria.MbpsToBps
 	}
+	guard := resourceguard.FromContext(ctx)
 	client, err := hysteria.NewClient(hysteria.ClientOptions{
 		Context:       ctx,
 		Dialer:        outboundDialer,
@@ -83,6 +85,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		TLSConfig:     tlsConfig,
 		QUICOptions:   buildOutboundQUICOptions(options),
 		UDPDisabled:   !common.Contains(networkList, N.NetworkUDP),
+		// One permit per real connection creation; streams on an established connection never
+		// reach this hook, and concurrent waiters share the one creation it bounds.
+		AdmitCreation: admitCreation(guard, "hysteria/"+options.ServerOptions.Build().String()),
 	})
 	if err != nil {
 		return nil, err

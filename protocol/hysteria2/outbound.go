@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
@@ -227,6 +228,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			"). This path cannot carry a standard QUIC handshake; configure a larger tunnel MTU or ",
 			"reach this server without this detour")
 	}
+	// One admission seam for the whole outbound, whichever family builds the connection: each REAL
+	// creation asks the process policy for one permit, and a stream on an established connection
+	// never reaches the hook. Both family clients share the key, so a saturated gate reports one
+	// destination rather than two.
+	guard := resourceguard.FromContext(ctx)
+	admissionKey := "hysteria2/" + options.ServerOptions.Build().String()
+
 	newClient := func(clientDialer N.Dialer) (*hysteria2.Client, error) {
 		return hysteria2.NewClient(hysteria2.ClientOptions{
 			Context:            ctx,
@@ -255,10 +263,11 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 				InitialPacketSizeCeiling: sizing.HardCeiling,
 				DisablePathMTUDiscovery:  sizing.DisablePMTUD,
 			},
-			UDPDisabled:  !common.Contains(networkList, N.NetworkUDP),
-			BBRProfile:   options.BBRProfile,
-			ChromeParrot: !options.DisableChromeParrot,
-			RealmOptions: realmOptions,
+			UDPDisabled:   !common.Contains(networkList, N.NetworkUDP),
+			BBRProfile:    options.BBRProfile,
+			ChromeParrot:  !options.DisableChromeParrot,
+			RealmOptions:  realmOptions,
+			AdmitCreation: admitCreation(guard, admissionKey),
 		})
 	}
 	if familyDialers[0] != nil && familyDialers[1] != nil {

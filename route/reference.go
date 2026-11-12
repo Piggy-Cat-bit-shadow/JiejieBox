@@ -3,7 +3,9 @@ package route
 import (
 	"context"
 	"slices"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/power"
@@ -30,6 +32,25 @@ type ReferenceManager struct {
 	devicePaused           atomic.Bool
 	keepIdle               map[any]bool
 	unreferencedTransports map[string]bool
+	// activity is the payload-activity ledger for the on-demand tunnels. It is what makes "this
+	// tunnel is CARRYING something" an answer this pass can ask for instead of inferring it from a
+	// reference or a connection count; see route/traffic_activity.go for the decision and its scope.
+	activity *tunnelActivity
+	// now is the clock the activity window and the recheck deadline are measured on. It is time.Now
+	// in production and injectable so a test can move time through a pause without sleeping, which is
+	// the only way the window and the deadline can be asserted deterministically.
+	now func() time.Time
+	// recheckTimer bounds how long a busy tunnel can hold its exemption. It is armed only while a
+	// paused, referenced tunnel is carrying traffic, at the instant that traffic stops being recent;
+	// it is the timeout half of the decision, without which a tunnel that once carried something
+	// would be kept for the rest of the sleep. See armRecheck.
+	recheckAccess sync.Mutex
+	recheckTimer  *time.Timer
+	recheckAt     time.Time
+	// pausedAtLastPass is the device level the previous pass saw, and it exists for one log line: the
+	// exemption is granted without changing any verdict, so "the tunnel was kept" has no transition
+	// to hang the evidence on. It is only touched from the pass itself.
+	pausedAtLastPass bool
 	// powerGovernor is the sleep authority, and the source of the reuse epoch. It is nil in a build
 	// with no governor installed, in which case a resume boundary does not exist and nothing here
 	// changes - the same zero-configuration rule the rest of the power wiring follows.
@@ -65,7 +86,7 @@ func NewReferenceManager(ctx context.Context, logger log.ContextLogger, options 
 	if options.DNS != nil {
 		dnsRules = options.DNS.Rules
 	}
-	return &ReferenceManager{
+	manager := &ReferenceManager{
 		ctx:              ctx,
 		logger:           logger,
 		rules:            rules,
@@ -77,6 +98,27 @@ func NewReferenceManager(ctx context.Context, logger log.ContextLogger, options 
 		// the router does the same for traffic observation.
 		powerGovernor: service.FromContext[*power.Governor](ctx),
 	}
+	// The activity window comes from the sleep authority, not from a constant here: it is the same
+	// kind of threshold as DeepIdleAfter and the same reason applies - one edit changes the whole
+	// core's trade, and no module can quietly disagree with another.
+	//
+	// A build with no governor installed still gets the ledger, at the shipped window: the ledger is
+	// observational, and an embedder that did not install the power service should not thereby lose
+	// the promise that a pause does not cut a transfer.
+	activityWindow := power.DefaultPolicy().OnDemandIdleAfter
+	if manager.powerGovernor != nil {
+		activityWindow = manager.powerGovernor.OnDemandIdleAfter()
+	}
+	manager.activity = newTunnelActivity(activityWindow, manager.clock)
+	return manager
+}
+
+// clock reads the manager's clock, which is time.Now unless a test installed one.
+func (m *ReferenceManager) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 func appendDomainResolver(transports []string, rawOptions any) []string {
@@ -167,9 +209,12 @@ func (m *ReferenceManager) Start(stage adapter.StartStage, scope *adapter.Scope)
 		service.MustRegister[adapter.ResidencyReporter](m.ctx, m)
 	}
 	// Registered last so that it is the FIRST cleanup to run: the manager must be marked closed
-	// before the pools and managers it reaches are torn down, not after.
+	// before the pools and managers it reaches are torn down, not after. The activity deadline is
+	// disarmed with it, because a wake-up after this point would run a pass against those same
+	// half-closed managers.
 	scope.Add(func() error {
 		m.closed.Store(true)
+		m.cancelRecheck()
 		return nil
 	})
 	return nil
@@ -326,6 +371,7 @@ func (m *ReferenceManager) update() {
 	}
 
 	devicePaused := m.devicePaused.Load()
+	now := m.clock()
 	keepIdle := make(map[any]bool)
 	for _, outbound := range outboundManager.Outbounds() {
 		keeper, isKeeper := outbound.(adapter.IdleConnectionKeeper)
@@ -342,17 +388,49 @@ func (m *ReferenceManager) update() {
 			keep:     referencedOutbounds[outbound.Tag()],
 		})
 	}
+	var recheckDeadline time.Time
+	pauseBegan := devicePaused && !m.pausedAtLastPass
 	for _, endpoint := range onDemandEndpoints {
+		tag := endpoint.Tag()
+		referenced := referencedOutbounds[tag]
+		// An on-demand tunnel is suspended at a device pause only when it is IDLE. "Idle" is payload
+		// that has not moved for the activity window - not an unreferenced tag and not an empty
+		// stream count; route/traffic_activity.go says why those two proxies are wrong in both
+		// directions. A tunnel that is carrying traffic keeps its transport, which is the behaviour
+		// common/runtimecoord/platform_events.go has promised all along and the one the audit could
+		// not find in the code (Q07, option (a)).
+		busy := referenced && devicePaused && m.activity.active(tag, now)
+		keep := referenced && (!devicePaused || busy)
+		previousKeep, trackedKeep := m.keepIdle[endpoint]
 		m.applyKeepIdle(keepIdle, idleTarget{
 			value:        endpoint,
 			keeper:       endpoint,
 			kind:         "endpoint/",
 			action:       "suspending",
 			typeName:     endpoint.Type(),
-			tag:          endpoint.Tag(),
-			keep:         referencedOutbounds[endpoint.Tag()] && !devicePaused,
+			tag:          tag,
+			keep:         keep,
 			devicePaused: devicePaused,
 		})
+		// The exemption is logged where it is granted, once: at the pause that found the tunnel
+		// carrying traffic, or when a tunnel a demand resumed during the pause gets the verdict back.
+		// It is deliberately not inside applyKeepIdle, which returns early when the verdict did not
+		// change - and "kept across the pause" is precisely a verdict that did not change.
+		if busy && (pauseBegan || !trackedKeep || !previousKeep) {
+			m.logger.Debug("endpoint/", endpoint.Type(), "[", tag,
+				"] device paused but carrying traffic, keeping the tunnel up")
+		}
+		if busy {
+			// The exemption expires when the last payload grows old. The earliest such instant across
+			// every kept tunnel is the next moment this pass has to look again; nothing else will
+			// wake it, because a tunnel that stops sending produces no event.
+			if lastActivity, observed := m.activity.lastActivity(tag); observed {
+				deadline := lastActivity.Add(m.activity.window)
+				if recheckDeadline.IsZero() || deadline.Before(recheckDeadline) {
+					recheckDeadline = deadline
+				}
+			}
+		}
 	}
 	unreferencedTransports := make(map[string]bool)
 	for _, transport := range transportManager.Transports() {
@@ -382,6 +460,8 @@ func (m *ReferenceManager) update() {
 	}
 	m.keepIdle = keepIdle
 	m.unreferencedTransports = unreferencedTransports
+	m.pausedAtLastPass = devicePaused
+	m.armRecheck(recheckDeadline)
 }
 
 type idleKeeper interface {
@@ -413,6 +493,108 @@ func (m *ReferenceManager) applyKeepIdle(keepIdle map[any]bool, target idleTarge
 		}
 	}
 	target.keeper.SetKeepIdleConnections(target.keep)
+}
+
+// observeOnDemandFlow is the forwarding path's one call per flow, and it returns the activity record
+// the flow's bytes are counted into.
+//
+// It is called when a flow is set up, not per byte: recording the setup is what covers a flow that
+// has not sent anything yet (a demand that resumes a suspended tunnel must be allowed to finish
+// opening), and the returned slot covers the bytes that follow.
+//
+// While the device is paused this also wakes the eligibility pass. That is not cosmetic: the pass
+// cannot see a flow arrive, so without this the tunnel a demand just resumed would keep its
+// "suspend" verdict for the rest of the pause - the opposite of what this change is for. The wake is
+// one non-blocking send on a coalescing subscriber, and the pass it triggers re-arms the recheck
+// deadline, which is what ultimately reclaims the tunnel.
+func (m *ReferenceManager) observeOnDemandFlow(tag string) *tunnelActivitySlot {
+	slot := m.activity.slot(tag)
+	slot.observe()
+	if m.devicePaused.Load() && !m.closed.Load() && m.subscriber != nil {
+		m.subscriber.Emit(struct{}{})
+	}
+	return slot
+}
+
+// onDemandActivitySlot returns the activity record a flow through this chain is counted into, or nil
+// when the chain carries nothing on-demand.
+//
+// It exists so the router does not have to know how the ledger is keyed: one call per flow resolves
+// the tunnel, records the flow's setup, and hands back the pointer the byte counters use.
+func (m *ReferenceManager) onDemandActivitySlot(chain []adapter.Outbound) *tunnelActivitySlot {
+	if m == nil {
+		return nil
+	}
+	endpoint := onDemandEndpointOf(chain)
+	if endpoint == nil {
+		return nil
+	}
+	return m.observeOnDemandFlow(endpoint.Tag())
+}
+
+// recheckSlack is how far past the deadline the recheck timer fires.
+//
+// A timer that fires a hair early would find the activity still inside the window, re-arm with a
+// delay near zero, and spin until the deadline actually passed. The slack is far below the window
+// (a millisecond, against a policy in tens of seconds) and it makes the wake-up once rather than a
+// burst.
+const recheckSlack = time.Millisecond
+
+// armRecheck schedules the pass that expires the activity exemption, or cancels it when nothing is
+// being kept.
+//
+// # Why the deadline cannot be left to the callbacks
+//
+// Every other trigger for this pass is an event: a pause, a wake, a graph publication, a provider
+// round. A tunnel that stops sending produces NONE of them - the flow is still open, the device is
+// still asleep, and the last thing that happened was a byte that will never be followed by another
+// one. Without a deadline the exemption would become permanent, which is the battery regression the
+// audit's D-4 warning is about. So the exemption carries its own expiry, computed from the last
+// payload that earned it.
+func (m *ReferenceManager) armRecheck(deadline time.Time) {
+	m.recheckAccess.Lock()
+	defer m.recheckAccess.Unlock()
+	if m.recheckTimer != nil {
+		m.recheckTimer.Stop()
+		m.recheckTimer = nil
+	}
+	m.recheckAt = deadline
+	if deadline.IsZero() || m.closed.Load() {
+		return
+	}
+	delay := deadline.Sub(m.clock()) + recheckSlack
+	if delay < recheckSlack {
+		delay = recheckSlack
+	}
+	m.recheckTimer = time.AfterFunc(delay, m.onRecheck)
+}
+
+// onRecheck wakes the eligibility pass when the activity window of a kept tunnel has run out.
+func (m *ReferenceManager) onRecheck() {
+	if m.closed.Load() {
+		return
+	}
+	m.recheckAccess.Lock()
+	m.recheckTimer = nil
+	m.recheckAccess.Unlock()
+	if m.subscriber == nil {
+		return
+	}
+	m.subscriber.Emit(struct{}{})
+}
+
+// cancelRecheck disarms the deadline. It runs on teardown, where a late wake-up would reach a manager
+// whose pools and managers are being closed.
+func (m *ReferenceManager) cancelRecheck() {
+	m.armRecheck(time.Time{})
+}
+
+// recheckDeadline reports the armed deadline and whether one is armed. It is read by tests, and by
+// nothing on a data path.
+func (m *ReferenceManager) recheckDeadline() (time.Time, bool) {
+	m.recheckAccess.Lock()
+	defer m.recheckAccess.Unlock()
+	return m.recheckAt, !m.recheckAt.IsZero()
 }
 
 // TrimIdleResources is the progressive memory pass.

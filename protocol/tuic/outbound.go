@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
@@ -173,6 +174,11 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		hardCeiling = int(quicPayloadCeiling)
 		disablePMTUD = true
 	}
+	// One admission seam for this outbound: a REAL session creation asks the process policy for one
+	// permit whichever family wins the race; a new stream on an established session never reaches it.
+	guard := resourceguard.FromContext(ctx)
+	admissionKey := "tuic/" + options.ServerOptions.Build().String()
+
 	newClient := func(clientDialer N.Dialer) (*tuic.Client, error) {
 		return tuic.NewClient(tuic.ClientOptions{
 			Context:       ctx,
@@ -195,6 +201,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			UDPStream:         tuicUDPStream,
 			ZeroRTTHandshake:  options.ZeroRTTHandshake,
 			Heartbeat:         time.Duration(options.Heartbeat),
+			AdmitCreation:     admitCreation(guard, admissionKey),
 		})
 	}
 	var carrier *familyCarrier

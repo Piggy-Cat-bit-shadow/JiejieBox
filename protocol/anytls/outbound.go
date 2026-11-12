@@ -91,6 +91,10 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		IdleSessionTimeout:       options.IdleSessionTimeout.Build(),
 		MinIdleSession:           options.MinIdleSession,
 		Logger:                   logger,
+		// Creation admission belongs to the session pool: the client asks this hook only when it
+		// must create a session, never when it reuses an idle one. A nil guard keeps the SDK on its
+		// no-hook path.
+		AdmitCreation: admitSessionCreation(outbound.guard, outbound.server.String()),
 	}
 	return outbound, nil
 }
@@ -128,11 +132,14 @@ func (d anytlsDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	return nil, os.ErrInvalid
 }
 
-// dialAdmitted runs one AnyTLS dial under the process admission policy. See admission.go for
-// why the permit is taken here rather than inside the session pool, and for what exactly the
-// bound covers.
+// dialAdmitted opens one AnyTLS stream.
+//
+// It deliberately does NOT bracket the dial in the admission gate. Whether this dial creates a
+// session is known only inside the client, after its idle-reuse attempt; the client asks
+// AdmitCreation on the creation path instead (see admission.go). Bracketing here would park a
+// healthy reuse behind a saturated creation budget, which is audit Q10.
 func (h *Outbound) dialAdmitted(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
-	return dialWithAdmissionFor(ctx, h.guard, h.server.String(), h.client.DialContext, destination)
+	return h.client.DialContext(ctx, destination)
 }
 
 // dialOut opens the tunnel connection the AnyTLS session runs over.

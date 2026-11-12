@@ -4,21 +4,26 @@ package route
 //
 // # What this file records, and what it deliberately does not decide
 //
-// The audit's F-01 is a POLICY question that is still open (`docs/coupling/DECISIONS.md` D-4): the
-// eligibility pass suspends a referenced on-demand endpoint whenever the device is paused, and the
-// five endpoint kinds implement that as "tear the tunnel down now", whatever the tunnel is carrying.
-// The two promised behaviours cannot both hold - `docs/configuration/endpoint/*.md` says an
-// on-demand endpoint may be disconnected "when necessary", while
-// `common/runtimecoord/platform_events.go` says a device pause "does not stop forwarding, and it
-// never terminates an active flow", and `experimental/libbox/platform_events.go` narrows that to
-// "makes IDLE on-demand resources eligible for suspension".
+// The audit's F-01 was a POLICY question (`docs/coupling/DECISIONS.md` D-4): the eligibility pass
+// suspended a referenced on-demand endpoint whenever the device was paused, and the five endpoint
+// kinds implement that as "tear the tunnel down now", whatever the tunnel is carrying. The two
+// promised behaviours could not both hold - `docs/configuration/endpoint/*.md` says an on-demand
+// endpoint may be disconnected "when necessary", while `common/runtimecoord/platform_events.go` says
+// a device pause "does not stop forwarding, and it never terminates an active flow", and
+// `experimental/libbox/platform_events.go` narrows that to "makes IDLE on-demand resources eligible
+// for suspension".
 //
-// A test cannot decide that policy. What it can do is make the current semantics measurable, and
-// this file does exactly that: the pause path is driven through the REAL reference manager, the real
-// pause callback registration and a keeper that models what every suspend implementation does to
-// the flows on it (cancel the session / down the device / fail the session). The result is pinned
-// as a recorded fact rather than an endorsement, and the two policy options are written down where
-// the decision has to be taken instead of being chosen here.
+// The decision taken is option (a) of that record: a tunnel that is CARRYING traffic is not
+// suspended by a device pause, and an idle one still is. "Carrying" is payload that moved inside
+// `power.Policy.OnDemandIdleAfter`, measured by the ledger in route/traffic_activity.go; the tests
+// for that contract are in route/reference_activity_test.go.
+//
+// This file keeps the two facts that decision has to be read against:
+//
+//   - the teardown still happens for a tunnel with no traffic, so what the five implementations do
+//     when they are told keep=false is unchanged and is asserted here rather than assumed;
+//   - the verdict comes from the pause manager's callbacks, not from a re-read of the manager's
+//     level. A test cannot decide the policy, and the policy did not change that rule either.
 //
 // # One candidate fix that was written, measured and WITHDRAWN
 //
@@ -36,6 +41,10 @@ package route
 //     pass fires first while the old instance is still published, and the test fails with "the
 //     service has an instance while the reload is in flight" (measured in CI run 43126821928 and
 //     reproduced locally). The pass therefore keeps reading the cache, and that is asserted below.
+//
+// The activity exemption does not reintroduce that read: it asks the pause manager nothing at all,
+// and the deadline its recheck timer is armed on is a duration, not a second opinion about the
+// level.
 
 import (
 	"context"
@@ -46,6 +55,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/power"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/x/list"
@@ -185,12 +195,53 @@ type pauseFixture struct {
 	endpoint *onDemandTestEndpoint
 	pause    *fakePauseManager
 	manager  *outbound.Manager
+	// reference is the manager under test. The activity tests drive its clock and read its deadlines
+	// through it, so the fixture hands it out rather than keeping it private.
+	reference *ReferenceManager
+	// clock is the fake time source installed before Start: the activity window is a duration, and a
+	// test that waited for it would be measuring the scheduler instead of the policy.
+	clock *pauseClock
 	// pass runs one eligibility pass deterministically: a graph publication is a real event the
 	// manager emits, so the pass it triggers is the production trigger rather than a direct call.
 	pass func()
 }
 
+// pauseClock is a hand-driven clock. It is safe for concurrent use because the eligibility pass reads
+// it from its own goroutine while the test advances it.
+type pauseClock struct {
+	access sync.Mutex
+	at     time.Time
+}
+
+func newPauseClock() *pauseClock {
+	return &pauseClock{at: time.Date(2026, 11, 12, 3, 0, 0, 0, time.UTC)}
+}
+
+func (c *pauseClock) Now() time.Time {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return c.at
+}
+
+func (c *pauseClock) Advance(delta time.Duration) {
+	c.access.Lock()
+	defer c.access.Unlock()
+	c.at = c.at.Add(delta)
+}
+
 func newPauseFixture(t *testing.T) *pauseFixture {
+	t.Helper()
+	return newPauseFixtureWithGovernor(t, nil, newPauseClock())
+}
+
+// newPauseFixtureWithGovernor is the same fixture with a hand-built power policy and, optionally, a
+// nil clock - which means real time.
+//
+// Both halves exist because the two kinds of assertion need different tools: the window and the
+// deadline are durations, so a test that waited for them with the shipped policy would measure the
+// scheduler, while the TIMER that expires the exemption is real time and cannot be driven from a
+// fake clock.
+func newPauseFixtureWithGovernor(t *testing.T, governor *power.Governor, clock *pauseClock) *pauseFixture {
 	t.Helper()
 	registry := outbound.NewRegistry()
 	outbound.Register[publishKeeperOptions](registry, "publish-test",
@@ -216,11 +267,24 @@ func newPauseFixture(t *testing.T) *pauseFixture {
 	ctx = service.ContextWith[adapter.ServiceManager](ctx, &reuseTestServiceManager{})
 	ctx = service.ContextWith[adapter.DNSTransportManager](ctx, &reuseTestDNSTransportManager{})
 	ctx = service.ContextWith[adapter.NetworkManager](ctx, &reuseTestNetworkManager{})
+	if governor != nil {
+		ctx = service.ContextWith[*power.Governor](ctx, governor)
+	}
 
 	reference := NewReferenceManager(ctx, log.NewNOPFactory().NewLogger("reference"), option.Options{})
+	// Install the clock BEFORE Start: the first pass runs inside Start, and a clock installed after
+	// it would leave the initial verdict on the system clock.
+	if clock != nil {
+		reference.now = clock.Now
+	}
 	scope := adapter.NewScope(ctx, log.NewNOPFactory().Logger())
 	require.NoError(t, reference.Start(adapter.StartStateStarted, scope))
-	t.Cleanup(func() { require.NoError(t, scope.Close()) })
+	t.Cleanup(func() {
+		require.NoError(t, scope.Close())
+		if governor != nil {
+			governor.Close()
+		}
+	})
 
 	// The first pass runs inside Start; the endpoint is already referenced there, so it has been
 	// told keep=true once. Drain that observation so each test asserts only what it causes.
@@ -229,10 +293,12 @@ func newPauseFixture(t *testing.T) *pauseFixture {
 		"a referenced on-demand endpoint must start allowed to keep its tunnel")
 
 	return &pauseFixture{
-		t:        t,
-		endpoint: endpoint,
-		pause:    pauseManager,
-		manager:  manager,
+		t:         t,
+		endpoint:  endpoint,
+		pause:     pauseManager,
+		manager:   manager,
+		reference: reference,
+		clock:     clock,
 		pass: func() {
 			// A publication is the cheapest real trigger the manager emits. The keeper's identity is
 			// irrelevant to the endpoint verdict; what matters is that the pass runs asynchronously
@@ -243,16 +309,19 @@ func newPauseFixture(t *testing.T) *pauseFixture {
 	}
 }
 
-// TestADevicePauseSuspendsATunnelThatIsCarryingAStream is the F-01 counterexample, recorded.
+// TestADevicePauseStillSuspendsATunnelThatMovedNoTraffic is the negative control for the Q07
+// exemption, and it preserves the fact the audit recorded: a suspend reaches the endpoint, the
+// endpoint implements it as a teardown, and the flows on the tunnel die.
 //
-// It is deliberately an assertion about TODAY's behaviour: the pause reaches the endpoint, the
-// endpoint implements it as a teardown, and the stream that was running on the tunnel dies. This is
-// the behaviour the audit could not find a guard for, and the platform contract
-// (common/runtimecoord/platform_events.go: "it never terminates an active flow") contradicts it.
-// The decision - defer the suspend until the tunnel is idle, or accept the teardown - is a product
-// decision that DECISIONS.md D-4 still records as open; choosing it here would be inventing policy.
-func TestADevicePauseSuspendsATunnelThatIsCarryingAStream(t *testing.T) {
+// What changed is which tunnels a pause reaches. A flow that is open but has moved no payload is
+// IDLE by the policy's definition - the connection count is exactly the proxy the decision rejects,
+// because a banking app's silent TLS session and a download are both "one stream" - so this case
+// still ends in the teardown the five implementations perform. The positive case, where payload did
+// move, is TestADevicePauseKeepsATunnelThatIsCarryingTraffic in route/reference_activity_test.go.
+func TestADevicePauseStillSuspendsATunnelThatMovedNoTraffic(t *testing.T) {
 	fixture := newPauseFixture(t)
+	// A flow is open on the tunnel and nothing has been counted for it: this is the idle case the
+	// exemption must NOT cover.
 	fixture.endpoint.openStream()
 	_, _, streams, kills := fixture.endpoint.snapshot()
 	require.Equal(t, 1, streams)
@@ -268,8 +337,8 @@ func TestADevicePauseSuspendsATunnelThatIsCarryingAStream(t *testing.T) {
 	require.Equal(t, []bool{true, false}, verdicts)
 	require.Zero(t, streams, "the suspended tunnel still reports a flow")
 	require.Equal(t, 1, kills,
-		"RECORDED F-01 BEHAVIOUR: a device pause terminated the flow the tunnel was carrying. "+
-			"The platform contract says a pause never terminates an active flow; the two cannot both hold.")
+		"an idle tunnel must still be suspended at a pause: the exemption is for traffic, not for "+
+			"the existence of a flow, and with no payload the pre-Q07 behaviour is correct")
 }
 
 // TestThePauseVerdictComesFromTheManagersCallbacks is the contract the withdrawn fix would have

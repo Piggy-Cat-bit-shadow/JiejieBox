@@ -77,21 +77,27 @@ unchanged.
 
 ## Documented — defects with a concrete next step
 
-### F-01 — An on-demand tunnel can be suspended while it carries traffic (High, risk)
+### F-01 — An on-demand tunnel can be suspended while it carries traffic (High, **decided: D-4**)
 
 The eligibility pass suspends a referenced on-demand endpoint whenever the device
-is paused (`route/reference.go:339`). MASQUE's suspend cancels the live session
-unconditionally (`transport/masque/client.go:429-442`); WireGuard's downs the
-device (`protocol/wireguard/endpoint.go:698-714`). The stage-1 test comment
+is paused (`route/reference.go`). MASQUE's suspend cancels the live session
+unconditionally (`transport/masque/client.go`); WireGuard's downs the
+device (`protocol/wireguard/endpoint.go`). The stage-1 test comment
 describes the exact user-visible case — a tethered client through a phone tunnel
-whose owner's screen goes off — and no guard refuses the suspend while flows are
+whose owner's screen goes off — and no guard refused the suspend while flows were
 active.
 
-Next step: a policy test with a fake pause manager and a real endpoint carrying a
-stream, asserting whether the stream survives. If it does not, the decision is
-whether `SetKeepIdleConnections(false)` should be deferred until the tunnel is
-idle, or whether "device paused" must not reach a tunnel with live flows. Both
-are product decisions; the audit did not pick one.
+The question was put to the product owner and answered: a device pause suspends
+only **idle** on-demand tunnels. The verdict now reads the activity ledger in
+`route/traffic_activity.go` (payload that moved inside
+`power.Policy.OnDemandIdleAfter`, 60 s by default) instead of the reference alone,
+and a kept tunnel carries its own expiry so the exemption cannot become permanent.
+`route/reference_pause_test.go` keeps the idle case (a pause still suspends a
+tunnel that moved nothing) and `route/reference_activity_test.go` pins the carrier
+case, the expiry, and the wake. The remaining work is **device**: battery and
+business continuity under a real lock screen, per
+`docs/fork/apple-screen-state-acceptance.md` §6; it is not claimed by the unit
+tests. Rationale and rejected option (b) in `docs/coupling/DECISIONS.md` D-4.
 
 ### F-06 — AnyTLS charges a creation permit for a pure reuse (Medium, documented)
 

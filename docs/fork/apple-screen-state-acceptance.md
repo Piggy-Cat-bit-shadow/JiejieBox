@@ -303,25 +303,26 @@ Three requirements, and they are not equally testable.
    and see §5.1), `transport/v2rayxhttp` (drains busy sessions), the HTTP/2/gRPC/QUIC pools
    (idle-only), and the DNS transports. `TestReuseBoundaryRetiresIdlePoolsAndPreservesLiveStreams`
    and `TestTheBoundaryDrainsAPoolThatCanRefuseNewWork` pin the two actions.
-2. **"不要因为 pause 错误释放热点必须的活跃 path" — this is a real, narrow risk and it is a
-   deliberate policy, not a defect.** The device level suspends on-demand tunnels:
-   `route/reference.go`'s eligibility pass computes
-   `keep: referencedOutbounds[endpoint.Tag()] && !devicePaused` for every `adapter.OnDemandEndpoint`,
-   so a screen-off calls `SetKeepIdleConnections(false)` on a WireGuard / MASQUE / OpenVPN /
-   OpenConnect / Tailscale endpoint that is *in the active routing set*, whether or not it is
-   carrying traffic. What that does is a suspend of the tunnel itself:
-   `transport/wireguard/endpoint.go:378` → `wgDevice.Down()`,
-   `protocol/tailscale/endpoint.go:665` → `WantRunning: false`,
-   `protocol/masque/client.go:513`, `protocol/openvpn/client.go:683`,
-   `protocol/openconnect/client.go:504` → `client.Suspend()`.
-   The recovery path exists and is demand-driven: `transport/wireguard/endpoint.go:357`
-   (`resumeForCaller`) wakes a suspended endpoint for a real flow and refuses to for a background
-   probe; the other four call `Resume()` in `waitReady`.
-   **This is not changed here.** §8.3 forbids inventing policy, the suspend is the pre-existing power
-   behaviour this stream inherited (introduced by `4aaa2372c`/`7d597e56a`, before the screen-state
-   work), and "should a device pause suspend a tunnel that is carrying hotspot traffic" is a policy
-   question whose answer depends on measurements this host cannot take. It is written down rather
-   than silently re-decided.
+2. **"不要因为 pause 错误释放热点必须的活跃 path" — this was a real, narrow risk, and Q07 has
+   now decided it (DECISIONS.md D-4, option a).** The device level suspends an on-demand tunnel only
+   when the tunnel is IDLE. `route/reference.go`'s eligibility pass computes the verdict from the
+   activity ledger in `route/traffic_activity.go`:
+   `keep = referenced && (!devicePaused || trafficMovedWithin(power.Policy.OnDemandIdleAfter))`, so
+   a screen-off calls `SetKeepIdleConnections(false)` on a WireGuard / MASQUE / OpenVPN /
+   OpenConnect / Tailscale endpoint that is *in the active routing set and has moved no payload for
+   the window*, and leaves a tunnel that is carrying traffic alone. What the suspend does when it is
+   taken is unchanged: `transport/wireguard` → `wgDevice.Down()`, `protocol/tailscale` →
+   `WantRunning: false`, `protocol/masque`, `protocol/openvpn`, `protocol/openconnect` →
+   `client.Suspend()`. The recovery path is unchanged too and stays demand-driven:
+   `transport/wireguard`'s `resumeForCaller` wakes a suspended endpoint for a real flow and refuses
+   to for a background probe; the other four call `Resume()` in `waitReady`.
+   **What is proven here is the contract, not the power.** The unit tests pin "carrying survives the
+   pause", "idle is still suspended", "the window expires and the tunnel is then suspended", and
+   "wake restores normal management"; the battery cost of keeping a transfer alive across a real
+   lock screen, and the continuity of the transfer itself, are §6 device items and are **not
+   claimed**. The one shape the exemption does not cover is a tunnel used as another outbound's
+   `detour`: that traffic does not pass through the router's chain walk (recorded in
+   `route/traffic_activity.go` and D-4).
 3. **"不要出现手机自身 tunnel 看起来活着，但热点设备断网" — NOT testable here, and the evidence
    that is missing is specific.** The whole case rests on a fact that is not in this repository and
    cannot be derived from it: **whether Personal Hotspot traffic from a tethered client enters the

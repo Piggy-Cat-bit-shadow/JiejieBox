@@ -65,6 +65,55 @@ func (r *Router) observeTraffic() {
 	}
 }
 
+// onDemandActivity resolves the on-demand tunnel a chain carries traffic through, records the flow's
+// setup against it, and returns the record its bytes are counted into.
+//
+// It is nil when this chain does not end at an on-demand tunnel, which is the common case, and when
+// there is no reference manager to own the ledger (a Router built directly in a test). It is never
+// nil for a chain the device's own traffic is about to enter a WireGuard, MASQUE, OpenVPN,
+// OpenConnect or Tailscale tunnel through - that flow is exactly the evidence a device pause is not
+// allowed to cut it.
+//
+// # The three data paths, and why all three are here
+//
+// A flow can reach a tunnel three ways, and a tunnel is "carrying traffic" if any of them moved:
+//
+//   - a stream, which the router wraps at setup and the flow then carries (trackOnDemandActivity);
+//   - a packet session, wrapped the same way (trackOnDemandPacketActivity);
+//   - a DIRECT-OFFLOAD flow, which the TUN stack hands straight to a flow-capable endpoint and never
+//     turns into a conn at all. That one is counted by a tun.FlowTracker added where the flow's
+//     trackers are created, because it is the only object that sees the packets.
+//
+// Counting here rather than inside each endpoint is the decision recorded in
+// route/traffic_activity.go: one implementation covers all five kinds, and a sixth kind is covered
+// without touching its protocol. The limit of that choice is written down there too - traffic that
+// reaches a tunnel as another outbound's DETOUR does not pass through the chain walk and is not
+// counted.
+func (r *Router) onDemandActivity(chain []adapter.Outbound) *tunnelActivitySlot {
+	if r.referenceManager == nil {
+		return nil
+	}
+	return r.referenceManager.onDemandActivitySlot(chain)
+}
+
+// trackOnDemandActivity wraps a stream flow with the activity counter for the tunnel it enters.
+func (r *Router) trackOnDemandActivity(conn net.Conn, chain []adapter.Outbound) net.Conn {
+	slot := r.onDemandActivity(chain)
+	if slot == nil {
+		return conn
+	}
+	return slot.wrapConn(conn)
+}
+
+// trackOnDemandPacketActivity is trackOnDemandActivity for a packet session.
+func (r *Router) trackOnDemandPacketActivity(conn N.PacketConn, chain []adapter.Outbound) N.PacketConn {
+	slot := r.onDemandActivity(chain)
+	if slot == nil {
+		return conn
+	}
+	return slot.wrapPacketConn(conn)
+}
+
 func (r *Router) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	// Real traffic, observed at the one place that can distinguish it.
 	//
@@ -196,6 +245,10 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 	// every consumer of OutboundChain looking at an unclassified flow.
 	metadata.TrafficClass = resolveTrafficClass(chain, r.trafficClassPolicies)
 	metadata.OutboundChain = chain
+	// Before the trackers and before the connection manager: a flow through an on-demand tunnel is
+	// what makes that tunnel "active" for the device-pause verdict, and this is where its payload is
+	// both visible and attributable. See route/traffic_activity.go.
+	conn = r.trackOnDemandActivity(conn, chain)
 	for _, tracker := range r.trackers {
 		conn = tracker.RoutedConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
 	}
@@ -483,6 +536,9 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	// every consumer of OutboundChain looking at an unclassified flow.
 	metadata.TrafficClass = resolveTrafficClass(chain, r.trafficClassPolicies)
 	metadata.OutboundChain = chain
+	// As on the stream path: count the session's datagrams against the tunnel carrying them, before
+	// anything else wraps the conn.
+	conn = r.trackOnDemandPacketActivity(conn, chain)
 	for _, tracker := range r.trackers {
 		conn = tracker.RoutedPacketConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
 	}
@@ -1240,11 +1296,18 @@ func (r *Router) preMatchFlowWithTruth(ctx context.Context, metadata *adapter.In
 	metadataCopy := *metadata
 	result.NewTracker = func() tun.FlowTracker {
 		r.logger.InfoContext(ctx, "pre-match: forward ", metadataCopy.Network, " connection from ", metadataCopy.Source, " to ", metadataCopy.Destination, " via outbound/", outbound.Type(), "[", outbound.Tag(), "]")
-		flowTrackers := make([]tun.FlowTracker, 0, len(r.trackers)+2)
+		flowTrackers := make([]tun.FlowTracker, 0, len(r.trackers)+3)
 		flowTrackers = append(flowTrackers, adapter.NewFlowLogger(ctx, r.logger, metadataCopy, outbound))
 		flowInterrupter := newFlowInterrupter(chain)
 		if flowInterrupter != nil {
 			flowTrackers = append(flowTrackers, flowInterrupter)
+		}
+		// The third and least obvious data path: a flow handed straight to a tun-like endpoint never
+		// becomes a conn or a packet conn, so the ledger would see nothing of it without this. The
+		// setup call is the same one the other two paths make, and it is what a demand that resumed a
+		// suspended tunnel is counted by before it moves its first byte.
+		if slot := r.onDemandActivity(chain); slot != nil {
+			flowTrackers = append(flowTrackers, newActivityFlowTracker(slot))
 		}
 		for _, tracker := range r.trackers {
 			flowTracker := tracker.RoutedFlow(ctx, metadataCopy, matchedRule, outbound)
