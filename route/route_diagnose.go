@@ -33,6 +33,22 @@ package route
 // registry: a diagnostic must not create a managed connection, and it must not delete URLTest
 // health evidence the way a real flow's failure does. The dial itself still goes through the
 // outbound the decision selected, including a failover-capable group's own dial.
+//
+// # Health evidence is suppressed at the WRITER, not asserted here
+//
+// Running production's dial means writing whatever production writes, and a failover-capable group
+// writes a penalty for a failed member and proof of life for a successful one. A probe that is
+// allowed to write that ledger can DEMOTE the member carrying the user's traffic - the diagnostic
+// would move the very selection it is supposed to explain. The dial therefore runs under
+// adapter.WithDiagnosticDial, and the group suppresses its own ledger writes when it sees the marker.
+// That is a promise kept by the owner of the state rather than a promise made in a comment here.
+//
+// # The chain is recorded, not reconstructed
+//
+// The same dial runs under an adapter.DialPath record, so the report can state which group handed the
+// connection to which member - including a group that handed it to a SECOND member after the first
+// did not carry it. That fact comes from the decision points during the dial; reading the group's
+// current selection afterwards would describe a path this request never took.
 
 import (
 	"context"
@@ -133,12 +149,24 @@ type RouteDiagnoseResult struct {
 	// A failover-capable group owns the dial and re-resolves a member per attempt, so the
 	// pre-selected leaf is not necessarily the member that answered.
 	DialedOutboundKnown bool
-	// Dialed reports that a dial was attempted.
+	// Dialed is true when a dial was attempted. It is also the gate for the two attribution facts
+	// below: a decision that never dialled has no chain and no recovery to report.
 	Dialed bool
 	// DialError is the dial's outcome; Conn is the established connection on success and belongs to
 	// the caller, who must close it.
 	DialError error
 	Conn      net.Conn
+
+	// DialSteps is the chain the dial ACTUALLY went through, recorded by the groups that made the
+	// decisions while the dial was running (adapter.DialPath). It is a fact about this dial, not a
+	// read of the current selector: a group that moved after the dial cannot change what happened.
+	DialSteps []adapter.DialPathStep
+	// RecoveredThrough names the group that handed this dial to a second member, and the two members
+	// in order, when the recorded chain shows one. Empty means no such hand-off was observed - not
+	// that none happened (a chain that a nested detour owns is outside the recorded boundary).
+	RecoveredThrough string
+	RecoveredFrom    string
+	RecoveredTo      string
 
 	// WalkMs, ResolveMs and DialMs are the phase durations of this ONE execution, so the report can
 	// still show where the time went without re-running anything.
@@ -283,17 +311,35 @@ func (r *Router) DiagnoseRoute(ctx context.Context, request RouteDiagnoseRequest
 	dialDestination := metadata.Destination
 	result.DialedDestination = destinationForError(metadata)
 	dialler := routeDialer(leaf, dialOwner, &metadata)
+	// The dial runs under a record of its own decisions and under the diagnostic marker.
+	//
+	// The record is how "the group moved this flow to another member" becomes a FACT rather than a
+	// guess from the current selection: the groups write into it while the dial runs. The marker is
+	// how this dial says it is a probe, so an owner of long-lived health evidence does not record a
+	// probe outcome as if a user's traffic had produced it - a diagnostic must not be able to demote
+	// the member carrying the user's connections.
+	dialPath := adapter.NewDialPath()
+	dialPath.BeginDial()
+	dialCtx := adapter.WithDiagnosticDial(adapter.WithDialPath(ctx, dialPath))
 	if len(metadata.DestinationAddresses) > 0 || dialDestination.IsIP() {
-		result.Conn, result.DialError = dialer.DialSerialNetwork(ctx, dialler, network, dialDestination,
+		result.Conn, result.DialError = dialer.DialSerialNetwork(dialCtx, dialler, network, dialDestination,
 			metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType,
 			metadata.FallbackNetworkType, metadata.FallbackDelay)
 	} else {
 		// A name with no address candidates: the outbound resolves it with its own DNS path, which
 		// is what production does. Resolving it here would take the decision away from the outbound
 		// (a remote-resolving proxy must receive the NAME, not an address chosen for it).
-		result.Conn, result.DialError = dialler.DialContext(ctx, network, dialDestination)
+		result.Conn, result.DialError = dialler.DialContext(dialCtx, network, dialDestination)
 	}
 	result.DialMs = time.Since(dialStart).Milliseconds()
+	result.DialSteps = dialPath.Snapshot()
+	if result.Conn != nil {
+		// A recovery is only reported for a dial that PRODUCED a connection. A failed dial can still
+		// have a two-member chain (the alternate failed too), and calling that "recovered" would be
+		// the same kind of lie as naming a dead candidate "connected".
+		result.RecoveredThrough, result.RecoveredFrom, result.RecoveredTo, _ =
+			dialPath.Result().Recovery()
+	}
 	diagnoseDialAttribution(&result, leaf)
 	return result, nil
 }

@@ -45,6 +45,11 @@ import (
 type DialPathStep struct {
 	// Tag is the outbound tag that took over the dial.
 	Tag string
+	// Group is the tag of the object that CHOSE Tag, when that is an outbound group. It is empty for
+	// a step recorded without a chooser (the leaf a caller dialled directly), and it is what makes
+	// "the same group handed this dial to two members" observable: a chain of tags alone cannot tell
+	// two nested groups apart from one group retrying.
+	Group string
 	// Revision is the selection revision of the object that chose Tag. It is 0 with HasRevision
 	// false when that object has no revision, which is "unknown", not "revision zero".
 	Revision    uint64
@@ -171,6 +176,15 @@ func (p *DialPath) MarkDirect() {
 
 // Record appends the object a dial was handed to.
 func (p *DialPath) Record(tag string, revision uint64, hasRevision bool) {
+	p.RecordStep("", tag, revision, hasRevision)
+}
+
+// RecordStep appends one decision point together with the object that made it.
+//
+// group is the chooser when the chooser is an outbound group, and empty when the caller dialled the
+// object itself. Keeping the chooser on the step is what lets a reader tell ONE group that moved the
+// flow to a second member (the same Group, a different Tag) from two nested groups (two Groups).
+func (p *DialPath) RecordStep(group string, tag string, revision uint64, hasRevision bool) {
 	if p == nil || tag == "" {
 		return
 	}
@@ -180,7 +194,7 @@ func (p *DialPath) Record(tag string, revision uint64, hasRevision bool) {
 		p.truncated = true
 		return
 	}
-	p.steps = append(p.steps, DialPathStep{Tag: tag, Revision: revision, HasRevision: hasRevision})
+	p.steps = append(p.steps, DialPathStep{Tag: tag, Group: group, Revision: revision, HasRevision: hasRevision})
 }
 
 // Replay publishes the chain of a connection this exchange is REUSING.
@@ -266,6 +280,36 @@ func (r DialPathResult) Leaf() (DialPathStep, bool) {
 	return r.Steps[len(r.Steps)-1], true
 }
 
+// Recovery reports the hand-off a group made to a SECOND member during this dial.
+//
+// # What this is and is not
+//
+// It is a fact about the recorded chain: one group (the same Group on adjacent steps) handed the
+// dial to one member and then to a different one, and the connection the caller holds belongs to the
+// later member. A failover-capable group only records a second member after the first attempt did
+// not produce a connection, so for that shape the reading is "the group did not give up on the
+// first choice". The step does not carry the failure's cause, so this deliberately does not claim
+// one: the same group can also legitimately hand two members to two address candidates of one dial,
+// and that is still a dial that recovered from the first member not carrying it.
+//
+// It is not a health statement and it must not be written back as one: the recovered member's health
+// evidence belongs to the flows that actually use it.
+func (r DialPathResult) Recovery() (group string, from string, to string, ok bool) {
+	for index := 1; index < len(r.Steps); index++ {
+		previous := r.Steps[index-1]
+		current := r.Steps[index]
+		if current.Group == "" || current.Group != previous.Group {
+			// Two nested groups, or a step with no chooser: not one group changing its mind.
+			continue
+		}
+		if current.Tag == previous.Tag {
+			continue
+		}
+		return current.Group, previous.Tag, current.Tag, true
+	}
+	return "", "", "", false
+}
+
 // Reason reports why the projection is incomplete, or DialPathReasonNone.
 func (r DialPathResult) Reason() DialPathReason {
 	if len(r.Steps) > 0 {
@@ -308,7 +352,7 @@ func RecordDialStep(ctx context.Context, group Outbound, member Outbound) {
 	if reporter, isReporter := group.(DialPathRevisionReporter); isReporter {
 		revision, hasRevision = reporter.DialPathRevision(), true
 	}
-	path.Record(member.Tag(), revision, hasRevision)
+	path.RecordStep(group.Tag(), member.Tag(), revision, hasRevision)
 }
 
 // DialPathRevisionReporter is implemented by a group whose selection has a revision.

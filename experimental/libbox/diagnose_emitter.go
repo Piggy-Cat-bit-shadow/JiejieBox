@@ -51,15 +51,18 @@ const (
 
 // connectionTestEvent is one emitted fact.
 type connectionTestEvent struct {
-	Seq      uint64                  `json:"seq"`
-	Kind     connectionTestEventKind `json:"kind"`
-	Stage    string                  `json:"stage,omitempty"`
-	Parent   string                  `json:"parent,omitempty"`
-	Name     string                  `json:"name,omitempty"`
-	Outcome  connectionTestOutcome   `json:"outcome,omitempty"`
-	Detail   string                  `json:"detail,omitempty"`
-	Snapshot bool                    `json:"snapshot,omitempty"`
-	Elapsed  int64                   `json:"elapsedMs"`
+	Seq     uint64                  `json:"seq"`
+	Kind    connectionTestEventKind `json:"kind"`
+	Stage   string                  `json:"stage,omitempty"`
+	Parent  string                  `json:"parent,omitempty"`
+	Name    string                  `json:"name,omitempty"`
+	Outcome connectionTestOutcome   `json:"outcome,omitempty"`
+	// Code is the stable causal code of a stage or a finding (see diagnose_codes.go). The stream
+	// carries it so a live subscriber branches on the same vocabulary the final report uses.
+	Code     string `json:"code,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	Snapshot bool   `json:"snapshot,omitempty"`
+	Elapsed  int64  `json:"elapsedMs"`
 }
 
 // emitterBounds keeps one diagnostic's narrative small enough to be safe on a phone.
@@ -183,7 +186,7 @@ func (e *connectionTestEmitter) Close(elapsed time.Duration) {
 
 // eventSize is the retained size estimate of one event.
 func eventSize(event connectionTestEvent) int {
-	return 48 + len(event.Stage) + len(event.Parent) + len(event.Name) + len(event.Detail)
+	return 48 + len(event.Stage) + len(event.Parent) + len(event.Name) + len(event.Code) + len(event.Detail)
 }
 
 // renderEvent is the stable text form handed to the platform.
@@ -201,6 +204,14 @@ func renderEvent(event connectionTestEvent) string {
 	if event.Outcome != "" {
 		builder.WriteString("=")
 		builder.WriteString(string(event.Outcome))
+	}
+	if event.Code != "" {
+		// The code is rendered as `[code]` so a consumer that parses the text form has the same
+		// stable vocabulary the JSON document carries, and so a reader cannot mistake the code for
+		// part of the prose detail.
+		builder.WriteString(" [")
+		builder.WriteString(event.Code)
+		builder.WriteString("]")
 	}
 	if event.Detail != "" {
 		builder.WriteString(": ")

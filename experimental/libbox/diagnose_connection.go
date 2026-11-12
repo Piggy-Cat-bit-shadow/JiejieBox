@@ -10,9 +10,21 @@ package libbox
 // # What it is not
 //
 // It writes no health evidence: the URLTest history is not touched, so a user pressing
-// "diagnose" can never move a live selection. It changes nothing (no selection, no
-// connection pool state beyond the dial it opened and closed), and it reports the passive
-// path it walked as its first stage so the active result is always attached to a model.
+// "diagnose" can never move a live selection. That promise is kept at the WRITER, not asserted
+// here: the dial runs under adapter.WithDiagnosticDial, and a failover-capable group suppresses its
+// penalty / proof-of-life ledger when it sees the marker. Without that, a diagnostic that failed
+// while the user's network was briefly down would have demoted the member carrying them.
+//
+// It changes nothing (no selection, no connection pool state beyond the dial it opened and closed),
+// and it reports the passive path it walked as its first stage so the active result is always
+// attached to a model.
+//
+// # Every stage carries a stable code
+//
+// The report's stages carry a fixed causal code (diagnose_codes.go) next to the sentence, so a
+// client can branch and translate without matching English prose. A failed dial is reported as
+// "no reply" or as "the peer refused" according to the error the real dial returned, and a budget
+// this runner imposed is reported as such rather than as an observation about the peer.
 //
 // # Bounds
 //
@@ -114,7 +126,24 @@ type connectionTestStage struct {
 	Status     string `json:"status"`
 	DurationMs int64  `json:"durationMs"`
 	Detail     string `json:"detail,omitempty"`
+	// Code is the stage's stable causal code (see diagnose_codes.go). A client branches and
+	// translates on this; Detail remains the sentence for a reader.
+	Code string `json:"code,omitempty"`
 }
+
+// connectionTestFinding is one fact the run observed about itself rather than about a stage.
+//
+// It exists because "the passive model was reused" and "a group moved this dial to another member"
+// have no stage of their own, and putting them in a stage's Detail would make a fact indistinguishable
+// from prose.
+type connectionTestFinding struct {
+	Code   string `json:"code"`
+	Stage  string `json:"stage,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// connectionTestMaxFindings bounds the findings list the report carries.
+const connectionTestMaxFindings = 16
 
 type connectionTestReport struct {
 	Root    string `json:"root"`
@@ -128,6 +157,8 @@ type connectionTestReport struct {
 	//   - "rule": dial the outbound the ROUTE DECISION selects for the target (real routing).
 	Routing string                `json:"routing"`
 	Stages  []connectionTestStage `json:"stages"`
+	// Findings are the run's own observations that no stage can carry (see connectionTestFinding).
+	Findings []connectionTestFinding `json:"findings,omitempty"`
 	// Truncated reports that one or more fields were shortened to keep the encoded report within
 	// its ceiling. A reader must treat the affected stage detail as incomplete rather than as the
 	// whole fact.
@@ -152,6 +183,29 @@ const (
 type connectionTestPath interface {
 	Status(root string, network string) physicalpath.PathStatus
 	Outbound() adapter.OutboundManager
+}
+
+// addFinding records one fact the run observed about itself, bounded.
+func (r *connectionTestReport) addFinding(code string, stage string, detail string) {
+	if len(r.Findings) >= connectionTestMaxFindings {
+		return
+	}
+	r.Findings = append(r.Findings, connectionTestFinding{Code: code, Stage: stage, Detail: detail})
+}
+
+// outcomeForFinding maps a finding's code onto the narrative's outcome vocabulary, so the stream
+// says the same thing the report does.
+func outcomeForFinding(code string) connectionTestOutcome {
+	switch code {
+	case connectionTestFindingPassiveReused:
+		return outcomeReused
+	case connectionTestFindingRecovered:
+		return outcomeRecovered
+	case connectionTestFindingEventsDropped:
+		return outcomeDropped
+	default:
+		return outcomeOK
+	}
 }
 
 // connectionTestRulePreviewer is the OPTIONAL extra a path may offer: which route rule decides a
@@ -236,6 +290,10 @@ func (s *CommandServer) ConnectionTest(root string, network string, target strin
 type dialOutcome struct {
 	conn net.Conn
 	err  error
+	// budgetErr is the dial context's error at the instant the dial settled, captured before the
+	// runner cancels it. Without it a runner-imposed deadline looks like a caller cancellation and
+	// the report would claim a fact about the peer that was never observed.
+	budgetErr error
 }
 
 // runConnectionTest is the bounded runner, separated from the gomobile entry so it can be
@@ -261,6 +319,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		report.Stages = append(report.Stages, connectionTestStage{
 			ID:     connectionTestStagePath,
 			Status: connectionTestStageFailed,
+			Code:   connectionTestCodeUnsupportedNetwork,
 			Detail: "the connection test can only test TCP; requested " + network,
 		})
 		report.TotalMs = time.Since(started).Milliseconds()
@@ -272,10 +331,6 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	// Close finalises the stream on EVERY return path, and the snapshot is attached to the
 	// report: a caller that never subscribed still gets the narrative, and a subscriber that
 	// did is guaranteed an end.
-	//
-	// pathStageRead is what keeps the "reused" finding honest: it is a claim about the PASSIVE
-	// stage, and a run refused before reading the model must not make it.
-	pathStageRead := false
 	defer func() {
 		// The stage facts are emitted from the settled report: every return path has already
 		// recorded what ran, what was skipped and why, so the narrative cannot disagree with the
@@ -286,12 +341,22 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 				Stage:   stage.ID,
 				Parent:  stage.Parent,
 				Outcome: outcomeForStage(stage.Status),
+				Code:    stage.Code,
 				Detail:  stage.Detail,
 				Elapsed: stage.DurationMs,
 			})
 		}
-		if pathStageRead {
-			emitter.Publish(connectionTestEvent{Kind: eventFinding, Outcome: outcomeReused, Detail: "passive status reused for the path stage", Elapsed: time.Since(started).Milliseconds()})
+		// Findings follow the stages so a reader sees the facts and then what was concluded about
+		// them, and a late subscriber gets them from the same snapshot.
+		for _, finding := range report.Findings {
+			emitter.Publish(connectionTestEvent{
+				Kind:    eventFinding,
+				Stage:   finding.Stage,
+				Outcome: outcomeForFinding(finding.Code),
+				Code:    finding.Code,
+				Detail:  finding.Detail,
+				Elapsed: time.Since(started).Milliseconds(),
+			})
 		}
 		emitter.Close(time.Since(started))
 		for _, event := range emitter.Snapshot() {
@@ -310,6 +375,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		report.Stages = append(report.Stages, connectionTestStage{
 			ID:     connectionTestStagePath,
 			Status: connectionTestStageFailed,
+			Code:   connectionTestCodeBoundReached,
 			Detail: "another diagnostic is still running: at most " + strconv.Itoa(connectionTestMaxConcurrent) +
 				" active tests may run at once, and this one did not start",
 		})
@@ -326,10 +392,14 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	// than an error string.
 	stageStarted := time.Now()
 	status := path.Status(root, network)
-	pathStageRead = true
+	// The "reused" finding is a claim about the PASSIVE stage, so it is recorded HERE - after the
+	// model was really read. A run refused before this point must not make it, which is why it is
+	// not emitted unconditionally at the end.
+	report.addFinding(connectionTestFindingPassiveReused, connectionTestStagePath, "passive status reused for the path stage")
 	pathStage := connectionTestStage{
 		ID:         connectionTestStagePath,
 		Status:     connectionTestStageOK,
+		Code:       connectionTestCodeOK,
 		DurationMs: time.Since(stageStarted).Milliseconds(),
 	}
 	switch {
@@ -337,17 +407,21 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		// Real-routing mode has no fixed root to validate. Skipping (not failing) the stage is what
 		// keeps the test describing the request's own path; the rule stage below supplies the exit.
 		pathStage.Status = connectionTestStageSkipped
+		pathStage.Code = connectionTestCodeSkipped
 		pathStage.Detail = "real-routing mode: the dial uses the route decision for the target, not a fixed root"
 	case status.Exit != "":
 		pathStage.Detail = "exit " + status.Exit
 	case status.Failure != nil:
 		pathStage.Status = connectionTestStageFailed
+		pathStage.Code = connectionTestCodePathFailure
 		pathStage.Detail = "path failure: " + status.Failure.Detail
 	case len(status.Unknowns) > 0:
 		pathStage.Status = connectionTestStageFailed
+		pathStage.Code = connectionTestCodePathUnknown
 		pathStage.Detail = status.Unknowns[0].Reason
 	default:
 		pathStage.Status = connectionTestStageFailed
+		pathStage.Code = connectionTestCodeNoExit
 		pathStage.Detail = "the path has no exit"
 	}
 	report.Stages = append(report.Stages, pathStage)
@@ -378,23 +452,28 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	switch {
 	case !canPreview:
 		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Code = connectionTestCodeDecisionUnavailable
 		rulesStage.Detail = "this build cannot explain the route rule for a running box"
 	case host == "":
 		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Code = connectionTestCodeTargetInvalid
 		rulesStage.Detail = "the target does not name a host"
 	default:
 		rulePreview, previewed = previewer.PreviewRouteRule(network, host, port)
 		switch {
 		case !previewed:
 			rulesStage.Status = connectionTestStageSkipped
+			rulesStage.Code = connectionTestCodeDecisionUnavailable
 			rulesStage.Detail = "the running box has no route rule preview"
 		case rulePreview.Unknown != "":
 			// The preview is honest about what it could not decide; the stage reports that instead
 			// of inventing a rule.
 			rulesStage.Status = connectionTestStageSkipped
+			rulesStage.Code = connectionTestCodeRuleUnknown
 			rulesStage.Detail = rulePreview.Unknown
 		case rulePreview.Matched:
 			rulesStage.Status = connectionTestStageOK
+			rulesStage.Code = connectionTestCodeOK
 			rulesStage.Detail = rulePreviewDetail(rulePreview)
 			if rulePreview.Outbound != "" && rulePreview.Outbound != status.Exit {
 				// The two semantics disagree, and saying so is the point of reporting Routing: this
@@ -403,6 +482,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 			}
 		default:
 			rulesStage.Status = connectionTestStageOK
+			rulesStage.Code = connectionTestCodeNoRule
 			rulesStage.Detail = "no rule matched: the final outbound decides"
 		}
 	}
@@ -423,29 +503,36 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		// A literal address never reaches a DNS rule. Reporting a default DNS server for it was
 		// one of the reviewed inaccuracies.
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeNoDNSDecision
 		dnsStage.Detail = "the target is a literal address: no DNS decision applies"
 	case !canPreviewDNS:
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeDecisionUnavailable
 		dnsStage.Detail = "this build cannot explain the DNS rule for a running box"
 	case host == "":
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeTargetInvalid
 		dnsStage.Detail = "the target does not name a host"
 	default:
 		dnsPreview, dnsPreviewed := dnsPreviewer.PreviewDNSRule(network, host, port)
 		switch {
 		case !dnsPreviewed:
 			dnsStage.Status = connectionTestStageSkipped
+			dnsStage.Code = connectionTestCodeDecisionUnavailable
 			dnsStage.Detail = "the running box has no DNS rule preview"
 		case dnsPreview.Unknown != "":
 			dnsStage.Status = connectionTestStageSkipped
+			dnsStage.Code = connectionTestCodeDNSUnknown
 			dnsStage.Detail = dnsPreview.Unknown
 		case dnsPreview.Matched:
 			dnsStage.Status = connectionTestStageOK
+			dnsStage.Code = connectionTestCodeDNSPreview
 			// "preview" is part of the fact: root mode did not resolve anything, so this is what a
 			// DNS query would hit, not what this run observed.
 			dnsStage.Detail = "preview: " + dnsPreviewDetail(dnsPreview)
 		default:
 			dnsStage.Status = connectionTestStageOK
+			dnsStage.Code = connectionTestCodeDNSPreview
 			dnsStage.Detail = "preview: no rule matched; the default DNS server would answer a local lookup"
 		}
 	}
@@ -459,10 +546,12 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		ID:         connectionTestStageResolve,
 		Parent:     connectionTestStagePath,
 		Status:     connectionTestStageOK,
+		Code:       connectionTestCodeOK,
 		DurationMs: time.Since(stageStarted).Milliseconds(),
 	}
 	if resolveErr != nil {
 		resolveStage.Status = connectionTestStageFailed
+		resolveStage.Code = connectionTestCodeResolveFailed
 		resolveStage.Detail = resolveErr.Error()
 		report.Stages = append(report.Stages, resolveStage)
 		report.Outcome = connectionTestOutcomeFailed
@@ -476,6 +565,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	dialStage := connectionTestStage{ID: connectionTestStageDial, Parent: connectionTestStagePath}
 	if pathStage.Status != connectionTestStageOK {
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDialNotAttempted
 		dialStage.Detail = "no exit to dial through"
 		report.Stages = append(report.Stages, dialStage)
 		report.Outcome = connectionTestOutcomeFailed
@@ -485,6 +575,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	outbound, loaded := path.Outbound().Outbound(status.Exit)
 	if !loaded || outbound == nil {
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDialNotAttempted
 		dialStage.Detail = "the exit is not an outbound: " + status.Exit
 		report.Stages = append(report.Stages, dialStage)
 		report.Outcome = connectionTestOutcomeFailed
@@ -498,14 +589,19 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	switch {
 	case !answered && ctx.Err() != nil:
 		dialStage.Status = connectionTestStageFailed
+		dialStage.Code = connectionTestCodeDialCancelled
 		dialStage.Detail = "cancelled: " + ctx.Err().Error()
 		report.Outcome = connectionTestOutcomeCancelled
 	case !answered:
+		// The runner stopped waiting. That is a fact about THIS diagnostic, not an observation
+		// about the peer, so it is reported as the budget expiring rather than as "no reply".
 		dialStage.Status = connectionTestStageFailed
-		dialStage.Detail = "the stage budget expired before the dial answered"
+		dialStage.Code = connectionTestCodeDialBudgetExpire
+		dialStage.Detail = "the stage budget expired before the dial answered; the peer did not answer inside the budget, which is not the same as refusing"
 		report.Outcome = connectionTestOutcomeFailed
 	case outcome.err == nil:
 		dialStage.Status = connectionTestStageOK
+		dialStage.Code = connectionTestCodeOK
 		dialStage.Detail = "connected via " + outbound.Tag() + " to " + address.String()
 		if outcome.conn != nil {
 			_ = outcome.conn.Close()
@@ -513,6 +609,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		report.Outcome = connectionTestOutcomeOK
 	default:
 		dialStage.Status = connectionTestStageFailed
+		dialStage.Code = classifyConnectionTestDialError(outcome.budgetErr, outcome.err)
 		dialStage.Detail = outcome.err.Error()
 		report.Outcome = connectionTestOutcomeFailed
 	}
@@ -536,12 +633,16 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	destination, parseErr := connectionTestAddress(target)
 	if parseErr != nil {
 		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Code = connectionTestCodeTargetInvalid
 		rulesStage.Detail = "the target could not be parsed, so there is no request to decide"
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeTargetInvalid
 		dnsStage.Detail = "the target could not be parsed"
 		resolveStage.Status = connectionTestStageFailed
+		resolveStage.Code = connectionTestCodeTargetInvalid
 		resolveStage.Detail = parseErr.Error()
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDialNotAttempted
 		dialStage.Detail = "nothing to dial"
 		appendAll()
 		report.Outcome = connectionTestOutcomeFailed
@@ -552,12 +653,16 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	dialRoute, canDialRoute := path.(connectionTestRouteDialer)
 	if !canDialRoute {
 		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Code = connectionTestCodeDecisionUnavailable
 		rulesStage.Detail = "this build cannot execute the production route decision for a running box"
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeDecisionUnavailable
 		dnsStage.Detail = "the route decision could not be executed, so no DNS decision was observed"
 		resolveStage.Status = connectionTestStageOK
+		resolveStage.Code = connectionTestCodeOK
 		resolveStage.Detail = destination.String()
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDecisionUnavailable
 		dialStage.Detail = "real-routing mode needs the production decision, which this build cannot execute"
 		appendAll()
 		report.Outcome = connectionTestOutcomeFailed
@@ -606,17 +711,22 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 
 	if !answered {
 		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Code = connectionTestCodeDecisionTimeout
 		rulesStage.Detail = "the production decision did not complete within the stage budget"
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeDecisionTimeout
 		dnsStage.Detail = "the production decision did not complete"
 		resolveStage.Status = connectionTestStageSkipped
+		resolveStage.Code = connectionTestCodeDecisionTimeout
 		resolveStage.Detail = "the production decision did not complete"
 		dialStage.Status = connectionTestStageFailed
 		dialStage.DurationMs = executionMs
 		if ctx.Err() != nil {
+			dialStage.Code = connectionTestCodeDialCancelled
 			dialStage.Detail = "cancelled: " + ctx.Err().Error()
 			report.Outcome = connectionTestOutcomeCancelled
 		} else {
+			dialStage.Code = connectionTestCodeDecisionTimeout
 			dialStage.Detail = "the stage budget expired before the decision answered"
 			report.Outcome = connectionTestOutcomeFailed
 		}
@@ -625,12 +735,16 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	}
 	if outcome.err != nil {
 		rulesStage.Status = connectionTestStageFailed
+		rulesStage.Code = connectionTestCodeDecisionFailed
 		rulesStage.Detail = outcome.err.Error()
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeDecisionFailed
 		dnsStage.Detail = "the production decision failed"
 		resolveStage.Status = connectionTestStageSkipped
+		resolveStage.Code = connectionTestCodeDecisionFailed
 		resolveStage.Detail = "the production decision failed"
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDialNotAttempted
 		dialStage.Detail = "nothing to dial through"
 		appendAll()
 		report.Outcome = connectionTestOutcomeFailed
@@ -652,15 +766,19 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	switch {
 	case result.Unknown != "":
 		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Code = connectionTestCodeRuleUnknown
 		rulesStage.Detail = result.Unknown
 	case result.Rejected:
 		rulesStage.Status = connectionTestStageOK
+		rulesStage.Code = connectionTestCodeRuleRejected
 		rulesStage.Detail = decisionDetail(result)
 	case result.Matched:
 		rulesStage.Status = connectionTestStageOK
+		rulesStage.Code = connectionTestCodeOK
 		rulesStage.Detail = decisionDetail(result)
 	default:
 		rulesStage.Status = connectionTestStageOK
+		rulesStage.Code = connectionTestCodeNoRule
 		rulesStage.Detail = "no rule matched: the final outbound " + result.Outbound + " decides"
 	}
 
@@ -668,42 +786,56 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	case result.Resolve.Performed:
 		// ACTUAL DNS: the walk ran the resolve action and this is what it answered. Not a preview.
 		dnsStage.Status = connectionTestStageOK
+		dnsStage.Code = connectionTestCodeDNSActual
 		dnsStage.Detail = "actual: resolved via " + resolveLabel(result.Resolve) + " -> " + addressList(result.Resolve.Addresses)
 	case literalTarget && !result.FinalDestination.IsDomain():
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeNoDNSDecision
 		dnsStage.Detail = "the target is a literal address: no DNS decision applies"
 	case result.FinalDestination.IsIP() && result.OriginalDestination.IsDomain():
 		// The decision rewrote a name into a literal: nothing is resolved, and saying "the default
 		// server would answer" would name a server that is never asked.
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeNoDNSDecision
 		dnsStage.Detail = "the route decision rewrote the destination to " + result.FinalDestination.String() + ": no DNS decision applies"
 	case result.FinalDestination.IsDomain() && !result.FinalDestination.Addr.IsValid() && result.OriginalDestination.IsIP():
 		// The decision rewrote a literal into a name; the dial resolves it, but not here.
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeNoDNSDecision
 		dnsStage.Detail = "the route decision rewrote the destination to " + result.FinalDestination.String() + ": no DNS decision applies to the original target"
 	case result.Unknown != "" || result.Rejected:
 		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Code = connectionTestCodeNoDNSDecision
 		dnsStage.Detail = "the route decision did not reach a DNS question"
 	default:
 		dnsPreviewer, canPreviewDNS := path.(connectionTestDNSPreviewer)
 		switch {
-		case !canPreviewDNS || host == "":
+		case !canPreviewDNS:
 			dnsStage.Status = connectionTestStageSkipped
+			dnsStage.Code = connectionTestCodeDecisionUnavailable
+			dnsStage.Detail = "this build cannot explain the DNS rule for a running box"
+		case host == "":
+			dnsStage.Status = connectionTestStageSkipped
+			dnsStage.Code = connectionTestCodeTargetInvalid
 			dnsStage.Detail = "this build cannot explain the DNS rule for a running box"
 		default:
 			dnsPreview, dnsPreviewed := dnsPreviewer.PreviewDNSRule(report.Network, host, port)
 			switch {
 			case !dnsPreviewed:
 				dnsStage.Status = connectionTestStageSkipped
+				dnsStage.Code = connectionTestCodeDecisionUnavailable
 				dnsStage.Detail = "the running box has no DNS rule preview"
 			case dnsPreview.Unknown != "":
 				dnsStage.Status = connectionTestStageSkipped
+				dnsStage.Code = connectionTestCodeDNSUnknown
 				dnsStage.Detail = dnsPreview.Unknown
 			case dnsPreview.Matched:
 				dnsStage.Status = connectionTestStageOK
+				dnsStage.Code = connectionTestCodeDNSPreview
 				dnsStage.Detail = "preview: " + dnsPreviewDetail(dnsPreview)
 			default:
 				dnsStage.Status = connectionTestStageOK
+				dnsStage.Code = connectionTestCodeDNSPreview
 				dnsStage.Detail = "preview: no rule matched; the default DNS server would answer a local lookup"
 			}
 		}
@@ -712,40 +844,61 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 	switch {
 	case result.Resolve.Performed:
 		resolveStage.Status = connectionTestStageOK
+		resolveStage.Code = connectionTestCodeOK
 		resolveStage.Detail = resolveActionStageDetail(host, result)
 	case result.Rejected || result.Unknown != "":
 		resolveStage.Status = connectionTestStageSkipped
+		resolveStage.Code = connectionTestCodeRuleUnknown
+		if result.Rejected {
+			resolveStage.Code = connectionTestCodeRuleRejected
+		}
 		resolveStage.Detail = "the route decision does not dial this request"
 	case result.FinalDestination.IsDomain():
 		resolveStage.Status = connectionTestStageOK
+		resolveStage.Code = connectionTestCodeOK
 		resolveStage.Detail = "the outbound keeps the name '" + result.FinalDestination.Fqdn + "' and resolves it at dial time"
 	default:
 		resolveStage.Status = connectionTestStageOK
+		resolveStage.Code = connectionTestCodeOK
 		resolveStage.Detail = "route destination " + result.FinalDestination.String()
 	}
 
 	switch {
 	case result.Rejected:
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDialNotAttempted
 		dialStage.Detail = "the route decision rejects this request: " + result.RejectDetail
 		report.Outcome = connectionTestOutcomeFailed
 	case result.Unknown != "":
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDialNotAttempted
 		dialStage.Detail = "the route decision is unknown: " + result.Unknown
 		report.Outcome = connectionTestOutcomeFailed
 	case !result.Dialed:
 		dialStage.Status = connectionTestStageSkipped
+		dialStage.Code = connectionTestCodeDialNotAttempted
 		dialStage.Detail = "the decision selected no dialable destination"
 		report.Outcome = connectionTestOutcomeFailed
 	case result.DialError == nil:
 		dialStage.Status = connectionTestStageOK
+		dialStage.Code = connectionTestCodeOK
 		dialStage.Detail = diagnoseSuccessDetail(result)
 		if result.Conn != nil {
 			_ = result.Conn.Close()
 		}
+		// A recovery is reported only for a dial that produced a connection - the route layer
+		// guarantees that, and this is where the fact becomes a finding. It states the hand-off,
+		// not a health verdict: the group moved this dial from one member to another and the second
+		// carried it.
+		if result.RecoveredThrough != "" {
+			report.addFinding(connectionTestFindingRecovered, connectionTestStageDial,
+				"group "+result.RecoveredThrough+" moved this dial from "+result.RecoveredFrom+
+					" to "+result.RecoveredTo+", which carried the connection")
+		}
 		report.Outcome = connectionTestOutcomeOK
 	default:
 		dialStage.Status = connectionTestStageFailed
+		dialStage.Code = classifyConnectionTestDialError(decisionCtx.Err(), result.DialError)
 		dialStage.Detail = result.DialError.Error()
 		report.Outcome = connectionTestOutcomeFailed
 	}
@@ -840,11 +993,14 @@ func resolveActionStageDetail(host string, result route.RouteDiagnoseResult) str
 
 // runBoundedOutboundDial performs one dial inside the stage budget for the root-mode contract.
 //
+// The settled outcome carries the dial context's error as it stood when the dial returned, so the
+// caller can tell a budget THIS runner imposed from a timeout the transport reported: the two mean
+// different things about the peer.
+//
 // A dial that ignores its context is abandoned by the report, and whatever it eventually returns is
 // closed by the waiter instead of leaking.
 func runBoundedOutboundDial(ctx context.Context, budgetCtx context.Context, outbound adapter.Outbound, network string, destination M.Socksaddr) (dialOutcome, bool) {
 	dialCtx, cancelDial := context.WithTimeout(budgetCtx, connectionTestStageTimeout)
-	defer cancelDial()
 	settled := make(chan dialOutcome, 1)
 	go func() {
 		conn, dialErr := outbound.DialContext(dialCtx, network, destination)
@@ -852,8 +1008,11 @@ func runBoundedOutboundDial(ctx context.Context, budgetCtx context.Context, outb
 	}()
 	select {
 	case outcome := <-settled:
+		outcome.budgetErr = dialCtx.Err()
+		cancelDial()
 		return outcome, true
 	case <-dialCtx.Done():
+		cancelDial()
 		go func() {
 			late := <-settled
 			if late.conn != nil {

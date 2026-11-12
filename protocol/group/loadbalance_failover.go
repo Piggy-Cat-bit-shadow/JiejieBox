@@ -783,6 +783,15 @@ func (g *LoadBalance) DialWithFailover(ctx context.Context, metadata *adapter.In
 		return g.dialOnce(ctx, metadata, network, destination)
 	}
 	ctx, budget := failoverBudget(ctx)
+	// A DIAGNOSTIC dial runs the same production retry but leaves no health evidence behind.
+	//
+	// The group's penalty ledger is not a log: it is what the next selection reads, so a probe that
+	// records into it decides which member the user's traffic uses next. A probe failing because the
+	// user's network is briefly down would then demote the member that carries them, and the
+	// diagnostic that was supposed to explain the selection would have moved it. The marking is done
+	// by the diagnostic at its dial boundary (adapter.WithDiagnosticDial); an ordinary flow never
+	// carries it, so this branch is unreachable for production traffic.
+	diagnostic := adapter.IsDiagnosticDial(ctx)
 	members := g.snapshot()
 	if len(members) == 0 {
 		return nil, E.New(strings.ToUpper(network), " is not supported by outbound: ", g.Tag())
@@ -795,7 +804,9 @@ func (g *LoadBalance) DialWithFailover(ctx context.Context, metadata *adapter.In
 	adapter.RecordDialStep(ctx, g, member)
 	conn, err := g.dialMember(ctx, member, metadata, network, destination)
 	if err == nil {
-		g.recordProofOfLife(member)
+		if !diagnostic {
+			g.recordProofOfLife(member)
+		}
 		return g.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	if !RetryThisFlow(err) {
@@ -803,7 +814,7 @@ func (g *LoadBalance) DialWithFailover(ctx context.Context, metadata *adapter.In
 		// the flow's one alternate is not spent on it.
 		return nil, err
 	}
-	if PenalizeMemberGlobally(member, err) {
+	if !diagnostic && PenalizeMemberGlobally(member, err) {
 		if g.recordPenalty(member) >= loadBalancePenaltyThreshold {
 			g.requestForcedRetest()
 		}
@@ -833,14 +844,17 @@ func (g *LoadBalance) DialWithFailover(ctx context.Context, metadata *adapter.In
 	adapter.RecordDialStep(ctx, g, alternate)
 	alternateConn, alternateErr := g.dialMember(ctx, alternate, metadata, network, destination)
 	if alternateErr != nil {
-		if PenalizeMemberGlobally(alternate, alternateErr) {
+		if !diagnostic && PenalizeMemberGlobally(alternate, alternateErr) {
 			// Both first hops failed, and both facts are worth keeping: the alternate failed
-			// for its own reason, not because the first member did.
+			// for its own reason, not because the first member did. A diagnostic keeps neither,
+			// for the reason stated where the marker is read.
 			g.recordPenalty(alternate)
 		}
 		return nil, err
 	}
-	g.recordProofOfLife(alternate)
+	if !diagnostic {
+		g.recordProofOfLife(alternate)
+	}
 	if g.logger != nil {
 		// The selection move is logged because it is otherwise invisible: the connection
 		// works, and only the group knows that a different member carried it. Nothing is

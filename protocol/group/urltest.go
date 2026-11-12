@@ -730,7 +730,15 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	// A real connection failed, so the node is not usable now regardless of what an earlier
 	// measurement said. Only this target's result is invalidated, and only if this outbound is
 	// still the selected one - a concurrent update may already have moved on.
-	current.clearSelectionFor(network, outbound)
+	//
+	// A DIAGNOSTIC dial is exempt: it runs the production path so the report can describe it, but it
+	// is not a flow. Clearing the selection here would let a probe taken while the user's network was
+	// briefly down move the member their traffic uses - and the forced recheck that follows the clear
+	// can delete the member's health measurement, so the probe would rewrite the evidence it was
+	// meant to read. The dial and its failure still reach the caller and the report.
+	if !adapter.IsDiagnosticDial(ctx) {
+		current.clearSelectionFor(network, outbound)
+	}
 	return nil, err
 }
 
@@ -761,7 +769,9 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	current.clearSelectionFor(N.NetworkUDP, outbound)
+	if !adapter.IsDiagnosticDial(ctx) {
+		current.clearSelectionFor(N.NetworkUDP, outbound)
+	}
 	return nil, err
 }
 
@@ -809,7 +819,9 @@ func (s *URLTest) DialParallelNetwork(ctx context.Context, network string, desti
 		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	current.clearSelectionFor(network, outbound)
+	if !adapter.IsDiagnosticDial(ctx) {
+		current.clearSelectionFor(network, outbound)
+	}
 	return nil, err
 }
 
@@ -849,7 +861,9 @@ func (s *URLTest) ListenSerialNetworkPacket(ctx context.Context, destination M.S
 		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	current.clearSelectionFor(N.NetworkUDP, outbound)
+	if !adapter.IsDiagnosticDial(ctx) {
+		current.clearSelectionFor(N.NetworkUDP, outbound)
+	}
 	return nil, address, err
 }
 
