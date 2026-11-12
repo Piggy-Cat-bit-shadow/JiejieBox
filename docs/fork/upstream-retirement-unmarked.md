@@ -8,8 +8,8 @@ every non-merge commit in `HEAD` that is not in the pinned `upstream/testing` ti
 
 | fact | value |
 | --- | --- |
-| non-merge commits in `HEAD --not upstream/testing` | **3790** |
-| normalized-subject groups | **3361** |
+| non-merge commits in `1bececc29 --not upstream/testing` (round-10 head) | **3789** |
+| normalized-subject groups | **3360** |
 | rows with test files in the same commit | available per row |
 | rows with a non-test consumer file | available per row |
 | disposition | **REVIEW** for every row |

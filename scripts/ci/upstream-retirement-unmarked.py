@@ -44,12 +44,13 @@ def normalized_subject(subject):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--head", default="HEAD")
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
 
     metadata = git("log", "--no-merges", "--date=short",
-                   "--format=%x1e%H%x1f%ad%x1f%s%x1f%b", f"HEAD", "--not", BASE)
+                   "--format=%x1e%H%x1f%ad%x1f%s%x1f%b", args.head, "--not", BASE)
     commits = []
     for record in metadata.split("\x1e"):
         if not record.strip():
@@ -70,7 +71,7 @@ def main():
                         "trigger": trigger[:300]})
 
     files = defaultdict(lambda: {"tests": [], "consumers": []})
-    listing = git("log", "--no-merges", "--name-only", "--format=%x1e%H", f"HEAD", "--not", BASE)
+    listing = git("log", "--no-merges", "--name-only", "--format=%x1e%H", args.head, "--not", BASE)
     for record in listing.split("\x1e"):
         if not record.strip():
             continue
