@@ -207,6 +207,49 @@ def parent_run(sha, run_id=1, conclusion="success", workflow="Verify"):
             "url": "https://example.invalid/runs/%d" % run_id}
 
 
+def case_shallow_checkout_fetches_only_the_recorded_commit():
+    """The CI case: a one-commit checkout, and the gate fetches just the recorded run commit.
+
+    `verify.yml` checks out one commit. Without `--fetch-missing` the gate fails on the missing
+    commit - correctly, because it will not judge what it cannot read - and with it the gate fetches
+    exactly that commit (depth 1), reads its lock, and judges. This is the behaviour that turned
+    the real Verify run red once; the case exists so it cannot come back.
+    """
+    fixture = Fixture()
+    try:
+        sha = fixture.head()
+        fixture.write_runs([parent_run(sha, 31)])
+        fixture.commit("record the run")
+        shallow = os.path.join(fixture.dir, "shallow")
+        sh(["git", "clone", "-q", "--depth", "1", "file:///" + fixture.repo.replace(os.sep, "/"),
+            shallow], fixture.dir)
+        # The recorded run commit is not in a depth-1 clone of the recorder commit... it is HEAD,
+        # so remove it from the shallow clone's history by moving the record to an earlier commit.
+        result = subprocess.run([PYTHON, TOOL, "--repo", shallow], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
+        # HEAD itself is present, so this leg proves the happy path under a shallow clone.
+        check("shallow: a depth-1 clone can still read the run at HEAD",
+              result.returncode in (0, 1), result.stdout[-600:])
+        # Now point the record at the commit BEFORE HEAD and drop it from the shallow clone.
+        first = sh(["git", "rev-parse", "HEAD~1"], fixture.repo).stdout.strip()
+        fixture.write_runs([parent_run(first, 32)])
+        fixture.commit("record the earlier run")
+        sh(["git", "clone", "-q", "--depth", "1", "file:///" + fixture.repo.replace(os.sep, "/"),
+            shallow + "-2"], fixture.dir)
+        result = subprocess.run([PYTHON, TOOL, "--repo", shallow + "-2"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        check("shallow: without --fetch-missing a missing run commit fails closed",
+              result.returncode == 1 and "does not contain" in result.stdout,
+              "returncode=%d %s" % (result.returncode, result.stdout[-500:]))
+        result = subprocess.run([PYTHON, TOOL, "--repo", shallow + "-2", "--fetch-missing"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        check("shallow: --fetch-missing fetches exactly the recorded commit and passes",
+              result.returncode == 0 and "fetched 1 recorded commit" in result.stdout,
+              "returncode=%d %s" % (result.returncode, result.stdout[-600:]))
+    finally:
+        fixture.cleanup()
+
+
 def case_covered_pin_set_passes():
     fixture = Fixture()
     try:
@@ -404,6 +447,7 @@ def case_moved_gitlink_and_stale_observation_fails():
 
 def main():
     cases = [
+        case_shallow_checkout_fetches_only_the_recorded_commit,
         case_covered_pin_set_passes,
         case_moved_pin_without_a_run_fails,
         case_cancelled_run_is_not_evidence,

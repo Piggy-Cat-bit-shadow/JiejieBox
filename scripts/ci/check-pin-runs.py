@@ -31,14 +31,18 @@ recorded run stops covering it, on the next push, offline.
 
 # What it deliberately does not do
 
-  * It does not fetch. A recorded run at a commit this clone does not contain is a failure, not a
-    silent pass: the point is that the pins are re-readable where the check runs.
+  * It does not fetch by default. A recorded run at a commit this clone does not contain is a
+    failure, not a silent pass: the point is that the pins are re-readable where the check runs.
+    `--fetch-missing` exists for the CI case - `verify.yml` checks out one commit, so the recorded
+    run commits are absent and fetching exactly those commits (depth 1) is cheaper than cloning
+    history. It fetches only the missing ids and says how many it fetched.
   * It does not claim a client built its own source: a parent run covers the gitlink the parent
     builds, which is the parent-repo consumption gate. A client's own CI run can be recorded in
     `child_runs` and is validated when present, but its absence is not invented as a pass.
 
 Usage:
-  scripts/ci/check-pin-runs.py                  # push gate and release path alike
+  scripts/ci/check-pin-runs.py                  # offline: a missing run commit fails
+  scripts/ci/check-pin-runs.py --fetch-missing  # CI: fetch the recorded commits, then judge
   scripts/ci/check-pin-runs.py --json build/pin-runs.json
 
 Exit status: 0 pass, 1 a recorded claim is contradicted, 2 input or environment error.
@@ -267,10 +271,11 @@ def checks_out_submodules(job_text):
 # Evaluation
 # ------------------------------------------------------------------------------------------------
 
-def evaluate(repo, lock, record, manifest):
+def evaluate(repo, lock, record, manifest, fetch_missing=False):
     problems = []
     notes = []
     covering = []
+    fetched = []
 
     proj = projection(lock)
     current = digest(proj)
@@ -295,10 +300,23 @@ def evaluate(repo, lock, record, manifest):
         seen.add(entry["run_id"])
         sha = entry["head_sha"]
         if git(repo, "cat-file", "-e", "%s^{commit}" % sha).returncode != 0:
-            problems.append("%s: this clone does not contain %s, so the pins it ran against "
-                            "cannot be re-read here; cite a run at a reachable commit"
-                            % (where, sha[:12]))
-            continue
+            if fetch_missing:
+                # A CI checkout is one commit deep. Fetching exactly the recorded commit (depth 1)
+                # brings its tree, which is all this gate reads; a full-history clone would pay for
+                # 6,000 commits to answer the same question.
+                run = git(repo, "fetch", "--no-tags", "--depth=1", "origin", sha)
+                if run.returncode == 0:
+                    fetched.append(sha)
+                else:
+                    problems.append("%s: the clone does not contain %s and fetching it failed: %s"
+                                    % (where, sha[:12], (run.stderr or "").strip()[:200]))
+                    continue
+            else:
+                problems.append("%s: this clone does not contain %s, so the pins it ran against "
+                                "cannot be re-read here; cite a run at a reachable commit (or run "
+                                "with --fetch-missing in a one-commit CI checkout)"
+                                % (where, sha[:12]))
+                continue
         theirs, why = lock_at_commit(repo, sha)
         if theirs is None:
             problems.append("%s: %s" % (where, why))
@@ -321,6 +339,10 @@ def evaluate(repo, lock, record, manifest):
         problems.append("no recorded run carries the current pin set: a pin moved and no run was "
                         "recorded against the new lock, so the sources the lock names have not "
                         "been built")
+
+    if fetched:
+        notes.append("fetched %d recorded commit(s) at depth 1 to read their locks: %s"
+                     % (len(fetched), ", ".join(sha[:12] for sha in fetched)))
 
     # -- 1b. optional per-client runs ----------------------------------------------------------
     child_runs = record.get("child_runs") or []
@@ -456,6 +478,8 @@ def main(argv):
     parser.add_argument("--lock", default=LOCK_PATH, help="the frozen source lock")
     parser.add_argument("--runs", default=RUNS_PATH, help="the recorded run evidence")
     parser.add_argument("--json", default="", help="write the report as JSON here")
+    parser.add_argument("--fetch-missing", action="store_true",
+                        help="fetch recorded commits this checkout lacks (depth 1) before judging")
     args = parser.parse_args(argv)
 
     repo = os.path.abspath(args.repo)
@@ -466,7 +490,7 @@ def main(argv):
     record = load_json(os.path.join(repo, args.runs), "the run record")
     manifest = load_json(os.path.join(repo, MANIFEST_PATH), "the dependency manifest")
 
-    result = evaluate(repo, lock, record, manifest)
+    result = evaluate(repo, lock, record, manifest, fetch_missing=args.fetch_missing)
 
     say("pin -> executed-run binding")
     say("  lock    : %s (release %s)" % (args.lock, lock.get("release_version") or "-"))

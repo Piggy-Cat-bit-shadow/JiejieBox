@@ -50,8 +50,9 @@ jobs:
           python3 scripts/ci/release-freeze.py check --resolve release-resolve.tsv --json release-pin-report.json
           jq -e '[.go_modules[], .clients[]] | all(.policy != "update" or .relation != "behind")' release-pin-report.json
           # Q42: the pins above were BUILT by a recorded run, not merely frozen. This needs no
-          # network - it re-reads the lock out of each recorded commit.
-          python3 scripts/ci/check-pin-runs.py --json release-pin-runs.json
+          # network for the pins themselves; `--fetch-missing` brings the recorded run commits into
+          # this one-commit checkout (depth 1) so their lock files can be read.
+          python3 scripts/ci/check-pin-runs.py --fetch-missing --json release-pin-runs.json
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "apple_sha=$(git rev-parse HEAD:clients/apple)" >> "$GITHUB_OUTPUT"
       - name: Save dependency observations

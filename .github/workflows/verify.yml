@@ -206,7 +206,12 @@ jobs:
         # run loses its coverage here, offline, on the push. It also refuses a pin that sits
         # outside the gate unless the record names the workflow+job that reads it, and verifies
         # that job still checks the submodule out (the nested Desktop dashboard gitlink).
-        run: python3 scripts/ci/check-pin-runs.py --json build/pin-runs.json
+        #
+        # `--fetch-missing`: this checkout is one commit deep, so the recorded run commits are not
+        # here. The gate fetches exactly those commits (depth 1) instead of the whole history - it
+        # reads their lock file and nothing else. Without the flag it refuses to judge a commit it
+        # cannot see, which is what a local run wants.
+        run: python3 scripts/ci/check-pin-runs.py --fetch-missing --json build/pin-runs.json
 
       - name: the knowledge entry points describe one revision
         # Q45 was not a false sentence; it was sentences that stopped agreeing: the page a reader
