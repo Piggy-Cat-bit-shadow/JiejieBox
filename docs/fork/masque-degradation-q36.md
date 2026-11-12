@@ -13,8 +13,10 @@ This page states the segments, the bounded policy, and what the local evidence c
 | reply | `SegmentStats.DatagramsToDevice` | a packet arrived from the tunnel and was written to the device |
 | drain | session ledger `Terminated` + queue release | the session's run() ended / queued buffers were released at close |
 
-The TrustTunnel side has the same five segments in `Service.UDPStats` (received/sent/dropped/expired),
-covered by the Q35 matrix.
+The TrustTunnel side has the same segments in `Service.UDPStats`: received (ingress), delivered
+(handed to the handler), sent / replies failed (reply), dropped (admission and queue), discarded
+(received and admitted, then lost at close or a dequeue), expired (drain). The conservation identity
+and its local evidence are in `udp-attribution-q36.md`, covered by the Q35 matrices.
 
 ## Bounded degradation strategy
 

@@ -107,6 +107,10 @@ func (s *udpSession) dispatch(source M.Socksaddr, destination M.Socksaddr, paylo
 	if s.closed {
 		s.access.Unlock()
 		payload.Release()
+		// The frame was read from the stream, so ingress already counted it. The
+		// session closed between that read and this admission: the datagram is
+		// discarded, not dropped by a limit, and the two are different facts.
+		s.service.udp.noteDiscarded(1)
 		return
 	}
 	flow, loaded := s.flows[key]
@@ -147,13 +151,20 @@ func (s *udpSession) dispatch(source M.Socksaddr, destination M.Socksaddr, paylo
 		return
 	}
 	s.access.Unlock()
-	if !flow.push(payload) {
-		// The flow closed between the admission and the queue, or the item
-		// queue was full: the reserved bytes go back, and a flow that never
-		// reached its handler returns its association slot too.
-		s.dropped.Add(1)
+	pushed, flowClosed := flow.push(payload)
+	if !pushed {
+		// The reserved bytes go back either way. The two refusals are different
+		// facts: a full item queue is a DROP at admission (the flow keeps
+		// working), while a flow that closed between the admission and the queue
+		// means the datagram was admitted and then discarded by that close.
 		s.releaseQueuedBytes(length)
-		s.service.udp.dropDatagram()
+		if flowClosed {
+			s.service.udp.noteDiscarded(1)
+		} else {
+			s.dropped.Add(1)
+			s.service.udp.dropDatagram()
+		}
+		// A flow that never reached its handler returns its association slot too.
 		if !loaded {
 			flow.Close()
 		}
@@ -282,6 +293,7 @@ func (s *udpSession) writeFrame(buffer *buf.Buffer, source M.Socksaddr, destinat
 		buffer.Release()
 		if err != nil {
 			newBuffer.Release()
+			s.service.udp.noteReplyFailed()
 			return err
 		}
 		buffer = newBuffer
@@ -289,11 +301,13 @@ func (s *udpSession) writeFrame(buffer *buf.Buffer, source M.Socksaddr, destinat
 	defer buffer.Release()
 	err := EncodeServerFrame(buffer, source, destination)
 	if err != nil {
+		s.service.udp.noteReplyFailed()
 		return err
 	}
 	s.writeAccess.Lock()
 	defer s.writeAccess.Unlock()
 	if s.writeClosed {
+		s.service.udp.noteReplyFailed()
 		return net.ErrClosed
 	}
 	_, err = s.writer.Write(buffer.Bytes())
@@ -302,6 +316,8 @@ func (s *udpSession) writeFrame(buffer *buf.Buffer, source M.Socksaddr, destinat
 	}
 	if err == nil {
 		s.service.udp.noteSent()
+	} else {
+		s.service.udp.noteReplyFailed()
 	}
 	return err
 }
@@ -330,6 +346,10 @@ type udpFlow struct {
 	// written by WritePacket; the idle sweeper reads it. Refusals and queue
 	// drops never update it.
 	lastActivity atomic.Int64
+	// deadlineAccess guards readDeadline, which is the absolute time a waiting
+	// ReadPacket must stop at. Zero means no deadline.
+	deadlineAccess sync.Mutex
+	readDeadline   time.Time
 }
 
 // touch records a datagram accepted in either direction. The caller holds
@@ -339,39 +359,68 @@ func (f *udpFlow) touch() {
 	f.lastActivity.Store(time.Now().UnixNano())
 }
 
-// push queues one datagram whose bytes were already reserved. It reports false
-// when the flow is closed or the item queue is full; the caller then returns the
-// reservation. The queue mutex serialises push against the final drain in Close,
-// so a datagram that arrives during the close cannot be left behind.
-func (f *udpFlow) push(payload *buf.Buffer) bool {
+// push queues one datagram whose bytes were already reserved. The first result
+// is false when the datagram was not queued; the second reports whether that was
+// because the flow had already closed (as opposed to the item queue being full).
+// The queue mutex serialises push against the final drain in Close, so a
+// datagram that arrives during the close cannot be left behind.
+func (f *udpFlow) push(payload *buf.Buffer) (pushed bool, closed bool) {
 	f.queueAccess.Lock()
 	defer f.queueAccess.Unlock()
 	if f.queueClosed {
 		payload.Release()
-		return false
+		return false, true
 	}
 	select {
 	case f.packets <- payload:
 		// Only an admitted datagram is activity: a full queue drops the
 		// datagram without extending the association's life.
 		f.touch()
-		return true
+		return true, false
 	default:
 		payload.Release()
-		return false
+		return false, false
 	}
 }
 
+// ReadPacket hands the next datagram of the association to the handler. It
+// honours the read deadline set by SetReadDeadline, so a caller that has to
+// bound the wait (a sniffer waiting for the rest of a fragmented ClientHello,
+// a DNS read, a health probe) gets os.ErrDeadlineExceeded instead of blocking
+// for the life of the association. A datagram that was dequeued but could not
+// be copied into the caller's buffer is counted as discarded: it left the
+// queue without reaching the handler, and without that term the ingress
+// segments would not conserve.
 func (f *udpFlow) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
+	f.deadlineAccess.Lock()
+	readDeadline := f.readDeadline
+	f.deadlineAccess.Unlock()
+	var timeout <-chan time.Time
+	if !readDeadline.IsZero() {
+		remaining := time.Until(readDeadline)
+		if remaining <= 0 {
+			return M.Socksaddr{}, os.ErrDeadlineExceeded
+		}
+		timer := time.NewTimer(remaining)
+		defer timer.Stop()
+		timeout = timer.C
+	}
 	select {
 	case packet := <-f.packets:
 		length := packet.Len()
 		_, err := buffer.Write(packet.Bytes())
 		packet.Release()
 		f.session.releaseQueuedBytes(length)
-		return f.destination, err
+		if err != nil {
+			f.session.service.udp.noteDiscarded(1)
+			return f.destination, err
+		}
+		f.session.service.udp.noteDelivered()
+		return f.destination, nil
 	case <-f.done:
 		return M.Socksaddr{}, net.ErrClosed
+	case <-timeout:
+		return M.Socksaddr{}, os.ErrDeadlineExceeded
 	}
 }
 
@@ -382,6 +431,7 @@ func (f *udpFlow) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error
 	if f.queueClosed {
 		f.queueAccess.Unlock()
 		buffer.Release()
+		f.session.service.udp.noteReplyFailed()
 		return net.ErrClosed
 	}
 	f.touch()
@@ -437,15 +487,18 @@ func (f *udpFlow) closeFlow(checkIdle bool, deadline int64) bool {
 	f.cleanup.Add(1)
 	close(f.done)
 	queued := 0
+	discarded := uint64(0)
 	for {
 		select {
 		case packet := <-f.packets:
 			queued += packet.Len()
+			discarded++
 			packet.Release()
 		default:
 			f.queueAccess.Unlock()
 			f.session.remove(f)
 			f.session.releaseQueuedBytes(queued)
+			f.session.service.udp.noteDiscarded(discarded)
 			f.session.service.udp.releaseAssociation()
 			f.cleanup.Done()
 			return true
@@ -457,18 +510,41 @@ func (f *udpFlow) LocalAddr() net.Addr {
 	return f.destination
 }
 
+// SetDeadline returns os.ErrInvalid: this conn supports a READ deadline only.
+// The write half is the session's shared framed response writer, so a
+// per-association write deadline cannot be honoured without one association's
+// stall timing out every other association on the same stream. A caller that
+// needs a bounded write path should use SetWriteDeadline's error as the answer.
 func (f *udpFlow) SetDeadline(t time.Time) error {
 	return os.ErrInvalid
 }
 
+// SetReadDeadline bounds the next reads. The value is an absolute time, as in
+// net.PacketConn; the zero time clears it. It is what lets the router's
+// fragmented-QUIC sniff, the DNS reader and a health probe wait for another
+// datagram for a bounded time instead of for the life of the association.
+//
+// One deviation from net.PacketConn is deliberate: a read that is ALREADY blocked
+// when the deadline changes is not interrupted, because waking it would cost a
+// per-association channel. Every caller in this tree sets the deadline immediately
+// before it reads (route/route.go's sniff round, dns/transport/udp.go,
+// common/stun), which is the shape this method is for.
 func (f *udpFlow) SetReadDeadline(t time.Time) error {
-	return os.ErrInvalid
+	f.deadlineAccess.Lock()
+	f.readDeadline = t
+	f.deadlineAccess.Unlock()
+	return nil
 }
 
+// SetWriteDeadline returns os.ErrInvalid for the reason SetDeadline gives.
 func (f *udpFlow) SetWriteDeadline(t time.Time) error {
 	return os.ErrInvalid
 }
 
+// NeedAdditionalReadDeadline reports that this conn does NOT need an external
+// read deadline: SetReadDeadline is honoured, so a caller may rely on it
+// instead of its own timer. Before the read deadline was implemented this
+// returned true, which was correct then and would be a lie now.
 func (f *udpFlow) NeedAdditionalReadDeadline() bool {
-	return true
+	return false
 }

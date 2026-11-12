@@ -202,7 +202,7 @@ func TestUDPIdleExpiryRechecksActivity(t *testing.T) {
 	if !session.reserveBytesLocked(payload.Len()) {
 		t.Fatal("the datagram was refused")
 	}
-	if !flow.push(payload) {
+	if pushed, _ := flow.push(payload); !pushed {
 		t.Fatal("the datagram was dropped")
 	}
 	if flow.closeIfIdle(deadline) {
