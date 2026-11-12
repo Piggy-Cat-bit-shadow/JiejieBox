@@ -1,5 +1,49 @@
 # 子仓库与分叉依赖（Child repositories and forked dependencies）
 
+## 2026-11-13 依赖仓库清单（Current dependency repositories）
+
+本节只更新**仓库名单与当前 pin**，不重写下面的历史节；完整刷新流程见 `KNOWLEDGE/REFRESH.md` §25A。
+机器可读的事实仍是 `release/dependencies.json`（仓库/分支/策略）与 `release/source-lock.json`（pin）；
+本节把它们摊平。pin 取自**远端 `testing` 的 `e5f5969d`**（本机 `_p01_main` 检出停在 `a3f56ac1`，
+落后若干提交，本表以远端为准）。策略含义见 `release/dependencies.json`
+（`update` = 发布准备可前移；`controlled` = 只能重建归档才能动；`report` = pin 在另一个仓库里）。
+
+### Go 依赖（`go.mod` / `test/go.mod` 的 replace）
+
+| 模块 | 仓库 | 分支 | 策略 | 当前 pin |
+|---|---|---|---|---|
+| `github.com/sagernet/sing` | `Piggy-Cat-bit-shadow/sing` | `dev` | update | `4abfaed41727` |
+| `github.com/sagernet/sing-tun` | `Piggy-Cat-bit-shadow/sing-tun` | `dev` | update | `3c0ead27405b` |
+| `github.com/sagernet/sing-quic` | `Piggy-Cat-bit-shadow/sing-quic` | `main` | update | `c1b074f1f868` |
+| `github.com/sagernet/quic-go` | `Piggy-Cat-bit-shadow/quic-go` | `sagernet` | update | `158445cdda77` |
+| `github.com/metacubex/utls` | `Piggy-Cat-bit-shadow/utls` | `main` | update | `e14b88879d80` |
+| `github.com/sagernet/wireguard-go` | `Piggy-Cat-bit-shadow/wireguard-go` | `awg3-inject` | update | `7ece3d66d79d` |
+| `github.com/sagernet/sing-anytls` | `Piggy-Cat-bit-shadow/sing-anytls` | `main` | update | `f4acc22de770` |
+| `github.com/enfein/mieru/v3` | `Piggy-Cat-bit-shadow/mieru` | `main` | update | `b5934f7136b4` |
+| `github.com/sagernet/cronet-go` | `Piggy-Cat-bit-shadow/cronet-go` | `main` | update | `362e63b14ce2` |
+| `github.com/sagernet/cronet-go/all` | `Piggy-Cat-bit-shadow/cronet-go` | `main` | update | `7ce9c49b464a` |
+| `cronet-go/lib/*`（29 个平台归档） | `Piggy-Cat-bit-shadow/cronet-go` | — | controlled | `362e63b14ce2`（按设计不随 root 抬） |
+
+### 客户端与嵌套 gitlink
+
+| 路径 | 仓库 | 分支 | 策略 | 当前 pin |
+|---|---|---|---|---|
+| `clients/apple` | `Piggy-Cat-bit-shadow/sing-box-for-apple` | `main` | update | `9330d9018c95` |
+| `clients/android` | `Piggy-Cat-bit-shadow/sing-box-for-android` | `main` | update | `ba5c6b161827` |
+| `clients/desktop` | `Piggy-Cat-bit-shadow/sing-box-for-desktop` | `main` | update | `e8b48beadd7d` |
+| `clients/desktop:dashboard` | `Piggy-Cat-bit-shadow/sing-box-dashboard` | `main` | report | `9bde90e1cd55` |
+
+### 尚未消费的移动（待合并后回写）
+
+窗口 03 的分支 `work/code-closeout6-03-20261112`（`9dafe5acf`）已把四个客户端 pin 前移到
+Apple `15a4ab6e`、Android `9816e006`、Desktop `a4d77faf`、Dashboard `8039ed0d`，并同步了
+`scripts/ci/check-libbox-abi.sh` 的两个 `VERIFIED_*_SHA` 与 `release/source-lock.json`。
+**这些 pin 尚未进入 `testing`**；合并后本节需要连同 `release/source-lock.json` 再更新一次。
+
+### 与下面历史节的关系
+
+v0.1.44（2026-11-08）及更早的节保留原样作为历史证据，其中记录的 pin 不是当前 pin。
+
 ## v0.1.44 固定消费（Released pins, 2026-11-08）
 
 父仓 `v0.1.44^{commit}` = `3b6ec64f7145a2add99656d47caaa4f22a1cc478`。`git ls-tree` 与 `release/source-lock.json` 核对的客户端 gitlink 为 Apple `e3283104c984d60cdf2a0250b47b7fc446e71ba6`、Android `c7837107dc0126fb704fdf08cf203e10b30c8a22`、Desktop `41722b030ea481523290d932a1d81177f8c13f32`；`release-freeze.py verify` 通过。Apple 从上一固定值 `0c7b10be` 前移到 `e3283104`，主要改动是 iOS 隧道接管等待从服务生命周期锁内移出，并为新会话重置接管标志。父仓的 Apple ABI 已验证 SHA 与此 pin 一致，正式运行构建了 Libbox、iOS、macOS 和自签 IPA。上述是固定源码与 CI 构建证据，不是 iPhone/iPad 上的 NE route/reload 验证。Satelite APK 在独立仓库通过自己的 `coreCommit` 和 tag 发布，不由父仓 `clients/android` gitlink 或内核 AAR 发布自动完成。本版另行回读其客户端 `v0.1.44` tag（`22ba907d62c23f09272117134a04e3bc96962520`）与 [公开 Release](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44)；双 ABI 签名构建见 [Release APK 42393794665](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/42393794665)。
