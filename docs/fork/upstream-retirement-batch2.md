@@ -26,10 +26,10 @@ Measured, not assumed: batch 1 compared stable patch-ids at upstream tip `a13dbe
 
 | spec | kind | commits | last touched | trigger | regression | upstream | upstream commit | disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 002 | code | 2 | 2026-11-02 | transport/v2rayxhttp/client.go:220: // that trim happens locally in applyMeta, not globally here (lx: SPEC 002). | transport/v2rayxhttp/url_test.go, transport/v2rayxhttp/xhtt… | fork-only | - | HOLD |
-| 015 | code | 1 | 2026-09-28 | daemon/started_service.go:1145: // SPEC 015 §3.5): the UI then shows a proxy list that is missing groups the | none names this patch | fork-only | - | HOLD |
+| 002 | code | 2 | 2026-11-02 | transport/v2rayxhttp/client.go:227: // that trim happens locally in applyMeta, not globally here (lx: SPEC 002). | transport/v2rayxhttp/url_test.go, transport/v2rayxhttp/xhtt… | fork-only | - | HOLD |
+| 015 | code | 1 | 2026-09-28 | daemon/started_service.go:1169: // SPEC 015 §3.5): the UI then shows a proxy list that is missing groups the | none names this patch | fork-only | - | HOLD |
 | 016 | code | 1 | 2026-10-08 | experimental/libbox/command_types_race_test.go:59: // TestConnectionsConcurrentApplyAndReadIsRaceFree is the SPEC 016 r… | experimental/libbox/command_types_race_test.go | fork-only | - | HOLD |
-| 022 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:642: // channel is effectively free (SPEC 022 #7). | none names this patch | fork-only | - | HOLD |
+| 022 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:668: // channel is effectively free (SPEC 022 #7). | none names this patch | fork-only | - | HOLD |
 | 038 | analysis | 1 | 2026-10-08 | docs/fork/lx-residual-bug-sweep.md:99: ## SPEC 038: why no signature was changed | none names this patch | fork-only | - | ANALYSIS |
 | 043 | code | 1 | 2026-10-08 | transport/v2rayxhttp/meta.go:390: // and the dial hung until timeout (lx: SPEC 043, wire-reproduced). | transport/v2rayxhttp/url_test.go | fork-only | - | HOLD |
 | 050 | code | 1 | 2026-10-08 | transport/v2rayxhttp/breaker_test.go:371: // The read deadline closes the body too (SPEC 050); the caller must | transport/v2rayxhttp/breaker_test.go, transport/v2rayxhttp/… | fork-only | - | HOLD |
@@ -37,15 +37,15 @@ Measured, not assumed: batch 1 compared stable patch-ids at upstream tip `a13dbe
 | 061 | code | 5 | 2026-11-02 | transport/v2rayxhttp/conn.go:56: // withholds it until the first uplink bytes (SPEC 061), so waiting for it here | transport/v2rayxhttp/dial_ctx_contract_test.go, transport/v… | fork-only | - | HOLD |
 | 071 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:157: // the dial (the WG bind dials under C.TCPTimeout since SPEC 071): on the dial | transport/v2rayxhttp/raise_failure_test.go | fork-only | - | HOLD |
 | 072 | code | 5 | 2026-11-02 | transport/http/client_h3_setup_context_test.go:193: // SPEC 072/077 property: the context that governed setup must be d… | transport/http/client_h3_setup_context_test.go, transport/v… | fork-only | - | HOLD |
-| 074 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:453: // lx: SPEC 074 — onExpire runs OUTSIDE the lock. It closes the HTTP/2 response | none names this patch | fork-only | - | HOLD |
-| 076 | code | 6 | 2026-11-02 | transport/v2rayxhttp/client.go:287: // backoff window before opening a transport (lx: SPEC 076). | transport/v2rayxhttp/packetup_drain_flow_test.go | fork-only | - | HOLD |
+| 074 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:479: // lx: SPEC 074 — onExpire runs OUTSIDE the lock. It closes the HTTP/2 response | none names this patch | fork-only | - | HOLD |
+| 076 | code | 6 | 2026-11-02 | transport/v2rayxhttp/client.go:300: // backoff window before opening a transport (lx: SPEC 076). | transport/v2rayxhttp/packetup_drain_flow_test.go | fork-only | - | HOLD |
 | 077 | code | 7 | 2026-11-02 | route/dial_setup.go:23: // XHTTP SPEC 077 dial-context contract, the HTTP/3 CONNECT setup context, and runtimecoord's | transport/http/client_h3_setup_context_test.go, transport/v… | fork-only | - | HOLD |
 | 080 | code | 1 | 2026-11-09 | transport/wireguard/device_awg.go:130: // AmneziaWG 3.x (SPEC 080) | none names this patch | fork-only | - | HOLD |
 | 082 | code | 3 | 2026-11-02 | common/badh2/stream_error.go:2: // conns our transports build on top of HTTP/2 bodies (lx: SPEC 082). | transport/v2rayxhttp/breaker_test.go, transport/v2rayxhttp/… | fork-only | - | HOLD |
 | 094 | code | 4 | 2026-11-02 | common/httpclient/http3_transport.go:778: // implementation (`transport/v2rayxhttp`, SPEC 094) takes the same position … | common/httpclient/http3_verdict_evidence_test.go, transport… | fork-only | - | HOLD |
-| 097 | code | 1 | 2026-09-28 | daemon/started_service.go:2782: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
+| 097 | code | 1 | 2026-09-28 | daemon/started_service.go:2806: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
 | 104 | code | 2 | 2026-11-02 | common/tls/std_config_quic_lx.go:17: // config (lx: SPEC 104). It first asks STDConfig(); when that refuses, it unwraps | transport/v2rayxhttp/http1_test.go, transport/v2rayxhttp/ht… | fork-only | - | HOLD |
-| 106 | code | 1 | 2026-09-28 | daemon/started_service.go:2782: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
+| 106 | code | 1 | 2026-09-28 | daemon/started_service.go:2806: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
 | 119 | analysis | 1 | 2026-10-10 | docs/fork/v016-handoff-310af9e69.md:332: SPEC 119 or 121. | none names this patch | fork-only | - | ANALYSIS |
 | 120 | analysis | 1 | 2026-10-10 | docs/fork/v016-final-closure-ledger.md:420: to absorb for them. SPEC 120 (MTU alignment) was addressed in this and the … | none names this patch | fork-only | - | ANALYSIS |
 | 122 | analysis | 2 | 2026-11-02 | docs/fork/audit-b1-handoff.md:58: / **SPEC 122 — uTLS retains TLS1.3 handshake state for the connection lifetime** / On… | none names this patch | fork-only | - | ANALYSIS |
