@@ -1086,8 +1086,19 @@ func tunnelDialerOptions(ctx context.Context, options option.MASQUEClientEndpoin
 // owned by transport/masque and the inner flows are created and released by the userspace stack, so
 // this endpoint has no object registry to count. It is reported as unknown, not as zero.
 func (c *ClientEndpoint) ResidencyLedger() adapter.ResidencyLedger {
+	if c.client != nil {
+		return c.client.ResidencyLedger()
+	}
 	return adapter.ResidencyLedger{
 		Answered: false,
-		Note:     "the MASQUE session is owned by transport/masque and inner flows by the device stack",
+		Note:     "the MASQUE client was not constructed; this endpoint cannot answer",
 	}
+}
+
+// SegmentStats exposes the Q36 attribution counters of the tunnel session.
+func (c *ClientEndpoint) SegmentStats() masque.SegmentStats {
+	if c.client == nil {
+		return masque.SegmentStats{}
+	}
+	return c.client.SegmentStats()
 }

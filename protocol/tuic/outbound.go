@@ -337,8 +337,11 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 // owns the session objects and exposes no observation interface, so this owner cannot answer. It is
 // reported as unknown rather than as a precise zero.
 func (h *Outbound) ResidencyLedger() adapter.ResidencyLedger {
+	if h.client != nil {
+		return h.client.ResidencyLedger()
+	}
 	return adapter.ResidencyLedger{
 		Answered: false,
-		Note:     "the pinned sing-quic client owns the TUIC session and exposes no object ledger",
+		Note:     "the TUIC carrier was not constructed; this outbound cannot answer",
 	}
 }

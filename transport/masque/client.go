@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	transportHTTP "github.com/sagernet/sing-box/transport/http"
 	"github.com/sagernet/sing-tun"
@@ -101,6 +102,17 @@ type Client struct {
 	// closeOnce and closeErr make Close idempotent: the endpoint and the scope share one release.
 	closeOnce sync.Once
 	closeErr  error
+	// sessionsCreated and sessionsTerminated are the object-identity lifetime counters for the
+	// residency ledger (audit Q15): one object is one published tunnel session.
+	sessionsCreated    atomic.Uint64
+	sessionsTerminated atomic.Uint64
+	// Q36 segment counters: what the device handed to the tunnel, what the tunnel returned, and
+	// the two local drops (no session, session not ready). Queue drops are the device's
+	// OutboundQueue and are counted by its owner, not here.
+	datagramsFromDevice       atomic.Uint64
+	datagramsToDevice         atomic.Uint64
+	datagramsDroppedNoSession atomic.Uint64
+	datagramsDroppedNotReady  atomic.Uint64
 }
 
 // clientSession is one established MASQUE tunnel.
@@ -154,6 +166,9 @@ type clientSession struct {
 	// state is the lock-free read view. It is written only under access and
 	// always with a complete, immutable snapshot.
 	state atomic.Pointer[sessionState]
+	// lastActivity is the last time a packet moved in either direction on this session. It is
+	// the Active/Idle distinction in the residency ledger; it is not a billing or QoS counter.
+	lastActivity atomic.Int64
 }
 
 // sessionState is the immutable snapshot the packet hot path reads.
@@ -366,6 +381,7 @@ func (c *Client) connect() (bool, error) {
 	current.session = newSession(c.ctx, stream, current, c.handler.FrontHeadroom)
 	current.tunnelTransport = tunnelTransport
 	c.current = current
+	c.sessionsCreated.Add(1)
 	c.access.Unlock()
 	// Report the transport the session was actually established over, now that it is the
 	// current one. The handler may use it to decide whether a same-connection transport is
@@ -385,6 +401,7 @@ func (c *Client) connect() (bool, error) {
 	c.access.Lock()
 	c.current = nil
 	c.access.Unlock()
+	c.sessionsTerminated.Add(1)
 	// The session is over, so the transport fact it carried is no longer true. Reporting
 	// Unknown rather than leaving the last value in place is what stops a handler from
 	// treating a finished H3 session as a live one.
@@ -404,6 +421,66 @@ func (c *Client) activeSession() *clientSession {
 	c.access.Lock()
 	defer c.access.Unlock()
 	return c.current
+}
+
+// markActivity records that a packet moved in either direction on this session.
+func (c *clientSession) markActivity() {
+	if c != nil {
+		c.lastActivity.Store(time.Now().UnixNano())
+	}
+}
+
+// activeWithin reports whether a packet moved on this session inside the window.
+func (c *clientSession) activeWithin(window time.Duration) bool {
+	if c == nil {
+		return false
+	}
+	last := c.lastActivity.Load()
+	return last != 0 && time.Since(time.Unix(0, last)) < window
+}
+
+// ResidencyLedger implements adapter.ResidencyLedgerReporter (audit Q15).
+//
+// The resident object is one published MASQUE tunnel session. Creating covers the connect/ready
+// window, Active/Idle is the last-packet window (60 s), Draining is a session cancelled by
+// RestartSession/network change while the loop has not cleared it yet, and Terminated is the
+// lifetime count of sessions whose run() completed. Inner flows are created and released by the
+// device stack, which is a different owner and is named in the Note, not counted here.
+func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
+	if c == nil {
+		return adapter.ResidencyLedger{}
+	}
+	c.access.Lock()
+	current := c.current
+	restarting := c.restarting
+	suspended := c.suspended
+	loops := c.activeLoops.Load()
+	c.access.Unlock()
+
+	ledger := adapter.ResidencyLedger{
+		Answered:   true,
+		Exact:      false,
+		Terminated: c.sessionsTerminated.Load(),
+		Note: "MASQUE tunnel sessions; Active/Idle uses a 60 s last-packet window, and the " +
+			"inner flows are owned by the device stack and are not counted here",
+	}
+	if current == nil {
+		if loops > 0 && !suspended && !restarting {
+			ledger.Creating = 1
+		}
+		return ledger
+	}
+	switch {
+	case restarting || (current.session != nil && current.session.ctx.Err() != nil):
+		ledger.Draining = 1
+	case !current.loadState().ready:
+		ledger.Creating = 1
+	case current.activeWithin(time.Minute):
+		ledger.Active = 1
+	default:
+		ledger.Idle = 1
+	}
+	return ledger
 }
 
 func (c *Client) Ready() bool {
@@ -477,8 +554,10 @@ func (c *Client) RestartSession() {
 }
 
 func (c *Client) WritePacketBuffers(packetBuffers []*buf.Buffer, forwarded bool) error {
+	c.datagramsFromDevice.Add(uint64(len(packetBuffers)))
 	current := c.activeSession()
 	if current == nil {
+		c.datagramsDroppedNoSession.Add(uint64(len(packetBuffers)))
 		buf.ReleaseMulti(packetBuffers)
 		return nil
 	}
@@ -486,10 +565,12 @@ func (c *Client) WritePacketBuffers(packetBuffers []*buf.Buffer, forwarded bool)
 	// on every packet batch. See clientSession's doc comment for the measurement.
 	state := current.loadState()
 	if !state.ready {
+		c.datagramsDroppedNotReady.Add(uint64(len(packetBuffers)))
 		buf.ReleaseMulti(packetBuffers)
 		return nil
 	}
 	configuration := state.configuration
+	current.markActivity()
 	inet4Address, inet6Address := firstAddresses(configuration.Address)
 	var replies []*buf.Buffer
 	routedBuffers := packetBuffers[:0]
@@ -690,6 +771,10 @@ func writeInboundBuffers(handler inboundBufferWriter, packetBuffers []*buf.Buffe
 }
 
 func (s *clientSession) handlePacket(buffer *buf.Buffer) {
+	s.markActivity()
+	if s.client != nil {
+		s.client.datagramsToDevice.Add(1)
+	}
 	_, destination, _, valid := packetAddresses(buffer.Bytes())
 	if !valid {
 		buffer.Release()

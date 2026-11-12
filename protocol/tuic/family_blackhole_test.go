@@ -148,7 +148,11 @@ func TestTheSilentFirstFamilyFailsOverToTheSecond(t *testing.T) {
 	_, err = io.ReadFull(conn, echo)
 	require.NoError(t, err)
 	require.Equal(t, payload, echo)
+	ledger := carrier.ResidencyLedger()
+	require.True(t, ledger.Answered)
+	require.EqualValues(t, 1, ledger.Active, "the established session with a live stream is Active")
 	_ = conn.Close()
+	require.EqualValues(t, 1, carrier.ResidencyLedger().Idle, "a session with no live stream is Idle")
 
 	require.Greater(t, blackholed.Load(), int64(0), "the IPv4 family must have been attempted and stayed silent")
 	require.Eventually(t, func() bool {
@@ -157,6 +161,8 @@ func TestTheSilentFirstFamilyFailsOverToTheSecond(t *testing.T) {
 		return carrier.winner == 2 && carrier.clients[0] == nil
 	}, 5*time.Second, 20*time.Millisecond,
 		"the IPv6 family must be the single winner and the losing client must be closed")
+	_ = carrier.CloseWithError(net.ErrClosed)
+	require.EqualValues(t, 1, carrier.ResidencyLedger().Terminated, "the ended session is counted once")
 }
 
 // TestADualStackDomainBuildsTheFamilyCarrier pins the production wiring for TUIC.

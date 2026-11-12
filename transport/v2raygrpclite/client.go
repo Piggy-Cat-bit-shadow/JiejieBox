@@ -39,6 +39,7 @@ type Client struct {
 	url        *url.URL
 	host       string
 	closeIdle  atomic.Bool
+	ledger     clientLedger
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayGRPCOptions, tlsConfig tls.Config) adapter.V2RayClientTransport {
@@ -86,6 +87,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
+	c.ledger.creating.Add(1)
+	defer c.ledger.creating.Add(-1)
 	pipeInReader, pipeInWriter := io.Pipe()
 	requestCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	request := &http.Request{
@@ -133,7 +136,8 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 			conn.setup(response.Body, nil)
 		}
 	}()
-	return conn, nil
+	c.ledger.active.Add(1)
+	return &ledgerConn{Conn: conn, ledger: &c.ledger}, nil
 }
 
 func (c *Client) MultiplexEnabled() bool {

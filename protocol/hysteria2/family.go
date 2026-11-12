@@ -39,7 +39,10 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-quic/hysteria2"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -56,6 +59,12 @@ type familyCarrier struct {
 	families    int
 	winner      int // 0 none, 1 or 2; protected by access
 	established bool
+	// Residency accounting (audit Q15). One object is one established session; activeFlows is
+	// the Active/Idle distinction and terminated is the lifetime session-release count.
+	creating     atomic.Int64
+	activeFlows  atomic.Int64
+	terminated   atomic.Uint64
+	lastActivity atomic.Int64
 }
 
 func newFamilyCarrier(newClient func(family int) (*hysteria2.Client, error)) *familyCarrier {
@@ -89,7 +98,11 @@ func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (
 	c.access.Unlock()
 	if established && winner != 0 {
 		if client := c.peek(winner); client != nil {
-			return client.DialConn(ctx, destination)
+			conn, err := client.DialConn(ctx, destination)
+			if err != nil {
+				return nil, err
+			}
+			return c.trackConn(conn), nil
 		}
 	}
 	value, err := c.race(ctx, func(attemptCtx context.Context, client *hysteria2.Client) (any, error) {
@@ -98,7 +111,7 @@ func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (
 	if err != nil {
 		return nil, err
 	}
-	return value.(net.Conn), nil
+	return c.trackConn(value.(net.Conn)), nil
 }
 
 // ListenPacket is DialConn for a UDP session.
@@ -109,7 +122,11 @@ func (c *familyCarrier) ListenPacket(ctx context.Context) (net.PacketConn, error
 	c.access.Unlock()
 	if established && winner != 0 {
 		if client := c.peek(winner); client != nil {
-			return client.ListenPacket(ctx)
+			conn, err := client.ListenPacket(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return c.trackPacketConn(conn), nil
 		}
 	}
 	value, err := c.race(ctx, func(attemptCtx context.Context, client *hysteria2.Client) (any, error) {
@@ -118,7 +135,7 @@ func (c *familyCarrier) ListenPacket(ctx context.Context) (net.PacketConn, error
 	if err != nil {
 		return nil, err
 	}
-	return value.(net.PacketConn), nil
+	return c.trackPacketConn(value.(net.PacketConn)), nil
 }
 
 type familyResult struct {
@@ -131,6 +148,8 @@ type familyResult struct {
 func (c *familyCarrier) race(ctx context.Context, attempt func(context.Context, *hysteria2.Client) (any, error)) (any, error) {
 	raceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	c.creating.Add(1)
+	defer c.creating.Add(-1)
 
 	type familyCandidate struct {
 		family int
@@ -188,6 +207,7 @@ func (c *familyCarrier) retireLosers(results <-chan familyResult, remaining int,
 	for index := 0; index < remaining; index++ {
 		result := <-results
 		if result.value != nil {
+			c.terminated.Add(1)
 			switch value := result.value.(type) {
 			case net.Conn:
 				_ = value.Close()
@@ -211,10 +231,14 @@ func (c *familyCarrier) retireLosers(results <-chan familyResult, remaining int,
 func (c *familyCarrier) CloseWithError(err error) error {
 	c.access.Lock()
 	clients := c.clients
+	wasEstablished := c.established
 	c.clients = [2]*hysteria2.Client{}
 	c.winner = 0
 	c.established = false
 	c.access.Unlock()
+	if wasEstablished {
+		c.terminated.Add(1)
+	}
 	var lastErr error
 	for _, client := range clients {
 		if client == nil {
@@ -249,4 +273,121 @@ func (c *familyCarrier) CloseIdleConnections() {
 			client.CloseIdleConnections()
 		}
 	}
+}
+
+// markActivity records payload movement on an established stream or packet session.
+func (c *familyCarrier) markActivity() {
+	c.lastActivity.Store(time.Now().UnixNano())
+}
+
+func (c *familyCarrier) activeWithin(window time.Duration) bool {
+	last := c.lastActivity.Load()
+	return last != 0 && time.Since(time.Unix(0, last)) < window
+}
+
+// ResidencyLedger implements adapter.ResidencyLedgerReporter (audit Q15).
+//
+// One object is one established Hysteria2 session. Creating is a first-session race in flight;
+// Active/Idle is whether a tracked stream or UDP session moved bytes in the last 60 s; Terminated
+// counts sessions ended by CloseWithError or by losing a race after establishing. Streams are the
+// Active/Idle distinction inside the one session, not separate resident objects.
+func (c *familyCarrier) ResidencyLedger() adapter.ResidencyLedger {
+	if c == nil {
+		return adapter.ResidencyLedger{}
+	}
+	c.access.Lock()
+	established := c.established
+	c.access.Unlock()
+	ledger := adapter.ResidencyLedger{
+		Answered:   true,
+		Terminated: c.terminated.Load(),
+		Note: "Hysteria2 sessions; Active/Idle uses a 60 s last-payload window, and streams are " +
+			"the Active/Idle distinction inside one session, not separate objects",
+	}
+	switch {
+	case c.creating.Load() > 0:
+		ledger.Creating = 1
+	case !established:
+		return ledger
+	case c.activeFlows.Load() > 0 && c.activeWithin(time.Minute):
+		ledger.Active = 1
+	default:
+		ledger.Idle = 1
+	}
+	return ledger
+}
+
+// trackedConn counts an established session's stream as Active while it is open, and records
+// payload movement for the Active/Idle distinction. It forwards net.Conn unchanged otherwise.
+type trackedConn struct {
+	net.Conn
+	carrier *familyCarrier
+	once    sync.Once
+}
+
+func (c *familyCarrier) trackConn(conn net.Conn) net.Conn {
+	if c == nil || conn == nil {
+		return conn
+	}
+	c.activeFlows.Add(1)
+	return &trackedConn{Conn: conn, carrier: c}
+}
+
+func (t *trackedConn) Read(p []byte) (int, error) {
+	n, err := t.Conn.Read(p)
+	if n > 0 {
+		t.carrier.markActivity()
+	}
+	return n, err
+}
+
+func (t *trackedConn) Write(p []byte) (int, error) {
+	n, err := t.Conn.Write(p)
+	if n > 0 {
+		t.carrier.markActivity()
+	}
+	return n, err
+}
+
+func (t *trackedConn) Close() error {
+	err := t.Conn.Close()
+	t.once.Do(func() { t.carrier.activeFlows.Add(-1) })
+	return err
+}
+
+// trackedPacketConn is trackedConn for a UDP session.
+type trackedPacketConn struct {
+	net.PacketConn
+	carrier *familyCarrier
+	once    sync.Once
+}
+
+func (c *familyCarrier) trackPacketConn(conn net.PacketConn) net.PacketConn {
+	if c == nil || conn == nil {
+		return conn
+	}
+	c.activeFlows.Add(1)
+	return &trackedPacketConn{PacketConn: conn, carrier: c}
+}
+
+func (t *trackedPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	n, addr, err := t.PacketConn.ReadFrom(p)
+	if n > 0 {
+		t.carrier.markActivity()
+	}
+	return n, addr, err
+}
+
+func (t *trackedPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	n, err := t.PacketConn.WriteTo(p, addr)
+	if n > 0 {
+		t.carrier.markActivity()
+	}
+	return n, err
+}
+
+func (t *trackedPacketConn) Close() error {
+	err := t.PacketConn.Close()
+	t.once.Do(func() { t.carrier.activeFlows.Add(-1) })
+	return err
 }

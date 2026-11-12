@@ -52,7 +52,10 @@ type Endpoint struct {
 	endpoint   *wireguard.Endpoint
 	onDemand   bool
 	bindAccess sync.Mutex
-	started    atomic.Bool
+	// residency counters (audit Q15): one object is one started device instance.
+	terminated   atomic.Uint64
+	lastActivity atomic.Int64
+	started      atomic.Bool
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
@@ -210,8 +213,11 @@ func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		w.started.Store(true)
 		scope.Add(func() error {
 			w.bindAccess.Lock()
-			w.started.Store(false)
+			wasStarted := w.started.Swap(false)
 			w.bindAccess.Unlock()
+			if wasStarted {
+				w.terminated.Add(1)
+			}
 			return nil
 		})
 	}
@@ -461,10 +467,12 @@ func (w *Endpoint) WritePackets(packets [][]byte) error {
 	if !w.started.Load() {
 		return E.New("WireGuard is not ready yet")
 	}
+	w.lastActivity.Store(time.Now().UnixNano())
 	return w.endpoint.WritePackets(packets)
 }
 
 func (w *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	w.lastActivity.Store(time.Now().UnixNano())
 	var metadata adapter.InboundContext
 	metadata.Inbound = w.Tag()
 	metadata.InboundType = w.Type()
@@ -603,8 +611,23 @@ func (w *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address ne
 // owns the peer and session objects and exposes no observation interface, so this endpoint cannot
 // answer. It is reported as unknown rather than as a precise zero.
 func (e *Endpoint) ResidencyLedger() adapter.ResidencyLedger {
-	return adapter.ResidencyLedger{
-		Answered: false,
-		Note:     "the pinned wireguard device owns peer/session objects and exposes no object ledger",
+	if e == nil {
+		return adapter.ResidencyLedger{}
 	}
+	ledger := adapter.ResidencyLedger{
+		Answered:   true,
+		Exact:      false,
+		Terminated: e.terminated.Load(),
+		Note: "WireGuard device instances; Active/Idle uses a 60 s last-packet window, and the " +
+			"peer/session objects inside the pinned wireguard device are not counted here",
+	}
+	if !e.started.Load() {
+		return ledger
+	}
+	if last := e.lastActivity.Load(); last != 0 && time.Since(time.Unix(0, last)) < time.Minute {
+		ledger.Active = 1
+	} else {
+		ledger.Idle = 1
+	}
+	return ledger
 }

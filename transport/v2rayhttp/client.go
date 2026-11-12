@@ -38,6 +38,7 @@ type Client struct {
 	method     string
 	headers    http.Header
 	closeIdle  atomic.Bool
+	ledger     clientLedger
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
@@ -94,11 +95,22 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
+	c.ledger.creating.Add(1)
+	defer c.ledger.creating.Add(-1)
+	var (
+		conn net.Conn
+		err  error
+	)
 	if !c.http2 {
-		return c.dialHTTP(ctx)
+		conn, err = c.dialHTTP(ctx)
 	} else {
-		return c.dialHTTP2(ctx)
+		conn, err = c.dialHTTP2(ctx)
 	}
+	if err != nil || conn == nil {
+		return conn, err
+	}
+	c.ledger.active.Add(1)
+	return &ledgerConn{Conn: conn, ledger: &c.ledger}, nil
 }
 
 func (c *Client) dialHTTP(ctx context.Context) (net.Conn, error) {
