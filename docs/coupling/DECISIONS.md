@@ -47,16 +47,46 @@ and the pools live partly in external modules (sing-anytls, Mieru SDK). Recorded
 as F-15 with the test that would measure the window; revisit together with D-2,
 because a QUIC session admission would need the same generation plumbing.
 
-## D-4 — On-demand suspend remains a product decision
+## D-4 — On-demand suspend: a device pause keeps a tunnel that is carrying traffic
 
-F-01 is real in code and not provably harmful in product: "device paused" is the
-platform telling the extension the device is going to sleep, and suspending a
-tunnel is the documented behaviour of `OnDemandEndpoint`. The hotspot case in the
-stage-1 comment says a tunnel that carries traffic must not be *idle-closed*; it
-does not say a device pause must be ignored. Changing it silently would trade
-battery for a case nobody measured.
+**Decided (Q07, option a).** The two candidate policies were:
 
-Next step is a test and then a decision, not the other way around.
+- **(a)** a device pause suspends only IDLE on-demand tunnels; a tunnel that is
+  carrying traffic keeps its transport;
+- **(b)** the pause keeps tearing every referenced tunnel down, and the published
+  promise is narrowed to say a lock screen may end a transfer.
+
+(b) was rejected as a user-visible downgrade: for a VPN/proxy product, "we may
+cut your download when you lock the screen" is worse than the battery the
+exemption costs, and it would have required editing the platform contract in
+three places to say something weaker than the code already claims.
+
+The implementation is `power.Policy.OnDemandIdleAfter` (the activity window, 60 s
+by default) plus the ledger in `route/traffic_activity.go`, read by the eligibility
+pass in `route/reference.go`. Three properties are part of the decision rather
+than tuning:
+
+1. **Activity is payload that moved, not a reference and not a connection count.**
+   A referenced tag is the routing graph, not business; a stream count cannot tell
+   a silent banking session from a download. Both were rejected by name.
+2. **The exemption carries its own expiry.** Nothing emits an event when a
+   transfer stops, so the pass arms a deadline at `last payload + window`; when it
+   fires, an idle tunnel is suspended exactly as before. Without this the
+   exemption would be permanent, which is the battery cost D-4 originally warned
+   about.
+3. **The verdict still comes from the pause manager's callbacks.** The withdrawn
+   candidate in `route/reference_pause_test.go` (re-reading `IsDevicePaused()` on
+   every pass) stays withdrawn: it does not repair a missed wake, and it breaks
+   `experimental/libbox`'s reload-window contract.
+
+**Not proven here, and not claimed:** battery cost and business continuity under a
+real lock screen / sleep. That is a device round: the window (60 s) and the
+one-wake-per-window cost of a kept transfer are provisional tuning until it is
+measured, and the acceptance procedure is `docs/fork/apple-screen-state-acceptance.md`
+§6. The exemption also does not cover a tunnel used as another outbound's
+`detour`, because that traffic does not pass through the router's chain walk;
+`route/traffic_activity.go` records that limit where a future per-endpoint counter
+would replace it.
 
 ## D-5 — No shared session-pool abstraction
 
