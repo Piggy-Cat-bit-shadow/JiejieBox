@@ -33,8 +33,26 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-12",
+  "recorded_at": "2026-11-13",
   "parent_runs": [
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Verify",
+      "run_id": 43271312923,
+      "head_sha": "8d232df4a7cb07e64e050ef4047c9bf8048c9a59",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43271312923"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 43271321059,
+      "head_sha": "8d232df4a7cb07e64e050ef4047c9bf8048c9a59",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43271321059"
+    },
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Verify",
