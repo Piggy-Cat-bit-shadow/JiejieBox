@@ -335,15 +335,15 @@ func supportedVersions(hello []byte) []uint16 {
 
 const extensionSupportedVersions = 0x002b
 
+// windowsBuildNumber is the 16-bit build component RtlGetNtVersionNumbers reports.
+//
+// Only this component is comparable with tls13MinimumBuild; the number carries flag bits above
+// 0xffff, which is why they are masked off. There is no separate branch for a future major version:
+// the build numbering is what the TLS 1.3 threshold is stated in, and inventing a second scale for
+// an unobserved major would just be a guess.
 func windowsBuildNumber() uint32 {
-	major, _, build := windows.RtlGetNtVersionNumbers()
-	build &= 0xffff
-	if major > 10 {
-		// Future majors report a build that is not comparable with the Windows
-		// 10 numbering, so report the raw pair instead of a misleading number.
-		return build
-	}
-	return build
+	_, _, build := windows.RtlGetNtVersionNumbers()
+	return build & 0xffff
 }
 
 // setTLS13Support overrides the capability oracle for one test and restores the
