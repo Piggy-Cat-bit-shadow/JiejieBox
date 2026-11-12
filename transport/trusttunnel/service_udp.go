@@ -510,12 +510,16 @@ func (f *udpFlow) LocalAddr() net.Addr {
 	return f.destination
 }
 
-// SetDeadline returns os.ErrInvalid: this conn supports a READ deadline only.
-// The write half is the session's shared framed response writer, so a
-// per-association write deadline cannot be honoured without one association's
-// stall timing out every other association on the same stream. A caller that
-// needs a bounded write path should use SetWriteDeadline's error as the answer.
+// SetDeadline applies the READ half and returns os.ErrInvalid for the write half.
+// The read half is applied rather than dropped so a caller that ignores this
+// error (the tree's DNS reader does exactly that) still gets a bounded read; the
+// write half is the session's shared framed response writer, so a per-association
+// write deadline cannot be honoured without one association's stall timing out
+// every other association on the stream. The error is the answer to that part.
 func (f *udpFlow) SetDeadline(t time.Time) error {
+	f.deadlineAccess.Lock()
+	f.readDeadline = t
+	f.deadlineAccess.Unlock()
 	return os.ErrInvalid
 }
 

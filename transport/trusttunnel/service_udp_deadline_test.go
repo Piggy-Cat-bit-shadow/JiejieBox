@@ -92,15 +92,22 @@ func TestUDPFlowReadDeadlineIsHonouredAndDeclared(t *testing.T) {
 	require.False(t, deadline.NeedAdditionalReadDeadline(flow),
 		"the flow honours SetReadDeadline, so it must not ask callers for their own timer")
 	require.NoError(t, flow.SetReadDeadline(time.Time{}))
-	require.ErrorIs(t, flow.SetDeadline(time.Now()), os.ErrInvalid,
+	// SetDeadline reports that the write half is unsupported, but it must still
+	// apply the read half: the tree's DNS reader ignores this error and relies on
+	// the ensuing read being bounded.
+	require.ErrorIs(t, flow.SetDeadline(time.Now().Add(-time.Second)), os.ErrInvalid,
 		"SetDeadline must say the write half is unsupported instead of silently ignoring it")
+	_, err := flow.ReadPacket(buf.NewSize(MaxPayloadSize))
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded,
+		"SetDeadline's read half was not applied, so a caller ignoring its error reads unbounded")
+	require.NoError(t, flow.SetReadDeadline(time.Time{}))
 	require.ErrorIs(t, flow.SetWriteDeadline(time.Now()), os.ErrInvalid)
 
 	// A deadline in the past returns at once, with the timeout error a caller
 	// already has to handle.
 	require.NoError(t, flow.SetReadDeadline(time.Now().Add(-time.Second)))
 	started := time.Now()
-	_, err := flow.ReadPacket(buf.NewSize(MaxPayloadSize))
+	_, err = flow.ReadPacket(buf.NewSize(MaxPayloadSize))
 	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
 	require.Less(t, time.Since(started), time.Second, "a past deadline must not wait")
 
