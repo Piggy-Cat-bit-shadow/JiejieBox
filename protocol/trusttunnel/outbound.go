@@ -121,7 +121,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		AppName:       appName,
 		HealthCheck:   options.HealthCheck,
 		IdleTimeout:   idleWindow(options.IdleTimeout, 0),
-		AdmitCreation: admitSession(guard),
+		AdmitCreation: admitSessionFor(guard, options.ServerOptions.Build().String()),
 	})
 	if err != nil {
 		return nil, err
@@ -153,6 +153,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 // and the shared offer preserves the caller's context values, so the marker
 // reaches the TLS seam and no second permit is acquired behind our own.
 func admitSession(guard *resourceguard.Guard) func(context.Context) (context.Context, func(error), error) {
+	return admitSessionFor(guard, "")
+}
+
+// admitSessionFor is admitSession with the TrustTunnel server as the fast-fail window key.
+//
+// The key names the server, not the stream target: this seam admits a SESSION creation toward one
+// server, and a storm there must not delay session creations toward another outbound. The empty key
+// keeps the process-global behaviour for tests and callers that do not name a server.
+func admitSessionFor(guard *resourceguard.Guard, key string) func(context.Context) (context.Context, func(error), error) {
 	if guard == nil {
 		return nil
 	}
@@ -164,7 +173,7 @@ func admitSession(guard *resourceguard.Guard) func(context.Context) (context.Con
 		if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 			class = resourceguard.ClassInteractive
 		}
-		permit, err := guard.Acquire(ctx, class)
+		permit, err := guard.AcquireFor(ctx, class, key)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -173,7 +182,7 @@ func admitSession(guard *resourceguard.Guard) func(context.Context) (context.Con
 		// disarmed while the gate is saturated.
 		started := time.Now()
 		return resourceguard.WithHeldPermit(ctx), func(dialErr error) {
-			guard.ObserveOutcome(started, dialErr)
+			guard.ObserveOutcomeFor(key, started, dialErr)
 			permit.Release()
 		}, nil
 	}

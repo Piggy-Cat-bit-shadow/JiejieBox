@@ -182,11 +182,13 @@ type Guard struct {
 	// period.
 	lowSince time.Time
 
-	// rateConfig is the fast-fail policy's constants, and rate is its state. They are kept in the
-	// guard - not in a second limiter - because this is already the process's creation-policy owner;
-	// a separate type would be a second place that decides whether new work may start.
-	rateConfig rateConfig
-	rate       rateState
+	// rateConfig is the fast-fail policy's constants, and rateBuckets is its per-destination state.
+	// They are kept in the guard - not in a second limiter - because this is already the process's
+	// creation-policy owner; a separate type would be a second place that decides whether new work
+	// may start. The aggregate counters live outside the buckets so eviction never rewrites totals.
+	rateConfig   rateConfig
+	rateBuckets  map[string]*rateBucket
+	rateCounters rateCounters
 	// rateUntil is the atomic mirror of rate.until. It exists so the common case - no window - is
 	// one atomic load instead of a mutex acquisition on every dial: the rate policy must not add
 	// measurable cost to the path it is supposed to protect.
@@ -231,7 +233,8 @@ func NewGuard(config Config, pressure func() Level) *Guard {
 		levelSince: time.Now(),
 		now:        time.Now,
 
-		rateConfig: defaultRateConfig().normalized(),
+		rateConfig:  defaultRateConfig().normalized(),
+		rateBuckets: make(map[string]*rateBucket),
 	}
 	created.gate = NewGate(config.planFor(LevelNormal), config.InteractiveReserve)
 	created.gate.aging = config.StarvationAfter
@@ -293,6 +296,16 @@ func (g *Guard) Level() Level {
 // no-guard-configured behaviour. On a configured Guard it either returns a permit - which the
 // caller must Release - or one of ErrQueueFull, ErrWaitTimeout, or the context error.
 func (g *Guard) Acquire(ctx context.Context, class Class) (*Permit, error) {
+	return g.AcquireFor(ctx, class, "")
+}
+
+// AcquireFor is Acquire with the destination the creation is aimed at.
+//
+// The key is the proxy server address for network creations and empty for process-internal work
+// such as the build gate. Only failures reported with the same key arm this acquisition's window,
+// so a storm against one node does not slow a creation aimed at another. Empty keeps the original
+// process-global behaviour for callers that do not name a destination.
+func (g *Guard) AcquireFor(ctx context.Context, class Class, key string) (*Permit, error) {
 	if g == nil {
 		return nil, nil
 	}
@@ -303,7 +316,7 @@ func (g *Guard) Acquire(ctx context.Context, class Class) (*Permit, error) {
 	// instantaneously, so starting more work now is waste. The interactive class is exempt, because
 	// a person waiting on this flow must not inherit a background node's failure storm.
 	if class != ClassInteractive {
-		if err := g.rateGate(ctx); err != nil {
+		if err := g.rateGate(ctx, key); err != nil {
 			return nil, err
 		}
 	}

@@ -40,6 +40,18 @@ type streamDialFunc func(ctx context.Context, destination M.Socksaddr) (net.Conn
 // place that knows about admission, and on every platform without a process budget it costs one
 // nil check.
 func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial streamDialFunc, destination M.Socksaddr) (net.Conn, error) {
+	return dialWithAdmissionFor(ctx, guard, "", dial, destination)
+}
+
+// dialWithAdmissionFor is dialWithAdmission with the AnyTLS server as the rate-window key.
+//
+// The destination parameter is the TARGET of the stream, which may differ on every flow, while the
+// session whose creation can fail is shared per server. Keying the fast-fail window by the target
+// would let one unreachable target budget a storm that delays every other target sharing the same
+// server, and would grow one bucket per target. The production outbound therefore passes its
+// server address; the empty key keeps the old process-global behaviour for tests and callers that
+// do not name one.
+func dialWithAdmissionFor(ctx context.Context, guard *resourceguard.Guard, key string, dial streamDialFunc, destination M.Socksaddr) (net.Conn, error) {
 	// One logical dial holds one permit, however many seams it crosses. A detour, a chain or a
 	// fallback re-enters the dial path under the caller's context: an outbound dialling through
 	// another outbound, or the TLS handshake of a session this dial is creating. The outer seam
@@ -55,7 +67,7 @@ func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial str
 	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 		class = resourceguard.ClassInteractive
 	}
-	permit, err := guard.Acquire(ctx, class)
+	permit, err := guard.AcquireFor(ctx, class, key)
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +82,6 @@ func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial str
 	// Report the outcome to the fast-fail policy. A queue refusal never reaches here (Acquire
 	// returned it), so what is reported is a real creation result - which is exactly what the
 	// policy needs to distinguish a failing far side from this process's own backpressure.
-	guard.ObserveOutcome(started, dialErr)
+	guard.ObserveOutcomeFor(key, started, dialErr)
 	return conn, dialErr
 }

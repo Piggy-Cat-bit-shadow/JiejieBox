@@ -151,7 +151,7 @@ func (d *defaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 }
 
 func (d *defaultDialer) DialTLSContext(ctx context.Context, destination M.Socksaddr) (Conn, error) {
-	return handshakeWithAdmission(ctx, func(dialCtx context.Context) (Conn, error) {
+	return handshakeWithAdmissionFor(ctx, destination.String(), func(dialCtx context.Context) (Conn, error) {
 		return d.dialContext(dialCtx, destination, true)
 	})
 }
@@ -176,6 +176,14 @@ func (d *defaultDialer) DialTLSContext(ctx context.Context, destination M.Socksa
 // On a process with no budget the guard is nil and Acquire returns (nil, nil): one nil check and
 // the old behaviour.
 func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) (Conn, error)) (Conn, error) {
+	return handshakeWithAdmissionFor(ctx, "", dial)
+}
+
+// handshakeWithAdmissionFor is handshakeWithAdmission with the destination the handshake is aimed
+// at. The key scopes the fast-fail rate window: a storm against one outbound server must not delay
+// the first handshake of another. The empty key keeps the original process-global behaviour for
+// callers that do not name a destination.
+func handshakeWithAdmissionFor(ctx context.Context, key string, dial func(ctx context.Context) (Conn, error)) (Conn, error) {
 	if resourceguard.HasHeldPermit(ctx) {
 		return dial(ctx)
 	}
@@ -187,7 +195,7 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 		class = resourceguard.ClassInteractive
 	}
-	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, class)
+	permit, err := resourceguard.FromContext(ctx).AcquireFor(ctx, class, key)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +212,7 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	// inner would wait for the outer to finish - a stall that ends in a queue timeout with
 	// nothing wrong on the network. One logical dial may hold at most one handshake permit.
 	conn, dialErr := dial(resourceguard.WithHeldPermit(ctx))
-	resourceguard.FromContext(ctx).ObserveOutcome(started, dialErr)
+	resourceguard.FromContext(ctx).ObserveOutcomeFor(key, started, dialErr)
 	return conn, dialErr
 }
 

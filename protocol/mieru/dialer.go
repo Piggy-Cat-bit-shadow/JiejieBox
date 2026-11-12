@@ -86,7 +86,7 @@ func (d *serverDialer) admit(ctx context.Context) (release func(), held bool, er
 	if d.guard == nil || resourceguard.HasHeldPermit(ctx) {
 		return func() {}, false, nil
 	}
-	permit, permitErr := d.guard.Acquire(ctx, resourceguard.ClassNormal)
+	permit, permitErr := d.guard.AcquireFor(ctx, resourceguard.ClassNormal, d.server.String())
 	if permitErr != nil {
 		return nil, false, permitErr
 	}
@@ -116,7 +116,7 @@ func (d *serverDialer) DialContext(ctx context.Context, network string, address 
 		dialCtx = resourceguard.WithHeldPermit(ctx)
 	}
 	conn, dialErr := d.dialer.DialContext(dialCtx, network, destination)
-	d.guard.ObserveOutcome(started, dialErr)
+	d.guard.ObserveOutcomeFor(d.server.String(), started, dialErr)
 	observeSocketDial(ctx, dialErr)
 	return conn, dialErr
 }
@@ -151,7 +151,7 @@ func (d *serverDialer) ListenPacket(ctx context.Context, network string, laddr s
 		dialCtx = resourceguard.WithHeldPermit(ctx)
 	}
 	conn, dialErr := d.dialer.DialContext(dialCtx, N.NetworkUDP, destination)
-	d.guard.ObserveOutcome(started, dialErr)
+	d.guard.ObserveOutcomeFor(d.server.String(), started, dialErr)
 	if dialErr != nil {
 		observeSocketDial(ctx, dialErr)
 		return nil, dialErr

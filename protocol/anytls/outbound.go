@@ -132,7 +132,7 @@ func (d anytlsDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 // why the permit is taken here rather than inside the session pool, and for what exactly the
 // bound covers.
 func (h *Outbound) dialAdmitted(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
-	return dialWithAdmission(ctx, h.guard, h.client.DialContext, destination)
+	return dialWithAdmissionFor(ctx, h.guard, h.server.String(), h.client.DialContext, destination)
 }
 
 // dialOut opens the tunnel connection the AnyTLS session runs over.
