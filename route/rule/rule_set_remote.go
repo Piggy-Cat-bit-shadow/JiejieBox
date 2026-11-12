@@ -402,6 +402,15 @@ func (s *RemoteRuleSet) setUpdateMetadata(updated time.Time, etag string) {
 // errRuleSetSuperseded is returned by a refresh whose generation was replaced while it worked.
 var errRuleSetSuperseded = E.New("rule-set update superseded by a newer one")
 
+// hasResidentRules reports whether this rule-set is currently serving a version, which is what
+// decides the build's overlap shape: a refresh of a resident version keeps the old matcher alive
+// while the new document is parsed and built, while the FIRST load of a rule-set replaces nothing.
+func (s *RemoteRuleSet) hasResidentRules() bool {
+	s.access.Lock()
+	defer s.access.Unlock()
+	return s.rules != nil
+}
+
 // commitGeneration is the ONE publication owner: the generation check, the live rules/metadata
 // swap, the artifact lease and the exact reference are installed together under the rule-set lock.
 //
@@ -605,7 +614,7 @@ func (s *RemoteRuleSet) updateOnce() {
 	}
 }
 
-func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
+func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) (fetchErr error) {
 	s.logger.Debug("updating rule-set ", s.tag, " from URL: ", s.url)
 	// One refresh attempt is one generation. A refresh that started earlier and finishes later
 	// must not publish over the one that started after it; the generation is checked immediately
@@ -627,12 +636,31 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	// index and swaps it in - so it shares the box's build reservation with provider refreshes.
 	// The reservation is taken BEFORE the request: a deferred build must not download at all,
 	// and the version currently serving traffic stays untouched.
-	buildRelease, buildErr := buildgate.AcquireFromContext(ctx)
+	//
+	// The overlap shape is declared from what this rule-set currently serves: a refresh replaces a
+	// resident matcher (old document + new document), while the first load of a rule-set replaces
+	// nothing (Q20: the budget must describe both, not charge every build an old document).
+	buildReservation, buildErr := buildgate.AcquireBuildFromContext(ctx, buildgate.BuildOptions{
+		HasPreviousVersion: s.hasResidentRules(),
+	})
 	if buildErr != nil {
 		s.logger.Debug("rule-set ", s.tag, " build deferred: ", buildErr)
 		return buildErr
 	}
-	defer buildRelease()
+	buildSucceeded := false
+	// The outcome is the refresh's own: an error fails, a completed publish or not-modified answer
+	// succeeds, and a refresh a later generation superseded declares neither - it returns its slot
+	// without claiming a result it did not produce.
+	defer func() {
+		switch {
+		case fetchErr != nil:
+			buildReservation.Fail()
+		case buildSucceeded:
+			buildReservation.Succeed()
+		default:
+			buildReservation.Release()
+		}
+	}()
 	response, err := s.httpClient.Do(request.WithContext(ctx))
 	if err != nil {
 		return err
@@ -660,6 +688,7 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 			}
 		}
 		s.logger.Info("update rule-set ", s.tag, ": not modified")
+		buildSucceeded = true
 		return nil
 	default:
 		return E.New("unexpected status: ", response.Status)
@@ -721,6 +750,7 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 		}
 	}
 	s.logger.Info("updated rule-set ", s.tag)
+	buildSucceeded = true
 	return nil
 }
 

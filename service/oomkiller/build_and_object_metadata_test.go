@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/buildgate"
 	"github.com/sagernet/sing-box/common/resourceguard"
+	"github.com/sagernet/sing-box/common/urltest"
 	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
@@ -108,4 +109,54 @@ func TestBuildGateMetadataReportsTheBudgetAndItsBoundary(t *testing.T) {
 func TestBuildGateMetadataIsAbsentWithoutAGate(t *testing.T) {
 	require.Nil(t, (&Service{}).buildGateMetadata())
 	require.Nil(t, (&Service{ctx: context.Background()}).buildGateMetadata())
+}
+
+// TestBuildGateMetadataSeparatesTheAdmissionLimitFromTheOverlap is Q20's counterexample at the
+// document level: a build admitted under LevelNormal keeps its permit when pressure rises, so the
+// document must not report the new admission limit as the overlap.
+func TestBuildGateMetadataSeparatesTheAdmissionLimitFromTheOverlap(t *testing.T) {
+	level := resourceguard.LevelNormal
+	gate := buildgate.NewWithPressure(resourceguard.Config{Limit: 2, Queue: 4, Wait: 30e9},
+		func() resourceguard.Level { return level })
+	ctx := buildgate.ContextWithGate(context.Background(), gate)
+	killer := &Service{ctx: ctx}
+
+	release, err := gate.Acquire(context.Background())
+	require.NoError(t, err)
+	defer release()
+	releaseSecond, err := gate.Acquire(context.Background())
+	require.NoError(t, err)
+	defer releaseSecond()
+	level = resourceguard.LevelCritical
+
+	rendered, isMap := killer.buildGateMetadata().(map[string]any)
+	require.True(t, isMap)
+	require.Equal(t, 1, rendered["limit"], "the admission limit is what the gate admits now")
+	require.Equal(t, 2, rendered["inflightBuilds"], "the already-admitted build keeps its permit")
+	require.Equal(t, 2, rendered["maxOverlapping"],
+		"the overlap bound must not be the new admission limit while an old build still holds a permit")
+	require.Equal(t, "build-count", rendered["measure"])
+}
+
+// TestQueueMetadataStatesTheRoundQueueBound is Q08's diagnostics half: the bound, the entries inside
+// it and the demand past it are all readable, and the rule is stated in the document.
+func TestQueueMetadataStatesTheRoundQueueBound(t *testing.T) {
+	coordinator := urltest.NewCoordinator(10)
+	ctx := urltest.ContextWithCoordinator(context.Background(), coordinator)
+	killer := &Service{ctx: ctx}
+
+	rendered, isMap := killer.queueMetadata().(map[string]any)
+	require.True(t, isMap)
+	require.Equal(t, "queue", rendered["measure"])
+	require.Equal(t, 10, rendered["measurementLimit"])
+	require.Equal(t, 2, rendered["roundLimit"])
+	require.Equal(t, coordinator.RoundWaiterLimit(), rendered["roundQueueBound"])
+	require.NotEmpty(t, rendered["roundQueueRule"])
+	require.Contains(t, rendered, "roundsOverflow")
+}
+
+// TestQueueMetadataIsAbsentWithoutACoordinator keeps an embedder's document unchanged.
+func TestQueueMetadataIsAbsentWithoutACoordinator(t *testing.T) {
+	require.Nil(t, (&Service{}).queueMetadata())
+	require.Nil(t, (&Service{ctx: context.Background()}).queueMetadata())
 }

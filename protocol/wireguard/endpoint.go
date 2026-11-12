@@ -615,11 +615,12 @@ func (e *Endpoint) ResidencyLedger() adapter.ResidencyLedger {
 		return adapter.ResidencyLedger{}
 	}
 	ledger := adapter.ResidencyLedger{
+		Unit:       adapter.ResidencyUnitDevice,
 		Answered:   true,
 		Exact:      false,
 		Terminated: e.terminated.Load(),
-		Note: "WireGuard device instances; Active/Idle uses a 60 s last-packet window, and the " +
-			"peer/session objects inside the pinned wireguard device are not counted here",
+		Note: "WireGuard device instances (unit=device); Active/Idle uses a 60 s last-packet window, " +
+			"and the peer/session objects inside the pinned wireguard device are not counted here",
 	}
 	if !e.started.Load() {
 		return ledger

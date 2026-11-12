@@ -3,6 +3,7 @@ package route
 import (
 	"context"
 	"slices"
+	"sort"
 	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -594,8 +595,71 @@ func (m *ReferenceManager) ObjectResidencySnapshot() adapter.ResidencyObjectSnap
 		counts.Idle += ledger.Idle
 		counts.Draining += ledger.Draining
 		counts.Terminated += ledger.Terminated
+		generations := ledgerGenerationCount(ledger)
+		counts.Generations += generations
+		counts.RetiredGenerations += ledger.RetiredGenerations
+		unit := objectResidencyUnitFor(counts, ledger.Unit)
+		unit.Owners++
+		unit.Exact = unit.Exact && ledger.Exact
+		if ledger.Generation > unit.Generation {
+			unit.Generation = ledger.Generation
+		}
+		unit.Generations += generations
+		unit.RetiredGenerations += ledger.RetiredGenerations
+		unit.Creating += ledger.Creating
+		unit.Active += ledger.Active
+		unit.Idle += ledger.Idle
+		unit.Draining += ledger.Draining
+		unit.Terminated += ledger.Terminated
 	})
+	objectResidencyFinalize(&snapshot.Outbounds)
+	objectResidencyFinalize(&snapshot.Endpoints)
+	objectResidencyFinalize(&snapshot.DNSTransports)
+	objectResidencyFinalize(&snapshot.HTTPClients)
 	return snapshot
+}
+
+// ledgerGenerationCount is how many GENERATIONS one owner holds objects in: its current generation,
+// when it has one, plus the retired ones that still hold objects. An owner with no generation concept
+// contributes zero, which is why the field is a count of generation instances rather than a number
+// every owner is assumed to have.
+func ledgerGenerationCount(ledger adapter.ResidencyLedger) int {
+	count := ledger.RetiredGenerations
+	if ledger.Generation > 0 {
+		count++
+	}
+	return count
+}
+
+// objectResidencyUnitFor returns the per-unit record for one ledger's unit, creating it on first use.
+//
+// The unit is the whole point of the record: a provider that counts streams and one that counts
+// sessions are both "outbounds", and adding their Active counts would report one number for two
+// different objects. An owner that does not name a unit is kept in its own "unspecified" record
+// rather than being folded into every other owner's total.
+func objectResidencyUnitFor(counts *adapter.ResidencyObjectCounts, unit adapter.ResidencyUnit) *adapter.ResidencyUnitCounts {
+	if unit == "" {
+		unit = adapter.ResidencyUnitUnspecified
+	}
+	for index := range counts.Units {
+		if counts.Units[index].Unit == unit {
+			return &counts.Units[index]
+		}
+	}
+	counts.Units = append(counts.Units, adapter.ResidencyUnitCounts{Unit: unit, Exact: true})
+	return &counts.Units[len(counts.Units)-1]
+}
+
+// objectResidencyFinalize orders the unit records and states whether the kind's flat totals span more
+// than one unit. The order is by unit name so two snapshots of the same state render identically.
+func objectResidencyFinalize(counts *adapter.ResidencyObjectCounts) {
+	if len(counts.Units) == 0 {
+		return
+	}
+	sort.Slice(counts.Units, func(left int, right int) bool {
+		return counts.Units[left].Unit < counts.Units[right].Unit
+	})
+	counts.MixedUnits = len(counts.Units) > 1
 }
 
 // objectResidencyCountsFor returns the field of the object snapshot that a kind contributes to. The

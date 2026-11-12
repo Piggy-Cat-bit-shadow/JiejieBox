@@ -65,7 +65,20 @@ type Gate struct {
 	inner    *resourceguard.Guard
 	deferred atomic.Uint64
 	admitted atomic.Uint64
-	observer atomic.Pointer[func(context.Context, Admission)]
+	// The lifecycle counters. A permit is a permission, not an outcome: admitted counts permits
+	// handed out, and the three terminal counters say how each of them ended. Their sum plus
+	// Inflight is AdmittedBuilds, which is the invariant that makes "a failed build returns its
+	// slot" a checked fact rather than a claim.
+	succeeded atomic.Uint64
+	failed    atomic.Uint64
+	abandoned atomic.Uint64
+	// Overlap shape: a build that replaces a resident version holds an old document and a new one
+	// at the same time; a FIRST build has no predecessor and holds only the new one. The
+	// reservation reports the two separately instead of assuming every build overlaps an old
+	// version.
+	withPrevious    atomic.Uint64
+	withoutPrevious atomic.Uint64
+	observer        atomic.Pointer[func(context.Context, Admission)]
 }
 
 // Admission is one completed Acquire, reported to an observer.
@@ -117,6 +130,18 @@ type Stats struct {
 	resourceguard.Stats
 	Deferred       uint64
 	AdmittedBuilds uint64
+	// Succeeded/Failed/Abandoned classify the permits AdmittedBuilds handed out. Abandoned is a
+	// build that returned its slot without declaring an outcome; it is its own counter rather than
+	// being folded into either, because an undeclared outcome is not evidence of success and not
+	// evidence of failure.
+	Succeeded uint64
+	Failed    uint64
+	Abandoned uint64
+	// BuildsWithPreviousVersion/BuildsWithoutPreviousVersion are the ADMITTED builds by whether an
+	// old version of the same document was resident while they ran - the two shapes the overlap
+	// budget must not conflate.
+	BuildsWithPreviousVersion    uint64
+	BuildsWithoutPreviousVersion uint64
 }
 
 // New returns a gate that allows limit concurrent builds, with queue callers allowed to wait
@@ -178,11 +203,106 @@ func (g *Gate) Stats() Stats {
 	}
 	guardStats := g.inner.Stats()
 	return Stats{
-		GuardStats:     guardStats,
-		Stats:          guardStats.Gate,
-		Deferred:       g.deferred.Load(),
-		AdmittedBuilds: g.admitted.Load(),
+		GuardStats:                   guardStats,
+		Stats:                        guardStats.Gate,
+		Deferred:                     g.deferred.Load(),
+		AdmittedBuilds:               g.admitted.Load(),
+		Succeeded:                    g.succeeded.Load(),
+		Failed:                       g.failed.Load(),
+		Abandoned:                    g.abandoned.Load(),
+		BuildsWithPreviousVersion:    g.withPrevious.Load(),
+		BuildsWithoutPreviousVersion: g.withoutPrevious.Load(),
 	}
+}
+
+// BuildOptions is what a build owner knows about the build it is about to start, and which the
+// reservation cannot infer.
+type BuildOptions struct {
+	// HasPreviousVersion says a version of the SAME document is still resident when this build runs.
+	// That is the overlap the reservation exists to bound: the old document must stay reachable
+	// while the new one is downloaded, parsed and indexed. A FIRST build has no predecessor - it
+	// holds one document, not two - so a budget that charges it an old document would be
+	// overstating the resident set for the common case of a cold start.
+	HasPreviousVersion bool
+}
+
+// Reservation is one admitted build: the permit plus the outcome, so "the build failed" and "the
+// build's slot came back" are the same call and cannot disagree.
+//
+// Release/Succeed/Fail are all idempotent, so a defer and an error path may both end the same
+// reservation without freeing the slot twice or counting the build twice.
+type Reservation struct {
+	gate      *Gate
+	options   BuildOptions
+	permit    func()
+	released  atomic.Bool
+	completed atomic.Bool
+}
+
+// Build marks the reservation successful and returns its slot.
+func (r *Reservation) Succeed() {
+	if r == nil || r.gate == nil {
+		return
+	}
+	if r.completed.CompareAndSwap(false, true) {
+		r.gate.succeeded.Add(1)
+	}
+	r.Release()
+}
+
+// Fail marks the reservation failed and returns its slot. The failure still returns the permit: a
+// build that dies must not hold the reservation for the rest of the process's life.
+func (r *Reservation) Fail() {
+	if r == nil || r.gate == nil {
+		return
+	}
+	if r.completed.CompareAndSwap(false, true) {
+		r.gate.failed.Add(1)
+	}
+	r.Release()
+}
+
+// Release returns the slot. When no outcome was declared first, the build is counted as abandoned
+// rather than being reported as either a success or a failure.
+func (r *Reservation) Release() {
+	if r == nil || r.gate == nil {
+		return
+	}
+	if !r.released.CompareAndSwap(false, true) {
+		return
+	}
+	if r.completed.CompareAndSwap(false, true) {
+		r.gate.abandoned.Add(1)
+	}
+	r.permit()
+}
+
+// AcquireBuild reserves one build slot and records the shape of the build it reserved it for.
+//
+// It is Acquire plus the options, and it is what a build owner should call: the returned
+// Reservation carries the outcome, so the report can compare admitted, deferred, succeeded and
+// failed builds of the same gate.
+func (g *Gate) AcquireBuild(ctx context.Context, options BuildOptions) (*Reservation, error) {
+	release, err := g.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if options.HasPreviousVersion {
+		g.withPrevious.Add(1)
+	} else {
+		g.withoutPrevious.Add(1)
+	}
+	return &Reservation{gate: g, options: options, permit: release}, nil
+}
+
+// AcquireBuildFromContext reserves a build slot when the context carries a gate, and returns a
+// reservation that releases nothing otherwise.
+func AcquireBuildFromContext(ctx context.Context, options BuildOptions) (*Reservation, error) {
+	gate := FromContext(ctx)
+	if gate == nil {
+		return &Reservation{}, nil
+	}
+	return gate.AcquireBuild(ctx, options)
 }
 
 // Level reports the pressure level the reservation is currently shaped by.
@@ -195,23 +315,49 @@ func (g *Gate) Level() resourceguard.Level {
 
 // Budget is the reservation's explicable budget at one moment.
 //
+// # The admission limit is not the overlap
+//
+// Limit is what the gate admits from now on. It is NOT how many builds can be in flight: a permit
+// already handed out is never revoked mid-build, so when pressure rises from normal to critical the
+// two builds permitted under the old level keep running while the admission limit becomes one.
+// Reporting Limit as "max overlapping builds" therefore understated the peak that was actually
+// resident - the audit's counterexample, reproduced 3/3 - so the two numbers are reported
+// separately:
+//
+//	Limit                 what the gate admits now
+//	Inflight              what is running now
+//	PeakOverlapping       the largest overlap observed since the gate was created
+//	MaxOverlappingBuilds  max(Limit, Inflight): the bound that is still true at this instant
+//
 // # What is provable, and what is not
 //
-// MaxOverlappingBuilds/Documents/Indices are counts and are exact for as long as the level holds:
-// the gate admits at most Limit builds, so at most Limit old documents, Limit new documents and
-// Limit matcher indices can be resident from build work at once. ByteBoundKnown is false on every
-// platform, and that is a statement about the source of the numbers rather than about the build:
-// the encoded size of a rule-set document is known only after its download, and the matcher index
-// is built inside a dependency whose memory is not observable from here. Reporting a byte estimate
-// would be inventing one, so the budget reports the countable part and this boundary.
+// MaxOldDocuments/MaxNewDocuments/MaxMatcherIndices are counts and are exact for as long as the level
+// holds. Old documents are bounded by MaxOverlappingBuilds - the builds already running may each
+// still hold the version they are replacing - while a FIRST build holds none of them;
+// Stats.BuildsWithPreviousVersion / BuildsWithoutPreviousVersion say how many of each were admitted,
+// so the same budget describes both shapes instead of assuming every build overlaps an old version.
+//
+// ByteBoundKnown is false on every platform, and that is a statement about the source of the numbers
+// rather than about the build: the encoded size of a rule-set document is known only after its
+// download, and the matcher index is built inside a dependency whose memory is not observable from
+// here. Reporting a byte estimate would be inventing one, so the budget reports the countable part and
+// this boundary.
 //
 // Note names the degradation: the count is what pressure is allowed to reduce, and at LevelCritical
-// it is reduced to one build, which is the strongest bound this reservation can prove.
+// it is reduced to one ADMISSION at a time, which is the strongest bound this reservation can prove.
 type Budget struct {
-	Level                resourceguard.Level
-	Limit                int
-	Queue                int
-	Wait                 time.Duration
+	Level resourceguard.Level
+	// Limit is the current ADMISSION limit: how many new builds the gate admits.
+	Limit int
+	Queue int
+	Wait  time.Duration
+	// Inflight is how many builds hold a permit right now. It can exceed Limit, because a permit is
+	// never revoked.
+	Inflight int
+	// PeakOverlapping is the largest number of builds that have overlapped since the gate was
+	// created.
+	PeakOverlapping int
+	// MaxOverlappingBuilds is the overlap bound that holds at this instant: max(Limit, Inflight).
 	MaxOverlappingBuilds int
 	MaxOldDocuments      int
 	MaxNewDocuments      int
@@ -227,20 +373,32 @@ func (g *Gate) Budget() Budget {
 	}
 	stats := g.inner.Stats()
 	limit := stats.Gate.Limit
+	inflight := stats.Gate.Inflight
+	// The overlap bound must include the builds that are ALREADY running: they hold their permits
+	// until they finish, so a level change cannot reduce their number and reporting the new
+	// admission limit as the overlap would understate what is resident right now.
+	maxOverlapping := limit
+	if inflight > maxOverlapping {
+		maxOverlapping = inflight
+	}
 	return Budget{
 		Level:                stats.Level,
 		Limit:                limit,
 		Queue:                stats.Gate.QueueLimit,
 		Wait:                 stats.Gate.WaitBudget,
-		MaxOverlappingBuilds: limit,
-		MaxOldDocuments:      limit,
-		MaxNewDocuments:      limit,
-		MaxMatcherIndices:    limit,
+		Inflight:             inflight,
+		PeakOverlapping:      stats.Gate.MaxInflight,
+		MaxOverlappingBuilds: maxOverlapping,
+		MaxOldDocuments:      maxOverlapping,
+		MaxNewDocuments:      maxOverlapping,
+		MaxMatcherIndices:    maxOverlapping,
 		ByteBoundKnown:       false,
-		Note: "counts of builds and of the documents/indices they can overlap; bytes are not " +
-			"provable here because a document's encoded size is known only after download and its " +
-			"matcher index is built inside a dependency. Pressure reduces the COUNT (one build at " +
-			"critical), which is the provable degradation.",
+		Note: "counts of builds and of the documents/indices they can overlap; a permit is never " +
+			"revoked, so maxOverlappingBuilds is max(admission limit, builds already running) and " +
+			"limit alone is only what the gate admits from now on. bytes are not provable here " +
+			"because a document's encoded size is known only after download and its matcher index " +
+			"is built inside a dependency. Pressure reduces the COUNT (one admission at critical), " +
+			"which is the provable degradation.",
 	}
 }
 
