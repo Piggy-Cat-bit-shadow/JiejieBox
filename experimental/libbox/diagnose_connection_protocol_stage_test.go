@@ -164,7 +164,13 @@ func TestTheDiagnosticReportsAnAcceptedHTTPTunnel(t *testing.T) {
 	require.Equal(t, connectionTestStageDial, tunnel.Parent, "a protocol stage describes the dial")
 	require.Equal(t, connectionTestStageOK, tunnel.Status)
 	require.Equal(t, adapter.DiagnoseCodeHTTPTunnelOK, tunnel.Code)
-	require.Greater(t, target.count.Load(), int32(0), "the tunnel really forwarded")
+	// The proxy answers 200 as soon as its own dial to the target returns; the counting listener
+	// increments from its own accept goroutine. Reading the count once assumed those two were
+	// ordered, which they are not: under load the accept can still be pending when the dial returns,
+	// and the assertion then fails on a tunnel that did forward. Every other cell in this package
+	// already waits for the accept, so this one does too - the assertion is unchanged.
+	require.Eventually(t, func() bool { return target.count.Load() > 0 }, 5*time.Second, time.Millisecond,
+		"the tunnel really forwarded")
 
 	dial := stagesByID(report)[connectionTestStageDial]
 	require.Equal(t, connectionTestStageOK, dial.Status)

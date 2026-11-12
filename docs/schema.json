@@ -14454,7 +14454,8 @@
             "providers": {
               "type": "array",
               "items": {
-                "type": "string"
+                "type": "string",
+                "x-tag-reference": "provider"
               }
             },
             "use_all_providers": {
@@ -16602,7 +16603,8 @@
             "providers": {
               "type": "array",
               "items": {
-                "type": "string"
+                "type": "string",
+                "x-tag-reference": "provider"
               }
             },
             "use_all_providers": {
