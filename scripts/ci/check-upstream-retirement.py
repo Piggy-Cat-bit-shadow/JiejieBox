@@ -40,17 +40,20 @@ PAGE = "docs/fork/upstream-retirement-batch2.md"
 UNMARKED_TSV = "docs/fork/upstream-retirement-unmarked.tsv"
 UNMARKED_PAGE = "docs/fork/upstream-retirement-unmarked.md"
 GENERATOR = "scripts/ci/upstream-retirement-batch2.py"
+PAIRS = "docs/fork/upstream-retirement-batch1.tsv"
+PAIRS_META = "docs/fork/upstream-retirement-batch1.meta.json"
+UPSTREAM_REF = "refs/remotes/upstream/testing"
 
 HEADER = ["spec", "commit_shas", "patch_ids", "first_date", "last_date", "trigger_marker",
           "consumer_files", "regression_exact", "regression_surface", "upstream_status",
-          "retirement_condition", "retirement_verify", "disposition"]
+          "upstream_commit", "retirement_condition", "retirement_verify", "disposition"]
 UNMARKED_HEADER = ["group", "commit", "date", "subject", "trigger", "regression_tests",
                    "consumer_files", "disposition"]
 
-STATUSES = ("absorbed", "fork-only", "not-comparable")
+STATUSES = ("absorbed", "duplicate-of-upstream", "fork-only", "not-comparable")
 DISPOSITIONS = ("HOLD", "ANALYSIS", "RETIRE_READY")
 SELF_FILES = (TSV, PAGE, UNMARKED_TSV, UNMARKED_PAGE, "docs/fork/upstream-retirement-ledger.md",
-              "docs/fork/upstream-retirement-b3.md")
+              "docs/fork/upstream-retirement-b3.md", PAIRS, PAIRS_META)
 NO_EXACT = "none names this patch"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 TRIGGER = re.compile(r"^(?P<path>[^:]+):(?P<line>[0-9]+): (?P<text>.*)$")
@@ -111,6 +114,80 @@ def tree_paths(repo):
     return set(path for path in listing.split("\0") if path)
 
 
+def load_pairs(repo):
+    """Read batch 1's recorded measurement and validate its own claims.
+
+    The file is only evidence if it says WHAT it measured: which upstream tip, over which
+    population of fork commits, and by which criterion. Without that, "this commit is not in the
+    list" would be reading as "upstream lacks the patch", which is exactly the unmeasured claim
+    this audit removed. So the metadata is required, its commits must exist here, every recorded
+    upstream commit must be reachable from the recorded tip, and the recorded pair count must match
+    the rows.
+    """
+    problems = []
+    mapping, meta = {}, {}
+    pairs_path = os.path.join(repo, PAIRS)
+    meta_path = os.path.join(repo, PAIRS_META)
+    if not os.path.exists(pairs_path):
+        return mapping, meta, problems
+    with open(pairs_path, "r", encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    if not lines or lines[0].split("\t") != ["fork_commit", "upstream_commit"]:
+        problems.append("%s: header is %r" % (PAIRS, lines[0] if lines else ""))
+        return mapping, meta, problems
+    for number, line in enumerate(lines[1:], 2):
+        fields = line.split("\t")
+        if len(fields) != 2 or not FULL_SHA.match(fields[0]) or not FULL_SHA.match(fields[1]):
+            problems.append("%s:%d: not a full fork/upstream pair" % (PAIRS, number))
+            continue
+        if fields[0] in mapping:
+            problems.append("%s:%d: fork commit %s recorded twice"
+                            % (PAIRS, number, fields[0][:12]))
+        mapping[fields[0]] = fields[1]
+    if not os.path.exists(meta_path):
+        problems.append("%s: missing; the pairs cannot be read as a measurement without the tip "
+                        "and population they were taken at" % PAIRS_META)
+        return mapping, meta, problems
+    try:
+        with open(meta_path, "r", encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except ValueError as error:
+        problems.append("%s: not valid JSON (%s)" % (PAIRS_META, error))
+        return mapping, meta, problems
+    for field in ("upstream_tip", "population_commit"):
+        value = meta.get(field) or ""
+        if not FULL_SHA.match(value):
+            problems.append("%s: %s %r is not a full commit id" % (PAIRS_META, field, value))
+        elif git(repo, "cat-file", "-e", "%s^{commit}" % value).returncode != 0:
+            problems.append("%s: %s %s is not in this clone"
+                            % (PAIRS_META, field, value[:12]))
+    if meta.get("pairs") not in (None, len(mapping)):
+        problems.append("%s: records %r pairs, the file has %d"
+                        % (PAIRS_META, meta.get("pairs"), len(mapping)))
+    if "patch-id" not in (meta.get("method") or ""):
+        problems.append("%s: method %r does not name the patch-id criterion"
+                        % (PAIRS_META, meta.get("method")))
+    tip = meta.get("upstream_tip") or ""
+    if FULL_SHA.match(tip):
+        reachable = set(git(repo, "rev-list", tip).stdout.split())
+        outside = [fork for fork, upstream in mapping.items() if upstream not in reachable]
+        if outside:
+            problems.append("%s: %d recorded upstream commit(s) are not reachable from the "
+                            "recorded tip %s; the pairs describe another upstream"
+                            % (PAIRS, len(outside), tip[:12]))
+        present = upstream_tip(repo)
+        if present and present != tip:
+            problems.append("%s: measured at %s but this clone's %s is %s"
+                            % (PAIRS_META, tip[:12], UPSTREAM_REF, present[:12]))
+    return mapping, meta, problems
+
+
+def upstream_tip(repo):
+    """The tip this clone currently has for the pinned upstream ref, or ""."""
+    result = git(repo, "rev-parse", "--verify", "--quiet", UPSTREAM_REF + "^{commit}")
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def evaluate(repo):
     problems = []
     notes = []
@@ -127,6 +204,10 @@ def evaluate(repo):
         rows = list(reader)
 
     tracked = tree_paths(repo)
+    pairs, pairs_meta, pair_problems = load_pairs(repo)
+    problems.extend(pair_problems)
+    population = pairs_meta.get("population_commit") or ""
+    ref_tip = upstream_tip(repo)
     specs = set()
     for row in rows:
         spec = row["spec"]
@@ -222,6 +303,12 @@ def evaluate(repo):
         # -- upstream status and disposition -------------------------------------------------
         status = row["upstream_status"]
         disposition = row["disposition"]
+        upstream_commit = (row["upstream_commit"] or "").strip()
+
+        def covered(commit):
+            return bool(population) and git(repo, "merge-base", "--is-ancestor", commit,
+                                            population).returncode == 0
+
         if status not in STATUSES:
             problems.append("%s: upstream_status %r is not one of %s"
                             % (where, status, ", ".join(STATUSES)))
@@ -229,6 +316,39 @@ def evaluate(repo):
                 and "UNMEASURED" not in row["retirement_condition"]:
             problems.append("%s: not-comparable without saying the equivalence is unmeasured"
                             % where)
+        if status == "not-comparable" and pairs and all(covered(commit) for commit in commits):
+            problems.append("%s: not-comparable although the recorded measurement covers every "
+                            "one of its commits; regenerate the index" % where)
+        if status == "duplicate-of-upstream":
+            if not FULL_SHA.match(upstream_commit):
+                problems.append("%s: duplicate-of-upstream without the upstream commit" % where)
+            else:
+                recorded = [pairs.get(commit) for commit in commits]
+                if pairs and upstream_commit not in recorded:
+                    problems.append("%s: batch 1 did not record %s as the upstream commit for any "
+                                    "of this row's commits" % (where, upstream_commit[:12]))
+                if ref_tip and git(repo, "cat-file", "-e",
+                                   "%s^{commit}" % upstream_commit).returncode == 0:
+                    if git(repo, "merge-base", "--is-ancestor", upstream_commit,
+                           UPSTREAM_REF).returncode != 0:
+                        problems.append("%s: the cited upstream commit %s is not in %s"
+                                        % (where, upstream_commit[:12], UPSTREAM_REF))
+        elif status in ("absorbed", "fork-only") and upstream_commit:
+            problems.append("%s: %s should not name an upstream commit (%s)"
+                            % (where, status, upstream_commit[:12]))
+        if status == "absorbed":
+            if ref_tip:
+                if not any(git(repo, "merge-base", "--is-ancestor", commit,
+                               UPSTREAM_REF).returncode == 0 for commit in commits):
+                    problems.append("%s: absorbed, but none of its commits is in %s"
+                                    % (where, UPSTREAM_REF))
+            else:
+                problems.append("%s: absorbed although this clone has no %s to check it against"
+                                % (where, UPSTREAM_REF))
+        if status == "fork-only" and pairs:
+            if not all(covered(commit) for commit in commits):
+                problems.append("%s: fork-only although part of the row is outside the recorded "
+                                "measurement population" % where)
         if disposition not in DISPOSITIONS:
             problems.append("%s: disposition %r is not one of %s"
                             % (where, disposition, ", ".join(DISPOSITIONS)))
@@ -240,11 +360,12 @@ def evaluate(repo):
         if disposition != "ANALYSIS" and documentation_only:
             problems.append("%s: %s over a documentation-only footprint"
                             % (where, disposition))
-        if disposition == "RETIRE_READY" and status != "absorbed":
-            problems.append("%s: RETIRE_READY without an absorbed upstream status" % where)
-        if disposition == "HOLD" and status == "absorbed":
-            problems.append("%s: HOLD although the pinned upstream already carries the commit"
+        if disposition == "RETIRE_READY" and status not in ("absorbed", "duplicate-of-upstream"):
+            problems.append("%s: RETIRE_READY without an upstream that already carries it"
                             % where)
+        if disposition == "HOLD" and status in ("absorbed", "duplicate-of-upstream"):
+            problems.append("%s: HOLD although upstream already ships the change (%s)"
+                            % (where, status))
         if not row["retirement_verify"].strip():
             problems.append("%s: no retirement verification command" % where)
 

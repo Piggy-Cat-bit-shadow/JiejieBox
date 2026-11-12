@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-11-13",
+  "method": "git patch-id --stable, equality of stable patch-ids",
+  "note": "A fork commit absent from this file was measured at upstream_tip and has no equivalent patch-id there. That is a measurement, not an assumption - provided the commit is within the population, which check-upstream-retirement.py verifies.",
+  "pairs": 218,
+  "population": "every non-merge commit reachable from population_commit; batch 1 emitted a stable patch-id for each and intersected the set with the upstream tip's",
+  "population_commit": "ddae30cc1e72380051d63d5d3a1474906eacceca",
+  "recorded_by": "round 09 batch 1 (see package evidence q47_upstream_retirement_round09.txt)",
+  "schema": 1,
+  "unresolved": 0,
+  "upstream_tip": "a13dbe1f785f66c86acbf3985c33fdafea0cbfd6"
+}

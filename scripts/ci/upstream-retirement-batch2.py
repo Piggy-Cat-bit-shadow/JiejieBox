@@ -37,6 +37,7 @@ Usage:
 """
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -47,6 +48,13 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "fork" / "upstream-retirement-batch2.tsv"
 PAGE = ROOT / "docs" / "fork" / "upstream-retirement-batch2.md"
 PATCHID_TABLE = ROOT / "docs" / "fork" / "fork-patchids.tsv"
+# Batch 1's measured result, carried into the repository so the ledger can cite it instead of a
+# report in another directory: 218 fork/upstream pairs whose stable patch-ids are equal, produced at
+# a recorded upstream tip over a recorded population of fork commits. A fork commit NOT in this file
+# was measured against that tip and has no equivalent patch-id - that is the measurement the
+# `upstream_status` column reads.
+PAIRS = ROOT / "docs" / "fork" / "upstream-retirement-batch1.tsv"
+PAIRS_META = ROOT / "docs" / "fork" / "upstream-retirement-batch1.meta.json"
 SPEC = re.compile(r"SPEC ([0-9][0-9A-Za-z./_-]*)")
 MARKER = re.compile(r"// lx:|lx: SPEC|SPEC [0-9]")
 # The ledger cannot be its own evidence: these are the files this pair of tools writes.
@@ -59,7 +67,7 @@ SELF_PATHS = ("docs/fork/upstream-retirement-batch2.md",
 
 HEADER = ["spec", "commit_shas", "patch_ids", "first_date", "last_date", "trigger_marker",
           "consumer_files", "regression_exact", "regression_surface", "upstream_status",
-          "retirement_condition", "retirement_verify", "disposition"]
+          "upstream_commit", "retirement_condition", "retirement_verify", "disposition"]
 
 
 def git(*args, stdin=None):
@@ -106,6 +114,30 @@ def batch1_map():
     return mapping
 
 
+def batch1_pairs():
+    """Batch 1's measured duplicate pairs (fork commit -> upstream commit), plus its metadata.
+
+    The file is what lets this index state an upstream status without re-deriving 2950 upstream
+    patch-ids on every run. It is only usable because the metadata records the tip it was measured
+    at and the population it covered: a commit absent from the pairs is `fork-only` only when it is
+    inside that population, and `not-comparable` otherwise.
+    """
+    pairs, meta = {}, {}
+    if PAIRS.exists():
+        with PAIRS.open("r", encoding="utf-8") as stream:
+            next(stream, None)  # header
+            for line in stream:
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) == 2 and len(fields[0]) == 40 and len(fields[1]) == 40:
+                    pairs[fields[0]] = fields[1]
+    if PAIRS_META.exists():
+        try:
+            meta = json.loads(PAIRS_META.read_text(encoding="utf-8"))
+        except ValueError:
+            meta = {}
+    return pairs, meta
+
+
 def render_tsv(rows):
     lines = ["\t".join(HEADER)]
     for row in rows:
@@ -119,7 +151,7 @@ def cell(text, limit=120):
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def render_page(rows, marker_count):
+def render_page(rows, marker_count, pairs_meta=None):
     """The page is generated from the same rows as the TSV.
 
     Why generated: the first version's table was written by hand next to a machine-generated TSV,
@@ -128,13 +160,16 @@ def render_page(rows, marker_count):
     advertised a "0 upstream equivalents" figure nothing had measured. A page that cannot be
     regenerated is a second truth.
     """
+    pairs_meta = pairs_meta or {}
     total = len(rows)
-    analysis = sum(1 for row in rows if row[12] == "ANALYSIS")
+    analysis = sum(1 for row in rows if row[13] == "ANALYSIS")
     code = total - analysis
     exact = sum(1 for row in rows if not row[7].startswith("none"))
     absorbed = sum(1 for row in rows if row[9] == "absorbed")
+    duplicate = sum(1 for row in rows if row[9] == "duplicate-of-upstream")
     fork_only = sum(1 for row in rows if row[9] == "fork-only")
     not_comparable = sum(1 for row in rows if row[9] == "not-comparable")
+    retire_ready = sum(1 for row in rows if row[13] == "RETIRE_READY")
     no_exact = total - exact
 
     out = []
@@ -171,17 +206,26 @@ def render_page(rows, marker_count):
     out.append("| patches with a test that names the patch | **%d** |" % exact)
     out.append("| patches with no test naming them (precise regression absent) | **%d** |"
                % no_exact)
-    out.append("| upstream status: absorbed / fork-only / not-comparable | **%d / %d / %d** |"
-               % (absorbed, fork_only, not_comparable))
+    out.append("| upstream status: absorbed / duplicate-of-upstream / fork-only / not-comparable | "
+               "**%d / %d / %d / %d** |" % (absorbed, duplicate, fork_only, not_comparable))
+    out.append("| retire-ready rows (upstream already ships the change) | **%d** |" % retire_ready)
     out.append("")
-    if not_comparable == total:
-        out.append("Every row is `not-comparable` because this clone has no "
-                   "`refs/remotes/upstream/*`: the equivalence question cannot be answered from the "
-                   "tree alone. Batch 1 answered it once, at its own upstream pin, and recorded the "
-                   "result in `../evidence/q47_upstream_retirement_round09.txt`; that is a dated "
-                   "measurement, not a property of these rows. Re-run batch 1's patch-id comparison "
-                   "at the current pinned tip before retiring anything.")
-        out.append("")
+    if pairs_meta.get("upstream_tip"):
+        out.append("Measured, not assumed: batch 1 compared stable patch-ids at upstream tip "
+                   "`%s` over the fork population reachable from `%s` (%s equal pairs are carried "
+                   "in `upstream-retirement-batch1.tsv`). A row is `duplicate-of-upstream` only "
+                   "when its commit is one of those pairs, and `fork-only` only when that "
+                   "comparison actually covered the commit and found no equal patch-id. "
+                   "`not-comparable` now means the commit is outside that population - it is no "
+                   "longer a synonym for \"upstream lacks it\"."
+                   % (pairs_meta["upstream_tip"][:12],
+                      (pairs_meta.get("population_commit") or "?")[:12],
+                      pairs_meta.get("pairs", "?")))
+    else:
+        out.append("No upstream measurement record is present, so equivalence can only be decided "
+                   "by ancestry; rows outside a measured population are `not-comparable` rather "
+                   "than \"upstream lacks it\".")
+    out.append("")
     out.append("## The %d patches" % total)
     out.append("")
     out.append("`trigger` is the marker line itself (`file:line: text`), preferring a source line "
@@ -189,15 +233,15 @@ def render_page(rows, marker_count):
                "`SPEC <id>`; `none names this patch` is a finding, not a placeholder - it says the "
                "available regression surface for that patch is package-level only.")
     out.append("")
-    out.append("| spec | kind | commits | last touched | trigger | regression | upstream | disposition |")
-    out.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    out.append("| spec | kind | commits | last touched | trigger | regression | upstream | upstream commit | disposition |")
+    out.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in rows:
         spec, commits, _ids, _first, last, trigger, _consumer, regression, _surface, status, \
-            _condition, _verify, disposition = row
+            upstream_commit, _condition, _verify, disposition = row
         kind = "analysis" if disposition == "ANALYSIS" else "code"
-        out.append("| %s | %s | %d | %s | %s | %s | %s | %s |"
+        out.append("| %s | %s | %d | %s | %s | %s | %s | %s | %s |"
                    % (spec, kind, len(commits.split()), last or "-", cell(trigger),
-                      cell(regression, 60), status, disposition))
+                      cell(regression, 60), status, (upstream_commit or "-")[:12], disposition))
     out.append("")
     out.append("## What each column means - and does not")
     out.append("")
@@ -215,15 +259,18 @@ def render_page(rows, marker_count):
                "`SPEC <id>`. That is a precise reference, and still not a claim that the test "
                "exercises this patch. **regression_surface** is the count of test files available in "
                "those packages; a large number there is not evidence of coverage.")
-    out.append("- **upstream_status** is measured here, never assumed: `absorbed` when the commit is "
-               "reachable from a local upstream ref, `fork-only` when an upstream ref exists and the "
-               "commit is not reachable from it, `not-comparable` when this clone has no upstream "
-               "ref at all (with the reason in `retirement_condition`). The first version of this "
-               "tool wrote \"upstream has no equivalent patch-id\" for every code row without ever "
-               "asking; `not-comparable` is what the tree can actually support.")
-    out.append("- **disposition** is HOLD for code rows (no measured upstream equivalent), ANALYSIS "
-               "for historical investigation records with no code patch to retire, and "
-               "RETIRE_READY only when the upstream status is `absorbed`.")
+    out.append("- **upstream_status / upstream_commit** are measured, never assumed: `absorbed` "
+               "when the commit itself is in a local upstream ref's history; "
+               "`duplicate-of-upstream` when batch 1's recorded comparison found an upstream commit "
+               "with the same stable patch-id (that commit id is `upstream_commit`); `fork-only` "
+               "when the recorded comparison covered this commit and found no equal patch-id; "
+               "`not-comparable` only when no measurement covers it. The first version of this tool "
+               "wrote \"upstream has no equivalent patch-id\" for every code row without ever "
+               "asking - a state the tree could not support.")
+    out.append("- **disposition** is HOLD for code rows upstream does not carry, ANALYSIS for "
+               "historical investigation records with no code patch to retire, and RETIRE_READY "
+               "only when upstream already ships the change (`absorbed` or "
+               "`duplicate-of-upstream`).")
     out.append("- **retirement_condition** is what has to become true, and **retirement_verify** is "
                "the command that decides it.")
     out.append("")
@@ -320,22 +367,46 @@ def main():
 
     refs = upstream_refs()
     mapping = batch1_map()
+    pairs, pairs_meta = batch1_pairs()
+    population = pairs_meta.get("population_commit") or ""
+
+    def covered_by_population(commit):
+        """Was this commit inside the population batch 1 measured?"""
+        if not population:
+            return False
+        return subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", commit,
+                               population], capture_output=True).returncode == 0
 
     def upstream_status(commits):
-        """One measured state, never a guess: absorbed / fork-only / not-comparable."""
-        if not refs:
-            return ("not-comparable",
-                    "no refs/remotes/upstream/* in this clone; batch 1's comparison is recorded "
-                    "separately")
-        for ref in refs:
-            for commit in commits:
+        """One measured state, never a guess.
+
+        absorbed              the commit itself is in a local upstream ref's history
+        duplicate-of-upstream batch 1 measured an upstream commit with the SAME stable patch-id
+        fork-only             batch 1 measured this commit and found no equivalent patch-id at the
+                              recorded upstream tip
+        not-comparable        no upstream ref and no measurement covers this commit
+        """
+        for commit in commits:
+            for ref in refs:
                 result = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor",
                                          commit, ref], capture_output=True)
                 if result.returncode == 0:
-                    return "absorbed", ref
-        if mapping and any(commit in mapping for commit in commits):
-            return "fork-only", "batch-1 table maps it to an upstream commit; compare patch-ids"
-        return "fork-only", "not reachable from any local upstream ref"
+                    return "absorbed", commit, "a local upstream ref's history contains it"
+        for commit in commits:
+            if commit in pairs:
+                return ("duplicate-of-upstream", pairs[commit],
+                        "an upstream commit at %s carries the same stable patch-id"
+                        % (pairs_meta.get("upstream_tip") or "the recorded tip")[:12])
+        if pairs and all(covered_by_population(commit) for commit in commits):
+            tip = (pairs_meta.get("upstream_tip") or "")[:12]
+            return ("fork-only", "",
+                    "measured at upstream tip %s over %d recorded fork commits: no equivalent "
+                    "patch-id" % (tip, pairs_meta.get("pairs") or len(pairs)))
+        if refs:
+            return ("fork-only", "", "not reachable from a local upstream ref")
+        return ("not-comparable", "",
+                "no upstream measurement covers this commit (no ref, and it is outside the "
+                "batch-1 population)")
 
     rows = []
     for spec in sorted(groups, key=lambda value: (len(value), value)):
@@ -353,22 +424,24 @@ def main():
         consumer = ", ".join(files[:4]) + (f" (+{len(files) - 4})" if len(files) > 4 else "")
         regression_exact = (", ".join(exact[:4]) + (f" (+{len(exact) - 4})" if len(exact) > 4 else "")
                             if exact else "none names this patch")
-        status, status_reason = upstream_status(commits)
         patch_ids = [pid for pid in (patch_id(commit) for commit in commits) if pid]
+        status, upstream_commit, status_reason = upstream_status(commits)
         analysis_only = all(path.endswith(".md") for path in files)
         if analysis_only:
             disposition = "ANALYSIS"
             condition = "documentation/analysis record; no code patch to retire"
             verify = "n/a (analysis record)"
-        elif status == "absorbed":
+        elif status in ("absorbed", "duplicate-of-upstream"):
             disposition = "RETIRE_READY"
-            condition = "the pinned upstream already carries the commit; drop the local copy"
-            verify = "git merge-base --is-ancestor <commit> <upstream-ref>"
+            condition = "%s (%s); drop the local copy, because upstream already ships it" % (
+                status_reason, upstream_commit[:12] if upstream_commit else "in history")
+            verify = ("git show <commit> | git patch-id --stable  ==  "
+                      "git show %s | git patch-id --stable" % (upstream_commit or "<upstream-sha>"))
         else:
             disposition = "HOLD"
             if status == "not-comparable":
-                condition = ("upstream equivalence is UNMEASURED here (%s); HOLD until the "
-                             "batch-1 comparison is re-run at the pinned tip" % status_reason)
+                condition = ("upstream equivalence is UNMEASURED here (%s); HOLD until a "
+                             "patch-id comparison covers this commit" % status_reason)
             else:
                 condition = ("upstream ships an equivalent change (%s), or the product drops the "
                              "behaviour" % status_reason)
@@ -376,19 +449,19 @@ def main():
                       "upstream candidate")
         rows.append((spec, " ".join(commits), " ".join(patch_ids), dates[0] if dates else "",
                      dates[-1] if dates else "", trigger, consumer, regression_exact,
-                     str(len(tests)), status, condition, verify, disposition))
+                     str(len(tests)), status, upstream_commit, condition, verify, disposition))
 
     if args.write:
         OUT.parent.mkdir(parents=True, exist_ok=True)
         with OUT.open("w", encoding="utf-8", newline="\n") as stream:
             stream.write(render_tsv(rows))
         with PAGE.open("w", encoding="utf-8", newline="\n") as stream:
-            stream.write(render_page(rows, len(marker_lines)))
+            stream.write(render_page(rows, len(marker_lines), pairs_meta))
         print(f"wrote {OUT.relative_to(ROOT)} and {PAGE.relative_to(ROOT)}: {len(rows)} logical "
               f"patches from {len(marker_lines)} marker lines")
     if args.check:
         expected_tsv = render_tsv(rows)
-        expected_page = render_page(rows, len(marker_lines))
+        expected_page = render_page(rows, len(marker_lines), pairs_meta)
         drifted = []
         for path, expected in ((OUT, expected_tsv), (PAGE, expected_page)):
             actual = path.read_text(encoding="utf-8") if path.exists() else None
@@ -403,7 +476,7 @@ def main():
         return 0
     if args.list:
         for row in rows:
-            print("\t".join((row[0], str(len(row[1].split())), row[3], row[4], row[12])))
+            print("\t".join((row[0], str(len(row[1].split())), row[3], row[4], row[13])))
     if args.print_ids:
         for row in rows:
             print("%s\t%s" % (row[0], row[2]))
