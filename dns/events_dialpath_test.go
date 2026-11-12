@@ -40,6 +40,9 @@ type pathTransport struct {
 	tag string
 	// record is called with the recorder installed on the exchange context, when there is one.
 	record func(path *adapter.DialPath)
+	// nested runs a SECOND exchange inside this one, the way a transport that must resolve its own
+	// server name does while its dial is in flight.
+	nested func(ctx context.Context)
 	// sawRecorder reports whether the exchange context carried a recorder at all.
 	sawRecorder bool
 }
@@ -62,6 +65,9 @@ func (t *pathTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.
 	t.sawRecorder = path != nil
 	if path != nil && t.record != nil {
 		t.record(path)
+	}
+	if t.nested != nil {
+		t.nested(ctx)
 	}
 	return FixedResponse(message.Id, message.Question[0], []netip.Addr{netip.MustParseAddr("192.0.2.1")}, 300), nil
 }
@@ -186,6 +192,45 @@ func TestDialPathInAnEventIsBounded(t *testing.T) {
 	require.NotNil(t, event.DialPath)
 	require.Len(t, event.DialPath.Steps, 8, "the chain is capped at the recorder's bound")
 	require.True(t, event.DialPath.Truncated, "hitting the cap must be visible to a reader")
+}
+
+// TestANestedExchangeDoesNotPolluteTheOuterPath: a DNS transport that resolves its own server name
+// runs a SECOND exchange while the outer dial is in flight. The nested dial must not be recorded
+// into the outer exchange's path - the outer event has to describe one connection, not two.
+func TestANestedExchangeDoesNotPolluteTheOuterPath(t *testing.T) {
+	t.Parallel()
+
+	bus := NewEventBus(4)
+	events, unsubscribe := bus.Subscribe(false, 0)
+	defer unsubscribe()
+
+	// The inner client has no bus of its own, which is the case that used to inherit the outer
+	// record instead of shadowing it.
+	innerTransport := &pathTransport{tag: "inner", record: func(path *adapter.DialPath) {
+		path.BeginDial()
+		path.Record("nested-hop", 0, false)
+	}}
+	innerClient := newPathClient(t, nil, true)
+
+	outerTransport := &pathTransport{record: func(path *adapter.DialPath) {
+		path.BeginDial()
+		path.Record("proxy", 0, false)
+		path.Record("node-a", 2, true)
+	}}
+	outerClient := newPathClient(t, bus, true)
+
+	// Wire the nested exchange into the outer one through the transport's own behaviour.
+	outerTransport.nested = func(ctx context.Context) {
+		_, _ = innerClient.Exchange(ctx, innerTransport, pathMessage(), adapter.DNSQueryOptions{}, nil)
+	}
+
+	runPathExchange(t, outerClient, outerTransport, pathMessage())
+	event := receiveEvent(t, events)
+
+	require.NotNil(t, event.DialPath)
+	require.Equal(t, []string{"proxy", "node-a"}, event.DialPath.Steps,
+		"the nested exchange's dial belongs to the nested query, not to this event")
+	require.Equal(t, "node-a", event.DialPath.Leaf)
 }
 
 // TestFanOutSuppressesTheSteps: concurrent member dials write into one record, so the surviving chain

@@ -1188,8 +1188,21 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 // a recorder and a context value for it would be pure cost on the hot path - the same rule the event
 // bus itself follows. `adapter.DialPathFromContext` answers nil for a context without a recorder,
 // and every recording point is nil-safe, so the unobserved path pays one nil check per dial.
+//
+// # Why a nested exchange must SHADOW an outer record
+//
+// A DNS exchange can cause another one: a transport whose server address is a name resolves it
+// through this same router while the outer dial is in flight. The nested exchange inherits the
+// outer context, so without this branch its dials would be recorded into the OUTER exchange's
+// record - and the outer event would claim a path assembled from two different connections. The
+// nested call gets its own record (which is discarded, because no event is built for an unobserved
+// query) so the outer record stays a fact about the outer dial. The allocation is paid only when an
+// outer record actually exists, which is exactly when a subscriber does.
 func (c *Client) openDialPath(ctx context.Context) (context.Context, *adapter.DialPath) {
 	if c.eventBus == nil || !c.eventBus.Active() {
+		if adapter.DialPathFromContext(ctx) != nil {
+			return adapter.WithDialPath(ctx, adapter.NewDialPath()), nil
+		}
 		return ctx, nil
 	}
 	dialPath := adapter.NewDialPath()
