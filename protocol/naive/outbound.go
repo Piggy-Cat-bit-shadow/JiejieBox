@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
@@ -48,6 +49,9 @@ type Outbound struct {
 	// h2Fallback is the optional engine-level QUIC-disabled client used for the
 	// opt-in H2 retry; nil unless the operator opted in. See h2_fallback_engine.go.
 	h2Fallback *h2FallbackClient
+	// nativeCreation is the admission + accounting seam at the engine's native
+	// socket-creation callback. See native_creation.go.
+	nativeCreation *nativeCreationDialer
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions) (adapter.Outbound, error) {
@@ -175,6 +179,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if !isResolveDialer {
 		return nil, E.New("naive outbound: the dialer chain did not produce a resolve dialer, which this outbound requires for its DNS policy; this is a defect in the dialer factory rather than in the configuration")
 	}
+	// The engine's native socket-creation callback (Cronet_Engine_SetDialer) is the only place a
+	// physical Naive connection exists, so the process admission gate and the creation counters
+	// belong there - not on DialEarly, which counts CONNECTs, and not on the engine, which counts
+	// outbounds. See native_creation.go for what this seam can and cannot observe.
+	// The ResolveDialer capability is captured above, before the wrap: the wrapper is a plain
+	// N.Dialer and would hide it.
+	creationDialer := newNativeCreationDialer(outboundDialer, resourceguard.FromContext(ctx), serverAddress.String())
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
 	var dnsResolver cronet.DNSResolverFunc
 	if dnsRouter != nil {
@@ -241,7 +252,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		options:                 options,
 		extraHeaders:            extraHeaders,
 		trustedRootCertificates: trustedRootCertificates,
-		dialer:                  outboundDialer,
+		dialer:                  creationDialer,
 		dnsResolver:             dnsResolver,
 		echEnabled:              echEnabled,
 		echConfigList:           echConfigList,
@@ -253,11 +264,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 	naiveOutbound := &Outbound{
-		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, nil, options.DialerOptions),
-		ctx:          ctx,
-		logger:       logger,
-		client:       client,
-		fallbackToH2: options.QUICFallbackToH2,
+		Adapter:        outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, nil, options.DialerOptions),
+		ctx:            ctx,
+		logger:         logger,
+		client:         client,
+		fallbackToH2:   options.QUICFallbackToH2,
+		nativeCreation: creationDialer,
 	}
 	if options.QUICFallbackToH2 {
 		// The H2 retry needs an ENGINE with QUIC disabled: the pinned Cronet has no
@@ -307,6 +319,12 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if h.h2Fallback != nil {
 		// A no-op when the lazy engine was never created.
 		scope.Add(h.h2Fallback.Close)
+	}
+	// Idle connections are the only reclaim action this outbound can offer a process under
+	// pressure: a busy CONNECT cannot be closed without cutting the user's flow, and the
+	// engine's pool is idle-only by definition.
+	if guard := resourceguard.FromContext(h.ctx); guard != nil {
+		guard.RegisterShed(h.client.CloseAllConnections)
 	}
 	h.logger.Info("NaiveProxy started, version: ", h.client.Engine().Version())
 	return nil
