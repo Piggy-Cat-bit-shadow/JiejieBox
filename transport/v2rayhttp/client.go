@@ -14,6 +14,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/badhttp"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -21,6 +22,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 
 	"golang.org/x/net/http2"
 )
@@ -38,10 +40,25 @@ type Client struct {
 	method     string
 	headers    http.Header
 	closeIdle  atomic.Bool
+	// pool owns the HTTP/2 generation. It is nil for the HTTP/1 transport, which has no pooled
+	// connection to lend.
+	pool *h2Pool
+	// newTransport builds the next HTTP/2 generation with the same dialer and TLS configuration.
+	newTransport func() *http2.Transport
+	// generation is this pool's view of the network generation. A nil coordinator yields a nil
+	// registration and every check is a no-op, which is the previous behaviour for embedders.
+	coordinator        *runtimecoord.Coordinator
+	registration       *runtimecoord.Registration
+	removeRegistration func()
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
-	var transport http.RoundTripper
+	var (
+		transport http.RoundTripper
+		// newHTTP2 is set only when the transport multiplexes onto pooled HTTP/2 connections, which
+		// is exactly the case a network generation must be checked at the hand-out.
+		newHTTP2 func() *http2.Transport
+	)
 	if tlsConfig == nil {
 		transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -53,13 +70,16 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
 		}
 		tlsDialer := tls.NewDialer(dialer, tlsConfig)
-		transport = &http2.Transport{
-			ReadIdleTimeout: time.Duration(options.IdleTimeout),
-			PingTimeout:     time.Duration(options.PingTimeout),
-			DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.STDConfig) (net.Conn, error) {
-				return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
-			},
+		newHTTP2 = func() *http2.Transport {
+			return &http2.Transport{
+				ReadIdleTimeout: time.Duration(options.IdleTimeout),
+				PingTimeout:     time.Duration(options.PingTimeout),
+				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.STDConfig) (net.Conn, error) {
+					return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
+				},
+			}
 		}
+		transport = newHTTP2()
 	}
 	if options.Method == "" {
 		options.Method = http.MethodPut
@@ -90,6 +110,15 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		http2:      tlsConfig != nil,
 	}
 	client.transport.Store(transport)
+	if newHTTP2 != nil {
+		client.newTransport = newHTTP2
+		client.pool = newH2Pool(transport.(*http2.Transport))
+	}
+	// The generation the pool rebuilds itself against. A transport built in a test or by an
+	// embedder without a coordinator gets no registration and keeps its previous behaviour.
+	client.coordinator = service.FromContext[*runtimecoord.Coordinator](ctx)
+	client.registration, client.removeRegistration = generationRegistration(
+		client.coordinator, "v2rayhttp/"+serverAddr.String())
 	return client, nil
 }
 
@@ -129,6 +158,19 @@ func (c *Client) dialHTTP(ctx context.Context) (net.Conn, error) {
 }
 
 func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
+	// The hand-out is where "this pool belongs to a previous network" must be answered: the
+	// listener phase has not run yet, and http2.Transport would otherwise reuse a connection whose
+	// path just ended. Retiring the transport removes the whole previous generation from new
+	// streams; connections that still carry a stream finish on the path they started on.
+	if c.generationStale() {
+		c.retireGeneration()
+	}
+	// The generation this creation is being built FOR. A dial that starts before a network change
+	// and finishes after it produces a result bound to the path that just ended; publishing it as
+	// current would hand every later demand a session the audit called stale. The comparison is one
+	// number taken twice from the same clock the dialer compares against.
+	startGeneration := c.currentGeneration()
+
 	pipeInReader, pipeInWriter := io.Pipe()
 	requestCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	request := &http.Request{
@@ -151,7 +193,7 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 	keepSession := adapter.KeepSessionFromContext(ctx)
 	conn.onClose = func() {
 		if c.closeIdle.Load() && !keepSession {
-			CloseIdleConnections(c.transport.Load())
+			c.CloseIdleConnections()
 		}
 	}
 	handshakeTimeout := C.TCPTimeout
@@ -163,19 +205,29 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 		handshakeTimedOut.Store(true)
 		cancel()
 	})
+	generation := c.pool.begin()
 	go func() {
-		response, err := c.transport.Load().RoundTrip(request)
+		response, err := generation.transport.RoundTrip(request)
 		handshakeTimer.Stop()
 		if err != nil {
+			c.pool.finish(generation)
 			if handshakeTimedOut.Load() {
 				err = os.ErrDeadlineExceeded
 			}
 			conn.Setup(nil, err)
 		} else if response.StatusCode != 200 {
 			response.Body.Close()
+			c.pool.finish(generation)
 			conn.Setup(nil, E.New("v2ray-http: unexpected status: ", response.Status))
+		} else if c.currentGeneration() != startGeneration {
+			// The result belongs to a generation that ended while it was in flight. Discard it:
+			// acknowledging it would claim the pool is current on evidence from the old network.
+			response.Body.Close()
+			c.pool.finish(generation)
+			conn.Setup(nil, staleGenerationError{})
 		} else {
-			conn.Setup(response.Body, nil)
+			c.acknowledgeGeneration()
+			conn.Setup(&generationBody{ReadCloser: response.Body, release: func() { c.pool.finish(generation) }}, nil)
 		}
 	}()
 	return conn, nil
@@ -193,10 +245,23 @@ func (c *Client) SetKeepIdleConnections(keep bool) {
 }
 
 func (c *Client) CloseIdleConnections() {
+	if c.pool != nil {
+		c.pool.closeIdle()
+		return
+	}
 	CloseIdleConnections(c.transport.Load())
 }
 
 func (c *Client) Close() error {
-	c.transport.Store(ResetTransport(c.transport.Load()))
+	if c.pool != nil {
+		c.pool.closeAll()
+	} else {
+		c.transport.Store(ResetTransport(c.transport.Load()))
+	}
+	// Unregister last: a torn-down pool must never be reached by a later generation sweep.
+	if c.removeRegistration != nil {
+		c.removeRegistration()
+		c.removeRegistration = nil
+	}
 	return nil
 }
