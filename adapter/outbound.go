@@ -8,6 +8,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/common/observable"
 )
 
 // Note: for proxy protocols, outbound creates early connections by default.
@@ -380,6 +381,37 @@ type ReuseSuspect interface {
 	// ones that are carrying nothing. A resource still carrying work keeps it and is torn down when
 	// that work finishes. It must not dial and must not terminate work in progress.
 	RetireSuspect()
+}
+
+// OutboundGraphPublisher is the OPTIONAL capability a dynamic outbound manager provides so a
+// consumer that derives a projection of the outbound graph is told when that graph changed,
+// instead of only when a group's SELECTION moved.
+//
+// # Why a selection change is not the same event
+//
+// The reference manager's eligibility pass - which outbound may keep idle connections - reads the
+// whole published graph: every outbound tag, each object's References()/Dependencies(), and each
+// group's published membership. Today the only runtime notifications it can subscribe to are the
+// URLTest history and the clash mode, and a group reports to history only when the member it
+// SELECTS changed. A provider that replaces a node under the SAME tag, or a membership that grows
+// without moving the selection, therefore changes the eligibility pass's entire input while
+// producing no event at all. MEASURED consequence: a node that just became referenced kept the
+// "unreferenced" verdict and kept closing its idle connections, and a node that stopped being
+// referenced kept them, until some unrelated history round happened to fire.
+//
+// # What the event means, precisely
+//
+// One emission means "a node replacement, a removal or a group membership publication was
+// COMMITTED". A consumer must re-read the published table and must not patch a cached view: one
+// emission is one consistent snapshot, not necessarily the end of a multi-node provider round - a
+// round that replaces ten nodes emits ten times, and the last emission describes the final graph.
+// A publication that was REFUSED (a cycle, a duplicate tag, a failed replace) emits nothing,
+// because nothing changed.
+//
+// The subscriber is owned by the caller: the manager never closes it, and a closed subscriber
+// simply stops receiving.
+type OutboundGraphPublisher interface {
+	AddGraphUpdateHook(hook *observable.Subscriber[struct{}])
 }
 
 type Referrer interface {

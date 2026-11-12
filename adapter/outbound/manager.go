@@ -12,11 +12,13 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/observable"
 )
 
 var (
 	_ adapter.OutboundManager        = (*Manager)(nil)
 	_ adapter.DynamicOutboundManager = (*Manager)(nil)
+	_ adapter.OutboundGraphPublisher = (*Manager)(nil)
 )
 
 type Manager struct {
@@ -46,6 +48,12 @@ type Manager struct {
 	// users counts in-flight hand-offs per object, including objects that are still published. It is
 	// keyed by identity because a tag can move to a replacement while a dial still holds the old object.
 	users map[adapter.Outbound]int
+	// graphHooks are the consumers of adapter.OutboundGraphPublisher: they are told after a node
+	// replacement, a removal or a group membership publication was committed, and they re-read the
+	// published table. graphHookAccess is separate from access because emitting must not run under
+	// the namespace lock - a consumer reacts by reading this same manager.
+	graphHookAccess sync.Mutex
+	graphHooks      []*observable.Subscriber[struct{}]
 	// testAcquireAfterRead parks a test between AcquireOutbound's read-only fast-path check and the
 	// exclusive check-and-increment. Production leaves it nil; it exists so the publication window
 	// can be hit deterministically instead of by scheduler luck.
@@ -72,6 +80,51 @@ type Manager struct {
 	// cross-kind cycle check reads it: an object that declares no resolver of its own still resolves
 	// through this one, so it is the edge that closes the loop for that object.
 	defaultDomainResolver func() string
+}
+
+// AddGraphUpdateHook registers a coalescing subscriber that is emitted to after this manager
+// committed a change to the published outbound graph.
+//
+// See adapter.OutboundGraphPublisher for what one emission means. The implementation detail that
+// matters here is the ORDER, and it is the reason every call site emits after its locks are
+// released: emitting is how a consumer is invited to read this manager, so an emission made under
+// m.access or m.graphAccess would have the consumer take those same locks from inside the
+// publication - and a consumer that reads through `Outbounds()` and then calls a keeper is not a
+// short callback, it is an eligibility pass over the whole namespace.
+//
+// The subscriber is borrowed, never closed here. A burst - one provider apply replacing N nodes -
+// collapses to one pending event because observable.Subscriber keeps a single slot and its Emit
+// never blocks, which is deliberate: the consumer's answer is a full re-read, so N events would
+// only mean N identical re-reads.
+func (m *Manager) AddGraphUpdateHook(hook *observable.Subscriber[struct{}]) {
+	if m == nil || hook == nil {
+		return
+	}
+	m.graphHookAccess.Lock()
+	m.graphHooks = append(m.graphHooks, hook)
+	m.graphHookAccess.Unlock()
+}
+
+// notifyGraphUpdated emits one "the published graph changed" event to every registered hook.
+//
+// The hooks are copied under the lock and emitted outside it: Emit is non-blocking, but a consumer
+// may close its subscriber concurrently, and holding graphHookAccess across the emit would put a
+// consumer's Close behind the publisher for no reason.
+func (m *Manager) notifyGraphUpdated() {
+	if m == nil {
+		return
+	}
+	m.graphHookAccess.Lock()
+	if len(m.graphHooks) == 0 {
+		m.graphHookAccess.Unlock()
+		return
+	}
+	hooks := make([]*observable.Subscriber[struct{}], len(m.graphHooks))
+	copy(hooks, m.graphHooks)
+	m.graphHookAccess.Unlock()
+	for _, hook := range hooks {
+		hook.Emit(struct{}{})
+	}
 }
 
 // SetDefaultDomainResolver installs a reader for the tag `route.default_domain_resolver` names.
@@ -842,6 +895,10 @@ func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log
 	for _, object := range sweep {
 		m.release(object)
 	}
+	// A replacement is a graph change even when the tag did not move: the OBJECT behind the tag is
+	// new, and a consumer that keys anything by object identity - the opportunity to keep idle
+	// connections included - must be told to re-read it. Emitted after every lock above is released.
+	m.notifyGraphUpdated()
 	return nil
 }
 
@@ -1161,6 +1218,9 @@ func (m *Manager) Remove(tag string) error {
 	for _, object := range sweep {
 		m.release(object)
 	}
+	// A removal shrinks the graph: a tag that was referenced is gone, and a consumer that derived
+	// anything from the previous table has to recompute against the one without it.
+	m.notifyGraphUpdated()
 	return nil
 }
 

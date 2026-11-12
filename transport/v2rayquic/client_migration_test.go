@@ -36,25 +36,76 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingConn counts how many times its socket was closed, so "each socket closed exactly once"
-// is observable from the test.
+// recordingConn records one socket the client opened, whichever shape it has: the handshake path is
+// a CONNECTED net.Conn, a migration candidate is an UNCONNECTED net.PacketConn. One type for both
+// keeps the index ordering and the close count observable across the two, which is what lets the
+// assertions below say "socket 0 is the handshake, socket 1 is the candidate" without caring which
+// API produced them.
+//
+// # Why the shape is asserted and not just recorded
+//
+// The candidate shape is load-bearing: a connected socket handed to the library's path transport
+// sends with an explicit destination sockaddr, which Darwin rejects, and the write error is
+// discarded inside the library - the audit's Q30 (a silent 10 s path validation timeout on macOS
+// only). This type delegates ReadFrom/WriteTo, so `dialer.socket(i)` can be asked whether the
+// candidate is really unconnected (see TestTheMigrationCandidateIsAnUnconnectedSocket).
 type recordingConn struct {
 	net.Conn
+	packet net.PacketConn
 	closes atomic.Int32
 }
 
 func (c *recordingConn) Close() error {
 	c.closes.Add(1)
-	return c.Conn.Close()
+	if c.Conn != nil {
+		return c.Conn.Close()
+	}
+	return c.packet.Close()
 }
 
-// silentConn accepts writes and never sends them: a candidate on such a socket can never be
+func (c *recordingConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+	return c.packet.ReadFrom(buffer)
+}
+
+func (c *recordingConn) WriteTo(buffer []byte, destination net.Addr) (int, error) {
+	return c.packet.WriteTo(buffer, destination)
+}
+
+func (c *recordingConn) LocalAddr() net.Addr {
+	if c.Conn != nil {
+		return c.Conn.LocalAddr()
+	}
+	return c.packet.LocalAddr()
+}
+
+func (c *recordingConn) SetDeadline(deadline time.Time) error {
+	if c.Conn != nil {
+		return c.Conn.SetDeadline(deadline)
+	}
+	return nil
+}
+
+func (c *recordingConn) SetReadDeadline(deadline time.Time) error {
+	if c.Conn != nil {
+		return c.Conn.SetReadDeadline(deadline)
+	}
+	return nil
+}
+
+func (c *recordingConn) SetWriteDeadline(deadline time.Time) error {
+	if c.Conn != nil {
+		return c.Conn.SetWriteDeadline(deadline)
+	}
+	return nil
+}
+
+// silentPacketConn accepts writes and never sends them: a candidate on such a socket can never be
 // validated, which is what a dead path looks like to the probe.
-type silentConn struct {
-	net.Conn
+type silentPacketConn struct {
+	net.PacketConn
 }
 
-func (c *silentConn) Write(payload []byte) (int, error) { return len(payload), nil }
+func (c *silentPacketConn) WriteTo(payload []byte, _ net.Addr) (int, error) { return len(payload), nil }
 
 // migratingDialer records every socket handed to the client (index 0 is the handshake socket,
 // later ones are migration candidates) and can sabotage candidates to force the fallback.
@@ -70,13 +121,6 @@ func (d *migratingDialer) DialContext(ctx context.Context, network string, desti
 	if err != nil {
 		return nil, err
 	}
-	d.access.Lock()
-	index := len(d.sockets)
-	sabotage := d.sabotage && index > 0
-	d.access.Unlock()
-	if sabotage {
-		conn = &silentConn{Conn: conn}
-	}
 	recording := &recordingConn{Conn: conn}
 	d.access.Lock()
 	d.sockets = append(d.sockets, recording)
@@ -84,8 +128,25 @@ func (d *migratingDialer) DialContext(ctx context.Context, network string, desti
 	return recording, nil
 }
 
+// ListenPacket is the candidate path's API after Q30: an unconnected socket.
 func (d *migratingDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	return d.base.ListenPacket(ctx, destination)
+	packetConn, err := d.base.ListenPacket(ctx, destination)
+	if err != nil {
+		return nil, err
+	}
+	d.access.Lock()
+	index := len(d.sockets)
+	sabotage := d.sabotage && index > 0
+	d.access.Unlock()
+	var inner net.PacketConn = packetConn
+	if sabotage {
+		inner = &silentPacketConn{PacketConn: packetConn}
+	}
+	recording := &recordingConn{packet: inner}
+	d.access.Lock()
+	d.sockets = append(d.sockets, recording)
+	d.access.Unlock()
+	return recording, nil
 }
 
 func (d *migratingDialer) socket(index int) *recordingConn {

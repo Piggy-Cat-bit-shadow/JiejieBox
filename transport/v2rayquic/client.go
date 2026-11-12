@@ -8,12 +8,12 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -21,6 +21,7 @@ import (
 	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
@@ -66,6 +67,16 @@ type Client struct {
 	// shared-task tests replace it so they can hold a dial open and decide its result without a QUIC
 	// handshake. Production never reads it from outside this package.
 	dialConn func(ctx context.Context) (*clientConnection, error)
+	// registration is this pool's view of the network generation. It is nil when the transport was
+	// built without a runtime coordinator, and every generation check then degrades to the previous
+	// behaviour (see generation.go).
+	registration       *runtimecoord.Registration
+	removeRegistration func()
+	// coordinator is the generation clock itself. currentGeneration reads it directly: a
+	// registration's Epoch() is the generation its resource was last rebuilt against, which is not
+	// the same question as "what generation is current now" and cannot be used to detect a change
+	// that happened DURING a dial.
+	coordinator *runtimecoord.Coordinator
 }
 
 // The migration budgets. A candidate is validated in at most migrationProbeBudget, and the wait
@@ -79,8 +90,18 @@ const (
 // pathSocket is one socket the shared connection sends on, the transport that owns it, and its
 // one close action. The transport is nil only if the pinned library did not report the transport
 // it dialed through, which it does for every client connection.
+//
+// # Two socket shapes, one lifetime
+//
+// The handshake path is a CONNECTED socket (DialContext "udp"), because that is what a QUIC
+// handshake for one peer needs. A migration candidate is an UNCONNECTED packet socket
+// (ListenPacket), because the library writes every candidate-path packet with an explicit
+// destination sockaddr. Keeping both in this one type means the single close action, the retired
+// channel and the cleanup task are shared by the two shapes instead of being duplicated per call
+// site - and it is why the wrong shape cannot be reintroduced by "just dialling a second socket".
 type pathSocket struct {
 	socket    net.Conn
+	packet    net.PacketConn
 	transport *quic.Transport
 	// retired is closed by close, so anything waiting for THIS path to end wakes when it does
 	// instead of waiting for the connection. It is the path's own lifetime token.
@@ -92,12 +113,22 @@ func newPathSocket(socket net.Conn) *pathSocket {
 	return &pathSocket{socket: socket, retired: make(chan struct{})}
 }
 
+// newPathPacketSocket is the unconnected shape: a candidate path's socket.
+func newPathPacketSocket(packet net.PacketConn) *pathSocket {
+	return &pathSocket{packet: packet, retired: make(chan struct{})}
+}
+
 // close closes the socket exactly once and publishes the path's end. Several owners reach here -
 // the failed attempt that created it, the migration that replaced it, and the cleanup task watching
 // it - and only the first of them is the close.
 func (p *pathSocket) close() {
 	p.closeOnce.Do(func() {
-		_ = p.socket.Close()
+		if p.socket != nil {
+			_ = p.socket.Close()
+		}
+		if p.packet != nil {
+			_ = p.packet.Close()
+		}
 		close(p.retired)
 	})
 }
@@ -128,36 +159,6 @@ func watchPathCleanup(conn *clientConnection, path *pathSocket) {
 	}()
 }
 
-// connectedPacketConn presents the connected socket a dialer returns for "udp" as the
-// net.PacketConn a path transport needs: every packet goes to the peer the socket is already
-// connected to, and the address argument is ignored. quic-go's own quic.DialConn wraps a socket
-// the same way; a path transport needs the same shape because a path is validated by sending to
-// the destination on that socket, not by opening a second connection.
-type connectedPacketConn struct {
-	net.Conn
-}
-
-func (c connectedPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
-	read, err := c.Conn.Read(buffer)
-	return read, c.Conn.RemoteAddr(), err
-}
-
-func (c connectedPacketConn) WriteTo(buffer []byte, _ net.Addr) (int, error) {
-	return c.Conn.Write(buffer)
-}
-
-// SyscallConn forwards the raw socket when the dialer's conn exposes one, so the path transport
-// keeps the receive/send buffer tuning and batching quic-go only enables for a socket it can
-// reach through syscall.RawConn. It returns an error instead of panicking for a dialer whose conn
-// is not a real socket: quic-go then falls back to its basic (unoptimized) transport.
-func (c connectedPacketConn) SyscallConn() (syscall.RawConn, error) {
-	raw, isRaw := c.Conn.(syscall.Conn)
-	if !isRaw {
-		return nil, errors.New("the dialed socket is not a syscall.Conn")
-	}
-	return raw.SyscallConn()
-}
-
 // clientConnection is one shared QUIC connection plus the ownership state the pool needs.
 //
 // ctx and closeFn exist so the connection's lifetime and its one close action are explicit fields: a
@@ -179,6 +180,11 @@ type clientConnection struct {
 	// offers for path validation is spent and every later attempt would only stall the network
 	// change by the probe budget. The generation is then retired the way it was before migration.
 	failedMigrations int
+	// drainAfterStreams marks a generation that was detached from the pool because the network
+	// generation moved: it must not be handed out again, and it closes when its last stream ends.
+	// It is set by generation.go and honoured by releaseStream, so a transfer that is already
+	// running finishes instead of being cut by the retirement.
+	drainAfterStreams atomic.Bool
 	// pathAccess guards the socket the connection currently sends on. It is replaced only by a
 	// successful migration, under the client's migrateAccess.
 	pathAccess sync.Mutex
@@ -229,7 +235,14 @@ func (c *clientConnection) acquireStream() bool {
 func (c *clientConnection) releaseStream(keepSession bool) {
 	c.access.Lock()
 	c.streams--
-	closed := c.closeIdle.Load() && !keepSession && c.streams == 0 && c.markClosedLocked()
+	// A detached generation closes itself on its last stream, exactly like an idle-policy close.
+	//
+	// It closes even when the caller asked the session to survive its own stream: keepSession means
+	// "do not end a session other work may still use", and a DETACHED generation is no longer
+	// reachable from the pool - nothing can reuse it - so honouring keepSession here would leave a
+	// QUIC connection and its socket alive with no owner, which is a leak rather than a courtesy.
+	idleClose := (c.closeIdle.Load() && !keepSession) || c.drainAfterStreams.Load()
+	closed := idleClose && c.streams == 0 && c.markClosedLocked()
 	c.access.Unlock()
 	if closed {
 		c.closeConn()
@@ -324,6 +337,11 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		quicConfig: quicConfig,
 	}
 	client.dialConn = client.offerNew
+	// The generation the pool rebuilds itself against. A transport built in a test or by an
+	// embedder without a coordinator gets no registration and keeps its previous behaviour.
+	client.coordinator = service.FromContext[*runtimecoord.Coordinator](ctx)
+	client.registration, client.removeRegistration = generationRegistration(
+		client.coordinator, "v2rayquic/"+serverAddr.String())
 	return client, nil
 }
 
@@ -334,37 +352,66 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 // that are still there. That is why the dial context is derived from the client lifetime below and
 // never from ctx.
 func (c *Client) offer(ctx context.Context) (*clientConnection, error) {
-	c.connAccess.Lock()
-	conn := c.conn.Load()
-	if conn != nil && conn.active() {
+	for {
+		c.connAccess.Lock()
+		conn := c.conn.Load()
+		if conn != nil && conn.active() {
+			c.connAccess.Unlock()
+			if !c.generationStale() {
+				return conn, nil
+			}
+			// The pooled generation belongs to a previous network. It is detached from the pool -
+			// never handed to this caller - and the next turn of this loop starts a creation for
+			// the current generation. A detach that loses the race (another caller replaced or
+			// drained the pool first) also falls through: re-reading is correct in both cases, and
+			// the loop terminates because each turn either publishes a generation or finds the pool
+			// in a state that dials.
+			c.detachStaleGeneration(conn)
+			continue
+		}
+		pending := c.pending
+		if pending != nil {
+			c.connAccess.Unlock()
+			return pending.wait(ctx)
+		}
+		offerCtx, cancel := context.WithCancelCause(c.ctx)
+		pending = &clientOffer{
+			done:   make(chan struct{}),
+			cancel: cancel,
+		}
+		c.pending = pending
 		c.connAccess.Unlock()
-		return conn, nil
-	}
-	pending := c.pending
-	if pending != nil {
-		c.connAccess.Unlock()
+
+		go c.completeOffer(pending, offerCtx)
 		return pending.wait(ctx)
 	}
-	offerCtx, cancel := context.WithCancelCause(c.ctx)
-	pending = &clientOffer{
-		done:   make(chan struct{}),
-		cancel: cancel,
-	}
-	c.pending = pending
-	c.connAccess.Unlock()
-
-	go c.completeOffer(pending, offerCtx)
-	return pending.wait(ctx)
 }
 
 // completeOffer runs one shared creation and publishes its result. The client is the owner: a
 // success is accepted into the pool unless the client was closed first, in which case the late
 // connection is closed here - exactly once - instead of being published or leaked.
 func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
+	// The generation the result is being built FOR. A dial that starts before a network change and
+	// finishes after it produces a socket bound to the path that just ended, and publishing that as
+	// the current generation would hand every later demand a session the audit called stale. The
+	// comparison is one number taken twice, and it is the same clock the dialer itself compares
+	// against, so "a result from the previous generation" has one definition in the tree.
+	startGeneration := c.currentGeneration()
 	conn, err := c.dialConn(offerCtx)
 	// The dial context is no longer needed once the dial returned; releasing it here keeps the
 	// per-offer timer/context from outliving the work even when the result is discarded.
 	pending.cancel(nil)
+
+	var lateGeneration bool
+	if err == nil && conn != nil {
+		lateGeneration = c.coordinator != nil && c.currentGeneration() != startGeneration
+		if lateGeneration {
+			// The result belongs to the generation that ended while it was being established.
+			// Released here, exactly once, instead of being published.
+			conn.closeConn()
+			err = staleGenerationError{}
+		}
+	}
 
 	c.connAccess.Lock()
 	discard := pending.discarded
@@ -388,6 +435,13 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 
 	if discard && conn != nil {
 		conn.closeConn()
+	}
+	if !discard && !lateGeneration && pending.err == nil {
+		// The published generation was built after the last network change this pool observed, so
+		// the pool is current again. Recording it here - and only here - is what keeps Stale() from
+		// reporting a generation that was just replaced, and keeps the reference to this pool's
+		// epoch from drifting behind the coordinator's.
+		c.acknowledgeGeneration()
 	}
 }
 
@@ -484,6 +538,10 @@ func (c *Client) Close() error {
 	if conn != nil {
 		conn.closeConn()
 	}
+	if c.removeRegistration != nil {
+		c.removeRegistration()
+		c.removeRegistration = nil
+	}
 	return nil
 }
 
@@ -547,7 +605,7 @@ func (c *Client) ResetContext(ctx context.Context) error {
 			// waiters from attaching.
 			//
 			// Leaving it set made the first demand after a network change wait for a
-			// dial that could only ever publish net.ErrClosed — the "cannot dial again
+			// dial that could only ever publish net.ErrClosed 鈥?the "cannot dial again
 			// after the change" failure Reset exists to prevent, one connection to the
 			// left of where Close used to cause it.
 			c.pending = nil
@@ -574,9 +632,17 @@ func (c *Client) ResetContext(ctx context.Context) error {
 		return nil
 	}
 	switch c.migrate(ctx, conn) {
-	case migrationMigrated, migrationUnchanged:
-		// The connection is still the published generation, either on its new socket or on the
-		// one it had. Nothing to retire.
+	case migrationMigrated:
+		// The connection now sends on a socket of the current network. That IS a rebuild against
+		// the current generation, so the pool is current again and a demand arriving after this
+		// point may join it.
+		c.acknowledgeGeneration()
+		return nil
+	case migrationUnchanged:
+		// The candidate failed before any switch was requested and the connection was never
+		// touched. It is NOT acknowledged on purpose: the connection is still on the previous
+		// path, so the next demand detaches it (it drains when its flows end) and dials a
+		// generation that was established after the change.
 		return nil
 	default:
 		c.retireConnection(conn)
@@ -626,18 +692,40 @@ func (c *Client) migrate(parent context.Context, conn *clientConnection) migrati
 	stopExpectation := conn.ExpectPathSwitch(migrationProbeBudget + migrationRetireBudget + time.Second)
 	defer stopExpectation()
 
-	candidateSocket, err := c.dialer.DialContext(ctx, "udp", c.serverAddr)
+	// The candidate is an UNCONNECTED packet socket bound to the interface this network gives us,
+	// aimed at the peer address the connection is already talking to.
+	//
+	// # Why not a connected socket (the defect this replaces)
+	//
+	// A candidate used to be opened with DialContext("udp", ...) and adapted to net.PacketConn by a
+	// small wrapper that ignored the address argument. That shape is wrong for any platform where
+	// the pinned library can reach the socket's file descriptor: it builds its OOB transport and
+	// sends each packet with an EXPLICIT destination sockaddr, which a connected socket rejects on
+	// Darwin (windows never reaches that branch, which is why only the macOS job failed). The write
+	// error is discarded inside the library, so the only visible symptom was a silent 10 s path
+	// validation timeout - the audit's Q30.
+	//
+	// An unconnected socket is what the library's destination-sockaddr write is designed for, so the
+	// receipt/send tuning, GSO and ECN all stay available, and the shape is identical on every
+	// platform. The peer address is taken from the live connection rather than from c.serverAddr: a
+	// path to a DIFFERENT server address would be a different connection's peer, and re-resolving a
+	// domain here could pick one.
+	candidateAddress := c.serverAddr
+	if remoteAddress := conn.RemoteAddr(); remoteAddress != nil {
+		candidateAddress = M.SocksaddrFromNet(remoteAddress)
+	}
+	candidatePacket, err := c.dialer.ListenPacket(ctx, candidateAddress)
 	if err != nil {
-		traceMigration("candidate dial failed: %v", err)
+		traceMigration("candidate listen failed: %v", err)
 		return migrationUnchanged
 	}
-	candidate := newPathSocket(candidateSocket)
+	candidate := newPathPacketSocket(candidatePacket)
 	// From here the socket is owned by this attempt or by the connection, never by both: a failed
 	// attempt closes it directly, and the connection's path task closes it when the path ends.
 	// pathSocket.close is idempotent, which is what lets both reach it.
 	watchPathCleanup(conn, candidate)
 
-	candidateTransport := &quic.Transport{Conn: connectedPacketConn{Conn: candidateSocket}}
+	candidateTransport := &quic.Transport{Conn: candidatePacket}
 	candidate.transport = candidateTransport
 	path, err := conn.AddPath(candidateTransport)
 	if err != nil {

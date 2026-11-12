@@ -263,13 +263,18 @@ func migrationDial(t *testing.T, ctx context.Context, serverAddr net.Addr) (*qui
 	return conn, transport, socket
 }
 
-// addMigrationPath attaches one real connected socket as a candidate path through the same adapter
-// production uses, and validates it.
-func addMigrationPath(t *testing.T, ctx context.Context, conn *quic.Conn, serverAddr net.Addr) (*quic.Path, net.Conn) {
+// addMigrationPath attaches one real UNCONNECTED packet socket as a candidate path and validates it.
+//
+// The socket shape is the production shape after Q30: quic-go writes every candidate-path packet
+// with an explicit destination sockaddr, which a connected socket rejects on Darwin. An
+// unconnected ListenPacket socket is what that write is designed for, and it is also the only shape
+// that exercises the library's OOB transport on Windows, so this test now covers the branch the
+// macOS job failed on instead of silently downgrading to the basic transport.
+func addMigrationPath(t *testing.T, ctx context.Context, conn *quic.Conn, serverAddr net.Addr) (*quic.Path, net.PacketConn) {
 	t.Helper()
-	socket, err := net.Dial("udp", serverAddr.String())
+	socket, err := net.ListenPacket("udp", "127.0.0.1:0")
 	require.NoError(t, err)
-	path, err := conn.AddPath(&quic.Transport{Conn: connectedPacketConn{Conn: socket}})
+	path, err := conn.AddPath(&quic.Transport{Conn: socket})
 	require.NoError(t, err, "the pinned library must offer a candidate path on a second socket")
 	probeCtx, probeCancel := context.WithTimeout(ctx, migrationSettle)
 	defer probeCancel()

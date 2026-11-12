@@ -112,6 +112,20 @@ func (m *ReferenceManager) Start(stage adapter.StartStage, scope *adapter.Scope)
 	if m.pauseManager != nil {
 		m.devicePaused.Store(m.pauseManager.IsDevicePaused())
 	}
+	// The graph itself is an input, not only the selection. A provider replacing a node under the
+	// same tag, or a group publishing a member list whose selection did not move, changes which
+	// objects exist and which of them are referenced - and the history hook above fires only when a
+	// selected member moves, so without this the eligibility pass would keep the previous verdict
+	// for a node that is now a different object. See adapter.OutboundGraphPublisher for the measured
+	// consequence and for what one event does and does not mean.
+	//
+	// A manager that does not implement the capability (a test double, an embedder with no dynamic
+	// namespace) keeps exactly the previous behaviour: the pass runs on the events it always had.
+	if outboundManager := service.FromContext[adapter.OutboundManager](m.ctx); outboundManager != nil {
+		if graphPublisher, isPublisher := outboundManager.(adapter.OutboundGraphPublisher); isPublisher {
+			graphPublisher.AddGraphUpdateHook(m.subscriber)
+		}
+	}
 	m.update()
 	go m.loop()
 	if m.pauseManager != nil {
@@ -312,6 +326,17 @@ func (m *ReferenceManager) update() {
 	}
 
 	devicePaused := m.devicePaused.Load()
+	if m.pauseManager != nil {
+		// The pause manager is the AUTHORITY on whether the device is paused; the atomic above is a
+		// cache fed by its callbacks. Reading the cache alone makes a missed notification permanent:
+		// on the Apple client the wake event may never arrive (route/reference.go's reuse-boundary
+		// note records the same platform fact), so a tunnel suspended on pause would stay suspended
+		// for the life of the process even though the device is awake again. Re-reading the authority
+		// on every pass also makes this pass the reconciliation point after ANY update - a graph
+		// publication, a history round, a reuse boundary - instead of only after a pause event.
+		devicePaused = m.pauseManager.IsDevicePaused()
+		m.devicePaused.Store(devicePaused)
+	}
 	keepIdle := make(map[any]bool)
 	for _, outbound := range outboundManager.Outbounds() {
 		keeper, isKeeper := outbound.(adapter.IdleConnectionKeeper)

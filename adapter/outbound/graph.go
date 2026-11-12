@@ -66,7 +66,6 @@ func (m *Manager) UpdateGroupMembership(groupTag string, members []string, commi
 		return nil
 	}
 	m.graphAccess.Lock()
-	defer m.graphAccess.Unlock()
 	// A NON-NIL copy even when members is empty: the proposal distinguishes "this group publishes
 	// nothing" from "this group is not part of the proposal", and a nil slice would read as the
 	// second and validate the OLD membership.
@@ -76,9 +75,16 @@ func (m *Manager) UpdateGroupMembership(groupTag string, members []string, commi
 		members: map[string][]string{groupTag: proposed},
 	})
 	if err != nil {
+		m.graphAccess.Unlock()
 		return err
 	}
 	commit()
+	m.graphAccess.Unlock()
+	// A group's membership IS the reference edge set for everything it names, so a committed
+	// membership is a graph change even when its selection stayed the same byte for byte - a new
+	// member that is not selected yet is still referenced, and a dropped member is not. Emitted
+	// after the graph lock is released so the consumer may read this manager (and the group) back.
+	m.notifyGraphUpdated()
 	return nil
 }
 
