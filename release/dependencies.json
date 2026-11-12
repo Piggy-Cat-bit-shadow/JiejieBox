@@ -82,6 +82,13 @@
       "note": "The AnyTLS session pool. Consumed for audit Q10: the client asks AdmitCreation only on a real session creation, so reusing an idle session is neither charged nor blocked by the creation budget. Temporary fix branch; when the upstream PR lands, move the pin to main before the branch is deleted."
     },
     {
+      "module": "github.com/enfein/mieru/v3",
+      "slug": "Piggy-Cat-bit-shadow/mieru",
+      "branch": "fix/underlay-closed-2026-11-12",
+      "policy": "update",
+      "note": "The Mieru client SDK. Consumed for audit Q04: a session attach is refused on a closed underlay, and the stream/packet wrappers hold the lifecycle mutex across attach so a teardown cannot observe a half-attached session. Temporary fix branch; when the upstream PR lands, move the pin to main before the branch is deleted."
+    },
+    {
       "module": "github.com/sagernet/cronet-go",
       "slug": "Piggy-Cat-bit-shadow/cronet-go",
       "branch": "main",
