@@ -77,11 +77,20 @@ esac
 # Git Bash without coreutils: `shasum` does not exist there, so the previous single implementation
 # made the gate fail with "command not found" on the one host that can check the Windows bytes.
 # The recorded fact is the hex digest, so any of these tools produces the same manifest line.
+#
+# # Why the file is fed on stdin, not passed as an argument
+#
+# `go list -m -f {{.Dir}}` prints a WINDOWS path on Windows, and backslashes in a filename make GNU
+# coreutils escape the whole output line: it prefixes the DIGEST with a backslash and escapes the
+# name. The first field then reads "\8e5d33..." and every archive looks changed. Reading the file
+# from stdin removes the filename from the output, so the digest is the whole line on every host and
+# in every tool. Measured on this repository's Windows host: sha256sum on the argument produced
+# "\8e5d330e..."; on stdin it produced "8e5d330e...", matching openssl and certutil.
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
+        sha256sum < "$1" | awk '{print $1}'
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{print $1}'
+        shasum -a 256 < "$1" | awk '{print $1}'
     elif command -v openssl >/dev/null 2>&1; then
         openssl dgst -sha256 "$1" | awk '{print $NF}'
     elif command -v certutil >/dev/null 2>&1; then
