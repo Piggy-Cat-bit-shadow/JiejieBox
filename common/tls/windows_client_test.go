@@ -378,6 +378,13 @@ func TestWindowsClientHandshakeWrappedConn(t *testing.T) {
 }
 
 func TestWindowsClientHandshakeTLS13(t *testing.T) {
+	if !windowsTLS13Available(t) {
+		// The platform has no TLS 1.3. The regression this test now protects is
+		// that the requirement is refused with a capability error instead of a
+		// hello the peer can only reset.
+		assertTLS13Refusal(t)
+		return
+	}
 	serverCertificate, serverCertificatePEM := newWindowsTestCertificate(t, "localhost")
 	serverResult, serverAddress := startWindowsTLSTestServer(t, &stdtls.Config{
 		Certificates: []stdtls.Certificate{serverCertificate},
@@ -781,6 +788,10 @@ func TestWindowsClientRoundtrip(t *testing.T) {
 }
 
 func TestWindowsClientRoundtripTLS13(t *testing.T) {
+	if !windowsTLS13Available(t) {
+		assertTLS13Refusal(t)
+		return
+	}
 	clientConn, serverDone := startWindowsEchoServer(t, stdtls.VersionTLS13)
 	defer clientConn.Close()
 
@@ -906,6 +917,10 @@ func TestWindowsClientCreateReadWaiterFallback(t *testing.T) {
 }
 
 func TestWindowsClientTLS13PostHandshakeConcurrentWrite(t *testing.T) {
+	if !windowsTLS13Available(t) {
+		assertTLS13Refusal(t)
+		return
+	}
 	serverCertificate, serverCertificatePEM := newWindowsTestCertificate(t, "localhost")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
