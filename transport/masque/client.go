@@ -458,11 +458,12 @@ func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 	c.access.Unlock()
 
 	ledger := adapter.ResidencyLedger{
+		Unit:       adapter.ResidencyUnitSession,
 		Answered:   true,
 		Exact:      false,
 		Terminated: c.sessionsTerminated.Load(),
-		Note: "MASQUE tunnel sessions; Active/Idle uses a 60 s last-packet window, and the " +
-			"inner flows are owned by the device stack and are not counted here",
+		Note: "MASQUE tunnel sessions (unit=session); Active/Idle uses a 60 s last-packet window, and " +
+			"the inner flows are owned by the device stack and are not counted here",
 	}
 	if current == nil {
 		if loops > 0 && !suspended && !restarting {
