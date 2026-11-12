@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
@@ -201,6 +202,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			"). This path cannot carry a standard QUIC handshake; configure a larger tunnel MTU or ",
 			"reach this server without this detour")
 	}
+	guard := resourceguard.FromContext(ctx)
 	client, err := hysteria2.NewClient(hysteria2.ClientOptions{
 		Context:            ctx,
 		Dialer:             outboundDialer,
@@ -232,6 +234,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		BBRProfile:   options.BBRProfile,
 		ChromeParrot: !options.DisableChromeParrot,
 		RealmOptions: realmOptions,
+		// One permit per real connection creation; streams on an established connection never
+		// reach this hook, and concurrent waiters share the one creation it bounds.
+		AdmitCreation: admitCreation(guard, "hysteria2/"+options.ServerOptions.Build().String()),
 	})
 	if err != nil {
 		return nil, err

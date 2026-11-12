@@ -3,10 +3,8 @@ package anytls
 import (
 	"context"
 	"net"
-	"time"
 
 	"github.com/sagernet/sing-box/common/resourceguard"
-	"github.com/sagernet/sing-box/common/trafficclass"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -41,39 +39,12 @@ type streamDialFunc func(ctx context.Context, destination M.Socksaddr) (net.Conn
 // place that knows about admission, and on every platform without a process budget it costs one
 // nil check.
 func admit(ctx context.Context, guard *resourceguard.Guard, key string, create func(context.Context) error) error {
-	// One logical dial holds one permit, however many seams it crosses. A detour, a chain or a
-	// fallback re-enters the dial path under the caller's context: an outbound dialling through
-	// another outbound, or the TLS handshake of the session this creation is establishing. The
-	// outer seam already admitted this work, so asking the gate again would queue a creation behind
-	// a permit its own cohort is holding - the defect the TLS seam had, and the reason this check
-	// exists on both seams rather than only one.
-	if guard == nil || resourceguard.HasHeldPermit(ctx) {
-		return create(ctx)
-	}
-	// A flow whose class says a person is waiting on it may use the interactive reserve; that is
-	// what makes the reserve a priority rather than dead capacity. Everything else is normal.
-	class := resourceguard.ClassNormal
-	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
-		class = resourceguard.ClassInteractive
-	}
-	permit, err := guard.AcquireFor(ctx, class, key)
-	if err != nil {
-		return err
-	}
-	defer permit.Release()
-	// Queueing at the gate is our own backpressure, not creation time. Starting the clock before
-	// Acquire would make a queued refusal look slow and keep the fast-fail rate limit disarmed
-	// exactly when the gate is saturated.
-	started := time.Now()
-	// The TLS handshake this creation may perform is admitted again at the shared TLS layer.
-	// Marking the context is what stops one handshake being charged twice; see
-	// resourceguard.HeldPermit.
-	createErr := create(resourceguard.WithHeldPermit(ctx))
-	// Report the outcome to the fast-fail policy. A queue refusal never reaches here (Acquire
-	// returned it), so what is reported is a real creation result - which is exactly what the
-	// policy needs to distinguish a failing far side from this process's own backpressure.
-	guard.ObserveOutcomeFor(key, started, createErr)
-	return createErr
+	// The body is common/resourceguard.(*Guard).AdmitCreation, shared with the QUIC clients' hooks:
+	// one logical dial holds one permit however many seams it crosses (HeldPermit), the interactive
+	// reserve is reachable, the creation clock starts after the permit, and the outcome is reported
+	// with the key the acquisition used. This wrapper exists so the AnyTLS placement - creation
+	// only, after the idle-reuse attempt - stays visible here.
+	return guard.AdmitCreation(ctx, key, create)
 }
 
 // admitSessionCreation is the AnyTLS client's AdmitCreation hook. It is called exactly once per

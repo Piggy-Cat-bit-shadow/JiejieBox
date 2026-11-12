@@ -51,7 +51,7 @@
       "slug": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
       "policy": "update",
-      "note": "The option-to-Config pass-through for QUIC; carries the owned-datagram ceiling."
+      "note": "The option-to-Config pass-through for QUIC; carries the owned-datagram ceiling. The pinned commit is one fix commit ahead of main for audit Q09 (per-creation admission across the three shared QUIC clients, TUIC authentication inside the creation); it is not merged to main yet, so `check` reports AHEAD until it is."
     },
     {
       "module": "github.com/sagernet/quic-go",

@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
@@ -152,6 +153,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		hardCeiling = int(quicPayloadCeiling)
 		disablePMTUD = true
 	}
+	guard := resourceguard.FromContext(ctx)
 	client, err := tuic.NewClient(tuic.ClientOptions{
 		Context:       ctx,
 		Dialer:        outboundDialer,
@@ -173,6 +175,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		UDPStream:         tuicUDPStream,
 		ZeroRTTHandshake:  options.ZeroRTTHandshake,
 		Heartbeat:         time.Duration(options.Heartbeat),
+		// One permit per real session creation; a new stream on an established connection never
+		// reaches this hook, and concurrent waiters share the one creation it bounds.
+		AdmitCreation: admitCreation(guard, "tuic/"+options.ServerOptions.Build().String()),
 	})
 	if err != nil {
 		return nil, err

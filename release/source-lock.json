@@ -35,9 +35,9 @@
     },
     {
       "module": "github.com/sagernet/sing-quic",
-      "pinned": "aa6d98964049",
+      "pinned": "c1b074f1f868",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-quic",
-      "version": "v0.7.2-0.20261110234451-aa6d98964049"
+      "version": "v0.7.2-0.20261112101651-c1b074f1f868"
     },
     {
       "module": "github.com/sagernet/quic-go",
