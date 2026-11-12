@@ -326,17 +326,6 @@ func (m *ReferenceManager) update() {
 	}
 
 	devicePaused := m.devicePaused.Load()
-	if m.pauseManager != nil {
-		// The pause manager is the AUTHORITY on whether the device is paused; the atomic above is a
-		// cache fed by its callbacks. Reading the cache alone makes a missed notification permanent:
-		// on the Apple client the wake event may never arrive (route/reference.go's reuse-boundary
-		// note records the same platform fact), so a tunnel suspended on pause would stay suspended
-		// for the life of the process even though the device is awake again. Re-reading the authority
-		// on every pass also makes this pass the reconciliation point after ANY update - a graph
-		// publication, a history round, a reuse boundary - instead of only after a pause event.
-		devicePaused = m.pauseManager.IsDevicePaused()
-		m.devicePaused.Store(devicePaused)
-	}
 	keepIdle := make(map[any]bool)
 	for _, outbound := range outboundManager.Outbounds() {
 		keeper, isKeeper := outbound.(adapter.IdleConnectionKeeper)

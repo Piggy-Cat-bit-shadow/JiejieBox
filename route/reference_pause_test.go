@@ -2,7 +2,7 @@ package route
 
 // Q07: what a device pause actually does to an on-demand tunnel.
 //
-// # What this file records, and what it fixes
+// # What this file records, and what it deliberately does not decide
 //
 // The audit's F-01 is a POLICY question that is still open (`docs/coupling/DECISIONS.md` D-4): the
 // eligibility pass suspends a referenced on-demand endpoint whenever the device is paused, and the
@@ -20,11 +20,22 @@ package route
 // as a recorded fact rather than an endorsement, and the two policy options are written down where
 // the decision has to be taken instead of being chosen here.
 //
-// The one thing this file DOES change is a defect inside the pause handling that is independent of
-// the policy: the pass used to trust a cached "device paused" boolean, so a wake notification that
-// never arrived (a documented Apple platform fact) left the tunnel suspended for the life of the
-// process. The pass now re-reads the pause manager, which is the authority, and the missed-wake
-// regression below pins that.
+// # One candidate fix that was written, measured and WITHDRAWN
+//
+// The first version of this change made the pass re-read `pause.Manager.IsDevicePaused()` on every
+// pass, on the theory that the cached flag could lag the manager after a wake the platform never
+// delivered. Two measurements killed it:
+//
+//  1. The theory is wrong. The cache is fed by the manager's callbacks, which the manager invokes
+//     synchronously from `DevicePause`/`DeviceWake`, and `Start` seeds it from the manager. A wake
+//     the PLATFORM never delivers does not move `IsDevicePaused()` either - the level itself is
+//     still paused - so the extra read cannot repair that case. The only divergence is a
+//     registration race, which the Start seeding already covers.
+//  2. It breaks a real contract. `experimental/libbox`'s device-axis test holds the reload
+//     nil-instance window open with the ONE level read `box.New` performs; a second read from this
+//     pass fires first while the old instance is still published, and the test fails with "the
+//     service has an instance while the reload is in flight" (measured in CI run 43126821928 and
+//     reproduced locally). The pass therefore keeps reading the cache, and that is asserted below.
 
 import (
 	"context"
@@ -261,49 +272,41 @@ func TestADevicePauseSuspendsATunnelThatIsCarryingAStream(t *testing.T) {
 			"The platform contract says a pause never terminates an active flow; the two cannot both hold.")
 }
 
-// TestAMissedWakeIsReconciledByTheNextPass is the defect this change fixes.
+// TestThePauseVerdictComesFromTheManagersCallbacks is the contract the withdrawn fix would have
+// replaced, pinned so the replacement cannot come back unnoticed.
 //
-// The Apple client may never deliver the wake callback (documented in this file's header), so the
-// cached "device paused" flag could stay true while the device was awake. Every later pass now
-// re-reads the pause manager, which is the authority, so the tunnel is resumed on the next real
-// trigger instead of staying suspended for the life of the process.
-func TestAMissedWakeIsReconciledByTheNextPass(t *testing.T) {
+// The pass reads the cache, and the cache is fed by the pause manager's callbacks: a level that the
+// manager was told about moves the tunnel, and a level change with NO event does not (the event is
+// the trigger). That is not a defect being preserved - it is the same rule the pause manager itself
+// follows, where the level and the notification are one action (`defaultManager.DevicePause` stores
+// the level and invokes the callbacks), so "cache and manager disagree" is not a state production
+// can reach.
+func TestThePauseVerdictComesFromTheManagersCallbacks(t *testing.T) {
 	fixture := newPauseFixture(t)
 
+	// A level with no delivered event: the manager reports paused, and NOTHING is suspended,
+	// because nothing told this pass that anything changed.
+	fixture.pause.setWithoutNotification(true)
+	fixture.pass()
+	_, verdicts, _, _ := fixture.endpoint.snapshot()
+	require.Equal(t, []bool{true}, verdicts,
+		"a level change with no pause event suspended a tunnel: the pass is not reading a cache")
+
+	// The event arrives: the tunnel is told, exactly once.
 	fixture.pause.DevicePause()
 	require.Eventually(t, func() bool {
 		keep, _, _, _ := fixture.endpoint.snapshot()
 		return !keep
 	}, 5*time.Second, time.Millisecond)
+	_, verdicts, _, _ = fixture.endpoint.snapshot()
+	require.Equal(t, []bool{true, false}, verdicts)
 
-	// The platform wakes the device but the wake event is lost: the authority's answer changes, the
-	// callbacks do not run.
-	fixture.pause.setWithoutNotification(false)
-
-	// Any real trigger of the pass must reconcile against the authority.
-	fixture.pass()
+	// And the wake is the same rule in the other direction: one event, one resume.
+	fixture.pause.DeviceWake()
 	require.Eventually(t, func() bool {
 		keep, _, _, _ := fixture.endpoint.snapshot()
 		return keep
-	}, 5*time.Second, time.Millisecond,
-		"a wake that never arrived left the tunnel suspended: the pass trusted its cache over the authority")
-
-	_, verdicts, _, _ := fixture.endpoint.snapshot()
+	}, 5*time.Second, time.Millisecond)
+	_, verdicts, _, _ = fixture.endpoint.snapshot()
 	require.Equal(t, []bool{true, false, true}, verdicts)
-}
-
-// TestThePauseAuthorityWinsInBothDirections is the negative control for the reconciliation: a
-// cached "awake" flag must not keep a paused device's tunnel up either. The authority is the single
-// answer, not just a repair for one direction.
-func TestThePauseAuthorityWinsInBothDirections(t *testing.T) {
-	fixture := newPauseFixture(t)
-
-	// The authority says paused; no event is delivered, and the cache (from Start) says awake.
-	fixture.pause.setWithoutNotification(true)
-	fixture.pass()
-	require.Eventually(t, func() bool {
-		keep, _, _, _ := fixture.endpoint.snapshot()
-		return !keep
-	}, 5*time.Second, time.Millisecond,
-		"a device that is paused must be suspended even when the event was missed")
 }
