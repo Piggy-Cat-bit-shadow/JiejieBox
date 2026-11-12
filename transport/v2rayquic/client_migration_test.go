@@ -368,6 +368,63 @@ func TestAFailedCandidateBudgetRetiresTheGeneration(t *testing.T) {
 	require.Equal(t, int32(2), server.handshakes.Load())
 }
 
+// TestACancelledResetAbandonsTheCandidateAndKeepsTheOldPath pins the difference between a
+// CANCELLED attempt and a FAILED one.
+//
+// InterfaceUpdated hands ResetContext a deadline for the whole listener phase. When that deadline
+// lands inside the probe, the candidate is abandoned and the connection keeps the path it had - and
+// that outcome must not be booked as a failed validation, or two cancellations would spend the
+// retry budget and turn the next network change into a generation retirement.
+func TestACancelledResetAbandonsTheCandidateAndKeepsTheOldPath(t *testing.T) {
+	server := startMigrationServer(t, nil)
+	dialer := &migratingDialer{base: &N.DefaultDialer{}, sabotage: true}
+	client := newMigratingClient(t, server, dialer)
+	t.Cleanup(func() { _ = client.Close() })
+
+	stream := openStream(t, client)
+	sendRecord(t, stream, 0, "before-the-cancelled-change")
+	baseline := runtime.NumGoroutine()
+
+	// The caller's bound is shorter than the probe budget, so the attempt can only end by
+	// cancellation. If the code ignored the bound, the sabotage would end it a probe budget later.
+	// Three of them, because the retry budget is spent by the SECOND failed validation: a
+	// cancellation booked as a failure only shows its damage on the change after it.
+	cancelledChange := func() time.Duration {
+		attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		defer attemptCancel()
+		started := time.Now()
+		require.NoError(t, client.ResetContext(attemptCtx))
+		return time.Since(started)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		elapsed := cancelledChange()
+		require.Less(t, elapsed, migrationProbeBudget,
+			"the caller's deadline must cut the probe short instead of waiting for the probe budget")
+		require.Equal(t, attempt+2, dialer.count(),
+			"a cancelled attempt must still create its one candidate instead of retiring the generation")
+		require.NotNil(t, client.conn.Load(), "a cancelled attempt must not retire the generation")
+		require.True(t, client.conn.Load().migrationAvailable(),
+			"a cancellation says nothing about the candidate and must not spend the retry budget")
+	}
+	require.Eventually(t, func() bool {
+		released := true
+		for index := 1; index <= 3; index++ {
+			if dialer.socket(index).closes.Load() != 1 {
+				released = false
+			}
+		}
+		return released
+	}, migrationSettle, time.Millisecond, "every abandoned candidate's socket must be released exactly once")
+	require.Zero(t, dialer.socket(0).closes.Load(), "a cancelled attempt must not touch the live path")
+
+	// The old path is still the send path, and the open flow still carries acknowledged bytes.
+	sendRecord(t, stream, 1, "the-old-path-after-the-cancelled-attempt")
+	require.Equal(t, int32(1), server.handshakes.Load(), "a cancelled attempt must not reconnect")
+	require.Equal(t, int32(1), server.streamCount.Load())
+	sendRecord(t, stream, 2, "still-the-old-path")
+	requireNoExtraGoroutines(t, baseline)
+}
+
 // TestCloseDuringAMigrationReleasesTheCandidateAndPublishesNothing pins the terminal state: Close
 // while a candidate is being validated cancels the attempt, the candidate socket is released, and
 // no connection is published afterwards.

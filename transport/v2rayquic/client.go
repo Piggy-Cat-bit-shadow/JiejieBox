@@ -618,7 +618,7 @@ func (c *Client) ResetContext(ctx context.Context) error {
 			// waiters from attaching.
 			//
 			// Leaving it set made the first demand after a network change wait for a
-			// dial that could only ever publish net.ErrClosed 闂?the "cannot dial again
+			// dial that could only ever publish net.ErrClosed - the "cannot dial again
 			// after the change" failure Reset exists to prevent, one connection to the
 			// left of where Close used to cause it.
 			c.pending = nil
@@ -755,7 +755,13 @@ func (c *Client) migrate(parent context.Context, conn *clientConnection) migrati
 		// makes closing its socket safe: otherwise the socket's read error would destroy conn.
 		_ = path.Close()
 		candidate.close()
-		if errors.Is(err, context.DeadlineExceeded) {
+		// A probe that ran out of its OWN budget is a failed validation, and repeating it on every
+		// network change would stall each change by the full probe budget for nothing. A probe cut
+		// short by the caller's deadline (the network manager's phase deadline, or an explicit
+		// ResetContext bound) is not a statement about the candidate at all: counting it would let
+		// two well-behaved cancellations spend the retry budget and turn the next change into a
+		// generation retirement. The distinction is the parent's error, not the probe's.
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			conn.noteFailedMigration()
 		}
 		return migrationUnchanged

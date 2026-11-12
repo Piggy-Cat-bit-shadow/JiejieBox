@@ -63,7 +63,8 @@ func TestTheLedgerFollowsTheConnectionLifecycle(t *testing.T) {
 	require.Zero(t, active)
 }
 
-// TestADrainingGenerationIsResidentUntilItIsReleased is the "閫€鍑哄€欓€変笉鑳芥彁鍓嶅綋鎴愬凡閲婃斁" property.
+// TestADrainingGenerationIsResidentUntilItIsReleased is the "a retiring generation cannot be
+// counted as already released" property.
 func TestADrainingGenerationIsResidentUntilItIsReleased(t *testing.T) {
 	server := startMigrationServer(t, nil)
 	dialer := &migratingDialer{base: &N.DefaultDialer{}}
