@@ -52,16 +52,46 @@ done
 
 platform="${1:-apple}"
 arch="${2:-}"
-manifest="release/cronet-provenance.txt"
 
 # The slices each product links. Apple links four: the two darwin slices and the two device/simulator
 # iOS slices, which is what build-apple-libbox.sh asks the toolchain for.
+#
+# # Why each platform has its own manifest
+#
+# The manifest records "the bytes THIS product links", and different products link different
+# archives: Apple's run has no windows slice, the desktop run has no darwin slice. Keeping one file
+# for all of them made the check pass only while exactly one platform's modules were present,
+# because the comparison below treats a recorded archive that is not in this platform's set as a
+# FAIL. The Apple file keeps its historical name so the existing release gate and its evidence stay
+# valid; the others are named after their platform.
 case "$platform" in
-    apple)   globs=('lib/darwin_*' 'lib/ios_*'); goos="darwin" ;;
-    linux)   globs=('lib/linux_*');             goos="linux" ;;
-    windows) globs=('lib/windows_*');           goos="windows" ;;
+    apple)   globs=('lib/darwin_*' 'lib/ios_*'); goos="darwin";  manifest="release/cronet-provenance.txt" ;;
+    linux)   globs=('lib/linux_*');             goos="linux";   manifest="release/cronet-provenance-linux.txt" ;;
+    windows) globs=('lib/windows_*');           goos="windows"; manifest="release/cronet-provenance-windows.txt" ;;
     *) echo "unknown platform '$platform' (apple|linux|windows)" >&2; exit 2 ;;
 esac
+
+# sha256_of prints the SHA-256 of one file using whatever tool this host has.
+#
+# The release gate runs on the machines that PRODUCE the slices, and the Windows build host ships a
+# Git Bash without coreutils: `shasum` does not exist there, so the previous single implementation
+# made the gate fail with "command not found" on the one host that can check the Windows bytes.
+# The recorded fact is the hex digest, so any of these tools produces the same manifest line.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    elif command -v certutil >/dev/null 2>&1; then
+        # Windows: certutil wraps the digest over several lines and prints it upper-case.
+        certutil -hashfile "$1" SHA256 | grep -E '^[0-9A-Fa-f]{16,}$' | tr -d ' \r' | tr 'A-F' 'a-f'
+    else
+        echo "no SHA-256 tool available (sha256sum, shasum, openssl, certutil)" >&2
+        return 1
+    fi
+}
 
 echo "cronet provenance: platform=${platform} arch=${arch:-all} goos=${goos}"
 echo "  profile tags: ${tags}"
@@ -95,7 +125,7 @@ while IFS= read -r path; do
         while IFS= read -r archive; do
             [ -n "$archive" ] || continue
             size="$(wc -c < "$archive" | tr -d ' ')"
-            hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
+            hash="$(sha256_of "$archive")"
             relative="$(basename "$archive")"
             archive_lines+=("$path $relative $size $hash")
         done < <(find "$dir" -maxdepth 1 \( -name 'libcronet.a' -o -name 'libcronet.dll' \) 2>/dev/null | sort)
@@ -146,6 +176,8 @@ if [ "$record" -eq 1 ]; then
         echo "# the cronet pin changes:"
         echo "#"
         echo "#   scripts/ci/verify-cronet-provenance.sh --record ${platform}${arch:+ $arch}"
+        echo "#"
+        echo "# Platform: ${platform} (one manifest per product; see the script's case statement)."
         echo "#"
         echo "# Format: <module-path> <archive> <size-bytes> <sha256>"
         printf '%s\n' "${archive_lines[@]}"
