@@ -197,6 +197,19 @@ func (s *StartedService) currentInstanceID() string {
 	return s.instanceID
 }
 
+// ServiceIdentity reports the running instance and the profile revision it serves. Both are
+// empty when no instance is running. They are read under one lock so a caller cannot pair the
+// identity of one instance with the revision of its successor: a reload publishes both while
+// holding the write side of this lock.
+func (s *StartedService) ServiceIdentity() (instanceID string, activeRevision string) {
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	if s.instance == nil {
+		return s.instanceID, ""
+	}
+	return s.instanceID, s.instance.revision
+}
+
 type ServiceOptions struct {
 	Context context.Context
 	// Platform           adapter.PlatformInterface

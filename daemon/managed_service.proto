@@ -6,13 +6,44 @@ option go_package = "github.com/sagernet/sing-box/daemon";
 import "google/protobuf/empty.proto";
 
 service ManagedService {
-  rpc StopService(google.protobuf.Empty) returns (google.protobuf.Empty);
-  rpc ReloadService(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc StopService(google.protobuf.Empty) returns(google.protobuf.Empty);
+  // ReloadService is the original token-less reload. It stays for clients that were shipped
+  // before request identity existed; a new daemon still serves it, and a client that needs the
+  // read-back calls ReloadServiceWithRequest instead.
+  rpc ReloadService(google.protobuf.Empty) returns(google.protobuf.Empty);
+  // ReloadServiceWithRequest reloads the service while carrying the caller's identity for THIS
+  // attempt, and answers with the instance and revision that are running afterwards. A daemon
+  // that predates the RPC answers Unimplemented, which is a capability answer, not a failed
+  // reload: the client falls back to ReloadService and reports that the attempt is unconfirmed.
+  rpc ReloadServiceWithRequest(ReloadServiceRequest) returns(ReloadServiceResponse) {}
 
   rpc GetSystemProxyStatus(google.protobuf.Empty) returns(SystemProxyStatus) {}
   rpc SetSystemProxyEnabled(SetSystemProxyEnabledRequest) returns(google.protobuf.Empty) {}
   rpc TriggerDebugCrash(DebugCrashRequest) returns(google.protobuf.Empty) {}
   rpc TriggerOOMReport(google.protobuf.Empty) returns(google.protobuf.Empty) {}
+}
+
+message ReloadServiceRequest {
+  // The caller's identity for THIS attempt. It is echoed in the response, so a confirmation
+  // that arrives after the caller moved on cannot settle a different attempt.
+  string requestId = 1;
+  // The instance the caller last saw, or empty when it does not track instances. A mismatch
+  // means the reload was decided against a state the caller had not seen.
+  string expectedInstanceId = 2;
+}
+
+message ReloadServiceResponse {
+  // The identity from the request.
+  string requestId = 1;
+  // The instance running after the attempt. Empty when no instance is running.
+  string instanceId = 2;
+  // The profile revision serving after the attempt, or empty when nothing is running.
+  string activeRevision = 3;
+  // The caller's expectedInstanceId did not match when the request arrived. The reload is still
+  // performed: refusing would leave the caller unable to reach a state it can see.
+  bool stale = 4;
+  // What the attempt left: "restarted" when a new instance is running, "stopped" when none is.
+  string status = 5;
 }
 
 message SystemProxyStatus {

@@ -823,17 +823,71 @@ func (c *CommandClient) handleOutboundsStream(client daemon.StartedServiceClient
 	}
 }
 
+// SelectOutbound keeps the shipped signature: it performs the selection and discards the
+// read-back. A caller that has to settle its own pending state uses SelectOutboundWithRequest,
+// which carries the request identity and returns what the group actually holds afterwards.
 func (c *CommandClient) SelectOutbound(groupTag string, outboundTag string) error {
-	_, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.SelectOutboundResponse, error) {
-		return client.SelectOutbound(ctx, &daemon.SelectOutboundRequest{
-			GroupTag:    groupTag,
-			OutboundTag: outboundTag,
-		})
-	})
+	_, err := c.selectOutbound(groupTag, outboundTag, 0, 0)
 	if err != nil {
 		return E.Cause(err, "select outbound")
 	}
 	return nil
+}
+
+type selectOutboundResult struct {
+	Supported          bool   `json:"supported"`
+	Unconfirmed        bool   `json:"unconfirmed,omitempty"`
+	RequestID          uint64 `json:"requestId"`
+	AppliedOutboundTag string `json:"appliedOutboundTag,omitempty"`
+	AppliedRevision    uint64 `json:"appliedRevision,omitempty"`
+	Stale              bool   `json:"stale,omitempty"`
+}
+
+// SelectOutboundWithRequest performs a selection carrying the caller's identity for this attempt
+// and the group revision it last observed. The answer is the read-back, encoded as JSON so the
+// gomobile bridge can pass it as a string box:
+//
+//	{"supported":true,"requestId":41,"appliedOutboundTag":"b","appliedRevision":7,"stale":false}
+//
+// A daemon that predates the identity fields answers requestId 0. That is a CAPABILITY answer,
+// not a failed selection: the selection was performed, so the document says supported=false and
+// unconfirmed=true rather than inventing a revision the caller could mistake for its own.
+func (c *CommandClient) SelectOutboundWithRequest(groupTag string, outboundTag string, requestID uint64, expectedRevision uint64) (*StringBox, error) {
+	result, err := c.selectOutbound(groupTag, outboundTag, requestID, expectedRevision)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := std_json.Marshal(result)
+	if err != nil {
+		return nil, E.Cause(err, "encode select outbound result")
+	}
+	return wrapString(string(encoded)), nil
+}
+
+func (c *CommandClient) selectOutbound(groupTag string, outboundTag string, requestID uint64, expectedRevision uint64) (*selectOutboundResult, error) {
+	response, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.SelectOutboundResponse, error) {
+		return client.SelectOutbound(ctx, &daemon.SelectOutboundRequest{
+			GroupTag:         groupTag,
+			OutboundTag:      outboundTag,
+			RequestId:        requestID,
+			ExpectedRevision: expectedRevision,
+		})
+	})
+	if err != nil {
+		return nil, E.Cause(err, "select outbound")
+	}
+	if requestID != 0 && response.GetRequestId() != requestID {
+		// Zero is what an older daemon sends: it never saw the identity field. The selection
+		// itself was performed, so this is an unconfirmed result, not a failure.
+		return &selectOutboundResult{Supported: false, Unconfirmed: true, RequestID: requestID}, nil
+	}
+	return &selectOutboundResult{
+		Supported:          true,
+		RequestID:          response.GetRequestId(),
+		AppliedOutboundTag: response.GetAppliedOutboundTag(),
+		AppliedRevision:    response.GetAppliedRevision(),
+		Stale:              response.GetStale(),
+	}, nil
 }
 
 func (c *CommandClient) URLTest(outboundTag string) error {
@@ -946,14 +1000,92 @@ func (c *CommandClient) CloseConnections() error {
 	return nil
 }
 
+type serviceReloadResult struct {
+	Supported      bool   `json:"supported"`
+	Unconfirmed    bool   `json:"unconfirmed,omitempty"`
+	RequestID      string `json:"requestId"`
+	InstanceID     string `json:"instanceId,omitempty"`
+	ActiveRevision string `json:"activeRevision,omitempty"`
+	Stale          bool   `json:"stale,omitempty"`
+	Status         string `json:"status,omitempty"`
+}
+
+// ServiceReload keeps the shipped signature, but it is no longer token-less on the wire: it runs
+// through the request-identified RPC whenever the daemon serves it, so the reload the daemon
+// performed is the one this call asked for. A daemon that predates that RPC gets the legacy call
+// and no confirmation.
 func (c *CommandClient) ServiceReload() error {
-	_, err := callManagedWithResult(c, func(ctx context.Context, client daemon.ManagedServiceClient) (*emptypb.Empty, error) {
-		return client.ReloadService(ctx, &emptypb.Empty{})
-	})
+	_, err := c.serviceReload("", "")
 	if err != nil {
 		return E.Cause(err, "reload service")
 	}
 	return nil
+}
+
+// ServiceReloadWithRequest reloads the service with the caller's identity for this attempt and
+// the instance it last saw. The answer is a JSON document:
+//
+//	{"supported":true,"requestId":"r-7","instanceId":"...","activeRevision":"...","status":"restarted"}
+//
+// A daemon that predates request identity still reloads, but answers supported=false and
+// unconfirmed=true: the caller must not report that attempt as confirmed.
+func (c *CommandClient) ServiceReloadWithRequest(requestID string, expectedInstanceID string) (*StringBox, error) {
+	result, err := c.serviceReload(requestID, expectedInstanceID)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := std_json.Marshal(result)
+	if err != nil {
+		return nil, E.Cause(err, "encode reload result")
+	}
+	return wrapString(string(encoded)), nil
+}
+
+// reloadRequestIDCounter numbers reload attempts process-wide, so two clients (or one client
+// reloading twice) can never share an identity.
+var reloadRequestIDCounter atomic.Uint64
+
+// newReloadRequestID returns an identity for one reload attempt. It is only a label: the daemon
+// echoes it, and the caller decides which pending attempt it settles.
+func newReloadRequestID() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.FormatUint(reloadRequestIDCounter.Add(1), 36)
+}
+
+func (c *CommandClient) serviceReload(requestID string, expectedInstanceID string) (*serviceReloadResult, error) {
+	if strings.TrimSpace(requestID) == "" {
+		requestID = newReloadRequestID()
+	}
+	response, err := callManagedWithResult(c, func(ctx context.Context, client daemon.ManagedServiceClient) (*daemon.ReloadServiceResponse, error) {
+		return client.ReloadServiceWithRequest(ctx, &daemon.ReloadServiceRequest{
+			RequestId:          requestID,
+			ExpectedInstanceId: expectedInstanceID,
+		})
+	})
+	if err != nil {
+		if status.Code(err) != codes.Unimplemented {
+			return nil, E.Cause(err, "reload service")
+		}
+		// The daemon predates the request-identified RPC. The reload still has to happen: an old
+		// daemon is not a reason to refuse a reload, only a reason not to call it confirmed.
+		_, legacyErr := callManagedWithResult(c, func(ctx context.Context, client daemon.ManagedServiceClient) (*emptypb.Empty, error) {
+			return client.ReloadService(ctx, &emptypb.Empty{})
+		})
+		if legacyErr != nil {
+			return nil, E.Cause(legacyErr, "reload service")
+		}
+		return &serviceReloadResult{Supported: false, Unconfirmed: true, RequestID: requestID}, nil
+	}
+	if response.GetRequestId() != requestID {
+		return nil, E.New("the daemon confirmed reload request ", strconv.Quote(response.GetRequestId()), " instead of ", strconv.Quote(requestID))
+	}
+	return &serviceReloadResult{
+		Supported:      true,
+		RequestID:      requestID,
+		InstanceID:     response.GetInstanceId(),
+		ActiveRevision: response.GetActiveRevision(),
+		Stale:          response.GetStale(),
+		Status:         response.GetStatus(),
+	}, nil
 }
 
 func (c *CommandClient) ServiceClose() error {

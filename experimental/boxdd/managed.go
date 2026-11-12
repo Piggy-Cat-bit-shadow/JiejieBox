@@ -29,27 +29,56 @@ func (h *managedHandler) ServiceStop() error {
 }
 
 func (h *managedHandler) ServiceReload(ctx context.Context) error {
+	_, err := h.serviceReload(ctx, "", "")
+	return err
+}
+
+func (h *managedHandler) ServiceReloadWithRequest(ctx context.Context, requestID string, expectedInstanceID string) (*daemon.ReloadOutcome, error) {
+	return h.serviceReload(ctx, requestID, expectedInstanceID)
+}
+
+// serviceReload is the one reload body: the legacy RPC and the request-identified RPC must not
+// grow two different reload semantics. The identity half only observes - it reads the instance
+// before and after the same call the old entry performs.
+func (h *managedHandler) serviceReload(ctx context.Context, requestID string, expectedInstanceID string) (*daemon.ReloadOutcome, error) {
 	if h.daemon.closed {
-		return os.ErrClosed
+		return nil, os.ErrClosed
 	}
+	previousInstanceID, _ := h.daemon.startedService.ServiceIdentity()
+	stale := expectedInstanceID != "" && expectedInstanceID != previousInstanceID
 	ownerUserID, err := loadOwner()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	configContent, err := loadServiceConfig(ownerUserID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	options, err := loadStartOptions(ownerUserID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = h.daemon.startServiceLocked(ctx, ownerUserID, configContent, options)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	options.WasRunning = true
-	return saveStartOptions(ownerUserID, options)
+	err = saveStartOptions(ownerUserID, options)
+	if err != nil {
+		return nil, err
+	}
+	instanceID, activeRevision := h.daemon.startedService.ServiceIdentity()
+	status := daemon.ReloadStatusStopped
+	if instanceID != "" {
+		status = daemon.ReloadStatusRestarted
+	}
+	return &daemon.ReloadOutcome{
+		RequestID:      requestID,
+		InstanceID:     instanceID,
+		ActiveRevision: activeRevision,
+		Stale:          stale,
+		Status:         status,
+	}, nil
 }
 
 func (h *managedHandler) SystemProxyStatus() (*daemon.SystemProxyStatus, error) {
