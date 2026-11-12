@@ -42,10 +42,17 @@ jobs:
             test "$remote_sha" = "$GITHUB_SHA"
           fi
           test "$(jq -er '.release_version' release/source-lock.json)" = "$version"
-          python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
+          # `--strict`: this job checks submodules out (`submodules: recursive` above), so the
+          # nested Desktop dashboard gitlink IS readable here. A run that cannot read a frozen pin
+          # must fail rather than print a partial pass on the commit the tag will point at.
+          python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json --strict
           python3 scripts/ci/release-freeze.py resolve --out release-resolve.tsv
           python3 scripts/ci/release-freeze.py check --resolve release-resolve.tsv --json release-pin-report.json
           jq -e '[.go_modules[], .clients[]] | all(.policy != "update" or .relation != "behind")' release-pin-report.json
+          # Q42: the pins above were BUILT by a recorded run, not merely frozen. This needs no
+          # network for the pins themselves; `--fetch-missing` brings the recorded run commits into
+          # this one-commit checkout (depth 1) so their lock files can be read.
+          python3 scripts/ci/check-pin-runs.py --fetch-missing --json release-pin-runs.json
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "apple_sha=$(git rev-parse HEAD:clients/apple)" >> "$GITHUB_OUTPUT"
       - name: Save dependency observations
@@ -56,6 +63,7 @@ jobs:
           path: |
             release-resolve.tsv
             release-pin-report.json
+            release-pin-runs.json
           overwrite: true
 
   verify:

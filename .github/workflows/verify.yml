@@ -198,6 +198,31 @@ jobs:
         # because a green build only proves the pin is consistent, not that it is current.
         run: python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
 
+      - name: the frozen pins are the ones an executed run built
+        # `verify` above proved the pins are CONSISTENT with the lock. It cannot prove anything
+        # ever BUILT them, and that was the Q42 finding: a consistent pin can be a pin only prose
+        # remembers. release/pin-runs.json records completed runs, and this step re-reads
+        # release/source-lock.json out of each recorded commit - a pin that moved without a new
+        # run loses its coverage here, offline, on the push. It also refuses a pin that sits
+        # outside the gate unless the record names the workflow+job that reads it, and verifies
+        # that job still checks the submodule out (the nested Desktop dashboard gitlink).
+        #
+        # `--fetch-missing`: this checkout is one commit deep, so the recorded run commits are not
+        # here. The gate fetches exactly those commits (depth 1) instead of the whole history - it
+        # reads their lock file and nothing else. Without the flag it refuses to judge a commit it
+        # cannot see, which is what a local run wants.
+        run: python3 scripts/ci/check-pin-runs.py --fetch-missing --json build/pin-runs.json
+
+      - name: the knowledge entry points describe one revision
+        # Q45 was not a false sentence; it was sentences that stopped agreeing: the page a reader
+        # opens first advertised one baseline while the scoped refresh below described a later
+        # release, the report index grew a second row for the same directory with a different
+        # version in each, and archives written after the index was last touched were never
+        # registered. This reads the entry points together - release version, source lock, both
+        # knowledge pages, the report index, the 55-item matrix - so one of them moving alone fails
+        # here instead of becoming a wording defect a human has to notice.
+        run: python3 scripts/ci/check-knowledge-facts.py --json build/knowledge-facts.json
+
       - name: gomobile single-source check
         # `github.com/sagernet/gomobile/cmd/gomobile@v0.1.13` used to be written out
         # three times: twice in the Apple workflow and once in the Makefile. Nothing

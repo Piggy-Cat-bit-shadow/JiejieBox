@@ -755,6 +755,66 @@ def case_verify_skips_nested_without_submodule():
         fixture.cleanup()
 
 
+def case_verify_names_the_nested_pin_it_cannot_read():
+    """A lock pin that this checkout cannot read must not be covered by a full PASS.
+
+    This is the push-gate case, and it is not hypothetical: `verify.yml` checks out no
+    submodules, so on every push `clients/desktop:dashboard` used to be listed as SKIPPED under a
+    line that said "every pin in the tree is the pin the lock records". The pin was in the lock,
+    the gitlink was never read, and the gate claimed it anyway. `--strict` is what the release
+    path uses where the submodule IS present, so the same code has to fail there and pass there.
+    """
+    fixture = Fixture()
+    try:
+        resolve = fixture.write_resolution()
+        lock = os.path.join(fixture.dir, "lock.json")
+        fixture.run("snapshot", "--resolve", resolve, "--out", lock, expect=0)
+        parent = os.path.join(fixture.repo, fixture.NESTED[0])
+        aside = parent + ".not-checked-out"
+        os.rename(parent, aside)
+
+        result = fixture.run("verify", "--lock", lock, expect=0)
+        check("nested-unchecked: the gate does not claim a full pass over a pin it did not read",
+              "PASS-PARTIAL" in result.stdout
+              and "PASS: every pin in the tree" not in result.stdout, result.stdout[-500:])
+        check("nested-unchecked: the unchecked pin is named in the verdict",
+              "clients/desktop:dashboard" in result.stdout
+              and "NOT CHECKED" in result.stdout, result.stdout[-500:])
+
+        strict = fixture.run("verify", "--lock", lock, "--strict", expect=1)
+        check("nested-unchecked: --strict fails closed on the pin it cannot read",
+              "FAIL" in strict.stdout and "clients/desktop:dashboard" in strict.stdout,
+              strict.stdout[-500:])
+
+        os.rename(aside, parent)
+        result = fixture.run("verify", "--lock", lock, "--strict", expect=0)
+        check("nested-unchecked: --strict passes once the parent is checked out and matches",
+              "PASS: every pin in the tree" in result.stdout, result.stdout[-400:])
+    finally:
+        fixture.cleanup()
+
+
+def case_verify_nested_mismatch_still_fails_strict():
+    """The strict path must fail for the right reason: a moved nested pin, not only a missing one."""
+    fixture = Fixture()
+    try:
+        resolve = fixture.write_resolution()
+        lock = os.path.join(fixture.dir, "lock.json")
+        fixture.run("snapshot", "--resolve", resolve, "--out", lock, expect=0)
+        parent = os.path.join(fixture.repo, fixture.NESTED[0])
+        nested_path = fixture.NESTED[1]
+        # Move the nested gitlink inside the Desktop repository only: the lock still records the
+        # old pin, so a verifier that reads the gitlink HAS to disagree with it.
+        sh(["git", "update-index", "--add", "--cacheinfo", "160000",
+            full("eeeeeeeeeeee"), nested_path], parent)
+        result = fixture.run("verify", "--lock", lock, "--strict", expect=1)
+        check("nested-mismatch: --strict names the nested gitlink that moved",
+              "clients/desktop:dashboard" in result.stdout and "FAIL" in result.stdout,
+              result.stdout[-500:])
+    finally:
+        fixture.cleanup()
+
+
 def case_resolve_from_recorded_file():
     fixture = Fixture()
     try:
@@ -857,6 +917,8 @@ def main():
         case_verify_catches_missing_fork_pin,
         case_apply_never_moves_controlled_pins,
         case_verify_skips_nested_without_submodule,
+        case_verify_names_the_nested_pin_it_cannot_read,
+        case_verify_nested_mismatch_still_fails_strict,
         case_resolve_from_recorded_file,
         case_lock_records_the_release_version,
         case_parse_block_form,

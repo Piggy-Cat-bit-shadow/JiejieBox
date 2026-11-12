@@ -59,6 +59,9 @@ on:
       - ".github/workflows/android-core-arm64.yml"
       - "scripts/ci/release-freeze.py"
       - "scripts/ci/test-release-freeze.py"
+      - "scripts/ci/check-pin-runs.py"
+      - "scripts/ci/test-check-pin-runs.py"
+      - "release/pin-runs.json"
       - ".github/workflows/client-apple.yml"
       - ".github/actions/apple-libbox-build/action.yml"
       - "scripts/ci/apple-client-input.sh"
@@ -275,6 +278,24 @@ jobs:
           rc="${PIPESTATUS[0]}"
           set -e
           echo "$rc" > verify-logs/release-freeze.exit
+          exit "$rc"
+
+      - name: the pin/run binding gate's behavioural suite
+        # `verify.yml` refuses to let a pin stand without a run that carries it. This is the
+        # suite behind that refusal: a moved pin with no new run, a cancelled run cited as
+        # evidence, a run at a commit the clone does not contain, a diverged fork, a stale branch
+        # observation, and a compensating job that stopped checking submodules out all have to
+        # fail. A binding gate that passes on any of those is worse than no gate - it turns prose
+        # about evidence into a green check.
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          python3 scripts/ci/test-check-pin-runs.py 2>&1 | tee verify-logs/pin-runs.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/pin-runs.exit
           exit "$rc"
 
       - name: the Apple client source override's behaviour

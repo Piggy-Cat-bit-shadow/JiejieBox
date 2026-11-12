@@ -1,0 +1,135 @@
+name: Maintenance ledger
+
+# The two ledgers the audit asked for (Q45, Q47), and the only workflow that runs their gates.
+#
+# # Why this is not part of Verify
+#
+# Verify is bounded at 40 minutes and checks out one commit, deliberately: it answers "is the source
+# self-consistent, are the pinned assumptions still true, do the main targets compile". The
+# retirement gate answers a different question - "does the maintenance ledger still describe this
+# tree" - and answering it needs the full history: it blames marker lines, recomputes patch-ids from
+# the commits those markers landed in, and checks that every row of the unmarked history index names
+# a commit on the branch. A shallow checkout would turn that into a failure about the checkout
+# rather than about the ledger, so the fetch depth here is 0 and the job carries no toolchain.
+#
+# # Why this is not part of Release Contract Verification
+#
+# RCV owns the release tooling, and its path filter deliberately carries no documentation path: a
+# report-only commit must not start a release-gate run. Both ledgers ARE documentation, so putting
+# them there would either widen that filter (the rule it is guarded by) or leave the gates unrun.
+# The separate workflow keeps each budget honest: no Go, no build, seconds per run.
+#
+# # What it does not claim
+#
+# A green run here says the documents still describe the tree and agree about which revision they
+# describe. It says nothing about device behaviour, interop, or whether the patches should be
+# retired - those remain recorded measurement tasks on the ledger itself.
+on:
+  push:
+    branches: [testing]
+    paths:
+      - "docs/fork/upstream-retirement-batch2.md"
+      - "docs/fork/upstream-retirement-batch2.tsv"
+      - "docs/fork/upstream-retirement-unmarked.md"
+      - "docs/fork/upstream-retirement-unmarked.tsv"
+      - "scripts/ci/upstream-retirement-batch2.py"
+      - "scripts/ci/check-upstream-retirement.py"
+      - "scripts/ci/test-check-upstream-retirement.py"
+      - "scripts/ci/check-knowledge-facts.py"
+      - "scripts/ci/test-check-knowledge-facts.py"
+      - "KNOWLEDGE/**"
+      - "release/JIEJIE_VERSION"
+      - "release/source-lock.json"
+  pull_request:
+    paths:
+      - "docs/fork/upstream-retirement-batch2.md"
+      - "docs/fork/upstream-retirement-batch2.tsv"
+      - "docs/fork/upstream-retirement-unmarked.md"
+      - "docs/fork/upstream-retirement-unmarked.tsv"
+      - "scripts/ci/upstream-retirement-batch2.py"
+      - "scripts/ci/check-upstream-retirement.py"
+      - "scripts/ci/test-check-upstream-retirement.py"
+      - "scripts/ci/check-knowledge-facts.py"
+      - "scripts/ci/test-check-knowledge-facts.py"
+      - "KNOWLEDGE/**"
+      - "release/JIEJIE_VERSION"
+      - "release/source-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-ledger-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the gates blame marker lines and recompute patch-ids out of the commits
+          # those markers landed in, so a shallow clone cannot answer them.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: the knowledge entry points describe one revision
+        # One target version and commit across the two pages a reader opens first, the report index
+        # covering the directories it indexes, and the 55-item matrix intact.
+        run: python3 scripts/ci/check-knowledge-facts.py --json build/knowledge-facts.json
+
+      - name: the knowledge-facts gate's behavioural suite
+        # A gate that only agrees with the documents it reads is not a gate: each case mutates one
+        # fact - a duplicated directory row, an unregistered archive, a lock naming another
+        # release, a target newer than the tree, a dropped staleness rule - and requires a failure.
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          python3 scripts/ci/test-check-knowledge-facts.py 2>&1 | tee verify-logs/knowledge-facts.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/knowledge-facts.exit
+          exit "$rc"
+
+      - name: the maintenance ledger still describes this tree
+        # Q47's finding: the retirement ledger counted maintained patches it could not name, cited
+        # triggers nobody re-read, and asserted "upstream has no equivalent" for every code row
+        # without ever comparing a patch-id. This re-derives commits, patch-ids, trigger lines,
+        # consumers, precise regressions, upstream status and disposition, and refuses to let the
+        # ledger cite itself as evidence.
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          python3 scripts/ci/check-upstream-retirement.py --json verify-logs/upstream-retirement.json 2>&1 | tee verify-logs/upstream-retirement.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/upstream-retirement.exit
+          exit "$rc"
+
+      - name: the maintenance ledger gate's behavioural suite
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          python3 scripts/ci/test-check-upstream-retirement.py 2>&1 | tee verify-logs/upstream-retirement-suite.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/upstream-retirement-suite.exit
+          exit "$rc"
+
+      - name: upload the ledger reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintenance-ledger
+          path: |
+            build/knowledge-facts.json
+            verify-logs/*.json
+            verify-logs/*.log
+          if-no-files-found: warn
+          retention-days: 30
