@@ -7,7 +7,7 @@ type SelectorOutboundOptions struct {
 	// Providers names the outbound providers whose nodes join this selector in addition to
 	// `outbounds`. The provider renders each node as "<provider tag>/<node tag>", and that rendered
 	// tag is what `outbounds` and the Clash API see.
-	Providers []string `json:"providers,omitempty"`
+	Providers []string `json:"providers,omitempty" reference:"provider"`
 	// UseAllProviders is a shortcut for naming every configured provider. It is resolved at start,
 	// so a provider added to the configuration later is not picked up without a restart.
 	UseAllProviders bool `json:"use_all_providers,omitempty"`
@@ -33,7 +33,7 @@ type SelectorOutboundOptions struct {
 type URLTestOutboundOptions struct {
 	Outbounds []string `json:"outbounds" reference:"outbound"`
 	// Providers names the outbound providers whose nodes join this group; see SelectorOutboundOptions.
-	Providers       []string          `json:"providers,omitempty"`
+	Providers       []string          `json:"providers,omitempty" reference:"provider"`
 	UseAllProviders bool              `json:"use_all_providers,omitempty"`
 	Include         *badoption.Regexp `json:"include,omitempty"`
 	Exclude         *badoption.Regexp `json:"exclude,omitempty"`

@@ -2,11 +2,19 @@ package libbox
 
 // C01C02 - what AnalyzeConfig can declare without building a box.
 //
-// AnalyzeConfig parses the document and checks DECLARATIONS: tags that must be unique, and
-// references that must resolve inside the document. It deliberately does not build a Box,
-// construct a DNS client, fetch a provider or probe anything, so its answers are available
-// before any of that could run - and it says so: Checks separates parsed, declarations-checked
-// and runtime-checked, and RuntimeChecked is always false here.
+// AnalyzeConfig parses the document and checks DECLARATIONS: tags that must be unique, and the
+// references between objects. It deliberately does not build a Box, construct a DNS client, fetch a
+// provider or probe anything, so its answers are available before any of that could run - and it
+// says so: Checks separates parsed, declarations-checked and runtime-checked, and RuntimeChecked is
+// always false here.
+//
+// # Who checks what
+//
+// This file answers the question that is not about references: are two objects fighting over one
+// tag, and which providers can only exist after a fetch. The reference graph itself lives in
+// analysis_objects.go, which walks the option schema's own `reference` tags over the DECODED
+// document; that walk is what produces the dangling-reference findings, so the report's reference
+// list and its findings are the same projection read twice instead of two lists that can disagree.
 //
 // Two facts are not errors and must not be reported as such:
 //
@@ -22,8 +30,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"runtime"
-	"strconv"
-	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -80,7 +86,10 @@ func analysisRevision(content string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// analyseDeclarations checks the declaration graph the document itself can answer.
+// analyseDeclarations reports the duplicate tags and the providers that only exist after a fetch.
+//
+// References are NOT checked here: analysis_objects.go walks the schema's reference tags and
+// produces both the reference list and the dangling findings from that one walk.
 func analyseDeclarations(options *option.Options) (findings []ConfigFinding, pending []ConfigPendingProvider) {
 	inboundTags := make(map[string]bool, len(options.Inbounds))
 	for _, inbound := range options.Inbounds {
@@ -127,126 +136,8 @@ func analyseDeclarations(options *option.Options) (findings []ConfigFinding, pen
 			pending = append(pending, ConfigPendingProvider{Tag: provider.Tag, Type: provider.Type})
 		}
 	}
-
-	// Every outbound tag a reference may name. Provider-rendered tags ("<provider>/<node>")
-	// are not in the document, so a reference containing "/" is never dangling by itself.
-	known := func(tag string) bool {
-		return tag == "" || outboundTags[tag] || endpointTags[tag]
-	}
-	providerRendered := func(tag string) bool {
-		return strings.Contains(tag, "/")
-	}
-	for _, outbound := range options.Outbounds {
-		// The registry's CreateOptions returns a POINTER to the options struct, which is what
-		// the decoder fills; the value cases keep this correct if a caller builds options by
-		// hand (a test, an embedder).
-		switch group := outbound.Options.(type) {
-		case *option.SelectorOutboundOptions:
-			findings = append(findings, checkGroupMembers(group.Outbounds, group.Providers, group.UseAllProviders, providerTags, known, providerRendered)...)
-		case option.SelectorOutboundOptions:
-			findings = append(findings, checkGroupMembers(group.Outbounds, group.Providers, group.UseAllProviders, providerTags, known, providerRendered)...)
-		case *option.URLTestOutboundOptions:
-			findings = append(findings, checkGroupMembers(group.Outbounds, group.Providers, group.UseAllProviders, providerTags, known, providerRendered)...)
-		case option.URLTestOutboundOptions:
-			findings = append(findings, checkGroupMembers(group.Outbounds, group.Providers, group.UseAllProviders, providerTags, known, providerRendered)...)
-		}
-	}
 	// A rule that names a rule-set the document never declares is not a reference the Box
-	// tolerates: the router refuses to start. Reporting it here is the difference between "this
-	// profile is fine" and a start that fails on the device. Routing and DNS rules share the same
-	// declaration list.
-	declaredRuleSets := make(map[string]bool)
-	if options.Route != nil {
-		if options.Route.Final != "" && !known(options.Route.Final) {
-			findings = append(findings, ConfigFinding{Code: findingDanglingReference, Detail: "route.final " + options.Route.Final})
-		}
-		for _, ruleSet := range options.Route.RuleSet {
-			for _, tag := range ruleSet.Tag {
-				declaredRuleSets[tag] = true
-			}
-		}
-		for index, rule := range options.Route.Rules {
-			findings = append(findings, checkRuleSetReferences(routeRuleSetReferences(rule), declaredRuleSets, "route.rules["+strconv.Itoa(index)+"]")...)
-		}
-	}
-	if options.DNS != nil {
-		dnsServerTags := make(map[string]bool, len(options.DNS.Servers))
-		for _, server := range options.DNS.Servers {
-			dnsServerTags[server.Tag] = true
-		}
-		if options.DNS.Final != "" && !dnsServerTags[options.DNS.Final] {
-			findings = append(findings, ConfigFinding{Code: findingDanglingReference, Detail: "dns.final " + options.DNS.Final})
-		}
-		for index, rule := range options.DNS.Rules {
-			findings = append(findings, checkRuleSetReferences(dnsRuleSetReferences(rule), declaredRuleSets, "dns.rules["+strconv.Itoa(index)+"]")...)
-		}
-	}
+	// tolerates: the router refuses to start. That finding now comes from the reference walk
+	// (analysis_objects.go), which reports the same sentence for the same rule-set tag.
 	return findings, pending
-}
-
-// checkRuleSetReferences reports every rule-set tag a rule names that the document never declares.
-func checkRuleSetReferences(tags []string, declared map[string]bool, where string) []ConfigFinding {
-	var findings []ConfigFinding
-	for _, tag := range tags {
-		if declared[tag] {
-			continue
-		}
-		findings = append(findings, ConfigFinding{
-			Code:   findingDanglingReference,
-			Detail: where + " rule_set " + tag,
-			Reason: "the box fails to start with: rule-set not found: " + tag,
-		})
-	}
-	return findings
-}
-
-// routeRuleSetReferences flattens the rule-set tags one routing rule names, nested rules included.
-func routeRuleSetReferences(rule option.Rule) []string {
-	switch rule.Type {
-	case "", C.RuleTypeDefault:
-		return rule.DefaultOptions.RuleSet
-	case C.RuleTypeLogical:
-		var references []string
-		for _, child := range rule.LogicalOptions.Rules {
-			references = append(references, routeRuleSetReferences(child)...)
-		}
-		return references
-	default:
-		return nil
-	}
-}
-
-// dnsRuleSetReferences flattens the rule-set tags one DNS rule names, nested rules included.
-func dnsRuleSetReferences(rule option.DNSRule) []string {
-	switch rule.Type {
-	case "", C.RuleTypeDefault:
-		return rule.DefaultOptions.RuleSet
-	case C.RuleTypeLogical:
-		var references []string
-		for _, child := range rule.LogicalOptions.Rules {
-			references = append(references, dnsRuleSetReferences(child)...)
-		}
-		return references
-	default:
-		return nil
-	}
-}
-
-// checkGroupMembers validates one group's members and provider references.
-func checkGroupMembers(members []string, providers []string, useAllProviders bool, providerTags map[string]bool, known func(string) bool, providerRendered func(string) bool) []ConfigFinding {
-	var findings []ConfigFinding
-	for _, member := range members {
-		if known(member) || providerRendered(member) {
-			continue
-		}
-		findings = append(findings, ConfigFinding{Code: findingDanglingReference, Detail: "group member " + member})
-	}
-	for _, provider := range providers {
-		if providerTags[provider] {
-			continue
-		}
-		findings = append(findings, ConfigFinding{Code: findingDanglingReference, Detail: "group provider " + provider})
-	}
-	_ = useAllProviders
-	return findings
 }

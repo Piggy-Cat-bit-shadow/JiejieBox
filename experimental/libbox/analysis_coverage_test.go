@@ -57,11 +57,11 @@ func TestConfigAnalysisDocumentsExactlyTheProjectedKeys(t *testing.T) {
 	sort.Strings(actual)
 	expected := []string{
 		// always present
-		"autoDetectInterface", "buildId", "buildQuic", "checks", "configRevision",
-		"dnsRules", "dnsServers", "endpoints", "findProcess", "inbounds", "outbounds",
+		"autoDetectInterface", "buildId", "buildQuic", "capabilities", "checks", "configRevision",
+		"dnsRules", "dnsServers", "endpoints", "findProcess", "inbounds", "objects", "outbounds",
 		"parsed", "platform", "providers", "routeRules", "ruleSets", "schema", "services",
 		// present only when the document populates them
-		"defaults", "findings", "pendingProviders", "requirements",
+		"defaults", "findings", "pendingProviders", "references", "requirements",
 	}
 	sort.Strings(expected)
 	require.Equal(t, expected, actual,
