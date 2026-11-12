@@ -109,8 +109,14 @@ def main():
         trigger = markers[0] if markers else "no marker text"
         consumer = ", ".join(files[:4]) + (f" (+{len(files) - 4})" if len(files) > 4 else "")
         regression = ", ".join(tests[:4]) + (f" (+{len(tests) - 4})" if len(tests) > 4 else "") if tests else "none in package"
+        if all(path.endswith(".md") for path in files):
+            disposition = "ANALYSIS"
+            condition = "documentation/analysis record; no code patch to retire"
+        else:
+            disposition = "HOLD"
+            condition = "upstream has no equivalent patch-id at the pinned tip"
         rows.append((spec, str(len(commits)), dates[0] if dates else "", dates[-1] if dates else "",
-                     trigger, consumer, regression, "HOLD", "upstream has no equivalent patch-id at the pinned tip"))
+                     trigger, consumer, regression, disposition, condition))
 
     if args.write:
         header = ["spec", "commits", "first_date", "last_date", "trigger_marker", "consumer_files",
