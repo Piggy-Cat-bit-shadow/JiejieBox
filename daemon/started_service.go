@@ -465,7 +465,44 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 //
 // It is returned even when the call fails, because a failed attempt still has a state worth
 // reporting: which document is running now, whether the previous one was retained, and why.
+//
+// A caller that must correlate the answer with ITS OWN request supplies a token through
+// ApplyServiceChangeWithRequest; this entry keeps the older, token-less contract.
 func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent string, options *OverrideOptions) (*ServiceChangeReport, error) {
+	return s.applyServiceChange(ctx, "", profileContent, options)
+}
+
+// ApplyServiceChangeWithRequest is ApplyServiceChange with a caller-supplied request token.
+//
+// The token is echoed in the report on EVERY outcome - applied, unchanged, recovered, interrupted,
+// failed, cancelled - because the answer a caller needs is "what did MY request produce", and two of
+// those outcomes return no error at all. The report also names the instance identity running after
+// the attempt, so the answer joins the connection-event stream's `instanceId` without a revision
+// comparison.
+//
+// An empty requestID means "no token" and is indistinguishable from the older entry; a caller that
+// wants a match must send a non-empty one.
+func (s *StartedService) ApplyServiceChangeWithRequest(ctx context.Context, requestID string, profileContent string, options *OverrideOptions) (*ServiceChangeReport, error) {
+	return s.applyServiceChange(ctx, requestID, profileContent, options)
+}
+
+// applyServiceChange is the one implementation behind the entry points.
+//
+// The request token and the instance identity are stamped in a DEFERRED step rather than in every
+// ServiceChangeReport literal below. There are more than a dozen return points (cancelled, unparsable,
+// live-only, interrupted, recovered, failed, applied) and a new one added later would silently ship a
+// report without its identity - the exact class of defect this token exists to remove. Stamping at
+// the boundary makes that impossible by construction.
+func (s *StartedService) applyServiceChange(ctx context.Context, requestID string, profileContent string, options *OverrideOptions) (report *ServiceChangeReport, returnErr error) {
+	defer func() {
+		if report == nil {
+			return
+		}
+		report.RequestID = requestID
+		// The identity is read AFTER the attempt, which is what the caller needs: this is the
+		// instance that is serving now, so a stream batch carrying the same id belongs to it.
+		report.InstanceID = s.currentInstanceID()
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -648,7 +685,7 @@ func (s *StartedService) ApplyServiceChange(ctx context.Context, profileContent 
 	runtimeDebug.FreeOSMemory()
 	// What the caller asked for is now running; the plan says whether a rebuild was required to
 	// get there or whether the document change was one the running Box could have absorbed.
-	report := &ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRestarted, RestartRequired: plan.RestartRequired, ActiveRevision: targetRevision}
+	report = &ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRestarted, RestartRequired: plan.RestartRequired, ActiveRevision: targetRevision}
 	if !plan.Started {
 		report.Status = ServiceChangeStatusStarted
 	}

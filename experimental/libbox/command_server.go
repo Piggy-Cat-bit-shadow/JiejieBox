@@ -272,7 +272,7 @@ func parseLoopbackAddresses(iterator StringIterator) []netip.Addr {
 // the same attempt with the report attached; keeping both means an older client cannot be affected
 // by the newer one, and the newer one cannot drift from the older one's behaviour.
 func (s *CommandServer) StartOrReloadService(configContent string, options *OverrideOptions) error {
-	_, err := s.applyServiceChange(configContent, options)
+	_, err := s.applyServiceChange("", configContent, options)
 	return err
 }
 
@@ -291,17 +291,32 @@ func (s *CommandServer) StartOrReloadService(configContent string, options *Over
 //
 // See `daemon.DescribeServiceChangeOutcome` for the shape and for why `ok` is not "no error".
 func (s *CommandServer) ApplyServiceChangeReport(configContent string, options *OverrideOptions) *StringBox {
-	report, applyErr := s.applyServiceChange(configContent, options)
+	return s.ApplyServiceChangeReportWithRequest("", configContent, options)
+}
+
+// ApplyServiceChangeReportWithRequest is ApplyServiceChangeReport with a caller-supplied request
+// token.
+//
+// # Where the token has to live, and why it is here
+//
+// The daemon protocol has no Reload RPC: a profile is applied through this process-internal path
+// (`CommandServer` -> `StartedService`), and the platform sends the patch with the call. A token that
+// travelled on the wire would need a request field the protocol does not have, so it travels on this
+// call and comes back inside the report as `requestId`, next to the instance identity the report now
+// names. That is enough for a client to answer "did MY reload produce the instance I am talking to",
+// including for the two outcomes that return no error at all.
+func (s *CommandServer) ApplyServiceChangeReportWithRequest(requestID string, configContent string, options *OverrideOptions) *StringBox {
+	report, applyErr := s.applyServiceChange(requestID, configContent, options)
 	return wrapString(daemon.EncodeServiceChangeOutcome(daemon.DescribeServiceChangeOutcome(report, applyErr)))
 }
 
-// applyServiceChange is the one implementation behind both exported entry points.
-func (s *CommandServer) applyServiceChange(configContent string, options *OverrideOptions) (*daemon.ServiceChangeReport, error) {
+// applyServiceChange is the one implementation behind the exported entry points.
+func (s *CommandServer) applyServiceChange(requestID string, configContent string, options *OverrideOptions) (*daemon.ServiceChangeReport, error) {
 	saveConfigSnapshot(configContent)
 	if s.powerManager.Recorder() != nil {
 		copyConfigSnapshot(filepath.Join(sWorkingPath, powerreport.DraftDirectoryName))
 	}
-	report, err := s.StartedService.ApplyServiceChange(s.ctx, configContent, &daemon.OverrideOptions{
+	report, err := s.StartedService.ApplyServiceChangeWithRequest(s.ctx, requestID, configContent, &daemon.OverrideOptions{
 		AutoRedirect:    options.AutoRedirect,
 		IncludePackage:  iteratorToArray(options.IncludePackage),
 		ExcludePackage:  iteratorToArray(options.ExcludePackage),

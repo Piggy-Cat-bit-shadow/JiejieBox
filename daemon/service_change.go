@@ -110,6 +110,24 @@ type ServiceChangePlan struct {
 type ServiceChangeReport struct {
 	Plan   ServiceChangePlan   `json:"plan"`
 	Status ServiceChangeStatus `json:"status"`
+	// RequestID is the token the CALLER supplied for this attempt, echoed unchanged.
+	//
+	// # Why a revision cannot stand in for it
+	//
+	// `activeRevision` identifies the DOCUMENT, not the request. Two attempts with the same content
+	// have the same target revision, so a revision cannot tell "my apply" from "the one before it";
+	// and an attempt that fails or is interrupted can leave the SAME revision running while doing
+	// nothing the caller asked for. A client that matched on the revision alone would report success
+	// for an attempt that never happened.
+	//
+	// It is empty for callers that supply no token (every pre-existing embedder), and an empty token
+	// is not a match for anything: a client must not treat it as "mine".
+	RequestID string `json:"requestId,omitempty"`
+	// InstanceID is the identity of the Box instance running AFTER this attempt, or empty when
+	// nothing is running. It is the same identity the connection-event batches carry, so a client can
+	// join "the reload I requested" to "the stream I am now receiving" without trusting a revision.
+	// A restart produces a NEW identity; a live apply keeps the existing one.
+	InstanceID string `json:"instanceId,omitempty"`
 	// RestartRequired repeats the plan's answer, so a caller that only reads the report sees it.
 	RestartRequired bool `json:"restartRequired"`
 	// Retained is true when the configuration that was running before the attempt is still the one
