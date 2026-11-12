@@ -15,7 +15,6 @@ import (
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/resourceguard"
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
@@ -26,8 +25,6 @@ import (
 	"github.com/sagernet/sing/common/uot"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/filemanager"
-
-	mDNS "github.com/miekg/dns"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -52,6 +49,9 @@ type Outbound struct {
 	// nativeCreation is the admission + accounting seam at the engine's native
 	// socket-creation callback. See native_creation.go.
 	nativeCreation *nativeCreationDialer
+	// engineVersion is the loaded engine's own version string, recorded once at
+	// Start. See native_contract.go for why it is not read before the engine exists.
+	engineVersion string
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions) (adapter.Outbound, error) {
@@ -187,17 +187,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	// N.Dialer and would hide it.
 	creationDialer := newNativeCreationDialer(outboundDialer, resourceguard.FromContext(ctx), serverAddress.String())
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
-	var dnsResolver cronet.DNSResolverFunc
-	if dnsRouter != nil {
-		dnsResolver = func(dnsContext context.Context, request *mDNS.Msg) *mDNS.Msg {
-			response, err := dnsRouter.Exchange(dnsContext, request, resolveDialerForQueryOptions.QueryOptions())
-			if err != nil {
-				logger.Error("DNS exchange failed: ", err)
-				return dns.FixedResponseStatus(request, mDNS.RcodeServerFailure)
-			}
-			return response
-		}
-	}
+	dnsResolver := newCronetDNSResolver(dnsRouter, resolveDialerForQueryOptions, logger)
 
 	var echEnabled bool
 	var echConfigList []byte
@@ -326,7 +316,15 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if guard := resourceguard.FromContext(h.ctx); guard != nil {
 		guard.RegisterShed(h.client.CloseAllConnections)
 	}
-	h.logger.Info("NaiveProxy started, version: ", h.client.Engine().Version())
+	// Record WHICH native artifact and WHICH binding generation this process is running. The two
+	// are separate facts (see native_contract.go): the module version names the Go binding, the
+	// engine version comes from the loaded library, and the archive bytes those resolve to are in
+	// release/cronet-provenance*.txt.
+	h.engineVersion = h.client.Engine().Version()
+	contract := h.NativeContract()
+	h.logger.Info("NaiveProxy started, cronet-go=", contract.ModuleVersion,
+		" (fork=", contract.ModuleReplaced, "), engine=", contract.EngineVersion,
+		", native creation callback=", contract.CreationCallback)
 	return nil
 }
 
