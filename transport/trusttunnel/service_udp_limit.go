@@ -103,6 +103,28 @@ type UDPStats struct {
 	// is the DRAIN segment: the association slot and queued bytes were returned
 	// without the stream ending.
 	AssociationsExpired uint64
+	// DatagramsDelivered counts client datagrams read out of their association
+	// queue by the handler. After this point the tunnel no longer owns them, so
+	// this is the only ingress segment whose fate is the handler's to report.
+	DatagramsDelivered uint64
+	// DatagramsDiscarded counts client datagrams the tunnel dropped AFTER they
+	// were received and admitted: the association (or the stream) closed while
+	// the datagram was still queued, or it was admitted and then lost to a
+	// failed delivery. It is the missing term that makes the ingress segments
+	// conserve:
+	//
+	//	DatagramsReceived == DatagramsDelivered + DroppedDatagrams +
+	//	    RefusedAssociations + DatagramsDiscarded   (at rest)
+	//
+	// where "at rest" means QueuedBytes == 0. A non-zero value is a normal
+	// outcome of a close under load, not an error.
+	DatagramsDiscarded uint64
+	// RepliesFailed counts handler replies that could not be written to the
+	// client, either because the stream was already closing or because the
+	// transport write failed. Sent and Failed are the two halves of the reply
+	// segment: without Failed, a target that answered on a breaking tunnel was
+	// indistinguishable from a target that never answered.
+	RepliesFailed uint64
 }
 
 // udpBudget is the service-wide half of UDPLimits. Session counters live on
@@ -118,6 +140,9 @@ type udpBudget struct {
 	datagramsReceived   uint64
 	datagramsSent       uint64
 	associationsExpired uint64
+	datagramsDelivered  uint64
+	datagramsDiscarded  uint64
+	repliesFailed       uint64
 }
 
 func newUDPBudget(limits UDPLimits) *udpBudget {
@@ -198,6 +223,29 @@ func (b *udpBudget) noteExpired() {
 	b.access.Unlock()
 }
 
+func (b *udpBudget) noteDelivered() {
+	b.access.Lock()
+	b.datagramsDelivered++
+	b.access.Unlock()
+}
+
+// noteDiscarded counts datagrams the tunnel received and then dropped without
+// delivering them. n is the number of datagrams, not a byte count.
+func (b *udpBudget) noteDiscarded(n uint64) {
+	if n == 0 {
+		return
+	}
+	b.access.Lock()
+	b.datagramsDiscarded += n
+	b.access.Unlock()
+}
+
+func (b *udpBudget) noteReplyFailed() {
+	b.access.Lock()
+	b.repliesFailed++
+	b.access.Unlock()
+}
+
 func (b *udpBudget) stats() UDPStats {
 	b.access.Lock()
 	defer b.access.Unlock()
@@ -209,5 +257,8 @@ func (b *udpBudget) stats() UDPStats {
 		DatagramsReceived:   b.datagramsReceived,
 		DatagramsSent:       b.datagramsSent,
 		AssociationsExpired: b.associationsExpired,
+		DatagramsDelivered:  b.datagramsDelivered,
+		DatagramsDiscarded:  b.datagramsDiscarded,
+		RepliesFailed:       b.repliesFailed,
 	}
 }
