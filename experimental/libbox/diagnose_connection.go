@@ -50,6 +50,40 @@ var (
 	connectionTestTotalTimeout = 10 * time.Second
 )
 
+// connectionTestMaxConcurrent bounds how many ACTIVE diagnostics may run at once, process wide.
+//
+// # Why a hard bound, and why here
+//
+// The total budget bounds ONE test; it says nothing about how many run together. A client that
+// reuses the button faster than the budget (a second tap, a retry after a UI timeout, two windows on
+// a tablet) would otherwise start a dial per tap, and each dial is real traffic through the path
+// being diagnosed - the one moment the user is least willing to have their connection disturbed.
+//
+// Two is the bound: a foreground test plus one racing retry. More than that is not a diagnostic
+// interaction, and the refusal is reported as a failed `path` stage with the reason rather than as a
+// silent queue, because a caller that sees nothing happen would tap again. The bound is process wide
+// rather than per Box on purpose: the dials a phone pays for are the phone's, not a Box instance's,
+// and a reload must not double the bound during the overlap.
+const connectionTestMaxConcurrent = 2
+
+// connectionTestSlots holds the active diagnostics. Capacity IS the bound; taking a slot is the
+// non-blocking receive that refuses instead of queueing.
+var connectionTestSlots = make(chan struct{}, connectionTestMaxConcurrent)
+
+// acquireConnectionTestSlot takes one slot, or reports that the bound is reached.
+func acquireConnectionTestSlot() bool {
+	select {
+	case connectionTestSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseConnectionTestSlot() {
+	<-connectionTestSlots
+}
+
 // connectionTestStageStatus is the vocabulary a caller can rely on.
 const (
 	connectionTestStageOK      = "ok"
@@ -220,6 +254,21 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		// go. The report says which semantics ran so a reader cannot confuse the two.
 		report.Routing = connectionTestRoutingRule
 	}
+	// The admission is checked FIRST, before any model read or dial: a refused run must cost the
+	// running ones nothing. It is reported as a stage, not as a silent no-op - a caller that sees
+	// nothing happen taps again, which is the behaviour the bound exists to stop.
+	if !acquireConnectionTestSlot() {
+		report.Outcome = connectionTestOutcomeFailed
+		report.Stages = append(report.Stages, connectionTestStage{
+			ID:     connectionTestStagePath,
+			Status: connectionTestStageFailed,
+			Detail: "another diagnostic is still running: at most " + strconv.Itoa(connectionTestMaxConcurrent) +
+				" active tests may run at once, and this one did not start",
+		})
+		report.TotalMs = time.Since(started).Milliseconds()
+		return report
+	}
+	defer releaseConnectionTestSlot()
 	// This diagnostic is a TCP connect through an outbound. A UDP/ICMP request cannot be expressed
 	// by it, and pretending otherwise would produce a green report for something it never did.
 	if network != "" && network != N.NetworkTCP {
