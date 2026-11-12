@@ -75,6 +75,19 @@ func testTrace(t *testing.T, protocol string) {
 		t.Fatalf("first dial CONNECT: %+v, want 200", events[1])
 	}
 
+	// Wait for the monotonic clock to pass the moment the first dial returned before reusing the
+	// session. Windows advances that clock in ~15.6 ms ticks, so a second dial made immediately
+	// after the first reads `Age` as exactly zero - `time.Since(opened)` is not negative, it is
+	// zero - even though the session really was reused. The session was opened during the first
+	// dial, so its open instant is at or before `firstDialReturned`; once the clock is strictly
+	// after that instant, the age the trace reports is necessarily positive and the assertion still
+	// tests "the age is the time since the session opened" instead of the timer's resolution.
+	firstDialReturned := time.Now()
+	clockDeadline := firstDialReturned.Add(200 * time.Millisecond)
+	for !time.Now().After(firstDialReturned) && time.Now().Before(clockDeadline) {
+		time.Sleep(100 * time.Microsecond)
+	}
+
 	conn, err = client.DialContext(ctx, echo)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +97,6 @@ func testTrace(t *testing.T, protocol string) {
 	if len(events) != 2 || events[0].kind != "reused" || events[0].info.Age <= 0 || events[1].status != http.StatusOK {
 		t.Fatalf("second dial: %+v, want the reused session with its age, then 200", events)
 	}
-
 	// A refused CONNECT reports the status with the error.
 	_, err = client.DialContext(ctx, closedPort(t))
 	events = recorder.take()
