@@ -75,6 +75,13 @@
       "note": "The AmneziaWG injection line (awg3-inject) consumed through the fork replace; awg-base/awg-graft were archived and deleted on 2026-11-11 after supersession evidence."
     },
     {
+      "module": "github.com/sagernet/sing-anytls",
+      "slug": "Piggy-Cat-bit-shadow/sing-anytls",
+      "branch": "fix/admit-creation-only-2026-11-12",
+      "policy": "update",
+      "note": "The AnyTLS session pool. Consumed for audit Q10: the client asks AdmitCreation only on a real session creation, so reusing an idle session is neither charged nor blocked by the creation budget. Temporary fix branch; when the upstream PR lands, move the pin to main before the branch is deleted."
+    },
+    {
       "module": "github.com/sagernet/cronet-go",
       "slug": "Piggy-Cat-bit-shadow/cronet-go",
       "branch": "main",
