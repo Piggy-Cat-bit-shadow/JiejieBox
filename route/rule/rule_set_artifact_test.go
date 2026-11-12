@@ -1,6 +1,6 @@
 package rule
 
-// B 鈥?the remote rule set's production store.
+// B - the remote rule set's production store.
 //
 // A downloaded rule set is a versioned artifact, not a single-slot cache entry: it is validated and
 // stored before it is published, the rule set holds a read lease on the exact bytes it serves, and

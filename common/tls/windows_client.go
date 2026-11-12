@@ -98,6 +98,15 @@ func (c *windowsClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	if err != nil {
 		return nil, err
 	}
+	// The bitmask cannot enforce a version requirement: Schannel decides the
+	// record it writes from the enabled set (see disabledProtocolsMask), so a
+	// caller that requires TLS 1.3 is only guaranteed it here. Refusing after
+	// the handshake is the honest boundary - it names the version the peer
+	// actually agreed to instead of surfacing a reset as "unexpected EOF".
+	err = schannel.CheckNegotiatedVersion(state.Version, c.minVersion, c.maxVersion)
+	if err != nil {
+		return nil, err
+	}
 	err = c.verifyPeerCertificates(state.PeerCertificates)
 	if err != nil {
 		return nil, err

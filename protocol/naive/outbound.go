@@ -13,8 +13,8 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
@@ -25,8 +25,6 @@ import (
 	"github.com/sagernet/sing/common/uot"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/filemanager"
-
-	mDNS "github.com/miekg/dns"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -48,6 +46,12 @@ type Outbound struct {
 	// h2Fallback is the optional engine-level QUIC-disabled client used for the
 	// opt-in H2 retry; nil unless the operator opted in. See h2_fallback_engine.go.
 	h2Fallback *h2FallbackClient
+	// nativeCreation is the admission + accounting seam at the engine's native
+	// socket-creation callback. See native_creation.go.
+	nativeCreation *nativeCreationDialer
+	// engineVersion is the loaded engine's own version string, recorded once at
+	// Start. See native_contract.go for why it is not read before the engine exists.
+	engineVersion string
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions) (adapter.Outbound, error) {
@@ -175,18 +179,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if !isResolveDialer {
 		return nil, E.New("naive outbound: the dialer chain did not produce a resolve dialer, which this outbound requires for its DNS policy; this is a defect in the dialer factory rather than in the configuration")
 	}
+	// The engine's native socket-creation callback (Cronet_Engine_SetDialer) is the only place a
+	// physical Naive connection exists, so the process admission gate and the creation counters
+	// belong there - not on DialEarly, which counts CONNECTs, and not on the engine, which counts
+	// outbounds. See native_creation.go for what this seam can and cannot observe.
+	// The ResolveDialer capability is captured above, before the wrap: the wrapper is a plain
+	// N.Dialer and would hide it.
+	creationDialer := newNativeCreationDialer(outboundDialer, resourceguard.FromContext(ctx), serverAddress.String())
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
-	var dnsResolver cronet.DNSResolverFunc
-	if dnsRouter != nil {
-		dnsResolver = func(dnsContext context.Context, request *mDNS.Msg) *mDNS.Msg {
-			response, err := dnsRouter.Exchange(dnsContext, request, resolveDialerForQueryOptions.QueryOptions())
-			if err != nil {
-				logger.Error("DNS exchange failed: ", err)
-				return dns.FixedResponseStatus(request, mDNS.RcodeServerFailure)
-			}
-			return response
-		}
-	}
+	dnsResolver := newCronetDNSResolver(dnsRouter, resolveDialerForQueryOptions, logger)
 
 	var echEnabled bool
 	var echConfigList []byte
@@ -241,7 +242,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		options:                 options,
 		extraHeaders:            extraHeaders,
 		trustedRootCertificates: trustedRootCertificates,
-		dialer:                  outboundDialer,
+		dialer:                  creationDialer,
 		dnsResolver:             dnsResolver,
 		echEnabled:              echEnabled,
 		echConfigList:           echConfigList,
@@ -253,11 +254,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 	naiveOutbound := &Outbound{
-		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, nil, options.DialerOptions),
-		ctx:          ctx,
-		logger:       logger,
-		client:       client,
-		fallbackToH2: options.QUICFallbackToH2,
+		Adapter:        outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, nil, options.DialerOptions),
+		ctx:            ctx,
+		logger:         logger,
+		client:         client,
+		fallbackToH2:   options.QUICFallbackToH2,
+		nativeCreation: creationDialer,
 	}
 	if options.QUICFallbackToH2 {
 		// The H2 retry needs an ENGINE with QUIC disabled: the pinned Cronet has no
@@ -308,7 +310,21 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		// A no-op when the lazy engine was never created.
 		scope.Add(h.h2Fallback.Close)
 	}
-	h.logger.Info("NaiveProxy started, version: ", h.client.Engine().Version())
+	// Idle connections are the only reclaim action this outbound can offer a process under
+	// pressure: a busy CONNECT cannot be closed without cutting the user's flow, and the
+	// engine's pool is idle-only by definition.
+	if guard := resourceguard.FromContext(h.ctx); guard != nil {
+		guard.RegisterShed(h.client.CloseAllConnections)
+	}
+	// Record WHICH native artifact and WHICH binding generation this process is running. The two
+	// are separate facts (see native_contract.go): the module version names the Go binding, the
+	// engine version comes from the loaded library, and the archive bytes those resolve to are in
+	// release/cronet-provenance*.txt.
+	h.engineVersion = h.client.Engine().Version()
+	contract := h.NativeContract()
+	h.logger.Info("NaiveProxy started, cronet-go=", contract.ModuleVersion,
+		" (fork=", contract.ModuleReplaced, "), engine=", contract.EngineVersion,
+		", native creation callback=", contract.CreationCallback)
 	return nil
 }
 
@@ -317,12 +333,16 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
 		if h.fallbackToH2 {
-			return h.dialWithH3Fallback(ctx, destination)
+			return h.observeTunnel(func() (net.Conn, error) {
+				return h.dialWithH3Fallback(ctx, destination)
+			})
 		}
 		// dialNaiveTunnel completes the CONNECT handshake, so a 407 or a failed
 		// first hop is a DialContext error with adapter.FailureFacts attached,
 		// not a connection that closes on its first read. See failure.go.
-		return dialNaiveTunnel(ctx, h.client, destination)
+		return h.observeTunnel(func() (net.Conn, error) {
+			return dialNaiveTunnel(ctx, h.client, destination)
+		})
 	case N.NetworkUDP:
 		if h.uotClient == nil {
 			return nil, E.New("UDP is not supported unless UDP over TCP is enabled")
@@ -373,10 +393,17 @@ func (d *naiveDialer) DialContext(ctx context.Context, network string, destinati
 	if N.NetworkName(network) != N.NetworkTCP {
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
-	if d.owner != nil && d.owner.fallbackToH2 {
-		return d.owner.dialWithH3Fallback(ctx, destination)
+	if d.owner == nil {
+		return dialNaiveTunnel(ctx, d.NaiveClient, destination)
 	}
-	return dialNaiveTunnel(ctx, d.NaiveClient, destination)
+	if d.owner.fallbackToH2 {
+		return d.owner.observeTunnel(func() (net.Conn, error) {
+			return d.owner.dialWithH3Fallback(ctx, destination)
+		})
+	}
+	return d.owner.observeTunnel(func() (net.Conn, error) {
+		return dialNaiveTunnel(ctx, d.NaiveClient, destination)
+	})
 }
 
 // cronetNaiveClientParams carries everything buildCronetNaiveClientOptions needs.

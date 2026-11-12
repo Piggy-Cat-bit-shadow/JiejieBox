@@ -1,0 +1,13 @@
+# Native cronet archives a release build links, by module path and content.
+#
+# The module paths are upstream by design; every one of them is replaced with the fork
+# in go.mod, and this file records WHICH BYTES that resolved to. Regenerate only when
+# the cronet pin changes:
+#
+#   scripts/ci/verify-cronet-provenance.sh --record windows
+#
+# Platform: windows (one manifest per product; see the script's case statement).
+#
+# Format: <module-path> <archive> <size-bytes> <sha256>
+github.com/sagernet/cronet-go/lib/windows_amd64 libcronet.dll 9889280 8e5d330ec3e0516c4b5372299f467bc09c3deb0ef2ee5d57c288dcd05582036a
+github.com/sagernet/cronet-go/lib/windows_arm64 libcronet.dll 8756224 b840b9e23bb71be434722cadf47feed45f364fd33c180d827c70500022b81077

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/binary"
-	"os"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -113,10 +112,11 @@ type ClientContext struct {
 // protocols through an SECBUFFER_APPLICATION_PROTOCOLS buffer on the first
 // handshake call.
 func NewClientContext(minVersion, maxVersion uint16, serverName string, alpn []string) (*ClientContext, error) {
-	if minVersion != 0 && maxVersion != 0 && minVersion > maxVersion {
-		return nil, os.ErrInvalid
+	err := CheckRequestedVersion(minVersion, maxVersion)
+	if err != nil {
+		return nil, err
 	}
-	err := CheckPlatform()
+	err = CheckPlatform()
 	if err != nil {
 		return nil, err
 	}
@@ -539,37 +539,55 @@ func consumedFromExtra(extraBuf *secBuffer, inputLen int) (int, error) {
 	return inputLen - extraLen, nil
 }
 
+// disabledProtocolsMask turns the "allowed" version range into Schannel's
+// disabled-protocol bitmask.
+//
+// # Why TLS 1.2 stays enabled when TLS 1.3 is allowed
+//
+// Schannel derives the shape of the record it writes from the enabled set, not
+// from the request alone. When the mask leaves TLS 1.3 as the only stream
+// protocol, Schannel emits a DTLS-shaped ClientHello (record version 0xfefd,
+// with epoch and sequence fields) even though the caller asked for a stream
+// handshake; every TLS peer rejects that with a reset, which surfaced to
+// callers as "read handshake: unexpected EOF". Measured on Windows 10
+// 10.0.19044: mask for "TLS 1.3 only" produced `16fefd...` while the mask that
+// also enabled TLS 1.2 produced `160303...`.
+//
+// Leaving TLS 1.2 enabled does not weaken a TLS 1.3 requirement: TLS 1.3
+// clients advertise their version in supported_versions and a server that
+// supports it selects it, while a server that answers TLS 1.2 is refused
+// afterwards by CheckNegotiatedVersion. The requirement is enforced by that
+// check, not by the bitmask the platform mishandles.
 func disabledProtocolsMask(minVersion, maxVersion uint16) uint32 {
+	effectiveMin, effectiveMax, err := effectiveVersionRange(minVersion, maxVersion)
+	if err != nil {
+		return 0
+	}
 	allowed := uint32(0)
-	versions := []struct {
-		id   uint16
-		mask uint32
-	}{
-		{tls.VersionTLS10, spProtTLS10Client},
-		{tls.VersionTLS11, spProtTLS11Client},
-		{tls.VersionTLS12, spProtTLS12Client},
-		{tls.VersionTLS13, spProtTLS13Client},
-	}
-	effectiveMin := minVersion
-	if effectiveMin == 0 {
-		effectiveMin = tls.VersionTLS12
-		if maxVersion != 0 && maxVersion < tls.VersionTLS12 {
-			effectiveMin = versions[0].id
+	for _, candidate := range netTLSVersionMasks {
+		if candidate.version >= effectiveMin && candidate.version <= effectiveMax {
+			allowed |= candidate.mask
 		}
 	}
-	effectiveMax := maxVersion
-	if effectiveMax == 0 {
-		effectiveMax = tls.VersionTLS13
-	}
-	for _, v := range versions {
-		if v.id >= effectiveMin && v.id <= effectiveMax {
-			allowed |= v.mask
-		}
+	if allowed&spProtTLS13Client != 0 {
+		allowed |= spProtTLS12Client
 	}
 	if allowed == 0 {
 		return 0
 	}
 	return spProtAllTLSClients &^ allowed
+}
+
+// netTLSVersionMasks lists the stream TLS versions Schannel can be told to
+// enable, in ascending order.
+var netTLSVersionMasks = []struct {
+	version uint16
+	mask    uint32
+}{
+	{tls.VersionTLS10, spProtTLS10Client},
+	{tls.VersionTLS11, spProtTLS11Client},
+	{tls.VersionTLS12, spProtTLS12Client},
+	{tls.VersionTLS13, spProtTLS13Client},
 }
 
 func sspProtocolToTLSVersion(sp uint32) uint16 {
