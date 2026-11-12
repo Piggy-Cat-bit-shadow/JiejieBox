@@ -197,6 +197,14 @@ func newNaiveCarrierOutbound(t *testing.T, port uint16, certificate string) *Out
 				},
 			},
 		})
+	// A runner without the pinned native archive cannot construct this outbound at all. That is an
+	// environment fact, not a product failure: the sibling tests in this package skip on it
+	// (`isMissingNativeLibrary`), and a hard failure here turns a missing DLL into a red suite that
+	// reads like a Naive regression - the one signal a release gate cannot afford to muddy.
+	if isMissingNativeLibrary(err) {
+		t.Skipf("the native Cronet archive is not installed on this host (%v); "+
+			"the real outbound cannot be constructed here", err)
+	}
 	require.NoError(t, err)
 	outbound, isOutbound := created.(*Outbound)
 	require.True(t, isOutbound)

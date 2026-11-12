@@ -632,9 +632,21 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 	// document succeeded, a build that ended unknown or partial failed, and either way the slot is
 	// returned here. That is the same fact the report carries, so the two cannot disagree.
 	defer func() {
-		if report.Status == ApplyStatusCommitted || report.Status == ApplyStatusUnchanged {
+		// The reservation's outcome is the report's: a build that committed or confirmed the current
+		// document succeeded, a build the caller cancelled published nothing and is ABANDONED, and
+		// anything else that ended without a result failed. The three-way split is the same one the
+		// rule-set owner applies (`route/rule/rule_set_remote.go`): the two consumers of this gate
+		// share one budget, so they must not disagree about what one event was. Either way the slot
+		// is returned here, so the classification cannot leak a permit.
+		switch {
+		case report.Status == ApplyStatusCommitted || report.Status == ApplyStatusUnchanged:
 			buildReservation.Succeed()
-		} else {
+		case report.Status == ApplyStatusUnknown && errors.Is(ctx.Err(), context.Canceled):
+			// The caller left before anything was installed. Counting this as a failure would
+			// describe cancellations as provider errors in the counters the OOM-killer service
+			// exports, which is the signal an operator reads as "the provider is broken".
+			buildReservation.Release()
+		default:
 			buildReservation.Fail()
 		}
 		if gate := buildgate.FromContext(ctx); gate != nil {

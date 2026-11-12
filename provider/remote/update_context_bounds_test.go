@@ -156,3 +156,71 @@ func TestACancellationWhileReadingTheBodyDoesNotPublish(t *testing.T) {
 		"nothing was applied, so nothing may be listed as applied")
 	_ = bytes.MinRead
 }
+
+// TestACancelledProviderBuildIsCountedAsAbandonedNotFailed is the terminal-classification half of
+// the same event: the build the test above proves does not publish is also a build whose outcome
+// must not be reported as a FAILURE.
+//
+// The two owners of the Box's build budget classify the same fact, so they have to agree:
+// a rule-set refresh a newer generation superseded returns its slot through `Release` and is
+// counted as abandoned (`route/rule/rule_set_remote.go`), while a provider refresh the caller
+// cancelled used to fall through to `Fail` because its report status is still `unknown`. The
+// numbers the OOM-killer service exports as `failedBuilds` / `abandonedBuilds` then describe
+// cancellations as failures, which is exactly the signal an operator would read as "the
+// provider is failing" while it is only being cancelled.
+func TestACancelledProviderBuildIsCountedAsAbandonedNotFailed(t *testing.T) {
+	t.Parallel()
+	document := `{"outbounds": [{"type": "test", "tag": "hk"}]}`
+	provider, _ := newRemoteHarness(t, "https://provider.invalid/subscription")
+	gate := buildgate.New(4, 4, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = buildgate.ContextWithGate(ctx, gate)
+	provider.httpClient = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{},
+			Body:       &cancellingEOFBody{data: []byte(document), cancel: cancel},
+			Request:    request,
+		}, nil
+	})}
+
+	report, err := provider.UpdateWithReportContext(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, report)
+	require.NotEqual(t, ApplyStatusCommitted, report.Status)
+
+	stats := gate.Stats()
+	require.EqualValues(t, 1, stats.AdmittedBuilds, "the build was admitted before it was cancelled")
+	require.EqualValues(t, 1, stats.Abandoned,
+		"a build the caller cancelled published nothing and is abandoned, not failed")
+	require.EqualValues(t, 0, stats.Failed,
+		"counting a cancellation as a failure reports the provider as broken while it was only cancelled")
+}
+
+// TestAFailedProviderBuildIsCountedAsFailed is the negative control for the classification above:
+// a refresh that ends in an error still counts as a failure, so the rule did not become "every
+// non-committed build is abandoned".
+func TestAFailedProviderBuildIsCountedAsFailed(t *testing.T) {
+	t.Parallel()
+	provider, _ := newRemoteHarness(t, "https://provider.invalid/subscription")
+	gate := buildgate.New(4, 4, 0)
+	ctx := buildgate.ContextWithGate(context.Background(), gate)
+	provider.httpClient = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     http.Header{},
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+			Request:    request,
+		}, nil
+	})}
+
+	report, err := provider.UpdateWithReportContext(ctx)
+	require.Error(t, err, "an unexpected HTTP status is an error, not an abandoned build")
+	require.NotNil(t, report)
+
+	stats := gate.Stats()
+	require.EqualValues(t, 1, stats.AdmittedBuilds)
+	require.EqualValues(t, 1, stats.Failed, "a real error must still be counted as a failure")
+	require.EqualValues(t, 0, stats.Abandoned, "an error is not an abandonment")
+}
