@@ -4,8 +4,8 @@
 
 本节只更新**仓库名单与当前 pin**，不重写下面的历史节；完整刷新流程见 `KNOWLEDGE/REFRESH.md` §25A。
 机器可读的事实仍是 `release/dependencies.json`（仓库/分支/策略）与 `release/source-lock.json`（pin）；
-本节把它们摊平。pin 取自**远端 `testing` 的 `e5f5969d`**（本机 `_p01_main` 检出停在 `a3f56ac1`，
-落后若干提交，本表以远端为准）。策略含义见 `release/dependencies.json`
+本节把它们摊平。pin 取**整合分支 `work/integration-2026-11-13` 的 pin 提交 `427889cf24b`**
+（2026-11-13 窗口 03 更新；此前取自远端 `testing` 的 `e5f5969d`）。策略含义见 `release/dependencies.json`
 （`update` = 发布准备可前移；`controlled` = 只能重建归档才能动；`report` = pin 在另一个仓库里）。
 
 ### Go 依赖（`go.mod` / `test/go.mod` 的 replace）
@@ -22,23 +22,40 @@
 | `github.com/enfein/mieru/v3` | `Piggy-Cat-bit-shadow/mieru` | `main` | update | `b5934f7136b4` |
 | `github.com/sagernet/cronet-go` | `Piggy-Cat-bit-shadow/cronet-go` | `main` | update | `362e63b14ce2` |
 | `github.com/sagernet/cronet-go/all` | `Piggy-Cat-bit-shadow/cronet-go` | `main` | update | `7ce9c49b464a` |
-| `cronet-go/lib/*`（29 个平台归档） | `Piggy-Cat-bit-shadow/cronet-go` | — | controlled | `362e63b14ce2`（按设计不随 root 抬） |
+| `cronet-go/lib/*`（29 个平台归档） | `Piggy-Cat-bit-shadow/cronet-go` | — | controlled | `362e63b14ce2`（与 root 同一个 native build commit；只随重建归档而移动） |
 
 ### 客户端与嵌套 gitlink
 
 | 路径 | 仓库 | 分支 | 策略 | 当前 pin |
 |---|---|---|---|---|
-| `clients/apple` | `Piggy-Cat-bit-shadow/sing-box-for-apple` | `main` | update | `9330d9018c95` |
-| `clients/android` | `Piggy-Cat-bit-shadow/sing-box-for-android` | `main` | update | `ba5c6b161827` |
-| `clients/desktop` | `Piggy-Cat-bit-shadow/sing-box-for-desktop` | `main` | update | `e8b48beadd7d` |
-| `clients/desktop:dashboard` | `Piggy-Cat-bit-shadow/sing-box-dashboard` | `main` | report | `9bde90e1cd55` |
+| `clients/apple` | `Piggy-Cat-bit-shadow/sing-box-for-apple` | `main` | update | `322100096fbf` |
+| `clients/android` | `Piggy-Cat-bit-shadow/sing-box-for-android` | `main` | update | `9816e0068c82` |
+| `clients/desktop` | `Piggy-Cat-bit-shadow/sing-box-for-desktop` | `main` | update | `a658231fcd97` |
+| `clients/desktop:dashboard` | `Piggy-Cat-bit-shadow/sing-box-dashboard` | `main` | report | `d9fca1b1f226` |
 
-### 尚未消费的移动（待合并后回写）
+### 2026-11-13 窗口 03：客户端 pin 已消费（不再是"待合并"）
 
-窗口 03 的分支 `work/code-closeout6-03-20261112`（`9dafe5acf`）已把四个客户端 pin 前移到
-Apple `15a4ab6e`、Android `9816e006`、Desktop `a4d77faf`、Dashboard `8039ed0d`，并同步了
-`scripts/ci/check-libbox-abi.sh` 的两个 `VERIFIED_*_SHA` 与 `release/source-lock.json`。
-**这些 pin 尚未进入 `testing`**；合并后本节需要连同 `release/source-lock.json` 再更新一次。
+前表是**整合分支** `work/integration-2026-11-13`（pin 提交 `427889cf24b`）上的实际 pin，
+取自 `git ls-tree` 与 `release/source-lock.json`，并由
+`release-freeze.py verify --strict` 与 `check-libbox-abi.sh --pin-only` 双重核对。
+
+四个值对应本窗口五条整合分支里需要改 pin 的三条（android 的整合分支是 fast-forward，
+最终提交与源分支相同）：
+
+| 客户端 | 源分支（中间值） | 整合分支（当前 pin） |
+|---|---|---|
+| Apple | `15a4ab6e` | `3221000`（main `45253d2a` + 选择/回读） |
+| Android | `9816e006` | `9816e006`（fast-forward，未变） |
+| Desktop | `a4d77faf` | `a658231`（+ unconfirmed 修复 + 嵌套 dashboard pin） |
+| Dashboard（嵌套） | `8039ed0d` | `d9fca1b`（main `d828b130` + 选择账本） |
+
+`scripts/ci/check-libbox-abi.sh` 的 `VERIFIED_APPLE_SHA` 随 gitlink 一起移到了 `3221000`；
+`VERIFIED_ANDROID_SHA` 早就是 `9816e006`。这些提交都是**已推送**的（`git submodule
+update --init` 从 GitHub 克隆成功即是证据），不是本地提交。
+
+注意：pin 指向前，`testing` 上的这四个 gitlink 仍是 v0.1.44/v0.1.45 的旧值
+（`9330d90` / `ba5c6b1` / `e8b48be` / `9bde90e`）；把整合分支并入 `testing` 是第 04 份
+的事，本节不预告那次合并。
 
 ### 与下面历史节的关系
 
