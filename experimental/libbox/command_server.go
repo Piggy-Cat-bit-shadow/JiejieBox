@@ -786,6 +786,31 @@ func (h *platformHandler) ServiceReload(ctx context.Context) error {
 	return (*CommandServer)(h).handler.ServiceReload()
 }
 
+// ServiceReloadWithRequest runs the same platform reload the legacy entry runs, and observes the
+// service identity around it. The platform owns what a reload means (the extension restarts its
+// box); this method only answers which instance and revision the caller ended up with.
+func (h *platformHandler) ServiceReloadWithRequest(ctx context.Context, requestID string, expectedInstanceID string) (*daemon.ReloadOutcome, error) {
+	server := (*CommandServer)(h)
+	previous := server.StartedService.ServiceIdentity()
+	stale := expectedInstanceID != "" && expectedInstanceID != previous.InstanceID
+	err := server.handler.ServiceReload()
+	if err != nil {
+		return nil, err
+	}
+	identity := server.StartedService.ServiceIdentity()
+	status := daemon.ReloadStatusStopped
+	if identity.InstanceID != "" {
+		status = daemon.ReloadStatusRestarted
+	}
+	return &daemon.ReloadOutcome{
+		RequestID:      requestID,
+		InstanceID:     identity.InstanceID,
+		ActiveRevision: identity.ActiveRevision,
+		Stale:          stale,
+		Status:         status,
+	}, nil
+}
+
 func (h *platformHandler) SystemProxyStatus() (*daemon.SystemProxyStatus, error) {
 	status, err := (*CommandServer)(h).handler.GetSystemProxyStatus()
 	if err != nil {

@@ -15,12 +15,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ManagedService_StopService_FullMethodName           = "/daemon.ManagedService/StopService"
-	ManagedService_ReloadService_FullMethodName         = "/daemon.ManagedService/ReloadService"
-	ManagedService_GetSystemProxyStatus_FullMethodName  = "/daemon.ManagedService/GetSystemProxyStatus"
-	ManagedService_SetSystemProxyEnabled_FullMethodName = "/daemon.ManagedService/SetSystemProxyEnabled"
-	ManagedService_TriggerDebugCrash_FullMethodName     = "/daemon.ManagedService/TriggerDebugCrash"
-	ManagedService_TriggerOOMReport_FullMethodName      = "/daemon.ManagedService/TriggerOOMReport"
+	ManagedService_StopService_FullMethodName              = "/daemon.ManagedService/StopService"
+	ManagedService_ReloadService_FullMethodName            = "/daemon.ManagedService/ReloadService"
+	ManagedService_ReloadServiceWithRequest_FullMethodName = "/daemon.ManagedService/ReloadServiceWithRequest"
+	ManagedService_GetSystemProxyStatus_FullMethodName     = "/daemon.ManagedService/GetSystemProxyStatus"
+	ManagedService_SetSystemProxyEnabled_FullMethodName    = "/daemon.ManagedService/SetSystemProxyEnabled"
+	ManagedService_TriggerDebugCrash_FullMethodName        = "/daemon.ManagedService/TriggerDebugCrash"
+	ManagedService_TriggerOOMReport_FullMethodName         = "/daemon.ManagedService/TriggerOOMReport"
 )
 
 // ManagedServiceClient is the client API for ManagedService service.
@@ -28,7 +29,15 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ManagedServiceClient interface {
 	StopService(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// ReloadService is the original token-less reload. It stays for clients that were shipped
+	// before request identity existed; a new daemon still serves it, and a client that needs the
+	// read-back calls ReloadServiceWithRequest instead.
 	ReloadService(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// ReloadServiceWithRequest reloads the service while carrying the caller's identity for THIS
+	// attempt, and answers with the instance and revision that are running afterwards. A daemon
+	// that predates the RPC answers Unimplemented, which is a capability answer, not a failed
+	// reload: the client falls back to ReloadService and reports that the attempt is unconfirmed.
+	ReloadServiceWithRequest(ctx context.Context, in *ReloadServiceRequest, opts ...grpc.CallOption) (*ReloadServiceResponse, error)
 	GetSystemProxyStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SystemProxyStatus, error)
 	SetSystemProxyEnabled(ctx context.Context, in *SetSystemProxyEnabledRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	TriggerDebugCrash(ctx context.Context, in *DebugCrashRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -57,6 +66,16 @@ func (c *managedServiceClient) ReloadService(ctx context.Context, in *emptypb.Em
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, ManagedService_ReloadService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *managedServiceClient) ReloadServiceWithRequest(ctx context.Context, in *ReloadServiceRequest, opts ...grpc.CallOption) (*ReloadServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReloadServiceResponse)
+	err := c.cc.Invoke(ctx, ManagedService_ReloadServiceWithRequest_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +127,15 @@ func (c *managedServiceClient) TriggerOOMReport(ctx context.Context, in *emptypb
 // for forward compatibility.
 type ManagedServiceServer interface {
 	StopService(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	// ReloadService is the original token-less reload. It stays for clients that were shipped
+	// before request identity existed; a new daemon still serves it, and a client that needs the
+	// read-back calls ReloadServiceWithRequest instead.
 	ReloadService(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	// ReloadServiceWithRequest reloads the service while carrying the caller's identity for THIS
+	// attempt, and answers with the instance and revision that are running afterwards. A daemon
+	// that predates the RPC answers Unimplemented, which is a capability answer, not a failed
+	// reload: the client falls back to ReloadService and reports that the attempt is unconfirmed.
+	ReloadServiceWithRequest(context.Context, *ReloadServiceRequest) (*ReloadServiceResponse, error)
 	GetSystemProxyStatus(context.Context, *emptypb.Empty) (*SystemProxyStatus, error)
 	SetSystemProxyEnabled(context.Context, *SetSystemProxyEnabledRequest) (*emptypb.Empty, error)
 	TriggerDebugCrash(context.Context, *DebugCrashRequest) (*emptypb.Empty, error)
@@ -126,23 +153,21 @@ type UnimplementedManagedServiceServer struct{}
 func (UnimplementedManagedServiceServer) StopService(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopService not implemented")
 }
-
 func (UnimplementedManagedServiceServer) ReloadService(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReloadService not implemented")
 }
-
+func (UnimplementedManagedServiceServer) ReloadServiceWithRequest(context.Context, *ReloadServiceRequest) (*ReloadServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReloadServiceWithRequest not implemented")
+}
 func (UnimplementedManagedServiceServer) GetSystemProxyStatus(context.Context, *emptypb.Empty) (*SystemProxyStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSystemProxyStatus not implemented")
 }
-
 func (UnimplementedManagedServiceServer) SetSystemProxyEnabled(context.Context, *SetSystemProxyEnabledRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetSystemProxyEnabled not implemented")
 }
-
 func (UnimplementedManagedServiceServer) TriggerDebugCrash(context.Context, *DebugCrashRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method TriggerDebugCrash not implemented")
 }
-
 func (UnimplementedManagedServiceServer) TriggerOOMReport(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method TriggerOOMReport not implemented")
 }
@@ -199,6 +224,24 @@ func _ManagedService_ReloadService_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ManagedServiceServer).ReloadService(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ManagedService_ReloadServiceWithRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReloadServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ManagedServiceServer).ReloadServiceWithRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ManagedService_ReloadServiceWithRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ManagedServiceServer).ReloadServiceWithRequest(ctx, req.(*ReloadServiceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -289,6 +332,10 @@ var ManagedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReloadService",
 			Handler:    _ManagedService_ReloadService_Handler,
+		},
+		{
+			MethodName: "ReloadServiceWithRequest",
+			Handler:    _ManagedService_ReloadServiceWithRequest_Handler,
 		},
 		{
 			MethodName: "GetSystemProxyStatus",

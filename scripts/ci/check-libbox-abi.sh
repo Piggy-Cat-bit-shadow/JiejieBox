@@ -116,7 +116,15 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # QR generation) and does not touch the Kotlin StringBox call sites; layer 4 was
 # re-run against this checkout (310 Kotlin files, 3 interface methods, zero
 # violations) before moving the pin.
-VERIFIED_ANDROID_SHA="ba5c6b161827a830cb7343850bf547156fbfdfee"
+# Moved to 9816e006 on 2026-11-13 (window 03): the client now sends and settles
+# request-identified selections and reloads. Layer 4 was RUN against this checkout:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang kotlin --root <checkout at 9816e006>
+#   {"scanned": 311, "violations": [], "interface_methods": 3, "error": ""}
+# The Kotlin compile the previous paragraph records as NOT_RUN was run as well, against
+# an AAR rebuilt from the same kernel branch: ./gradlew :app:compilePlayDebugKotlin ->
+# BUILD SUCCESSFUL.
+VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 # Moved from 90a0e9aef when the Apple gitlink advanced to d05249121, because the two must
 # be the same commit or this gate fails - which is exactly what it did.
 #
@@ -316,7 +324,14 @@ VERIFIED_ANDROID_SHA="ba5c6b161827a830cb7343850bf547156fbfdfee"
 # helper named `message` in ExtensionApplyReceiptTests.swift was reported as a call to
 # DeprecatedNote.Message. Dotted receivers are still classified, and the rule suppresses
 # only the bare-call shape inside the file that declares the name.
-VERIFIED_APPLE_SHA="9330d9018c95231ac9b5d8abb6244dcc33c95830"
+# Moved to 15a4ab6e on 2026-11-13 (window 03): selection/reload request identity, NE session
+# binding and the cross-process body store. Layer 4 was RUN against this checkout:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <checkout at 15a4ab6e>
+#   {"scanned": 467, "violations": [], "interface_methods": 3, "error": ""}
+# Xcode build remains NOT_RUN here (no macOS host). The pure Foundation subsets were
+# compiled and tested with Swift 6.3.3 on Windows: 111 XCTest cases, 0 failures.
+VERIFIED_APPLE_SHA="15a4ab6eb42d6581ee6e0b34678c5b773b9967f5"
 
 client_root=""
 skip_client=0

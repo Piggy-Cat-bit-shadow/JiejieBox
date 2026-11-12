@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/service/oomkiller"
@@ -47,6 +48,40 @@ func (s *ManagedService) ReloadService(ctx context.Context, empty *emptypb.Empty
 		return nil, err
 	}
 	return &emptypb.Empty{}, nil
+}
+
+// ReloadServiceWithRequest is the request-identified reload. The request token is required here:
+// a caller that cannot name its attempt keeps using the legacy ReloadService above instead.
+//
+// A handler that does not implement RequestAwareManagedHandler answers codes.Unimplemented. That
+// is deliberate: the client reads it as "this daemon cannot confirm reloads" and falls back to
+// the legacy RPC, rather than treating an identity-less success as a confirmation.
+func (s *ManagedService) ReloadServiceWithRequest(ctx context.Context, request *ReloadServiceRequest) (*ReloadServiceResponse, error) {
+	if request == nil {
+		return nil, status.Error(codes.InvalidArgument, "missing reload request")
+	}
+	requestID := request.GetRequestId()
+	if strings.TrimSpace(requestID) == "" {
+		return nil, status.Error(codes.InvalidArgument, "missing reload request id")
+	}
+	requestAware, isRequestAware := s.handler.(RequestAwareManagedHandler)
+	if !isRequestAware {
+		return nil, status.Error(codes.Unimplemented, "the managed handler cannot identify reload requests")
+	}
+	outcome, err := requestAware.ServiceReloadWithRequest(ctx, requestID, request.GetExpectedInstanceId())
+	if err != nil {
+		return nil, err
+	}
+	if outcome == nil {
+		outcome = &ReloadOutcome{}
+	}
+	return &ReloadServiceResponse{
+		RequestId:      requestID,
+		InstanceId:     outcome.InstanceID,
+		ActiveRevision: outcome.ActiveRevision,
+		Stale:          outcome.Stale,
+		Status:         outcome.Status,
+	}, nil
 }
 
 func (s *ManagedService) GetSystemProxyStatus(ctx context.Context, empty *emptypb.Empty) (*SystemProxyStatus, error) {

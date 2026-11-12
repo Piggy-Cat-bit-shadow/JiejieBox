@@ -194,3 +194,20 @@ func TestTwoSelectionsInTheSameBoxProduceTwoConsistentSnapshots(t *testing.T) {
 	require.Equal(t, "a", selector.Selected("tcp").Tag())
 	require.Equal(t, second.AppliedRevision, selector.Revision())
 }
+
+// An old client sends neither a request id nor an expected revision. It must keep getting the
+// selection it asked for, and the read-back must not invent an identity it never supplied: a zero
+// request id is how both sides say "this answer names no attempt".
+func TestAnOldClientSelectionStillReadsBack(t *testing.T) {
+	service := selectorService(t, selectorOutboundConfig)
+
+	response, err := service.SelectOutbound(context.Background(), &SelectOutboundRequest{
+		GroupTag:    "sel",
+		OutboundTag: "b",
+	})
+	require.NoError(t, err)
+	require.Zero(t, response.RequestId, "the daemon must not name an attempt the caller did not make")
+	require.Equal(t, "b", response.AppliedOutboundTag)
+	require.NotZero(t, response.AppliedRevision)
+	require.False(t, response.Stale, "no expectation means there is nothing to be stale against")
+}
