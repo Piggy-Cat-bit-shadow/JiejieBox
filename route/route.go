@@ -1667,6 +1667,19 @@ func (r *Router) actionSniff(
 			}
 			goto finally
 		}
+		// A transport that declares it needs an EXTERNAL read deadline cannot be bounded here: the
+		// SetReadDeadline below is a no-op error on it, the error is deliberately not treated as fatal
+		// (a timeout is a normal sniff outcome), and the read would therefore park the FIRST datagram
+		// for as long as the flow lives. That first datagram is already staged in `packetBuffers` and
+		// is only replayed when this function returns, so the park stalls the flow, not just the
+		// sniff. Measured shapes: TrustTunnel's server-side _udp2 flow reported the need while its
+		// SetReadDeadline returned os.ErrInvalid (that flow now honours a real deadline - see
+		// transport/trusttunnel/service_udp.go), and Trojan's and naive's inbound packet conns still
+		// report it. Replay what we have instead of waiting for a datagram this layer cannot bound.
+		if deadline.NeedAdditionalReadDeadline(inputPacketConn) {
+			r.logger.DebugContext(ctx, "sniff needed another datagram, but this transport has no usable read deadline; replaying what was staged")
+			goto finally
+		}
 		for {
 			var (
 				sniffBuffer = buf.NewPacket()
