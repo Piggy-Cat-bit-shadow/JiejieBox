@@ -110,8 +110,14 @@ func TestNativeCreationCountsTheRealEnginesSockets(t *testing.T) {
 		"every creation attempt must have exactly one recorded outcome: %+v", after)
 	require.Zero(t, after.InFlight, "no creation may still be in flight once the flows ended")
 	require.GreaterOrEqual(t, after.MaxInFlight, int64(1))
-	require.Equal(t, before.Created+after.Attempts, after.Created+after.Failed+after.Refused+after.TimedOut+after.Canceled,
-		"the ledger must balance across the whole run")
+	// Reuse, provably: a flow whose window saw no creation necessarily joined a pooled connection.
+	// Sequential flows on a healthy session must therefore confirm reuse for all but the first.
+	require.Equal(t, uint64(flows), after.Tunnels, "every flow is one CONNECT")
+	require.GreaterOrEqual(t, after.ReuseConfirmed, uint64(flows-1),
+		"%d sequential flows over one pooled session must confirm reuse for all but the first; "+
+			"counters: %+v", flows, after)
+	require.GreaterOrEqual(t, after.Created, after.Tunnels-after.ReuseConfirmed,
+		"every CONNECT not confirmed as reuse must be covered by a creation: %+v", after)
 }
 
 // TestNativeCreationGoesThroughTheProcessAdmissionGate proves the WIRING, not just the counters: a

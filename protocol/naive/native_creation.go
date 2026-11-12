@@ -47,8 +47,9 @@ import (
 //
 // NOT observable at this pin, and therefore never reported as a number:
 //
-//	reuse callback    there is none. Reuse is the ABSENCE of a creation for a CONNECT, which is why
-//	                  the counters are named after creations and not after requests.
+//	reuse callback    there is none. Reuse is derived conservatively at the CONNECT level instead
+//	                  (see observeTunnel): a CONNECT whose window saw no creation provably reused,
+//	                  and a CONNECT whose window overlapped another flow's creation is unknown.
 //	close callback    `Cronet_DialerFunc` has no on_close (the UDP callback has one, but cronet-go
 //	                  owns it), and a TCP socket's file descriptor is transferred to Chromium, so
 //	                  this process no longer holds the handle it would have to watch. A physical
@@ -83,6 +84,11 @@ type nativeCreationLedger struct {
 	canceled    atomic.Uint64
 	inflight    atomic.Int64
 	maxInFlight atomic.Int64
+	// tunnels counts the CONNECTs this outbound issued, and reuseConfirmed the subset that
+	// provably reused a pooled connection. See observeTunnel for why "provably" is the only
+	// reuse claim this pin allows.
+	tunnels        atomic.Uint64
+	reuseConfirmed atomic.Uint64
 }
 
 // NativeCreationStats is one snapshot of the ledger.
@@ -105,6 +111,13 @@ type NativeCreationStats struct {
 	// object yet, which is exactly what the ledger's Creating state means.
 	InFlight    int64
 	MaxInFlight int64
+	// Tunnels is how many CONNECTs this outbound issued, and ReuseConfirmed how many of them
+	// provably reused a pooled connection: no creation happened anywhere on this outbound between
+	// the CONNECT starting and its handshake completing. The converse is NOT counted - a CONNECT
+	// whose window overlapped another flow's creation is unknown, so this number can only
+	// undercount reuse, never overcount it.
+	Tunnels        uint64
+	ReuseConfirmed uint64
 }
 
 // Accounted is the number of attempts that reached a recorded outcome.
@@ -151,16 +164,34 @@ func (l *nativeCreationLedger) finishAdmission(outcome *atomic.Uint64) {
 
 func (l *nativeCreationLedger) stats() NativeCreationStats {
 	return NativeCreationStats{
-		Attempts:    l.attempts.Load(),
-		Created:     l.created.Load(),
-		LateCreated: l.late.Load(),
-		Failed:      l.failed.Load(),
-		Refused:     l.refused.Load(),
-		TimedOut:    l.timedOut.Load(),
-		Canceled:    l.canceled.Load(),
-		InFlight:    l.inflight.Load(),
-		MaxInFlight: l.maxInFlight.Load(),
+		Attempts:       l.attempts.Load(),
+		Created:        l.created.Load(),
+		LateCreated:    l.late.Load(),
+		Failed:         l.failed.Load(),
+		Refused:        l.refused.Load(),
+		TimedOut:       l.timedOut.Load(),
+		Canceled:       l.canceled.Load(),
+		InFlight:       l.inflight.Load(),
+		MaxInFlight:    l.maxInFlight.Load(),
+		Tunnels:        l.tunnels.Load(),
+		ReuseConfirmed: l.reuseConfirmed.Load(),
 	}
+}
+
+// beginTunnel books one CONNECT this outbound issues.
+func (l *nativeCreationLedger) beginTunnel() {
+	l.tunnels.Add(1)
+}
+
+// creations is the monotonic creation sequence, used to answer "did anything get created while
+// this CONNECT was being established?".
+func (l *nativeCreationLedger) creations() uint64 {
+	return l.created.Load()
+}
+
+// confirmReuse records a CONNECT that provably reused a pooled connection.
+func (l *nativeCreationLedger) confirmReuse() {
+	l.reuseConfirmed.Add(1)
 }
 
 // nativeCreationDialer is the dialer this outbound hands to the Cronet engine: the process
@@ -278,6 +309,34 @@ func (d *nativeCreationDialer) recordAdmission(err error, callerEnded bool) {
 	}
 }
 
+// observeTunnel runs one CONNECT and records whether it provably reused a pooled connection.
+//
+// # Why this is a real reuse signal without a native callback
+//
+// This pin has no "connection reused" callback. It does have a monotonic creation counter, shared
+// by every engine of this outbound, and that is enough for one direction of the claim: read it
+// before the CONNECT starts and again once the handshake completed. If it did not move, then no
+// physical connection was created anywhere on this outbound while this flow was being established,
+// so this CONNECT cannot have created one and must have reused one.
+//
+// The opposite direction is deliberately NOT claimed. If the counter moved, the creation may have
+// belonged to a concurrent flow, so this flow's outcome is unknown. A reader therefore gets a
+// number that can undercount reuse but never overcount it, which is the only honest shape for a
+// derived signal.
+func (h *Outbound) observeTunnel(dial func() (net.Conn, error)) (net.Conn, error) {
+	if h.nativeCreation == nil {
+		return dial()
+	}
+	ledger := h.nativeCreation.ledger
+	ledger.beginTunnel()
+	before := ledger.creations()
+	conn, err := dial()
+	if err == nil && ledger.creations() == before {
+		ledger.confirmReuse()
+	}
+	return conn, err
+}
+
 // NativeCreationStats returns this outbound's native creation counters.
 func (h *Outbound) NativeCreationStats() NativeCreationStats {
 	if h.nativeCreation == nil {
@@ -309,8 +368,9 @@ func (h *Outbound) ResidencyLedger() adapter.ResidencyLedger {
 		Answered: true,
 		Exact:    false,
 		Note: "native creations are counted at the engine's creation callback " +
-			"(Cronet_Engine_SetDialer); reuse has no callback, and a TCP connection's close is not " +
-			"observed because the socket is handed to Chromium, so Active/Idle/Draining/Terminated " +
-			"are unavailable rather than zero",
+			"(Cronet_Engine_SetDialer); reuse is derived conservatively per CONNECT (a window with " +
+			"no creation provably reused), and a TCP connection's close is not observed because the " +
+			"socket is handed to Chromium, so Active/Idle/Draining/Terminated are unavailable rather " +
+			"than zero",
 	}
 }

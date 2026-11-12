@@ -278,6 +278,53 @@ func TestHeldPermitIsNotAdmittedTwice(t *testing.T) {
 	require.Equal(t, uint64(1), dialer.ledger.stats().Created)
 }
 
+// TestTunnelReuseIsDerivedConservatively pins the reuse signal: a CONNECT whose window saw no
+// creation is confirmed reuse, and one whose window overlapped a creation is NOT claimed.
+func TestTunnelReuseIsDerivedConservatively(t *testing.T) {
+	parent := &fakeSocketDialer{}
+	dialer := newNativeCreationDialer(parent, nil, "proxy.example:443")
+	outbound := &Outbound{nativeCreation: dialer}
+
+	// A tunnel that creates nothing: the ledger's creation count does not move, so reuse is proven.
+	conn, err := outbound.observeTunnel(func() (net.Conn, error) {
+		client, server := net.Pipe()
+		_ = server.Close()
+		return client, nil
+	})
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	// A tunnel whose window contains a creation (a concurrent flow, or this flow itself): the
+	// outcome is unknown, so it must NOT be counted as reuse.
+	_, err = outbound.observeTunnel(func() (net.Conn, error) {
+		created, createErr := dialer.DialContext(context.Background(), N.NetworkTCP, M.Socksaddr{})
+		if createErr != nil {
+			return nil, createErr
+		}
+		return created, nil
+	})
+	require.NoError(t, err)
+
+	stats := dialer.ledger.stats()
+	require.Equal(t, uint64(2), stats.Tunnels)
+	require.Equal(t, uint64(1), stats.ReuseConfirmed, "only the window with no creation is proven reuse")
+	require.Equal(t, uint64(1), stats.Created)
+}
+
+// TestTunnelCountingIsAbsentWithoutTheSeam pins the nil case: an outbound built without the seam
+// (a test double, or a build that did not take the naive dialer) still dials, and counts nothing.
+func TestTunnelCountingIsAbsentWithoutTheSeam(t *testing.T) {
+	outbound := &Outbound{}
+	conn, err := outbound.observeTunnel(func() (net.Conn, error) {
+		client, server := net.Pipe()
+		_ = server.Close()
+		return client, nil
+	})
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+	require.Equal(t, NativeCreationStats{}, outbound.NativeCreationStats())
+}
+
 // TestResidencyLedgerNamesTheBoundary pins the honest report: creation is real, lifetime is not,
 // and the record says so instead of returning a precise zero.
 func TestResidencyLedgerNamesTheBoundary(t *testing.T) {

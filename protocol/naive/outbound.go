@@ -333,12 +333,16 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
 		if h.fallbackToH2 {
-			return h.dialWithH3Fallback(ctx, destination)
+			return h.observeTunnel(func() (net.Conn, error) {
+				return h.dialWithH3Fallback(ctx, destination)
+			})
 		}
 		// dialNaiveTunnel completes the CONNECT handshake, so a 407 or a failed
 		// first hop is a DialContext error with adapter.FailureFacts attached,
 		// not a connection that closes on its first read. See failure.go.
-		return dialNaiveTunnel(ctx, h.client, destination)
+		return h.observeTunnel(func() (net.Conn, error) {
+			return dialNaiveTunnel(ctx, h.client, destination)
+		})
 	case N.NetworkUDP:
 		if h.uotClient == nil {
 			return nil, E.New("UDP is not supported unless UDP over TCP is enabled")
@@ -389,10 +393,17 @@ func (d *naiveDialer) DialContext(ctx context.Context, network string, destinati
 	if N.NetworkName(network) != N.NetworkTCP {
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
-	if d.owner != nil && d.owner.fallbackToH2 {
-		return d.owner.dialWithH3Fallback(ctx, destination)
+	if d.owner == nil {
+		return dialNaiveTunnel(ctx, d.NaiveClient, destination)
 	}
-	return dialNaiveTunnel(ctx, d.NaiveClient, destination)
+	if d.owner.fallbackToH2 {
+		return d.owner.observeTunnel(func() (net.Conn, error) {
+			return d.owner.dialWithH3Fallback(ctx, destination)
+		})
+	}
+	return d.owner.observeTunnel(func() (net.Conn, error) {
+		return dialNaiveTunnel(ctx, d.NaiveClient, destination)
+	})
 }
 
 // cronetNaiveClientParams carries everything buildCronetNaiveClientOptions needs.
