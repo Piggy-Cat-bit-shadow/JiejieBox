@@ -37,6 +37,24 @@
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 43303390856,
+      "head_sha": "427889cf24b69fa1719e99c2cdef3ca452013eb0",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43303390856"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Verify",
+      "run_id": 43305405689,
+      "head_sha": "2aca83b92ab1ce2ec7788a289ec3e17b83bd98bd",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43305405689"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Release contract verification",
       "run_id": 43302064254,
       "head_sha": "427889cf24b69fa1719e99c2cdef3ca452013eb0",
