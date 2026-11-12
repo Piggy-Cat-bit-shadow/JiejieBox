@@ -2,15 +2,15 @@
   "clients": [
     {
       "path": "clients/apple",
-      "pinned": "9330d9018c95231ac9b5d8abb6244dcc33c95830"
+      "pinned": "15a4ab6eb42d6581ee6e0b34678c5b773b9967f5"
     },
     {
       "path": "clients/android",
-      "pinned": "ba5c6b161827a830cb7343850bf547156fbfdfee"
+      "pinned": "9816e0068c82397e0ae48966cec982c0fd3dee18"
     },
     {
       "path": "clients/desktop",
-      "pinned": "e8b48beadd7d11a9bce46f62e12820f3e3773518"
+      "pinned": "a4d77faf45daa3cac4e706d7acfe428003ecff23"
     }
   ],
   "cronet_native": {
@@ -74,7 +74,7 @@
     {
       "parent": "clients/desktop",
       "path": "dashboard",
-      "pinned": "9bde90e1cd5577dc3f5549535aa23bea69816d6f"
+      "pinned": "8039ed0d6244f480e81f15e8182ee2e6c99e98d1"
     }
   ],
   "release_version": "0.1.45",
