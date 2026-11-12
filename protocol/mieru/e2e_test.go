@@ -87,19 +87,32 @@ func nopLogger() log.ContextLogger {
 
 func freePortForBothTransports(t *testing.T) uint16 {
 	t.Helper()
-	for attempt := 0; attempt < 32; attempt++ {
+	// Hold the TCP half while probing the UDP half. The pair is usable only when BOTH transports are
+	// free, and releasing one before checking the other lets a parallel test take it in between: that
+	// is how this helper used to fail on a loaded Windows box (32 attempts, each losing the UDP half
+	// to a neighbour while the whole suite ran in parallel). The retries are bounded and the last
+	// bind error is reported, so a real port leak still fails the test - with a diagnostic instead of
+	// a bare sentence.
+	var lastErr error
+	for attempt := 0; attempt < 200; attempt++ {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		port := uint16(listener.Addr().(*net.TCPAddr).Port)
-		require.NoError(t, listener.Close())
-		packetConn, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			continue
+		packetConn, packetErr := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		if packetErr == nil {
+			require.NoError(t, packetConn.Close())
+			require.NoError(t, listener.Close())
+			return port
 		}
-		require.NoError(t, packetConn.Close())
-		return port
+		lastErr = packetErr
+		require.NoError(t, listener.Close())
+		if attempt%8 == 7 {
+			// Back off a little every few attempts: the ports a neighbour just released are not
+			// available in the same instant, and spinning only re-picks the same busy numbers.
+			time.Sleep(time.Duration(2+attempt/8) * time.Millisecond)
+		}
 	}
-	t.Fatal("could not find a port free for both TCP and UDP")
+	t.Fatalf("could not find a port free for both TCP and UDP after 200 attempts (last bind error: %v)", lastErr)
 	return 0
 }
 
