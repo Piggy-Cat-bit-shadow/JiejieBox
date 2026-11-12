@@ -13,6 +13,39 @@ import (
 // should still not wait behind a whole background round.
 const priorityAgingEvery = 3
 
+// maxConcurrentRounds is the Box-wide bound on measurement ROUNDS that may be in progress at once.
+//
+// # Why a round budget is needed at all
+//
+// The measurement budget bounds the probes that are running, but it does not bound what PRODUCES
+// them. Each round starts a fixed worker set and a fixed submitted-but-not-started queue (see
+// protocol/group/probeBatch); with no round budget, every group, provider republish and manual entry
+// that fires at the same moment creates its own workers and queue. MEASURED on the pre-budget tree,
+// against a coordinator with limit 10: 4 rounds produced 40 coordinator waiters and 44 extra
+// goroutines, 32 rounds produced 320 and 352. That is growth with the number of concurrent rounds,
+// which is exactly what the audit's "全 Box 测速任务生产/等待队列没有独立硬上界" names.
+//
+// A hard limit on the MEASUREMENT QUEUE cannot fix it: a 10,000-node round legitimately wants every
+// node measured, and refusing a waiter there silently drops members. MEASURED in round 08: a queue
+// cap of max(limit*4, 8) made TestTheBoxBudgetHoldsAtProviderScale answer 9,976 of 10,000 nodes.
+// The bound therefore belongs one level up: how many rounds may be PRODUCING at once. With the round
+// budget, the created resources are
+//
+//	2 rounds × 10 workers = 20 worker goroutines
+//	2 rounds × 20 queued tasks = 40 submitted tasks
+//	≤ 20 coordinator waiters
+//
+// all constants, while every submitted member is still measured (a round waits, it never drops).
+//
+// # Why two and not one
+//
+// The measurement share merges two concurrent callers asking about the same node, and the pair it
+// exists for is a background round and an interactive one. Allowing exactly one round would make
+// that pair impossible - the second round would wait for the first to finish and the share would
+// never have two participants, which several tests assert directly. A third round adds queue depth
+// but no new admissible work, because two rounds already fill or exceed the measurement budget.
+const maxConcurrentRounds = 2
+
 // Coordinator bounds how many measurements one Box may have in flight, and orders the waiters.
 //
 // # Why a Box-wide bound is needed
@@ -31,6 +64,14 @@ const priorityAgingEvery = 3
 // slots. The limit belongs to whichever Box is doing the measuring, so it is carried on that Box's
 // context.
 //
+// # Two budgets, one rule
+//
+// The coordinator owns two pools of the same shape: the MEASUREMENT budget (how many probes may be
+// in flight, from the configured limit) and the ROUND budget (how many rounds may be producing, see
+// maxConcurrentRounds). Both use the same queue and the same ordering rule, so a caller-triggered
+// round is admitted ahead of queued background rounds for exactly the reason a foreground probe is
+// admitted ahead of queued background probes.
+//
 // # Ordering: interactive first, background aged in
 //
 // A waiter carries the probe origin it already declares (see adapter.IsBackgroundProbe): a
@@ -42,73 +83,119 @@ const priorityAgingEvery = 3
 // The queue itself is not a second copy of the candidate list: a waiter is one small struct with a
 // channel, created only when the caller must wait, and removed when its own context ends.
 type Coordinator struct {
+	measurement slotPool
+	rounds      slotPool
+}
+
+// slotPool is one bounded pool of slots, with the interactive-first ordering above.
+//
+// The zero value allows nothing, which is how a coordinator created for a non-positive limit
+// disables coordination instead of blocking every caller.
+type slotPool struct {
 	limit int
 
 	access         sync.Mutex
 	inFlight       int
-	queue          []*measurementWaiter
+	queue          []*slotWaiter
 	priorityStreak int
 }
 
-// measurementWaiter is one queued acquisition. The channel is closed exactly once, under access,
-// when the slot is granted; a canceled waiter is removed from the queue under the same lock.
-type measurementWaiter struct {
+// slotWaiter is one queued acquisition. The channel is closed exactly once, under access, when the
+// slot is granted; a canceled waiter is removed from the queue under the same lock.
+type slotWaiter struct {
 	priority bool
 	ready    chan struct{}
 	granted  bool
 }
 
-// NewCoordinator returns a coordinator allowing limit concurrent measurements.
+// NewCoordinator returns a coordinator allowing limit concurrent measurements, and
+// maxConcurrentRounds rounds in progress.
 //
-// A non-positive limit disables coordination rather than blocking every measurement, because a
-// limit of zero is more likely to be a misconfiguration than a request to measure nothing.
+// A non-positive limit disables coordination - both budgets - rather than blocking every
+// measurement, because a limit of zero is more likely to be a misconfiguration than a request to
+// measure nothing.
 func NewCoordinator(limit int) *Coordinator {
 	if limit <= 0 {
 		return &Coordinator{}
 	}
-	return &Coordinator{limit: limit}
+	return &Coordinator{
+		measurement: slotPool{limit: limit},
+		rounds:      slotPool{limit: maxConcurrentRounds},
+	}
 }
 
 // Acquire reserves one measurement slot for background work, or fails if ctx is done first.
 func (c *Coordinator) Acquire(ctx context.Context) (func(), error) {
-	return c.acquire(ctx, false)
+	if c == nil {
+		return func() {}, nil
+	}
+	return c.measurement.acquire(ctx, false)
 }
 
 // AcquirePriority reserves one measurement slot for interactive work. It is identical to Acquire
 // except for its queue position; the slot bound is the same.
 func (c *Coordinator) AcquirePriority(ctx context.Context) (func(), error) {
-	return c.acquire(ctx, true)
+	if c == nil {
+		return func() {}, nil
+	}
+	return c.measurement.acquire(ctx, true)
 }
 
-func (c *Coordinator) acquire(ctx context.Context, priority bool) (func(), error) {
-	if c == nil || c.limit <= 0 {
+// AcquireRound reserves one round slot for background work, or fails if ctx is done first.
+//
+// A round takes this BEFORE it creates its workers or its submitted-task queue, so the number of
+// rounds producing at once - and therefore the number of goroutines and queue entries they create -
+// is bounded by the Box rather than by how many groups, providers and manual entries fire together.
+// A round that cannot take a slot WAITS; it never drops members, because "not measured" is not a
+// fact about a node.
+func (c *Coordinator) AcquireRound(ctx context.Context) (func(), error) {
+	if c == nil {
+		return func() {}, nil
+	}
+	return c.rounds.acquire(ctx, false)
+}
+
+// AcquireRoundPriority reserves one round slot for interactive work. It is identical to AcquireRound
+// except for its queue position: a round a person is waiting on is served before queued background
+// rounds when a slot frees.
+func (c *Coordinator) AcquireRoundPriority(ctx context.Context) (func(), error) {
+	if c == nil {
+		return func() {}, nil
+	}
+	return c.rounds.acquire(ctx, true)
+}
+
+// acquire waits for one slot, or for ctx to end. The ordering rule is the pool's, so the measurement
+// budget and the round budget cannot drift apart.
+func (p *slotPool) acquire(ctx context.Context, priority bool) (func(), error) {
+	if p == nil || p.limit <= 0 {
 		return func() {}, nil
 	}
 
-	c.access.Lock()
-	if c.inFlight < c.limit && len(c.queue) == 0 {
-		c.inFlight++
-		c.access.Unlock()
-		return c.releaseFunc(), nil
+	p.access.Lock()
+	if p.inFlight < p.limit && len(p.queue) == 0 {
+		p.inFlight++
+		p.access.Unlock()
+		return p.releaseFunc(), nil
 	}
-	waiter := &measurementWaiter{priority: priority, ready: make(chan struct{})}
-	c.queue = append(c.queue, waiter)
-	c.access.Unlock()
+	waiter := &slotWaiter{priority: priority, ready: make(chan struct{})}
+	p.queue = append(p.queue, waiter)
+	p.access.Unlock()
 
 	select {
 	case <-waiter.ready:
-		return c.releaseFunc(), nil
+		return p.releaseFunc(), nil
 	case <-ctx.Done():
-		c.access.Lock()
+		p.access.Lock()
 		if waiter.granted {
 			// The slot was granted at the same moment the context ended. The caller will not use
 			// it, so the slot must go back to the queue instead of leaking for the Box's lifetime.
-			c.access.Unlock()
-			c.release()
+			p.access.Unlock()
+			p.release()
 			return nil, ctx.Err()
 		}
-		c.removeWaiterLocked(waiter)
-		c.access.Unlock()
+		p.removeWaiterLocked(waiter)
+		p.access.Unlock()
 		return nil, ctx.Err()
 	}
 }
@@ -118,36 +205,36 @@ func (c *Coordinator) acquire(ctx context.Context, priority bool) (func(), error
 // The closure is called by the goroutine that acquired the slot (Measure defers it immediately).
 // The once guard keeps a double call from freeing the slot twice, which would hand it to a second
 // measurement while the first still believed it owned it.
-func (c *Coordinator) releaseFunc() func() {
+func (p *slotPool) releaseFunc() func() {
 	var once sync.Once
 	return func() {
-		once.Do(c.release)
+		once.Do(p.release)
 	}
 }
 
-func (c *Coordinator) release() {
-	c.access.Lock()
-	if c.inFlight > 0 {
-		c.inFlight--
+func (p *slotPool) release() {
+	p.access.Lock()
+	if p.inFlight > 0 {
+		p.inFlight--
 	}
-	c.dispatchLocked()
-	c.access.Unlock()
+	p.dispatchLocked()
+	p.access.Unlock()
 }
 
 // dispatchLocked grants free slots to queued waiters in priority order with aging. The caller holds
 // access.
-func (c *Coordinator) dispatchLocked() {
-	for c.inFlight < c.limit && len(c.queue) > 0 {
-		index := c.nextWaiterIndexLocked()
-		waiter := c.queue[index]
-		c.queue = append(c.queue[:index], c.queue[index+1:]...)
+func (p *slotPool) dispatchLocked() {
+	for p.inFlight < p.limit && len(p.queue) > 0 {
+		index := p.nextWaiterIndexLocked()
+		waiter := p.queue[index]
+		p.queue = append(p.queue[:index], p.queue[index+1:]...)
 		if waiter.priority {
-			c.priorityStreak++
+			p.priorityStreak++
 		} else {
-			c.priorityStreak = 0
+			p.priorityStreak = 0
 		}
 		waiter.granted = true
-		c.inFlight++
+		p.inFlight++
 		close(waiter.ready)
 	}
 }
@@ -155,15 +242,15 @@ func (c *Coordinator) dispatchLocked() {
 // nextWaiterIndexLocked picks the first interactive waiter, except that a continuous interactive
 // burst is cut after priorityAgingEvery grants so the oldest background waiter runs. The caller
 // holds access.
-func (c *Coordinator) nextWaiterIndexLocked() int {
-	if c.priorityStreak >= priorityAgingEvery {
-		for index, waiter := range c.queue {
+func (p *slotPool) nextWaiterIndexLocked() int {
+	if p.priorityStreak >= priorityAgingEvery {
+		for index, waiter := range p.queue {
 			if !waiter.priority {
 				return index
 			}
 		}
 	}
-	for index, waiter := range c.queue {
+	for index, waiter := range p.queue {
 		if waiter.priority {
 			return index
 		}
@@ -171,42 +258,72 @@ func (c *Coordinator) nextWaiterIndexLocked() int {
 	return 0
 }
 
-func (c *Coordinator) removeWaiterLocked(waiter *measurementWaiter) {
-	for index, queued := range c.queue {
+func (p *slotPool) removeWaiterLocked(waiter *slotWaiter) {
+	for index, queued := range p.queue {
 		if queued == waiter {
-			c.queue = append(c.queue[:index], c.queue[index+1:]...)
+			p.queue = append(p.queue[:index], p.queue[index+1:]...)
 			return
 		}
 	}
 }
 
-// InFlight reports how many slots are currently held. It exists for tests and diagnostics.
+// InFlight reports how many measurement slots are currently held. It exists for tests and
+// diagnostics.
 func (c *Coordinator) InFlight() int {
 	if c == nil {
 		return 0
 	}
-	c.access.Lock()
-	defer c.access.Unlock()
-	return c.inFlight
+	c.measurement.access.Lock()
+	defer c.measurement.access.Unlock()
+	return c.measurement.inFlight
 }
 
-// Queued reports how many acquisitions are waiting for a slot. It exists for tests and diagnostics;
+// Queued reports how many measurements are waiting for a slot. It exists for tests and diagnostics;
 // no policy reads it.
 func (c *Coordinator) Queued() int {
 	if c == nil {
 		return 0
 	}
-	c.access.Lock()
-	defer c.access.Unlock()
-	return len(c.queue)
+	c.measurement.access.Lock()
+	defer c.measurement.access.Unlock()
+	return len(c.measurement.queue)
 }
 
-// Limit reports the configured bound, or zero when coordination is disabled.
+// Limit reports the configured measurement bound, or zero when coordination is disabled.
 func (c *Coordinator) Limit() int {
 	if c == nil {
 		return 0
 	}
-	return c.limit
+	return c.measurement.limit
+}
+
+// RoundsInFlight reports how many rounds hold a round slot. It exists for tests and diagnostics.
+func (c *Coordinator) RoundsInFlight() int {
+	if c == nil {
+		return 0
+	}
+	c.rounds.access.Lock()
+	defer c.rounds.access.Unlock()
+	return c.rounds.inFlight
+}
+
+// RoundsQueued reports how many rounds are waiting for a round slot. It exists for tests and
+// diagnostics.
+func (c *Coordinator) RoundsQueued() int {
+	if c == nil {
+		return 0
+	}
+	c.rounds.access.Lock()
+	defer c.rounds.access.Unlock()
+	return len(c.rounds.queue)
+}
+
+// RoundLimit reports the configured round bound, or zero when coordination is disabled.
+func (c *Coordinator) RoundLimit() int {
+	if c == nil {
+		return 0
+	}
+	return c.rounds.limit
 }
 
 // ContextWithCoordinator attaches a coordinator to a Box context.

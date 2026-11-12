@@ -1506,7 +1506,14 @@ func (g *URLTestGroup) runHealthRound(ctx context.Context, force bool) (result m
 		g.failover.AdoptStable(g.currentSelectedTag())
 	}
 	probeMembers := g.healthProbeMembers(members, force)
-	result, publications, evidence := urlTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, probeMembers, g.link, g.expected, g.interval, force, TestHistoryHealth)
+	result, publications, evidence, roundErr := runMeasurementRound(ctx, g.outbound, g.history, g.logger, probeMembers, g.link, g.expected, g.interval, force, TestHistoryHealth)
+	if roundErr != nil {
+		// The round never began: the Box's round budget or the caller's context refused it before
+		// any member was measured. Reporting an empty map with a nil error would tell the caller
+		// "the test succeeded and every node is unreachable" - and a synchronous caller (the Clash
+		// API, the native command) serialises exactly that as a successful, empty response.
+		return make(map[string]uint16), roundErr
+	}
 	selection, selectionEvidence := g.observeFailoverRound(members, probeMembers, result, publications, evidence)
 	g.commitFailoverSelection(selection, selectionEvidence)
 	g.performUpdateCheck()
@@ -1908,6 +1915,58 @@ func URLTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 // published was not measured (or its measurement does not describe the current state), and inferring
 // "failed" from its absence is exactly how a refused publication used to move the selection.
 func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, expected urltest.ExpectedStatus, interval time.Duration, force bool, mode TestHistoryMode) (map[string]uint16, map[string]roundPublication, map[string]roundEvidence) {
+	result, publications, evidence, _ := runMeasurementRound(ctx, outboundManager, history, logger, outbounds, link, expected, interval, force, mode)
+	return result, publications, evidence
+}
+
+// runMeasurementRound is the round itself, plus why it did not start when it did not.
+//
+// The error is ONLY "this round never began": it is returned when the Box's round budget or the
+// caller's context refused admission before any member was measured. It exists because the group's
+// synchronous entry point cannot otherwise tell "no member answered" from "nothing was measured" -
+// both would be an empty map, and the Clash API serialises an empty map with a nil error as "the
+// test succeeded and every node is unreachable".
+func runMeasurementRound(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, expected urltest.ExpectedStatus, interval time.Duration, force bool, mode TestHistoryMode) (map[string]uint16, map[string]roundPublication, map[string]roundEvidence, error) {
+	// The Box's ROUND budget is taken before this round creates anything.
+	//
+	// # Why here
+	//
+	// This is the one entry point every round goes through: a group health check, a Clash delay
+	// probe, a native group test. Taking the budget here means a new caller cannot forget it, and it
+	// is taken BEFORE newProbeBatch, so the workers and the submitted-task queue of a round that is
+	// not admitted do not exist at all - which is the difference between "bounded" and "bounded
+	// after allocating".
+	//
+	// # Why a wait and not a refusal
+	//
+	// A refusal here would drop members: a 10,000-node round must answer all 10,000 nodes, and a
+	// refused round has measured none of them. MEASURED in round 08: refusing at the measurement
+	// queue answered 9,976 of 10,000. So the bound is on how many rounds PRODUCE at once, and a
+	// round that cannot get a slot waits for one. The caller is held back; no node goes unmeasured.
+	//
+	// # Fairness
+	//
+	// A caller the product treats as demand keeps its queue position: an interactive round is
+	// admitted ahead of queued background rounds, exactly as AcquirePriority does for one probe.
+	if coordinator := urltest.CoordinatorFromContext(ctx); coordinator != nil {
+		acquireRound := coordinator.AcquireRound
+		if !adapter.IsBackgroundProbe(ctx) {
+			acquireRound = coordinator.AcquireRoundPriority
+		}
+		releaseRound, roundErr := acquireRound(ctx)
+		if roundErr != nil {
+			// Nothing was measured, so there is no result to report and no evidence to touch. The
+			// caller is told why instead of being handed an empty success.
+			if logger != nil {
+				logger.Debug("url test round not started: ", roundErr)
+			}
+			return map[string]uint16{}, map[string]roundPublication{}, map[string]roundEvidence{}, roundErr
+		}
+		// Released AFTER the join below (defers run last-in-first-out), so a new round is never
+		// admitted while this one's workers are still unwinding.
+		defer releaseRound()
+	}
+
 	// The round owns a child context, so an abort can stop the members it already started.
 	//
 	// # Why the join is deferred rather than inlined
@@ -1941,7 +2000,7 @@ func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 	target, targetErr := urltest.ParseMeasurementTarget(link)
 	if targetErr != nil {
 		logger.Error("invalid URL test target: ", targetErr)
-		return map[string]uint16{}, map[string]roundPublication{}, map[string]roundEvidence{}
+		return map[string]uint16{}, map[string]roundPublication{}, map[string]roundEvidence{}, nil
 	}
 	scope := urltest.MeasurementScope{
 		URL:      target.ScopeURL,
@@ -2012,7 +2071,7 @@ func urlTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 			}
 		}
 	}
-	return testBatch.result, testBatch.publications, testBatch.evidence
+	return testBatch.result, testBatch.publications, testBatch.evidence, nil
 }
 
 // measure runs one member's probe, converting a panic into an error.
