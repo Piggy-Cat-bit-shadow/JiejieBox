@@ -75,6 +75,30 @@ The other half of F-07 (no creation single-flight for Mieru underlays; the SDK's
 idle cleaner racing `AddSession`) lives inside the SDK and is recorded below
 unchanged.
 
+### F-06 — AnyTLS creation admission is charged for the creation, not the reuse (Medium, fixed)
+
+The original finding: `dialWithAdmission` took the process permit before `sing-anytls` was asked
+whether an idle session existed, so under a saturated gate a stream that would create nothing waited
+or was refused with `ErrQueueFull`, and one outbound's stalled handshakes could starve another's
+healthy reuse.
+
+The fix is the same seam moved to the creation boundary. The pinned `sing-anytls` fork exposes
+`ClientOptions.AdmitCreation`, which the client calls exactly once per NEW session, after its reuse
+attempt failed; a reuse never reaches it. The kernel passes
+`admitSessionCreation(guard, server)` from `protocol/anytls/outbound.go`, and `admit` is the
+shared `resourceguard.(*Guard).AdmitCreation` body, so one logical dial keeps one permit across a
+nested TLS seam (`HeldPermit`) and the creation clock starts after the permit (F-04).
+
+Tests: `protocol/anytls/admission_reuse_test.go` — a reuse returns while the gate is saturated;
+a creation waits for the permit and proceeds when it is released; a nested dial that already holds a
+permit does not ask again; a failed creation returns the permit.
+
+The boundary this entry still records: the external API decides reuse inside `Client.DialContext`,
+so there is still no "would this dial reuse" query a caller could consult BEFORE attempting a reuse.
+Admission therefore cannot be pre-reserved for a creation that has not been decided yet. The defect
+the audit measured — a pure reuse being charged — is gone; the ordering limit is inherent to
+the pinned API and is written down here rather than claimed away.
+
 ## Documented — defects with a concrete next step
 
 ### F-01 — An on-demand tunnel can be suspended while it carries traffic (High, **decided: D-4**)
@@ -98,19 +122,6 @@ case, the expiry, and the wake. The remaining work is **device**: battery and
 business continuity under a real lock screen, per
 `docs/fork/apple-screen-state-acceptance.md` §6; it is not claimed by the unit
 tests. Rationale and rejected option (b) in `docs/coupling/DECISIONS.md` D-4.
-
-### F-06 — AnyTLS charges a creation permit for a pure reuse (Medium, documented)
-
-`dialWithAdmission` takes the permit before `sing-anytls` is asked whether an idle
-session exists (`protocol/anytls/admission.go:59` before the external
-`Client.DialContext`). Under a saturated gate, a stream that would create nothing
-waits or is refused with `ErrQueueFull`, and the gate is process-wide, so one
-outbound's stalled handshakes can starve another's healthy reuse.
-
-Next step: a pool-aware check needs the external module to expose "would this
-dial reuse"; `sing-anytls` is not replaced in `go.mod`, so this is a fork patch or
-an upstream API request, not an in-tree edit. TrustTunnel's shared-offer
-admission is the reference semantics.
 
 ### F-07 (remaining) — Mieru has no creation single-flight and can lose a dial on an idle-clean race (Medium, documented)
 
