@@ -693,6 +693,9 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 	}
 
 	if sel.fan != nil {
+		// The query is split across several member transports, so no single member can be named
+		// as the one that answered; the dial path says that instead of picking one.
+		adapter.DialPathFromContext(requestCtx).MarkTransportFanOut()
 		return t.fan(requestCtx, message, sel.fan, sel.gen, sel.election)
 	}
 	if sel.survival {
@@ -755,6 +758,7 @@ func (t *Transport) exchangeSingle(ctx context.Context, lifetime requestLifetime
 		}
 	}
 	targetCtx, cancel := context.WithTimeout(ctx, t.targetBudget(ctx))
+	adapter.DialPathFromContext(targetCtx).RecordTransportMember(t.Tag(), sel.target.tag)
 	response, err := sel.target.transport.Exchange(targetCtx, message)
 	// Cancelled before classifying so the sub-deadline cannot fire again while
 	// the result is being interpreted; the cancellation is not observable on the
@@ -800,6 +804,7 @@ func (t *Transport) exchangeSingle(ctx context.Context, lifetime requestLifetime
 func (t *Transport) exchangeSurvival(ctx context.Context, lifetime requestLifetime, message *mDNS.Msg, sel selection) (*mDNS.Msg, error) {
 	target := sel.target
 	t.logger.WarnContext(ctx, "group[", t.Tag(), "]: no clean servers, survival attempt via ", target.tag)
+	adapter.DialPathFromContext(ctx).RecordTransportMember(t.Tag(), target.tag)
 	response, err := target.transport.Exchange(ctx, message)
 	if !isFailure(response, err) {
 		// Erasing its errors returns it to the clean set and stickiness holds

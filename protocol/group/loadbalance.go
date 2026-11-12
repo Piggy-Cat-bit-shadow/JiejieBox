@@ -713,6 +713,7 @@ func (g *LoadBalance) DialContext(ctx context.Context, network string, destinati
 		return nil, E.New(strings.ToUpper(network), " is not supported by outbound: ", g.Tag())
 	}
 	g.Touch()
+	adapter.RecordDialStep(ctx, g, member)
 	conn, err := member.DialContext(ctx, network, destination)
 	if err != nil {
 		return nil, err
@@ -729,6 +730,7 @@ func (g *LoadBalance) DialParallelNetwork(ctx context.Context, network string, d
 		return nil, E.New(strings.ToUpper(network), " is not supported by outbound: ", g.Tag())
 	}
 	g.Touch()
+	adapter.RecordDialStep(ctx, g, member)
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, err := parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {
@@ -759,6 +761,7 @@ func (g *LoadBalance) ListenPacket(ctx context.Context, destination M.Socksaddr)
 		return nil, E.New(N.NetworkUDP, " is not supported by outbound: ", g.Tag())
 	}
 	g.Touch()
+	adapter.RecordDialStep(ctx, g, member)
 	conn, err := member.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err
@@ -772,6 +775,7 @@ func (g *LoadBalance) ListenSerialNetworkPacket(ctx context.Context, destination
 		return nil, netip.Addr{}, E.New(N.NetworkUDP, " is not supported by outbound: ", g.Tag())
 	}
 	g.Touch()
+	adapter.RecordDialStep(ctx, g, member)
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, address, err := parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {

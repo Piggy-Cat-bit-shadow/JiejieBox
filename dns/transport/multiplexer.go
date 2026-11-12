@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 
 	mDNS "github.com/miekg/dns"
@@ -44,6 +45,14 @@ type queryMultiplexer struct {
 type multiplexConn struct {
 	net.Conn
 	readEpoch atomic.Uint64
+	// dialPath is the outbound chain this connection was established on, captured at the dial.
+	//
+	// A connection outlives the exchange that dialled it, and may be reused by queries from
+	// unrelated flows. "Which outbound carried this query" is then a property of the CONNECTION,
+	// not of the query, and reading the group's current selection per query would attribute a
+	// reused socket to a member it was never opened through. It is published back into a reusing
+	// exchange's record so the event can say which path actually carried it.
+	dialPath []adapter.DialPathStep
 }
 
 type queryMultiplexerReadError struct {
@@ -238,6 +247,12 @@ func (m *queryMultiplexer) exchangeSingle(ctx context.Context, message *mDNS.Msg
 	if err != nil {
 		callback(nil, err)
 		return
+	}
+	if !created {
+		// The connection was established by an EARLIER exchange, so no dial runs for this one and
+		// nothing would be recorded. Publishing the connection's own chain is what keeps the
+		// attribution a fact about the path that carried this query.
+		adapter.ReplayDialPath(ctx, conn.dialPath)
 	}
 
 	// THE POOL OWNS THIS CONNECTION. Every path out of this function must end in exactly one
@@ -455,7 +470,7 @@ func (m *queryMultiplexer) dialSerialConn(ctx context.Context) (*multiplexConn, 
 	if err != nil {
 		return nil, err
 	}
-	return &multiplexConn{Conn: conn}, nil
+	return &multiplexConn{Conn: conn, dialPath: adapter.DialPathFromContext(ctx).Snapshot()}, nil
 }
 
 // exchangeAsync answers a query on the SHARED (concurrent) connection.
@@ -479,6 +494,8 @@ func (m *queryMultiplexer) exchangeAsync(ctx context.Context, message *mDNS.Msg,
 		}
 		if created {
 			go m.recvLoop(conn)
+		} else {
+			adapter.ReplayDialPath(ctx, conn.dialPath)
 		}
 		queryId, err := m.register(ctx, connCtx, conn, message, callback, retryReadError && m.options.retryReadError && !created)
 		if err != nil {
@@ -509,7 +526,7 @@ func (m *queryMultiplexer) dialConn(ctx context.Context) (*multiplexConn, error)
 	if err != nil {
 		return nil, err
 	}
-	return &multiplexConn{Conn: conn}, nil
+	return &multiplexConn{Conn: conn, dialPath: adapter.DialPathFromContext(ctx).Snapshot()}, nil
 }
 
 func (m *queryMultiplexer) register(ctx context.Context, connCtx context.Context, conn *multiplexConn, message *mDNS.Msg, callback func(response *mDNS.Msg, err error), retryReadError bool) (uint16, error) {

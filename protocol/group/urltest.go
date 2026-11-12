@@ -721,6 +721,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, outbound)
 	conn, err := outbound.DialContext(ctx, network, destination)
 	if err == nil {
 		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
@@ -754,6 +755,7 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, outbound)
 	conn, err := outbound.ListenPacket(ctx, destination)
 	if err == nil {
 		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
@@ -793,6 +795,7 @@ func (s *URLTest) DialParallelNetwork(ctx context.Context, network string, desti
 		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, outbound)
 	var (
 		conn net.Conn
 		err  error
@@ -831,6 +834,7 @@ func (s *URLTest) ListenSerialNetworkPacket(ctx context.Context, destination M.S
 		return nil, netip.Addr{}, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, outbound)
 	var (
 		conn    net.PacketConn
 		address netip.Addr

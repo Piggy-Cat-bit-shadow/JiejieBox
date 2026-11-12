@@ -600,6 +600,13 @@ func (s *Selector) Revision() uint64 {
 	return s.selectionRevision.Load()
 }
 
+// DialPathRevision reports the selection generation for a dial-path step, so an attribution records
+// the decision's own revision instead of whatever the group holds when somebody reads it later.
+// See adapter.DialPath.
+func (s *Selector) DialPathRevision() uint64 {
+	return s.Revision()
+}
+
 // SelectionSnapshot is one consistent answer to "select this member".
 //
 // AppliedTag is the member the group holds AFTER the call, read under the same hold that applied
@@ -757,6 +764,7 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 		return nil, err
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, member)
 	conn, err := member.DialContext(ctx, network, destination)
 	if err != nil {
 		return nil, err
@@ -775,6 +783,7 @@ func (s *Selector) DialParallelNetwork(ctx context.Context, network string, dest
 		return nil, err
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, member)
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, err := parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {
@@ -795,6 +804,7 @@ func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.
 		return nil, netip.Addr{}, err
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, member)
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, address, err := parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {
@@ -815,6 +825,7 @@ func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return nil, err
 	}
 	defer release()
+	adapter.RecordDialStep(ctx, s, member)
 	conn, err := member.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err

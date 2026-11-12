@@ -45,6 +45,9 @@ const (
 	// still charge them: the accounting is what the ring is bounded by.
 	historyStringOverhead = 16
 	historySliceOverhead  = 24
+	// historyDialPathOverhead is the retained size of one DialPathView: the struct itself plus the
+	// pointer the event holds. Its variable fields are charged below like every other string.
+	historyDialPathOverhead = 96
 )
 
 // ErrHistoryQueryTooLarge is returned when a caller asks for more output than the history
@@ -440,7 +443,7 @@ func (h *History) evictOldestLocked() {
 }
 
 // historyRecordSize is the RETAINED size of one event: every field the ring holds, every string
-// header and the answer slice, not only the name and the error text.
+// header, the answer slice and the dial-path projection, not only the name and the error text.
 //
 // # Why the exact fields matter
 //
@@ -458,6 +461,20 @@ func historyRecordSize(event QueryEvent) int {
 		size += historySliceOverhead
 		for _, answer := range event.Answers {
 			size += historyStringOverhead + len(answer)
+		}
+	}
+	if event.DialPath != nil {
+		// The projection is retained with the record, so it is charged with the record. A bound that
+		// does not count a field is not a bound: adding this one to the event without adding it here
+		// would have let a ring with a byte budget hold more than the budget claims.
+		size += historyDialPathOverhead
+		size += historyStringOverhead * 3
+		size += len(event.DialPath.Leaf) + len(event.DialPath.TransportMember) + len(event.DialPath.Reason)
+		if len(event.DialPath.Steps) > 0 {
+			size += historySliceOverhead
+			for _, step := range event.DialPath.Steps {
+				size += historyStringOverhead + len(step)
+			}
 		}
 	}
 	return size

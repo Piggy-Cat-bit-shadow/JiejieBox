@@ -35,6 +35,9 @@ const (
 	MaxHistoryAnswersBytes = 4 << 10
 	// MaxHistoryAnswers bounds the number of answers of one record.
 	MaxHistoryAnswers = 8
+	// MaxHistoryDialPathSteps bounds the outbound chain of one record. It matches the recorder's own
+	// bound; the copy here is what keeps a hand-built event from bypassing it.
+	MaxHistoryDialPathSteps = 8
 )
 
 // HistoryRecordView is one record as a management surface presents it.
@@ -52,6 +55,10 @@ type HistoryRecordView struct {
 	Rule       string   `json:"rule,omitempty"`
 	Err        string   `json:"err,omitempty"`
 	Answers    []string `json:"answers,omitempty"`
+	// DialPath is the bounded path projection of the record. It is the SAME document type the event
+	// carries, bounded again here because this surface has its own output budget: a management read
+	// must not be able to exceed what it promised because a recorded tag is long.
+	DialPath *DialPathView `json:"dialPath,omitempty"`
 }
 
 // HistoryStatsView is the history's accounting as a management surface presents it.
@@ -333,6 +340,42 @@ func presentHistoryRecord(record HistoryRecord, budgets historyFieldBudgets) (Hi
 			presented.Answers = append(presented.Answers, bounded)
 			budget -= len(bounded)
 		}
+	}
+	presented.DialPath, cut = presentDialPath(event.DialPath, budgets)
+	truncated = truncated || cut
+	return presented, truncated
+}
+
+// presentDialPath bounds one record's path projection by the same per-field budget as the transport
+// tag, because a path step is a tag from the same configuration namespace.
+func presentDialPath(view *DialPathView, budgets historyFieldBudgets) (*DialPathView, bool) {
+	if view == nil {
+		return nil, false
+	}
+	fieldBudget := minInt(budgets.transport, MaxHistoryFieldBytes)
+	truncated := false
+	presented := &DialPathView{
+		Revision:      view.Revision,
+		RevisionKnown: view.RevisionKnown,
+		Truncated:     view.Truncated,
+	}
+	var cut bool
+	presented.Leaf, cut = TruncateJSONField(view.Leaf, fieldBudget)
+	truncated = truncated || cut
+	presented.TransportMember, cut = TruncateJSONField(view.TransportMember, fieldBudget)
+	truncated = truncated || cut
+	presented.Reason, cut = TruncateJSONField(view.Reason, fieldBudget)
+	truncated = truncated || cut
+	steps := view.Steps
+	if len(steps) > MaxHistoryDialPathSteps {
+		steps = steps[:MaxHistoryDialPathSteps]
+		presented.Truncated = true
+		truncated = true
+	}
+	for _, step := range steps {
+		bounded, stepCut := TruncateJSONField(step, fieldBudget)
+		truncated = truncated || stepCut
+		presented.Steps = append(presented.Steps, bounded)
 	}
 	return presented, truncated
 }

@@ -93,6 +93,48 @@ type QueryEvent struct {
 	// Rule describes the rule that produced a Final verdict, empty when no rule was involved
 	// (an entry policy decision, a structural early answer, a cancellation).
 	Rule string `json:"rule,omitempty"`
+	// DialPath is the execution-time projection of WHERE this exchange actually went.
+	//
+	// TransportTag names the transport that ran the exchange, which is not the same fact as the
+	// outbound that carried its connection: a transport dials through a detour, the detour may be a
+	// group, and the group picks its member at the instant of the dial. This field records what the
+	// dial did, so a later selector move cannot re-describe an answer that has already been given.
+	//
+	// It is nil only when no projection was attempted (a Final verdict reached without any
+	// exchange, which the router reports without opening a record).
+	DialPath *DialPathView `json:"dialPath,omitempty"`
+}
+
+// DialPathView is the bounded, serializable projection of one exchange's dial record.
+//
+// # What each field is, and what it is NOT
+//
+//   - Steps is the chain of objects the dial was handed to, outermost first: the transport's
+//     detour, then each outbound group's chosen member. A failover retry appears as a further step,
+//     because the connection WAS handed to that member; Leaf is the one that carried it.
+//   - Leaf is the last step: the outbound that actually carried the connection.
+//   - Revision is the selection revision of the group that chose Leaf, and RevisionKnown says
+//     whether that group reports a revision at all. Zero with RevisionKnown false is "unknown", not
+//     "revision zero".
+//   - TransportMember is the member transport of a DNS transport group that ran the exchange. It is
+//     a separate dimension from the outbound chain: the group chooses a TRANSPORT, which then dials
+//     through its own outbound path.
+//   - Reason explains why the projection is incomplete, using a fixed vocabulary (adapter's
+//     DialPathReason). It is empty when everything the event can carry was observed.
+//
+// # Why the leaf cannot be read out of current state instead
+//
+// Reading the selector when the event is consumed would report the member of the moment the reader
+// looked, not of the moment the query ran. That is the exact mis-attribution (an answer credited to
+// a node that never carried it) this projection exists to prevent.
+type DialPathView struct {
+	Steps           []string `json:"steps,omitempty"`
+	Leaf            string   `json:"leaf,omitempty"`
+	Revision        uint64   `json:"revision,omitempty"`
+	RevisionKnown   bool     `json:"revisionKnown,omitempty"`
+	TransportMember string   `json:"transportMember,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
+	Truncated       bool     `json:"truncated,omitempty"`
 }
 
 // eventSubscriber is one subscriber's delivery state.
@@ -225,7 +267,7 @@ func (b *EventBus) emit(event QueryEvent) {
 // emitQueryEvent assembles and delivers one event. It returns immediately when no
 // subscriber is registered, which is the gate that keeps the query path allocation-free for
 // a process nobody is diagnosing.
-func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTransport, message *dns.Msg, source QuerySource, shared bool, response *dns.Msg, err error) {
+func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTransport, message *dns.Msg, source QuerySource, shared bool, response *dns.Msg, err error, dialPath *adapter.DialPath) {
 	bus := c.eventBus
 	if bus == nil || !bus.Active() {
 		return
@@ -240,6 +282,7 @@ func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTranspor
 	if transport != nil {
 		event.TransportTag = transport.Tag()
 	}
+	event.DialPath = buildDialPathView(dialPath)
 	if message != nil && len(message.Question) > 0 {
 		event.Name = message.Question[0].Name
 		event.QType = message.Question[0].Qtype
@@ -254,6 +297,41 @@ func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTranspor
 		event.Err = E.New(err).Error()
 	}
 	bus.emit(event)
+}
+
+// buildDialPathView projects one exchange's dial record onto the event document.
+//
+// # Why a fan-out suppresses the steps
+//
+// A DNS transport group that split the query across members ran several dials CONCURRENTLY into the
+// same record. The steps would then be whichever member's dial wrote last, which is not the path
+// that answered - it is an accident of scheduling. Naming one of them would be worse than naming
+// none, so the record reports why it cannot name a single member instead.
+func buildDialPathView(dialPath *adapter.DialPath) *DialPathView {
+	if dialPath == nil {
+		return nil
+	}
+	result := dialPath.Result()
+	view := &DialPathView{
+		TransportMember: result.TransportMember,
+		Reason:          string(result.Reason()),
+		Truncated:       result.Truncated,
+	}
+	if result.TransportFanOut {
+		view.Reason = string(adapter.DialPathReasonTransportFanOut)
+		return view
+	}
+	if len(result.Steps) > 0 {
+		view.Steps = make([]string, 0, len(result.Steps))
+		for _, step := range result.Steps {
+			view.Steps = append(view.Steps, step.Tag)
+		}
+		leaf, _ := result.Leaf()
+		view.Leaf = leaf.Tag
+		view.Revision = leaf.Revision
+		view.RevisionKnown = leaf.HasRevision
+	}
+	return view
 }
 
 // emitFinalQueryEvent records the query's terminal verdict when it was reached WITHOUT an upstream

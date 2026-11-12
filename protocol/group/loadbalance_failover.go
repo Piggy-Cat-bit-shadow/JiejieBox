@@ -792,6 +792,7 @@ func (g *LoadBalance) DialWithFailover(ctx context.Context, metadata *adapter.In
 		return nil, E.New(strings.ToUpper(network), " is not supported by outbound: ", g.Tag())
 	}
 	g.Touch()
+	adapter.RecordDialStep(ctx, g, member)
 	conn, err := g.dialMember(ctx, member, metadata, network, destination)
 	if err == nil {
 		g.recordProofOfLife(member)
@@ -829,6 +830,7 @@ func (g *LoadBalance) DialWithFailover(ctx context.Context, metadata *adapter.In
 	if g.logger != nil {
 		g.logger.Debug("loadbalance group ", g.Tag(), ": ", member.Tag(), " failed (", err, "), trying ", alternate.Tag())
 	}
+	adapter.RecordDialStep(ctx, g, alternate)
 	alternateConn, alternateErr := g.dialMember(ctx, alternate, metadata, network, destination)
 	if alternateErr != nil {
 		if PenalizeMemberGlobally(alternate, alternateErr) {
@@ -861,6 +863,7 @@ func (g *LoadBalance) dialOnce(ctx context.Context, metadata *adapter.InboundCon
 		return nil, E.New(strings.ToUpper(network), " is not supported by outbound: ", g.Tag())
 	}
 	g.Touch()
+	adapter.RecordDialStep(ctx, g, member)
 	conn, err := g.dialMember(ctx, member, metadata, network, destination)
 	if err != nil {
 		return nil, err

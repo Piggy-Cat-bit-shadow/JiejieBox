@@ -1117,9 +1117,10 @@ func (c *Client) exchangeWithSource(ctx context.Context, transport adapter.DNSTr
 	}
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout)
 	defer cancel()
+	ctx, dialPath := c.openDialPath(ctx)
 	operation, earlyResponse, status, source, shared, err := c.beginExchange(ctx, transport, message, options, responseChecker, true)
 	if status != exchangeReady {
-		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err)
+		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err, dialPath)
 		// An early response is still produced by THIS operation when one exists: a cache hit or a
 		// cached NXDOMAIN found under the operation's key, which was built from the environment the
 		// operation captured. Reporting that generation keeps a shared waiter's hit stamped like a
@@ -1133,11 +1134,11 @@ func (c *Client) exchangeWithSource(ctx context.Context, transport adapter.DNSTr
 	defer operation.release()
 	response, exchangeErr := c.exchangeToTransport(operation.ctx, transport, operation.message)
 	if exchangeErr != nil {
-		c.emitQueryEvent(started, transport, message, source, false, nil, exchangeErr)
+		c.emitQueryEvent(started, transport, message, source, false, nil, exchangeErr, dialPath)
 		return nil, operation.sourceGeneration, operation.hasSource, exchangeErr
 	}
 	response, exchangeErr = c.finishExchange(transport, operation, response)
-	c.emitQueryEvent(started, transport, message, source, shared, response, exchangeErr)
+	c.emitQueryEvent(started, transport, message, source, shared, response, exchangeErr, dialPath)
 	return response, operation.sourceGeneration, operation.hasSource, exchangeErr
 }
 
@@ -1147,11 +1148,12 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 		options.Timeout = c.timeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout)
+	ctx, dialPath := c.openDialPath(ctx)
 	operation, earlyResponse, status, source, shared, err := c.beginExchange(ctx, transport, message, options, responseChecker, false)
 	switch status {
 	case exchangeDone:
 		cancel()
-		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err)
+		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err, dialPath)
 		callback(earlyResponse, err)
 		return
 	case exchangeWait:
@@ -1166,16 +1168,32 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 		cancel()
 		if exchangeErr != nil {
 			operation.release()
-			c.emitQueryEvent(started, transport, message, source, false, nil, exchangeErr)
+			c.emitQueryEvent(started, transport, message, source, false, nil, exchangeErr, dialPath)
 			callback(nil, exchangeErr)
 			return
 		}
 		finishedResponse, finishErr := c.finishExchange(transport, operation, response)
 		operation.release()
-		c.emitQueryEvent(started, transport, message, source, shared, finishedResponse, finishErr)
+		c.emitQueryEvent(started, transport, message, source, shared, finishedResponse, finishErr, dialPath)
 		callback(finishedResponse, finishErr)
 	}
 	c.exchangeToTransportAsync(operation.ctx, transport, operation.message, finish)
+}
+
+// openDialPath installs a dial-path record for one exchange, but only while somebody is observing.
+//
+// # Why it is conditional
+//
+// The record exists for the query EVENT. A process with no subscriber builds no event, so allocating
+// a recorder and a context value for it would be pure cost on the hot path - the same rule the event
+// bus itself follows. `adapter.DialPathFromContext` answers nil for a context without a recorder,
+// and every recording point is nil-safe, so the unobserved path pays one nil check per dial.
+func (c *Client) openDialPath(ctx context.Context) (context.Context, *adapter.DialPath) {
+	if c.eventBus == nil || !c.eventBus.Active() {
+		return ctx, nil
+	}
+	dialPath := adapter.NewDialPath()
+	return adapter.WithDialPath(ctx, dialPath), dialPath
 }
 
 // conflictingFamilyStrategy reports whether a forced single family and another strict family
