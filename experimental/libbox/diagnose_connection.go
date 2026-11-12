@@ -118,6 +118,10 @@ const (
 	connectionTestStageDNS     = "dns"
 	connectionTestStageResolve = "resolve"
 	connectionTestStageDial    = "dial"
+	// connectionTestStageProtocol is the summary stage used when the dial reported no
+	// protocol-depth layer at all: the report then says the depth was not observed instead of
+	// leaving the absence unexplained.
+	connectionTestStageProtocol = "protocol"
 )
 
 type connectionTestStage struct {
@@ -902,7 +906,53 @@ func runRuleDecisionStages(ctx context.Context, budgetCtx context.Context, repor
 		dialStage.Detail = result.DialError.Error()
 		report.Outcome = connectionTestOutcomeFailed
 	}
+	appendProtocolStages(report, result)
 	appendAll()
+}
+
+// appendProtocolStages reports the protocol-depth layers this dial OBSERVED, as children of the dial
+// stage.
+//
+// # Why the stages are not invented for a path that has none
+//
+// The layers are recorded by the layer that performs them (adapter.DiagnoseStage): the TLS/REALITY
+// handshake, the v2ray stream transports, the HTTP CONNECT tunnel. A direct dial performs none of
+// them, and a protocol this build does not instrument records nothing - so an empty record is a
+// fact, not a gap to paper over with a guessed "tls: skipped". The report therefore adds ONE
+// summary stage saying the depth was not observed, and never rules out a layer it cannot see.
+//
+// The recorded stages keep their own status and code; the ids are the layer names (tls, reality,
+// stream, http) because that is what a client branches on, and a retried handshake appears twice
+// because it happened twice.
+func appendProtocolStages(report *connectionTestReport, result route.RouteDiagnoseResult) {
+	if !result.Dialed || result.Rejected || result.Unknown != "" {
+		return
+	}
+	if len(result.ProtocolStages) == 0 {
+		report.Stages = append(report.Stages, connectionTestStage{
+			ID:     connectionTestStageProtocol,
+			Parent: connectionTestStageDial,
+			Status: connectionTestStageSkipped,
+			Code:   connectionTestCodeProtocolNotObserved,
+			Detail: "the dial reported no TLS, REALITY, stream or HTTP tunnel stage; this build records " +
+				"those layers at the seams that perform them and nowhere else",
+		})
+		return
+	}
+	for _, stage := range result.ProtocolStages {
+		report.Stages = append(report.Stages, connectionTestStage{
+			ID:         stage.Stage,
+			Parent:     connectionTestStageDial,
+			Status:     stage.Status,
+			Code:       stage.Code,
+			Detail:     stage.Detail,
+			DurationMs: stage.DurationMs,
+		})
+	}
+	if result.ProtocolStagesTruncated {
+		report.addFinding(connectionTestFindingStagesTruncated, connectionTestStageDial,
+			"the dial observed more protocol stages than one report carries; the list is incomplete")
+	}
 }
 
 // diagnoseSuccessDetail renders the dial stage from what the connection actually did.

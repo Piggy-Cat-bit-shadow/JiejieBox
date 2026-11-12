@@ -168,6 +168,15 @@ type RouteDiagnoseResult struct {
 	RecoveredFrom    string
 	RecoveredTo      string
 
+	// ProtocolStages are the protocol-depth layers this dial actually performed, recorded by the
+	// layer that performed them (adapter.DiagnoseStage): a TLS or REALITY handshake, a v2ray stream
+	// transport, an HTTP CONNECT tunnel. The list is empty when no instrumented layer ran - a direct
+	// dial has none - and it is never filled in by inference. See adapter/diagnose_stage.go for what
+	// each stage means and diagnose_codes.go for the vocabulary the report uses.
+	ProtocolStages []adapter.DiagnoseStage
+	// ProtocolStagesTruncated reports that more layers were observed than the record carries.
+	ProtocolStagesTruncated bool
+
 	// WalkMs, ResolveMs and DialMs are the phase durations of this ONE execution, so the report can
 	// still show where the time went without re-running anything.
 	WalkMs    int64
@@ -320,7 +329,12 @@ func (r *Router) DiagnoseRoute(ctx context.Context, request RouteDiagnoseRequest
 	// the member carrying the user's connections.
 	dialPath := adapter.NewDialPath()
 	dialPath.BeginDial()
-	dialCtx := adapter.WithDiagnosticDial(adapter.WithDialPath(ctx, dialPath))
+	// The same dial also carries the protocol-depth record the instrumented layers write into. It is
+	// installed here, next to the path record, because both describe THIS dial: the path record says
+	// which object carried it, the stage record says which layer it got through.
+	protocolStages := adapter.NewDiagnoseStages()
+	dialCtx := adapter.WithDiagnoseStages(
+		adapter.WithDiagnosticDial(adapter.WithDialPath(ctx, dialPath)), protocolStages)
 	if len(metadata.DestinationAddresses) > 0 || dialDestination.IsIP() {
 		result.Conn, result.DialError = dialer.DialSerialNetwork(dialCtx, dialler, network, dialDestination,
 			metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType,
@@ -333,6 +347,9 @@ func (r *Router) DiagnoseRoute(ctx context.Context, request RouteDiagnoseRequest
 	}
 	result.DialMs = time.Since(dialStart).Milliseconds()
 	result.DialSteps = dialPath.Snapshot()
+	stageResult := protocolStages.Result()
+	result.ProtocolStages = stageResult.Stages
+	result.ProtocolStagesTruncated = stageResult.Truncated
 	if result.Conn != nil {
 		// A recovery is only reported for a dial that PRODUCED a connection. A failed dial can still
 		// have a two-member chain (the alternate failed too), and calling that "recovered" would be

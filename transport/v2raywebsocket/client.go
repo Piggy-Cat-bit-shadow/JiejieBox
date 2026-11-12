@@ -74,6 +74,14 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
+	started := time.Now()
+	conn, err := c.dialContext(ctx)
+	// A diagnostic asks what this layer did; an unobserved dial pays one context lookup.
+	adapter.RecordDiagnoseStage(ctx, adapter.DiagnoseStreamStage("v2ray websocket", started, err))
+	return conn, err
+}
+
+func (c *Client) dialContext(ctx context.Context) (net.Conn, error) {
 	conn, err := c.dialer.DialContext(ctx, N.NetworkTCP, c.serverAddr)
 	if err != nil {
 		return nil, err

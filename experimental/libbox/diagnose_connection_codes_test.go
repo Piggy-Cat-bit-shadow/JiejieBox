@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/route"
 	M "github.com/sagernet/sing/common/metadata"
 
@@ -61,6 +62,25 @@ var connectionTestCodeVocabulary = map[string]bool{
 	connectionTestCodeDialBudgetExpire:    true,
 	connectionTestCodeDialCancelled:       true,
 	connectionTestCodeDialNotAttempted:    true,
+	connectionTestCodeProtocolNotObserved: true,
+
+	// The protocol-depth layers carry the vocabulary of the layer that PERFORMED them
+	// (adapter/diagnose_stage.go). Listing the constants - rather than copying their strings - is
+	// what keeps the producer and this contract from drifting apart.
+	adapter.DiagnoseCodeTLSOK:               true,
+	adapter.DiagnoseCodeTLSTimeout:          true,
+	adapter.DiagnoseCodeTLSCertificate:      true,
+	adapter.DiagnoseCodeTLSProtocol:         true,
+	adapter.DiagnoseCodeTLSClosed:           true,
+	adapter.DiagnoseCodeTLSCancelled:        true,
+	adapter.DiagnoseCodeTLSFailed:           true,
+	adapter.DiagnoseCodeStreamOK:            true,
+	adapter.DiagnoseCodeStreamFailed:        true,
+	adapter.DiagnoseCodeStreamCancelled:     true,
+	adapter.DiagnoseCodeHTTPTunnelOK:        true,
+	adapter.DiagnoseCodeHTTPTunnelRefused:   true,
+	adapter.DiagnoseCodeHTTPTunnelFailed:    true,
+	adapter.DiagnoseCodeHTTPTunnelCancelled: true,
 }
 
 // requireEveryStageCarriesAKnownCode is the shape every case below also asserts: no stage may be

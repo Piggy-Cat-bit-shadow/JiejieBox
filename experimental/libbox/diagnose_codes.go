@@ -95,6 +95,12 @@ const (
 	// connectionTestCodeDialNotAttempted is a dial that was correctly skipped: nothing to dial, a
 	// refused decision, or a path with no exit.
 	connectionTestCodeDialNotAttempted = "dial-not-attempted"
+
+	// connectionTestCodeProtocolNotObserved is a dial that completed without reporting any
+	// protocol-depth layer. It is a fact about what this build instruments, not a verdict about the
+	// path: a direct dial performs no handshake, and a protocol with no instrumented seam records
+	// nothing.
+	connectionTestCodeProtocolNotObserved = "protocol-not-observed"
 )
 
 // Finding codes. A finding is a fact that is not a stage: something the run OBSERVED about itself.
@@ -107,4 +113,7 @@ const (
 	connectionTestFindingRecovered = "dial-recovered"
 	// connectionTestFindingEventsDropped: the subscriber could not keep up and lost events.
 	connectionTestFindingEventsDropped = "events-dropped"
+	// connectionTestFindingStagesTruncated: the dial observed more protocol-depth stages than one
+	// report carries. It is stated rather than silently dropped.
+	connectionTestFindingStagesTruncated = "stages-truncated"
 )
