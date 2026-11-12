@@ -74,6 +74,10 @@ cross-implementation environment the user excluded, and no local test may be pre
 the local matrix proves is that each direction of the path fails separately and is counted
 separately, on both transports.
 
+Both matrices - and the conservation cells above - also pass under `-race` on windows/amd64 with
+CGO enabled (`CGO_ENABLED=1 CC=<msys2 mingw-w64 gcc> go test -race ./transport/trusttunnel/`, H2 and
+`with_quic` H3), so the queue/deadline/counter interleavings they assert are not hiding a data race.
+
 ### The transports differ, and the difference is measured
 
 HTTP/2 has no stream read deadline and says so: `NeedAdditionalReadDeadline() == true` and
