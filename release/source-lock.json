@@ -29,9 +29,9 @@
     },
     {
       "module": "github.com/sagernet/sing-tun",
-      "pinned": "99abf3c27666",
+      "pinned": "3c0ead27405b",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-tun",
-      "version": "v0.9.7-0.20261110222329-99abf3c27666"
+      "version": "v0.9.7-0.20261112091034-3c0ead27405b"
     },
     {
       "module": "github.com/sagernet/sing-quic",
@@ -65,9 +65,9 @@
     },
     {
       "module": "github.com/enfein/mieru/v3",
-      "pinned": "153d0ac38d7f",
+      "pinned": "b5934f7136b4",
       "target": "github.com/Piggy-Cat-bit-shadow/mieru/v3",
-      "version": "v3.39.1-0.20261112103214-153d0ac38d7f"
+      "version": "v3.39.1-0.20261112135526-b5934f7136b4"
     },
     {
       "module": "github.com/sagernet/cronet-go",

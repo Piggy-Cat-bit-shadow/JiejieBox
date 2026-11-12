@@ -72,8 +72,8 @@ github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-2026110506232
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-20261105062326-362e63b14ce2/go.mod h1:lm9w/oCCRyBiUa3G8lDQTT8x/ONUvgVR2iV9fVzUZB8=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261105062326-362e63b14ce2 h1:XWu/GozE4DJq+K36eh1P7tjOSKHGGDjTVVzgBe/JqRI=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261105062326-362e63b14ce2/go.mod h1:AHSjG1k9wfhEfZhRCQCdUosL+qgyd//Ww9lwiRvBhhg=
-github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261112103214-153d0ac38d7f h1:2JF6YHkz2dbBc6kIqLYX7JjOTZW6R93YL+B76a1ptAA=
-github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261112103214-153d0ac38d7f/go.mod h1:zJBUCsi5rxyvHM8fjFf+GLaEl4OEjjBXr1s5F6Qd3hM=
+github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261112135526-b5934f7136b4 h1:NK0ZAjnIJon/eko5sLBviMN7rztgAl8OBx9pKZa3R1w=
+github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261112135526-b5934f7136b4/go.mod h1:zJBUCsi5rxyvHM8fjFf+GLaEl4OEjjBXr1s5F6Qd3hM=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77 h1:UHJApa76Vp8DxZViyPDOjhmdUNZXGINLPDNOeP/KEj8=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261110222322-4abfaed41727 h1:FOQfkSfAtacUfvz1iCd6yi/79K8XwhWu8jkUcmk6fpw=
@@ -82,8 +82,8 @@ github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261112100203-f4acc22de770 h
 github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261112100203-f4acc22de770/go.mod h1:VRKLnj0ObEsN228h+zuzf91p+6sjtYE8SBaLPVsBy5o=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261112101651-c1b074f1f868 h1:eqLPXg03bzMqVThf52mNEDIs3fdFoO+H0NVCWNeIVjw=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261112101651-c1b074f1f868/go.mod h1:GeOfu2884pUacFYBnjUsYzUa7gU8iunJ2gMVXwvssRo=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261110222329-99abf3c27666 h1:sOdhYyBN0Ps4+dYHSkucucsWzx9S5i8jiepkpqxdTJc=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261110222329-99abf3c27666/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
+github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261112091034-3c0ead27405b h1:4iMmtK4dY4ye67FqDeFZaR9D7Egpuu3oRj4Ln03soLI=
+github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261112091034-3c0ead27405b/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80 h1:oiJWYot1KZOqcUt0dnPwDuMdgOZhMZHoqf2fjXtQ9K4=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
 github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d h1:/OAiy3sQiUYcc09cL/AHs1KSd+ozkn0zFhqpmsbPcOQ=

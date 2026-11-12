@@ -29,7 +29,12 @@
     "  report      - resolved and recorded, but never written by release preparation because the",
     "                pin lives in ANOTHER repository's tree (Desktop's dashboard gitlink). Moving",
     "                it means a commit in that repository first, so the order stays",
-    "                Dashboard -> Desktop -> kernel."
+    "                Dashboard -> Desktop -> kernel.",
+    "  pinned_on   - documentation only, not read by release-freeze.py: the cronet-go pins are the",
+    "                publish commits, which live on the `go` generation line, while `branch` names",
+    "                the source line the release tracks. Changing the cronet `branch` to `go` would",
+    "                make freeze read the root pin as behind the publish tip and move it without a",
+    "                native rebuild, which is exactly what `controlled` exists to prevent."
   ],
   "go_modules": [
     {
@@ -44,7 +49,7 @@
       "slug": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
       "policy": "update",
-      "note": "TUN/route/nfqueue stack. Tracks SagerNet/sing-tun dev."
+      "note": "TUN/route/nfqueue stack. Tracks SagerNet/sing-tun dev. The pin now includes 3c0ead2, the three test-portability commits the full race suite needed; they change tests only, and dev carries nothing else after the old 99abf3c pin."
     },
     {
       "module": "github.com/sagernet/sing-quic",
@@ -77,30 +82,30 @@
     {
       "module": "github.com/sagernet/sing-anytls",
       "slug": "Piggy-Cat-bit-shadow/sing-anytls",
-      "branch": "fix/admit-creation-only-2026-11-12",
+      "branch": "main",
       "policy": "update",
-      "note": "The AnyTLS session pool. Consumed for audit Q10: the client asks AdmitCreation only on a real session creation, so reusing an idle session is neither charged nor blocked by the creation budget. Temporary fix branch; when the upstream PR lands, move the pin to main before the branch is deleted."
+      "note": "The AnyTLS session pool. Consumed for audit Q10: the client asks AdmitCreation only on a real session creation, so reusing an idle session is neither charged nor blocked by the creation budget. The fix is merged into main (f4acc22de770 is main's tip) and the temporary fix branch is retired; the residual boundary - the external API still cannot answer would-this-dial-reuse before the attempt - stays documented in docs/coupling/ISSUES.md F-06."
     },
     {
       "module": "github.com/enfein/mieru/v3",
       "slug": "Piggy-Cat-bit-shadow/mieru",
-      "branch": "fix/underlay-closed-2026-11-12",
+      "branch": "main",
       "policy": "update",
-      "note": "The Mieru client SDK. Consumed for audit Q04: a session attach is refused on a closed underlay, and the stream/packet wrappers hold the lifecycle mutex across attach so a teardown cannot observe a half-attached session. Temporary fix branch; when the upstream PR lands, move the pin to main before the branch is deleted."
+      "note": "The Mieru client SDK. Consumed for audit Q04: a session attach is refused on a closed underlay, and the stream/packet wrappers hold the lifecycle mutex across attach so a teardown cannot observe a half-attached session. The fix was cherry-picked onto main (b5934f7, patch-id identical to 153d0ac) so main's six newer commits are kept; main's tip is now the pin and the temporary fix branch is retired."
     },
     {
       "module": "github.com/sagernet/cronet-go",
       "slug": "Piggy-Cat-bit-shadow/cronet-go",
       "branch": "main",
       "policy": "update",
-      "note": "Root module: Go bindings for the native engine. Moves with `all`."
+      "note": "Root module: Go bindings for the native engine. Moves with `all`. The exact pin 362e63b14ce2 is the fork's Build from 4c96192d commit, which lives on the publish line `go` (main + build + generate), not on main; `branch` stays main because release-freeze tracks the source line and must not move a controlled-native pin on its own."
     },
     {
       "module": "github.com/sagernet/cronet-go/all",
       "slug": "Piggy-Cat-bit-shadow/cronet-go",
       "branch": "main",
       "policy": "update",
-      "note": "The aggregate module. Its publish commit is one ahead of the root: the first publish commit carries the natives, the second regenerates this module and the lib requires. release-freeze.py verify compares both."
+      "note": "The aggregate module. Its publish commit is one ahead of the root: the first publish commit carries the natives (362e63b14ce2), the second regenerates this module and the lib requires (7ce9c49b464a); both live on the `go` line, which is what the two pins name. release-freeze.py verify compares both; `branch` stays main for the same reason as the root entry."
     }
   ],
   "cronet_native": {
