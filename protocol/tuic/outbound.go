@@ -40,8 +40,10 @@ var (
 
 type Outbound struct {
 	outbound.Adapter
-	logger    logger.ContextLogger
-	client    *tuic.Client
+	logger logger.ContextLogger
+	// client is one or two family-restricted sing-quic clients (audit Q05). A single-family path
+	// behaves exactly as before; a dual-stack domain races the two families on the first creation.
+	client    *familyCarrier
 	udpStream bool
 	// generation closes the publish-to-listener window: a dial that arrives after the network
 	// manager advanced the epoch but before the listener closed the session closes it here first,
@@ -80,6 +82,25 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
 	if err != nil {
 		return nil, err
+	}
+	// A dual-stack domain is the only shape where a second family can exist; a literal server has
+	// one address, so it keeps the previous single-client behaviour exactly.
+	var familyDialers [2]N.Dialer
+	if options.ServerIsDomain() {
+		for index, strategy := range []option.DomainStrategy{
+			option.DomainStrategy(C.DomainStrategyIPv4Only),
+			option.DomainStrategy(C.DomainStrategyIPv6Only),
+		} {
+			familyOptions := options.DialerOptions
+			familyOptions.DomainStrategy = strategy
+			familyDialer, familyErr := dialer.New(ctx, familyOptions, true)
+			if familyErr != nil {
+				logger.Warn("tuic: cannot build the ", strategy, " family dialer, single-family carrier kept: ", familyErr)
+				familyDialers = [2]N.Dialer{}
+				break
+			}
+			familyDialers[index] = familyDialer
+		}
 	}
 	// A proven lower tunnel caps what this QUIC connection may put on the wire.
 	//
@@ -152,35 +173,62 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		hardCeiling = int(quicPayloadCeiling)
 		disablePMTUD = true
 	}
-	client, err := tuic.NewClient(tuic.ClientOptions{
-		Context:       ctx,
-		Dialer:        outboundDialer,
-		ServerAddress: options.ServerOptions.Build(),
-		TLSConfig:     tlsConfig,
-		QUICOptions: qtls.QUICOptions{
-			IdleTimeout:              options.IdleTimeout.Build(),
-			KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
-			StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
-			ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
-			MaxConcurrentStreams:     options.MaxConcurrentStreams,
-			InitialPacketSize:        effectiveInitialPacketSize,
-			InitialPacketSizeCeiling: hardCeiling,
-			DisablePathMTUDiscovery:  disablePMTUD,
-		},
-		UUID:              userUUID,
-		Password:          options.Password,
-		CongestionControl: options.CongestionControl,
-		UDPStream:         tuicUDPStream,
-		ZeroRTTHandshake:  options.ZeroRTTHandshake,
-		Heartbeat:         time.Duration(options.Heartbeat),
-	})
-	if err != nil {
-		return nil, err
+	newClient := func(clientDialer N.Dialer) (*tuic.Client, error) {
+		return tuic.NewClient(tuic.ClientOptions{
+			Context:       ctx,
+			Dialer:        clientDialer,
+			ServerAddress: options.ServerOptions.Build(),
+			TLSConfig:     tlsConfig,
+			QUICOptions: qtls.QUICOptions{
+				IdleTimeout:              options.IdleTimeout.Build(),
+				KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
+				StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
+				ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
+				MaxConcurrentStreams:     options.MaxConcurrentStreams,
+				InitialPacketSize:        effectiveInitialPacketSize,
+				InitialPacketSizeCeiling: hardCeiling,
+				DisablePathMTUDiscovery:  disablePMTUD,
+			},
+			UUID:              userUUID,
+			Password:          options.Password,
+			CongestionControl: options.CongestionControl,
+			UDPStream:         tuicUDPStream,
+			ZeroRTTHandshake:  options.ZeroRTTHandshake,
+			Heartbeat:         time.Duration(options.Heartbeat),
+		})
+	}
+	var carrier *familyCarrier
+	if familyDialers[0] != nil && familyDialers[1] != nil {
+		primary, primaryErr := newClient(familyDialers[0])
+		if primaryErr != nil {
+			return nil, primaryErr
+		}
+		secondary, secondaryErr := newClient(familyDialers[1])
+		if secondaryErr != nil {
+			_ = primary.CloseWithError(net.ErrClosed)
+			return nil, secondaryErr
+		}
+		carrier = newFamilyCarrier(func(family int) (*tuic.Client, error) {
+			return newClient(familyDialers[family-1])
+		})
+		carrier.clients[0] = primary
+		carrier.clients[1] = secondary
+		carrier.families = 2
+	} else {
+		client, clientErr := newClient(outboundDialer)
+		if clientErr != nil {
+			return nil, clientErr
+		}
+		carrier = newFamilyCarrier(func(int) (*tuic.Client, error) {
+			return newClient(outboundDialer)
+		})
+		carrier.clients[0] = client
+		carrier.families = 1
 	}
 	created := &Outbound{
 		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeTUIC, tag, options.Network.Build(), options.DialerOptions, options.ServerIsDomain()),
 		logger:    logger,
-		client:    client,
+		client:    carrier,
 		udpStream: options.UDPOverStream,
 	}
 	created.generation = runtimecoord.NewGenerationGate(

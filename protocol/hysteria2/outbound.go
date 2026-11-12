@@ -44,7 +44,9 @@ var (
 type Outbound struct {
 	outbound.Adapter
 	logger logger.ContextLogger
-	client *hysteria2.Client
+	// client is one or two family-restricted sing-quic clients (audit Q05). A single-family path
+	// behaves exactly as before; a dual-stack domain races the two families on the first creation.
+	client *familyCarrier
 	// generation closes the publish-to-listener window: a dial that arrives after the network
 	// manager advanced the epoch but before the listener closed the session closes it here first,
 	// so the demand cannot attach to a session built for the previous network.
@@ -91,6 +93,30 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	})
 	if err != nil {
 		return nil, err
+	}
+	// A dual-stack domain is the only shape where a second family can exist. A literal server has
+	// one address, and realm mode takes the address from the controller, so both keep the previous
+	// single-client behaviour exactly.
+	var familyDialers [2]N.Dialer
+	if options.ServerIsDomain() && options.Realm == nil {
+		for index, strategy := range []option.DomainStrategy{
+			option.DomainStrategy(C.DomainStrategyIPv4Only),
+			option.DomainStrategy(C.DomainStrategyIPv6Only),
+		} {
+			familyOptions := options.DialerOptions
+			familyOptions.DomainStrategy = strategy
+			familyDialer, familyErr := dialer.NewWithOptions(dialer.Options{
+				Context:        ctx,
+				Options:        familyOptions,
+				RemoteIsDomain: true,
+			})
+			if familyErr != nil {
+				logger.Warn("hysteria2: cannot build the ", strategy, " family dialer, single-family carrier kept: ", familyErr)
+				familyDialers = [2]N.Dialer{}
+				break
+			}
+			familyDialers[index] = familyDialer
+		}
 	}
 	var realmOptions *realm.Options
 	if options.Realm != nil {
@@ -201,45 +227,82 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			"). This path cannot carry a standard QUIC handshake; configure a larger tunnel MTU or ",
 			"reach this server without this detour")
 	}
-	client, err := hysteria2.NewClient(hysteria2.ClientOptions{
-		Context:            ctx,
-		Dialer:             outboundDialer,
-		Logger:             logger,
-		BrutalDebug:        options.BrutalDebug,
-		ServerAddress:      options.ServerOptions.Build(),
-		ServerPorts:        options.ServerPorts,
-		HopInterval:        time.Duration(options.HopInterval),
-		HopIntervalMax:     time.Duration(options.HopIntervalMax),
-		SendBPS:            uint64(options.UpMbps * hysteria.MbpsToBps),
-		ReceiveBPS:         uint64(options.DownMbps * hysteria.MbpsToBps),
-		SalamanderPassword: salamanderPassword,
-		GeckoPassword:      geckoPassword,
-		GeckoMinPacketSize: geckoMinPacketSize,
-		GeckoMaxPacketSize: geckoMaxPacketSize,
-		Password:           options.Password,
-		TLSConfig:          tlsConfig,
-		QUICOptions: qtls.QUICOptions{
-			IdleTimeout:              options.IdleTimeout.Build(),
-			KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
-			StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
-			ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
-			MaxConcurrentStreams:     options.MaxConcurrentStreams,
-			InitialPacketSize:        effectiveInitialPacketSize,
-			InitialPacketSizeCeiling: sizing.HardCeiling,
-			DisablePathMTUDiscovery:  sizing.DisablePMTUD,
-		},
-		UDPDisabled:  !common.Contains(networkList, N.NetworkUDP),
-		BBRProfile:   options.BBRProfile,
-		ChromeParrot: !options.DisableChromeParrot,
-		RealmOptions: realmOptions,
-	})
+	newClient := func(clientDialer N.Dialer) (*hysteria2.Client, error) {
+		return hysteria2.NewClient(hysteria2.ClientOptions{
+			Context:            ctx,
+			Dialer:             clientDialer,
+			Logger:             logger,
+			BrutalDebug:        options.BrutalDebug,
+			ServerAddress:      options.ServerOptions.Build(),
+			ServerPorts:        options.ServerPorts,
+			HopInterval:        time.Duration(options.HopInterval),
+			HopIntervalMax:     time.Duration(options.HopIntervalMax),
+			SendBPS:            uint64(options.UpMbps * hysteria.MbpsToBps),
+			ReceiveBPS:         uint64(options.DownMbps * hysteria.MbpsToBps),
+			SalamanderPassword: salamanderPassword,
+			GeckoPassword:      geckoPassword,
+			GeckoMinPacketSize: geckoMinPacketSize,
+			GeckoMaxPacketSize: geckoMaxPacketSize,
+			Password:           options.Password,
+			TLSConfig:          tlsConfig,
+			QUICOptions: qtls.QUICOptions{
+				IdleTimeout:              options.IdleTimeout.Build(),
+				KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
+				StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
+				ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
+				MaxConcurrentStreams:     options.MaxConcurrentStreams,
+				InitialPacketSize:        effectiveInitialPacketSize,
+				InitialPacketSizeCeiling: sizing.HardCeiling,
+				DisablePathMTUDiscovery:  sizing.DisablePMTUD,
+			},
+			UDPDisabled:  !common.Contains(networkList, N.NetworkUDP),
+			BBRProfile:   options.BBRProfile,
+			ChromeParrot: !options.DisableChromeParrot,
+			RealmOptions: realmOptions,
+		})
+	}
+	if familyDialers[0] != nil && familyDialers[1] != nil {
+		primary, primaryErr := newClient(familyDialers[0])
+		if primaryErr != nil {
+			return nil, primaryErr
+		}
+		secondary, secondaryErr := newClient(familyDialers[1])
+		if secondaryErr != nil {
+			_ = primary.CloseWithError(net.ErrClosed)
+			return nil, secondaryErr
+		}
+		carrier := newFamilyCarrier(func(family int) (*hysteria2.Client, error) {
+			return newClient(familyDialers[family-1])
+		})
+		carrier.clients[0] = primary
+		carrier.clients[1] = secondary
+		carrier.families = 2
+
+		created := &Outbound{
+			Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions, options.ServerIsDomain()),
+			logger:  logger,
+			client:  carrier,
+		}
+		created.generation = runtimecoord.NewGenerationGate(
+			service.FromContext[*runtimecoord.Coordinator](ctx),
+			"hysteria2/"+options.ServerOptions.Build().String(),
+			created.InterfaceUpdated,
+		)
+		return created, nil
+	}
+	client, err := newClient(outboundDialer)
 	if err != nil {
 		return nil, err
 	}
+	carrier := newFamilyCarrier(func(int) (*hysteria2.Client, error) {
+		return newClient(outboundDialer)
+	})
+	carrier.clients[0] = client
+	carrier.families = 1
 	created := &Outbound{
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions, options.ServerIsDomain()),
 		logger:  logger,
-		client:  client,
+		client:  carrier,
 	}
 	created.generation = runtimecoord.NewGenerationGate(
 		service.FromContext[*runtimecoord.Coordinator](ctx),
