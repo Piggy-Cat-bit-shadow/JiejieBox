@@ -338,6 +338,86 @@ func ReplayDialPath(ctx context.Context, steps []DialPathStep) {
 	}
 }
 
+// DialPathCarrier is implemented by a connection that carries the chain it was dialled on.
+//
+// # Why a connection carries it
+//
+// A pool that lives OUTSIDE the DNS transport's multiplexer - net/http's, quic-go's, the HTTPS
+// transport's own connection table - stores connections, not exchanges. When such a pool serves a
+// later query it never calls the dialer, so there is no dial to record against and the exchange
+// would report `reused-connection-untracked` even though the chain was known at establishment.
+// The chain therefore travels WITH the connection: whatever serves it can publish it.
+//
+// # Why it is an interface and not a wrapper
+//
+// Wrapping a net.Conn changes its dynamic type, and code that type-asserts a connection (a TLS
+// client asking for tls.Conn, a transport asking for syscall.Conn) would stop seeing it. A pool that
+// needs the association should keep it in its own table and expose this interface on the wrapper it
+// already has; nothing here wraps anything.
+type DialPathCarrier interface {
+	DialPathSteps() []DialPathStep
+}
+
+// ReplayDialPathFromConnection publishes the chain of a connection a pool is about to reuse, and
+// reports whether the connection carried one.
+//
+// A connection WITHOUT a chain still marks the exchange as served by a reused connection: it was
+// established before anything was recording, and leaving the record untouched would make the reason
+// `no-connection` - a claim that this exchange never had a connection, which is not true. What the
+// reason must say is `reused-connection-untracked`, and that is what marking it produces.
+func ReplayDialPathFromConnection(ctx context.Context, conn any) bool {
+	carrier, isCarrier := conn.(DialPathCarrier)
+	if !isCarrier {
+		return false
+	}
+	steps := carrier.DialPathSteps()
+	ReplayDialPath(ctx, steps)
+	return len(steps) > 0
+}
+
+// RecordDialPathStep records one object a dial entered when no GROUP chose it.
+//
+// It is the seam a detour occupies: an outbound whose own dialer declares `detour: warp` reaches the
+// network through warp, and until now that hop happened inside the outbound and was invisible to the
+// record - the projection said "the dial entered proxy" and stopped there. The object that owns the
+// dialer is the one that knows the hop, so it records it here.
+func RecordDialPathStep(ctx context.Context, outbound Outbound) {
+	path := DialPathFromContext(ctx)
+	if path == nil || outbound == nil {
+		return
+	}
+	path.RecordDetourHop(outbound.Tag())
+}
+
+// RecordDetourHop appends the object a dialer hands the dial to, unless that object is already the
+// last step.
+//
+// # Why the duplicate is dropped
+//
+// Two boundaries can legitimately name the same hop: the DNS transport's dialer opens the record and
+// names the detour it enters, and the detour's own dialer then hands the connection to the same
+// object. Those are not two hops, and reporting them as two would make a plain one-detour dial look
+// like a chain of two objects with the same name. A genuinely NESTED hop carries a different tag and
+// is appended.
+func (p *DialPath) RecordDetourHop(tag string) {
+	if p == nil || tag == "" {
+		return
+	}
+	p.access.Lock()
+	defer p.access.Unlock()
+	if count := len(p.steps); count > 0 {
+		last := p.steps[count-1]
+		if last.Group == "" && last.Tag == tag {
+			return
+		}
+	}
+	if len(p.steps) >= maxDialPathSteps {
+		p.truncated = true
+		return
+	}
+	p.steps = append(p.steps, DialPathStep{Tag: tag})
+}
+
 // RecordDialStep records one group's choice into the recorder carried by ctx, if any.
 //
 // It takes the group itself so the step carries the group's selection revision: the revision is a
