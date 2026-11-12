@@ -1,4 +1,4 @@
-﻿package transport
+package transport
 
 // The HTTPS DNS transport's pool is net/http's, not the query multiplexer's.
 //
