@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -89,6 +90,12 @@ type Client struct {
 	// packetup_upload_budget.go). budget is its pool; keeping the handle is what lets
 	// a Box prove two outbounds share ONE bound rather than two equal ones.
 	uploadBudget *UploadBudget
+	// The network generation this pool serves (audit Q12). A nil coordinator yields a nil
+	// registration and every check is a no-op, which is the previous behaviour for embedders.
+	// See generation.go: the hand-out compares the epoch and runs the pool's own reuse boundary.
+	coordinator        *runtimecoord.Coordinator
+	registration       *runtimecoord.Registration
+	removeRegistration func()
 }
 
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
@@ -276,10 +283,16 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			}
 		}
 	}
+	// The pool's ownership of the network generation (audit Q12). A nil coordinator - a unit test,
+	// an embedder - leaves the registration nil and the hand-out check a no-op.
+	client.coordinator = service.FromContext[*runtimecoord.Coordinator](ctx)
+	client.registration, client.removeRegistration = generationRegistration(
+		client.coordinator, "v2rayxhttp/"+serverAddr.String())
 	return client, nil
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
+	startGeneration := c.prepareGeneration()
 	sessionID := c.newSessionID()
 	// One pooled connection carries this whole dial: both halves of a split mode
 	// and every upload POST of packet-up. It is released once, when the conn
@@ -300,7 +313,37 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		release.release()
 		return nil, err
 	}
+	if c.currentGeneration() != startGeneration {
+		// The connection belongs to a generation that ended while the dial was running. Discard it
+		// rather than publish it: acknowledging would claim the pool is current on evidence from the
+		// old network. The conn's own release returns the pool slot, so nothing is leaked.
+		return c.settleCompletedGeneration(conn, startGeneration)
+	}
+	c.acknowledgeGeneration()
 	return conn, nil
+}
+
+// prepareGeneration answers the hand-out question before a dial: has the network moved since this
+// pool last served, and if so, run the pool's own reuse boundary.
+//
+// It is a named step rather than three lines inside DialContext so the rule can be driven directly by
+// a test at the same seam the production dial uses (see generation_test.go), without a fake HTTP
+// server standing in for the pool.
+func (c *Client) prepareGeneration() uint64 {
+	// The hand-out is where "this pool belongs to a previous network" must be answered: the listener
+	// phase has not run yet, so the pool generation would otherwise still be the one built on the
+	// path that just ended. The generation boundary here is the pool's OWN RetireSuspect.
+	if c.generationStale() {
+		c.retireGeneration()
+	}
+	return c.currentGeneration()
+}
+
+// settleCompletedGeneration discards a connection whose dial crossed a network change. The
+// connection is closed (its release returns the pool slot) and a retryable error is returned.
+func (c *Client) settleCompletedGeneration(conn net.Conn, startGeneration uint64) (net.Conn, error) {
+	_ = conn.Close()
+	return nil, staleGenerationError{}
 }
 
 func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmuxClient, release *xmuxRelease) (net.Conn, error) {
@@ -327,6 +370,11 @@ func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmu
 
 func (c *Client) Close() error {
 	c.xmux.Close()
+	// Unregister last: a torn-down pool must never be reached by a later generation sweep.
+	if c.removeRegistration != nil {
+		c.removeRegistration()
+		c.removeRegistration = nil
+	}
 	return nil
 }
 
@@ -383,11 +431,20 @@ func (c *Client) SetKeepIdleConnections(keep bool) {
 
 // ResidencyLedger implements adapter.ResidencyLedgerReporter (audit Q15).
 //
-// The resident objects are the XMUX pool's connections: Active while a stream is attached, Idle
-// while pooled and unused, Draining after RetireSuspect while the last stream finishes, and
+// The resident objects are the XMUX pool's connections, and the unit says so: it is a CONNECTION,
+// not a session and not a stream. A connection is Active while a stream is attached, Idle while
+// pooled and unused, Draining after the reuse boundary while its last stream finishes, and
 // Terminated once the underlying close actually ran (the pool's Released total). Creating is zero
 // because this pool creates a connection synchronously inside get(); there is no window in which an
 // allocated connection is neither pooled nor closed.
+//
+// # Across generations
+//
+// Generation is the pool's own reuse-boundary counter and RetiredGenerations is one when the
+// draining connections were opened before it: that is the cross-generation account the audit asks
+// for, and it is why Draining is not subtracted from Live() at the boundary. Close() empties the pool
+// without starting a generation, which is why the inventory can tell pre-change connections from the
+// ones opened after the change (see RetireSuspect).
 //
 // The HTTP/2 library's own idle-connection cache is a DIFFERENT owner and is not visible here. That
 // limit is stated in the Note rather than hidden, and it is the same boundary xmuxPoolStats
@@ -400,15 +457,23 @@ func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 		}
 	}
 	stats := c.xmux.stats()
+	retiredGenerations := 0
+	if stats.DrainingOldGeneration > 0 {
+		retiredGenerations = 1
+	}
 	return adapter.ResidencyLedger{
-		Active:     uint64(stats.Active),
-		Idle:       uint64(stats.Idle),
-		Draining:   uint64(stats.Draining),
-		Terminated: stats.Released,
-		Exact:      true,
-		Answered:   true,
-		Note: "XMUX pooled connections of this transport; the HTTP/2 library's internal " +
-			"idle-connection cache is a different owner and is not counted",
+		Unit:               adapter.ResidencyUnitConnection,
+		Active:             uint64(stats.Active),
+		Idle:               uint64(stats.Idle),
+		Draining:           uint64(stats.Draining),
+		Generation:         stats.Generation,
+		RetiredGenerations: retiredGenerations,
+		Terminated:         stats.Released,
+		Exact:              true,
+		Answered:           true,
+		Note: "XMUX pooled connections of this transport (unit=connection); Generation is the pool's " +
+			"reuse boundary and RetiredGenerations is set when draining connections predate it; the " +
+			"HTTP/2 library's internal idle-connection cache is a different owner and is not counted",
 	}
 }
 

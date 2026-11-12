@@ -52,6 +52,7 @@ func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 	c.access.Unlock()
 
 	var ledger adapter.ResidencyLedger
+	ledger.Unit = adapter.ResidencyUnitSession
 	if pending {
 		ledger.Creating = 1
 	}
@@ -68,7 +69,8 @@ func (c *Client) ResidencyLedger() adapter.ResidencyLedger {
 	ledger.Terminated = c.residency.terminated.Load()
 	ledger.Exact = true
 	ledger.Answered = true
-	ledger.Note = "client sessions of this transport; streams are the Active/Idle distinction " +
-		"inside one session, not separate objects"
+	ledger.Note = "client sessions of this transport (unit=session); streams are the Active/Idle " +
+		"distinction inside one session, not separate objects; a retired session is Draining until " +
+		"its last stream ends and only then counted in Terminated"
 	return ledger
 }
