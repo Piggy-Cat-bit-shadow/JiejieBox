@@ -24,6 +24,13 @@ import (
 // it can match (ConfigRequirement). What is NEVER claimed here is the runtime side: no component is
 // constructed, no DNS client is built, no provider is fetched, and Checks.RuntimeChecked stays
 // false.
+//
+// The document's own graph is projected too: Objects names every declared object (kind, tag, type),
+// References lists every reference the option schema declares between them with the document path it
+// sits at, and Capabilities lists the types this build's registries can construct. Those three
+// answer "what does this profile consist of and point at" without constructing any of it; see
+// analysis_objects.go for the states a reference can have and for why capabilities come from the
+// registry rather than from a table here.
 type ConfigAnalysis struct {
 	Parsed    bool   `json:"parsed"`
 	Platform  string `json:"platform"`
@@ -48,15 +55,30 @@ type ConfigAnalysis struct {
 	Requirements []ConfigRequirement `json:"requirements,omitempty"`
 	// PendingProviders are remote providers whose nodes do not exist until they are fetched.
 	PendingProviders []ConfigPendingProvider `json:"pendingProviders,omitempty"`
-	Inbounds         int                     `json:"inbounds"`
-	Outbounds        int                     `json:"outbounds"`
-	Endpoints        int                     `json:"endpoints"`
-	Services         int                     `json:"services"`
-	Providers        int                     `json:"providers"`
-	RouteRules       int                     `json:"routeRules"`
-	RuleSets         int                     `json:"ruleSets"`
-	DNSRules         int                     `json:"dnsRules"`
-	DNSServers       int                     `json:"dnsServers"`
+	// Objects are the objects the document DECLARES: kind, tag and type. They are the names a
+	// reference can use, and the identity a client needs to render the graph.
+	Objects []ConfigObject `json:"objects,omitempty"`
+	// References are the references the option schema declares between those objects, with the
+	// document path each one sits at and whether the document resolves it. See
+	// analysis_objects.go for what the four states mean.
+	References []ConfigReference `json:"references,omitempty"`
+	// ReferencesTruncated reports that the document holds more references than one analysis
+	// carries. It is stated rather than silent: a partial list read as complete would describe a
+	// broken graph.
+	ReferencesTruncated bool `json:"referencesTruncated,omitempty"`
+	// Capabilities are the types THIS BUILD's registries can construct, per namespace. They are
+	// build facts, not document facts, and they are what makes "this profile needs a type this
+	// binary does not have" answerable without starting a Box.
+	Capabilities []ConfigCapability `json:"capabilities,omitempty"`
+	Inbounds     int                `json:"inbounds"`
+	Outbounds    int                `json:"outbounds"`
+	Endpoints    int                `json:"endpoints"`
+	Services     int                `json:"services"`
+	Providers    int                `json:"providers"`
+	RouteRules   int                `json:"routeRules"`
+	RuleSets     int                `json:"ruleSets"`
+	DNSRules     int                `json:"dnsRules"`
+	DNSServers   int                `json:"dnsServers"`
 	// FindProcess and AutoDetectInterface are configuration intents, not a claim that the platform
 	// granted the capability.
 	FindProcess         bool `json:"findProcess"`
@@ -96,6 +118,12 @@ func AnalyzeConfig(configContent string) (*StringBox, error) {
 		Providers:      len(options.Providers),
 	}
 	analysis.Findings, analysis.PendingProviders = analyseDeclarations(&options)
+	graph := analyseObjectGraph(ctx, &options)
+	analysis.Findings = append(analysis.Findings, graph.Findings...)
+	analysis.Objects = graph.Objects
+	analysis.References = graph.References
+	analysis.ReferencesTruncated = graph.Truncated
+	analysis.Capabilities = graph.Capabilities
 	analysis.Defaults, analysis.Requirements = analyseEffective(&options)
 	analysis.Checks = ConfigChecks{Parsed: true, DeclarationsChecked: true}
 	if options.Route != nil {

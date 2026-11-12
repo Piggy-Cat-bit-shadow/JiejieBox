@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/sagernet/quic-go"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/badhttp"
 	"github.com/sagernet/sing-box/common/httpclient"
 	"github.com/sagernet/sing-box/common/tls"
@@ -592,6 +593,42 @@ func (c *Client) clearHTTP3Broken(attempt uint64) {
 }
 
 func (c *Client) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	started := time.Now()
+	conn, err := c.dialContext(ctx, network, destination)
+	// The HTTP tunnel is a protocol-depth stage of a diagnostic dial: a proxy that ANSWERED the
+	// CONNECT and said no is a different fact from a tunnel that never got a reply, and the peer
+	// answer is a typed error here (`peerResponded`), not something parsed back out of a message.
+	adapter.RecordDiagnoseStage(ctx, httpTunnelStage(started, err))
+	return conn, err
+}
+
+// httpTunnelStage renders one CONNECT attempt, whichever HTTP version carried it.
+func httpTunnelStage(started time.Time, err error) adapter.DiagnoseStage {
+	stage := adapter.DiagnoseStage{
+		Stage:      adapter.DiagnoseStageHTTP,
+		Status:     adapter.DiagnoseStageStatusOK,
+		Code:       adapter.DiagnoseCodeHTTPTunnelOK,
+		Detail:     "the proxy accepted the tunnel",
+		DurationMs: adapter.DiagnoseStageDuration(started),
+	}
+	if err == nil {
+		return stage
+	}
+	stage.Status = adapter.DiagnoseStageStatusFailed
+	stage.Detail = err.Error()
+	switch {
+	case peerResponded(err):
+		// The proxy answered. Its answer was "no", and the error carries which refusal it was.
+		stage.Code = adapter.DiagnoseCodeHTTPTunnelRefused
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		stage.Code = adapter.DiagnoseCodeHTTPTunnelCancelled
+	default:
+		stage.Code = adapter.DiagnoseCodeHTTPTunnelFailed
+	}
+	return stage
+}
+
+func (c *Client) dialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if c.closed.Load() {
 		return nil, net.ErrClosed
 	}

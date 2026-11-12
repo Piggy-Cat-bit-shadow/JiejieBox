@@ -19,7 +19,6 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	aTLS "github.com/sagernet/sing/common/tls"
 )
 
 var errMissingServerName = E.New("missing server_name or insecure=true")
@@ -112,7 +111,7 @@ func NewClientWithOptions(options ClientOptions) (Config, error) {
 }
 
 func ClientHandshake(ctx context.Context, conn net.Conn, config Config) (Conn, error) {
-	tlsConn, err := aTLS.ClientHandshake(ctx, conn, config)
+	tlsConn, err := clientHandshakeWithDiagnostic(ctx, conn, config)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +237,7 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	if err != nil {
 		return nil, err
 	}
-	tlsConn, err := aTLS.ClientHandshake(ctx, conn, d.config)
+	tlsConn, err := clientHandshakeWithDiagnostic(ctx, conn, d.config)
 	if err != nil {
 		if !isHandedOff(err) {
 			conn.Close()

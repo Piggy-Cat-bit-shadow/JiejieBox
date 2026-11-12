@@ -92,7 +92,18 @@ func (d *DetourDialer) DialContext(ctx context.Context, network string, destinat
 	if err != nil {
 		return nil, err
 	}
+	// This hop is the object the outbound's own dialer goes through, and it happens INSIDE the
+	// outbound's dial - beyond the boundary the DNS transport records. Without this the projection
+	// stopped at the outbound and never named the object that actually carried the connection.
+	recordDetourHop(ctx, dialer)
 	return dialer.DialContext(ctx, network, destination)
+}
+
+// recordDetourHop names the object this dialer hands the dial to, when a recorder is installed.
+func recordDetourHop(ctx context.Context, dialer N.Dialer) {
+	if detoured, isOutbound := dialer.(adapter.Outbound); isOutbound {
+		adapter.RecordDialPathStep(ctx, detoured)
+	}
 }
 
 func (d *DetourDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -100,6 +111,7 @@ func (d *DetourDialer) ListenPacket(ctx context.Context, destination M.Socksaddr
 	if err != nil {
 		return nil, err
 	}
+	recordDetourHop(ctx, dialer)
 	return dialer.ListenPacket(ctx, destination)
 }
 

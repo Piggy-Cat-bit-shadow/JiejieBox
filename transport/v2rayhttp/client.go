@@ -123,6 +123,16 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
+	started := time.Now()
+	conn, err := c.dialContext(ctx)
+	// A diagnostic asks what this layer did; an unobserved dial pays one context lookup.
+	adapter.RecordDiagnoseStage(ctx, adapter.DiagnoseStreamStage("v2ray http", started, err))
+	return conn, err
+}
+
+// dialContext is the transport half: the pool hand-out the generation checks live in. DialContext
+// wraps it with the diagnostic stage so the two concerns stay one line apart.
+func (c *Client) dialContext(ctx context.Context) (net.Conn, error) {
 	var (
 		conn net.Conn
 		err  error

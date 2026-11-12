@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/x/list"
 
 	"golang.org/x/sync/semaphore"
@@ -52,6 +53,15 @@ type ConnPool[T comparable] struct {
 	// Release, and a caller that forgot to check would silently keep a socket the transport had
 	// asked to stop keeping. Defaults to true, matching the historical behaviour.
 	keepIdle atomic.Bool
+
+	// dialPaths is the attribution of the connections this pool holds: the chain each one was
+	// dialled on, recorded at establishment and published again whenever the connection is REUSED.
+	//
+	// It is guarded by access, like the state maps, and pruned wherever a connection leaves the pool
+	// (removeConn, the idle eviction paths, Reset/Close), so an entry cannot outlive its connection.
+	// A connection dialled with no recorder installed has no entry: that is the honest
+	// "reused-connection-untracked", and it must not be turned into an empty path.
+	dialPaths map[T][]adapter.DialPathStep
 }
 
 type connPoolState[T comparable] struct {
@@ -110,16 +120,76 @@ func newConnPoolState[T comparable](mode ConnPoolMode) *connPoolState[T] {
 }
 
 func (p *ConnPool[T]) Acquire(ctx context.Context, dial func(context.Context) (T, error)) (T, bool, error) {
+	tracked, wasDialed := p.trackingDial(dial)
 	switch p.options.Mode {
 	case ConnPoolSingle:
-		conn, _, created, err := p.acquireShared(ctx, dial)
+		conn, _, created, err := p.acquireShared(ctx, tracked)
+		p.replayOnReuse(ctx, conn, err, wasDialed)
 		return conn, created, err
 	case ConnPoolOrdered:
-		return p.acquireOrdered(ctx, dial)
+		conn, created, err := p.acquireOrdered(ctx, tracked)
+		p.replayOnReuse(ctx, conn, err, wasDialed)
+		return conn, created, err
 	default:
 		var zero T
 		return zero, false, net.ErrClosed
 	}
+}
+
+// trackingDial wraps a dial function so this pool can tell, for one Acquire, whether a NEW connection
+// was established or an existing one was handed over - and, when it was established, record the
+// chain the dial actually took.
+//
+// The bool is read after the pool returns, so no assumption is made about how each pool mode reports
+// "created": what matters is whether the dial ran at all.
+func (p *ConnPool[T]) trackingDial(dial func(context.Context) (T, error)) (func(context.Context) (T, error), *atomic.Bool) {
+	var wasDialed atomic.Bool
+	return func(dialCtx context.Context) (T, error) {
+		wasDialed.Store(true)
+		conn, err := dial(dialCtx)
+		if err == nil {
+			p.rememberDialPath(conn, dialCtx)
+		}
+		return conn, err
+	}, &wasDialed
+}
+
+// rememberDialPath stores the chain a connection was established on.
+func (p *ConnPool[T]) rememberDialPath(conn T, dialCtx context.Context) {
+	steps := adapter.DialPathFromContext(dialCtx).Snapshot()
+	if len(steps) == 0 {
+		return
+	}
+	p.access.Lock()
+	if !p.closed {
+		if p.dialPaths == nil {
+			p.dialPaths = make(map[T][]adapter.DialPathStep)
+		}
+		p.dialPaths[conn] = steps
+	}
+	p.access.Unlock()
+}
+
+// replayOnReuse publishes a reused connection's chain into the exchange that asked for it.
+//
+// The reuse is published even when the connection carries no chain: the exchange was served by a
+// connection it did not dial, and leaving the record untouched would make the reason say
+// `no-connection` - which claims this exchange never had one. Marking it keeps the honest answer,
+// `reused-connection-untracked`, for a socket established before anything was recording.
+func (p *ConnPool[T]) replayOnReuse(ctx context.Context, conn T, err error, wasDialed *atomic.Bool) {
+	if err != nil || wasDialed.Load() {
+		return
+	}
+	p.access.Lock()
+	steps := p.dialPaths[conn]
+	p.access.Unlock()
+	adapter.ReplayDialPath(ctx, steps)
+}
+
+// forgetDialPath drops the attribution of a connection that is leaving the pool. The caller holds
+// access.
+func (p *ConnPool[T]) forgetDialPath(conn T) {
+	delete(p.dialPaths, conn)
 }
 
 func (p *ConnPool[T]) AcquireShared(ctx context.Context, dial func(context.Context) (T, error)) (T, context.Context, bool, error) {
@@ -127,7 +197,10 @@ func (p *ConnPool[T]) AcquireShared(ctx context.Context, dial func(context.Conte
 		var zero T
 		return zero, nil, false, net.ErrClosed
 	}
-	return p.acquireShared(ctx, dial)
+	tracked, wasDialed := p.trackingDial(dial)
+	conn, sharedCtx, created, err := p.acquireShared(ctx, tracked)
+	p.replayOnReuse(ctx, conn, err, wasDialed)
+	return conn, sharedCtx, created, err
 }
 
 func (p *ConnPool[T]) Release(conn T, reuse bool) {
@@ -171,6 +244,7 @@ func (p *ConnPool[T]) Release(conn T, reuse bool) {
 			evicted := state.idle.Remove(oldest)
 			delete(state.idleElements, evicted)
 			delete(state.all, evicted)
+			p.forgetDialPath(evicted)
 			go p.options.Close(evicted, net.ErrClosed)
 		}
 	}
@@ -205,7 +279,12 @@ func (p *ConnPool[T]) AcquireFresh(ctx context.Context, dial func(context.Contex
 
 	// Dialed outside the lock so a slow dial does not block other queries, then re-checked: if
 	// Close ran while dialling, the new connection is closed here rather than being leaked.
-	conn, err := dial(ctx)
+	//
+	// The chain is remembered even though a fresh connection is never REUSED by this pool: the caller
+	// owns this socket and may publish it (a retry that replaces a stale pooled connection still
+	// travelled a path).
+	tracked, _ := p.trackingDial(dial)
+	conn, err := tracked(ctx)
 	if err != nil {
 		return conn, err
 	}
@@ -277,6 +356,7 @@ func (p *ConnPool[T]) releaseSlot() {
 // removeConn must be called with p.access held.
 func (p *ConnPool[T]) removeConn(state *connPoolState[T], conn T, cause error) {
 	delete(state.all, conn)
+	p.forgetDialPath(conn)
 	switch p.options.Mode {
 	case ConnPoolSingle:
 		if state.hasShared && state.shared == conn {
@@ -350,6 +430,7 @@ func (p *ConnPool[T]) CloseIdle() {
 				break
 			}
 			delete(state.all, conn)
+			p.forgetDialPath(conn)
 			idle = append(idle, conn)
 		}
 		p.access.Unlock()
@@ -387,6 +468,8 @@ func (p *ConnPool[T]) Reset() {
 	}
 	oldState := p.state
 	p.state = newConnPoolState[T](p.options.Mode)
+	// Every connection of the old state is closed below, so their attributions go with them.
+	p.dialPaths = nil
 	p.access.Unlock()
 
 	p.closeState(oldState, net.ErrClosed)
@@ -401,6 +484,7 @@ func (p *ConnPool[T]) Close() error {
 	p.closed = true
 	oldState := p.state
 	p.state = nil
+	p.dialPaths = nil
 	p.access.Unlock()
 
 	p.closeState(oldState, net.ErrClosed)
