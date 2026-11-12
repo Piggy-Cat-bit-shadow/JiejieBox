@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -44,6 +45,10 @@ type Outbound struct {
 	outbound.Adapter
 	logger logger.ContextLogger
 	client *hysteria2.Client
+	// generation closes the publish-to-listener window: a dial that arrives after the network
+	// manager advanced the epoch but before the listener closed the session closes it here first,
+	// so the demand cannot attach to a session built for the previous network.
+	generation *runtimecoord.GenerationGate
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
@@ -231,11 +236,17 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	return &Outbound{
+	created := &Outbound{
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions, options.ServerIsDomain()),
 		logger:  logger,
 		client:  client,
-	}, nil
+	}
+	created.generation = runtimecoord.NewGenerationGate(
+		service.FromContext[*runtimecoord.Coordinator](ctx),
+		"hysteria2/"+options.ServerOptions.Build().String(),
+		created.InterfaceUpdated,
+	)
+	return created, nil
 }
 
 // quicPathSizing is the one place that decides the two sizing facts a connection is given, kept
@@ -300,12 +311,23 @@ func outboundTLSOptions(options option.Hysteria2OutboundOptions) (string, option
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if h.generation != nil {
+		h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.dialContext(ctx, network, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) dialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
 		return h.client.DialConn(ctx, destination)
 	case N.NetworkUDP:
-		conn, err := h.ListenPacket(ctx, destination)
+		conn, err := h.listenPacket(ctx, destination)
 		if err != nil {
 			return nil, err
 		}
@@ -316,6 +338,17 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if h.generation != nil {
+		h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.listenPacket(ctx, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) listenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	return h.client.ListenPacket(ctx)
 }
@@ -341,6 +374,7 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return nil
 	}
 	scope.Add(func() error {
+		h.generation.Close()
 		return h.client.CloseWithError(os.ErrClosed)
 	})
 	return nil

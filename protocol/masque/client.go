@@ -16,6 +16,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/iponly"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -107,6 +108,10 @@ type ClientEndpoint struct {
 	stateAccess     sync.Mutex
 	deviceStarted   bool
 	state           atomic.Pointer[clientState]
+	// generation closes the publish-to-listener window: a dial that arrives after the network
+	// manager advanced the epoch but before the listener restarted the session restarts it here
+	// first, so the demand cannot ride a tunnel built for the previous network.
+	generation *runtimecoord.GenerationGate
 }
 
 type clientState struct {
@@ -316,6 +321,11 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 		httpClient.Close()
 		return nil, err
 	}
+	clientEndpoint.generation = runtimecoord.NewGenerationGate(
+		service.FromContext[*runtimecoord.Coordinator](ctx),
+		"masque/"+options.ServerOptions.Build().String(),
+		clientEndpoint.InterfaceUpdated,
+	)
 	return clientEndpoint, nil
 }
 
@@ -326,6 +336,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 // and discards, and a constructor that succeeded while the start order never reached PostStart -
 // so a failed create cannot leave a transport, its idle connections and its goroutines behind.
 func (c *ClientEndpoint) Close() error {
+	c.generation.Close()
 	if c.client != nil {
 		return c.client.Close()
 	}
@@ -740,6 +751,17 @@ func (c *ClientEndpoint) NewPacketConnectionEx(ctx context.Context, conn N.Packe
 }
 
 func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if c.generation != nil {
+		c.generation.BeforeDial(ctx)
+	}
+	conn, err := c.dialContext(ctx, network, destination)
+	if c.generation != nil {
+		c.generation.AfterDial(err)
+	}
+	return conn, err
+}
+
+func (c *ClientEndpoint) dialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	switch network {
 	case N.NetworkTCP:
 		c.logger.InfoContext(ctx, "outbound connection to ", destination)
@@ -951,6 +973,17 @@ func preferIPv6(strategy C.DomainStrategy, addresses []netip.Addr) bool {
 const DefaultInnerFallbackDelay = N.DefaultFallbackDelay
 
 func (c *ClientEndpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
+	if c.generation != nil {
+		c.generation.BeforeDial(ctx)
+	}
+	conn, address, err := c.listenPacketWithDestination(ctx, destination)
+	if c.generation != nil {
+		c.generation.AfterDial(err)
+	}
+	return conn, address, err
+}
+
+func (c *ClientEndpoint) listenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	c.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	err := c.waitReady(ctx)
 	if err != nil {

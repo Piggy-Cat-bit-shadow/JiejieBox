@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/resourceguard"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/trafficclass"
 	C "github.com/sagernet/sing-box/constant"
@@ -45,6 +46,10 @@ type Outbound struct {
 	client       *trusttunnel.Client
 	dnsRouter    adapter.DNSRouter
 	queryOptions adapter.DNSQueryOptions
+	// generation closes the publish-to-listener window: a dial that arrives after the network
+	// manager advanced the epoch but before the listener retired the session retires it here
+	// first, so the demand opens a fresh session instead of borrowing the previous network's.
+	generation *runtimecoord.GenerationGate
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TrustTunnelOutboundOptions) (adapter.Outbound, error) {
@@ -132,13 +137,19 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		// flow, and it never dials.
 		guard.RegisterShed(client.CloseIdleConnections)
 	}
-	return &Outbound{
+	created := &Outbound{
 		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeTrustTunnel, tag, networkList, options.DialerOptions),
 		logger:       logger,
 		client:       client,
 		dnsRouter:    service.FromContext[adapter.DNSRouter](ctx),
 		queryOptions: queryOptions,
-	}, nil
+	}
+	created.generation = runtimecoord.NewGenerationGate(
+		service.FromContext[*runtimecoord.Coordinator](ctx),
+		"trusttunnel/"+options.ServerOptions.Build().String(),
+		created.InterfaceUpdated,
+	)
+	return created, nil
 }
 
 // admitSession bounds one TrustTunnel session creation with the process
@@ -216,12 +227,23 @@ func udpQueryOptions(ctx context.Context, options option.DialerOptions) (adapter
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if h.generation != nil {
+		h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.dialContext(ctx, network, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) dialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
 		return h.client.DialContext(ctx, destination) // lx: SPEC 139 — session and auth stages
 	case N.NetworkUDP:
-		conn, err := h.ListenPacket(ctx, destination)
+		conn, err := h.listenPacket(ctx, destination)
 		if err != nil {
 			return nil, err
 		}
@@ -234,6 +256,17 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 // ListenPacket opens a _udp2 stream. Frames carry IP addresses only, so a
 // domain destination is resolved here and mapped back on the way in.
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if h.generation != nil {
+		h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.listenPacket(ctx, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) listenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	var resolved netip.Addr
 	if destination.IsDomain() {
@@ -294,5 +327,6 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (h *Outbound) Close() error {
+	h.generation.Close()
 	return h.client.Close()
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -20,6 +21,7 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -42,6 +44,10 @@ type Outbound struct {
 	tlsConfig       tls.Config
 	tlsDialer       tls.Dialer
 	transport       adapter.V2RayClientTransport
+	// generation closes the publish-to-listener window: a dial that arrives after the network
+	// manager advanced the epoch but before the listener reset the transport runs the same reset
+	// here, before the transport can lend a connection built for the previous network.
+	generation *runtimecoord.GenerationGate
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TrojanOutboundOptions) (adapter.Outbound, error) {
@@ -87,10 +93,26 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
+	outbound.generation = runtimecoord.NewGenerationGate(
+		service.FromContext[*runtimecoord.Coordinator](ctx),
+		"trojan/"+outbound.serverAddr.String(),
+		outbound.InterfaceUpdated,
+	)
 	return outbound, nil
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if h.generation != nil {
+		h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.dialContext(ctx, network, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) dialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if h.multiplexDialer == nil {
 		switch N.NetworkName(network) {
 		case N.NetworkTCP:
@@ -111,6 +133,17 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if h.generation != nil {
+		h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.listenPacket(ctx, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) listenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if h.multiplexDialer == nil {
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 		return (*trojanDialer)(h).ListenPacket(ctx, destination)
@@ -179,6 +212,12 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	}
 	if h.multiplexDialer != nil {
 		scope.Add(h.multiplexDialer.Close)
+	}
+	if h.generation != nil {
+		scope.Add(func() error {
+			h.generation.Close()
+			return nil
+		})
 	}
 	return nil
 }
