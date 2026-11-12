@@ -254,21 +254,6 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		// go. The report says which semantics ran so a reader cannot confuse the two.
 		report.Routing = connectionTestRoutingRule
 	}
-	// The admission is checked FIRST, before any model read or dial: a refused run must cost the
-	// running ones nothing. It is reported as a stage, not as a silent no-op - a caller that sees
-	// nothing happen taps again, which is the behaviour the bound exists to stop.
-	if !acquireConnectionTestSlot() {
-		report.Outcome = connectionTestOutcomeFailed
-		report.Stages = append(report.Stages, connectionTestStage{
-			ID:     connectionTestStagePath,
-			Status: connectionTestStageFailed,
-			Detail: "another diagnostic is still running: at most " + strconv.Itoa(connectionTestMaxConcurrent) +
-				" active tests may run at once, and this one did not start",
-		})
-		report.TotalMs = time.Since(started).Milliseconds()
-		return report
-	}
-	defer releaseConnectionTestSlot()
 	// This diagnostic is a TCP connect through an outbound. A UDP/ICMP request cannot be expressed
 	// by it, and pretending otherwise would produce a green report for something it never did.
 	if network != "" && network != N.NetworkTCP {
@@ -287,6 +272,10 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	// Close finalises the stream on EVERY return path, and the snapshot is attached to the
 	// report: a caller that never subscribed still gets the narrative, and a subscriber that
 	// did is guaranteed an end.
+	//
+	// pathStageRead is what keeps the "reused" finding honest: it is a claim about the PASSIVE
+	// stage, and a run refused before reading the model must not make it.
+	pathStageRead := false
 	defer func() {
 		// The stage facts are emitted from the settled report: every return path has already
 		// recorded what ran, what was skipped and why, so the narrative cannot disagree with the
@@ -301,13 +290,33 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 				Elapsed: stage.DurationMs,
 			})
 		}
-		emitter.Publish(connectionTestEvent{Kind: eventFinding, Outcome: outcomeReused, Detail: "passive status reused for the path stage", Elapsed: time.Since(started).Milliseconds()})
+		if pathStageRead {
+			emitter.Publish(connectionTestEvent{Kind: eventFinding, Outcome: outcomeReused, Detail: "passive status reused for the path stage", Elapsed: time.Since(started).Milliseconds()})
+		}
 		emitter.Close(time.Since(started))
 		for _, event := range emitter.Snapshot() {
 			report.Events = append(report.Events, renderEvent(event))
 		}
 	}()
 	emitter.Publish(connectionTestEvent{Kind: eventBegin, Name: "connection test", Detail: root + " " + network + " " + target, Outcome: outcomeRunning})
+
+	// The admission is taken AFTER the stream is set up and the run is announced, and BEFORE any
+	// model read or dial: a refused run costs the running ones nothing, and the subscriber gets a
+	// begun-and-ended stream instead of a channel that never closes. The refusal is a reported
+	// stage, not a silent no-op - a caller that sees nothing happen taps again, which is exactly the
+	// behaviour the bound exists to stop.
+	if !acquireConnectionTestSlot() {
+		report.Outcome = connectionTestOutcomeFailed
+		report.Stages = append(report.Stages, connectionTestStage{
+			ID:     connectionTestStagePath,
+			Status: connectionTestStageFailed,
+			Detail: "another diagnostic is still running: at most " + strconv.Itoa(connectionTestMaxConcurrent) +
+				" active tests may run at once, and this one did not start",
+		})
+		report.TotalMs = time.Since(started).Milliseconds()
+		return report
+	}
+	defer releaseConnectionTestSlot()
 
 	budgetCtx, cancelBudget := context.WithTimeout(ctx, connectionTestTotalTimeout)
 	defer cancelBudget()
@@ -317,6 +326,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	// than an error string.
 	stageStarted := time.Now()
 	status := path.Status(root, network)
+	pathStageRead = true
 	pathStage := connectionTestStage{
 		ID:         connectionTestStagePath,
 		Status:     connectionTestStageOK,

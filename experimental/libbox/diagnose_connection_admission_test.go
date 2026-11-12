@@ -37,6 +37,38 @@ func (p *blockingDiagnosePath) Status(root string, network string) physicalpath.
 	return p.fakeConnectionTestPath.status
 }
 
+// TestARefusedDiagnosticClosesTheSubscriberStream: the streaming entry hands the runner an emitter
+// whose consumer waits for Finished(). A refusal that returned before closing it would leave that
+// consumer (and the goroutine draining it) waiting forever for a test that never started.
+func TestARefusedDiagnosticClosesTheSubscriberStream(t *testing.T) {
+	for index := 0; index < connectionTestMaxConcurrent; index++ {
+		require.True(t, acquireConnectionTestSlot())
+	}
+	t.Cleanup(func() {
+		for index := 0; index < connectionTestMaxConcurrent; index++ {
+			releaseConnectionTestSlot()
+		}
+	})
+
+	emitter := newConnectionTestEmitter(defaultEmitterBounds(), time.Now())
+	report := runConnectionTestWithEmitter(context.Background(), newConnectionTestPath("node-a", nil), "proxy", "tcp", "https://example.com", emitter)
+	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
+
+	select {
+	case <-emitter.Finished():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a refused diagnostic left the subscriber stream open")
+	}
+
+	require.NotEmpty(t, report.Events)
+	require.Contains(t, report.Events[0], "begin", "a refused run is still announced before it ends")
+	require.Contains(t, report.Events[len(report.Events)-1], "end")
+	for _, event := range report.Events {
+		require.NotContains(t, event, "reused",
+			"the passive model was never read, so no 'reused' finding may claim it was")
+	}
+}
+
 func TestActiveDiagnosticsHaveAHardConcurrencyBound(t *testing.T) {
 	member := &fakeConnectionOutbound{
 		tag: "node-a",
