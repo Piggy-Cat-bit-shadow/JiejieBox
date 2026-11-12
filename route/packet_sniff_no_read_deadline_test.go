@@ -83,18 +83,21 @@ func (c *unboundedPacketConn) SetReadDeadline(time.Time) error            { retu
 func (c *unboundedPacketConn) SetWriteDeadline(time.Time) error           { return os.ErrInvalid }
 func (c *unboundedPacketConn) NeedAdditionalReadDeadline() bool           { return true }
 
-// TestFragmentedPacketSniffDoesNotWaitOnATransportWithoutAReadDeadline is the
-// regression: the staged datagram is replayed, no unbounded read is started, and
-// the call returns without waiting for the flow to die.
-func TestFragmentedPacketSniffDoesNotWaitOnATransportWithoutAReadDeadline(t *testing.T) {
-	previousDefaults := defaultPacketSniffers
-	defaultPacketSniffers = []sniff.PacketSniffer{
+// fragmentedSniffers is the sniffer set these tests configure ON THE ACTION, so
+// they never mutate the package-level default: route has t.Parallel tests, and a
+// global swapped from one test is a race with them, not a fixture.
+func fragmentedSniffers() []sniff.PacketSniffer {
+	return []sniff.PacketSniffer{
 		func(context.Context, *adapter.InboundContext, []byte) error {
 			return sniff.ErrNeedMoreData
 		},
 	}
-	defer func() { defaultPacketSniffers = previousDefaults }()
+}
 
+// TestFragmentedPacketSniffDoesNotWaitOnATransportWithoutAReadDeadline is the
+// regression: the staged datagram is replayed, no unbounded read is started, and
+// the call returns without waiting for the flow to die.
+func TestFragmentedPacketSniffDoesNotWaitOnATransportWithoutAReadDeadline(t *testing.T) {
 	recorder := newSniffLogRecorder()
 	router := &Router{logger: recorder}
 	firstDatagram := []byte("a-fragment-that-needs-the-rest")
@@ -114,7 +117,7 @@ func TestFragmentedPacketSniffDoesNotWaitOnATransportWithoutAReadDeadline(t *tes
 	// No FakeIP domain and no sniffed domain: this is the plain unknown flow, so
 	// the sniff really wants more datagrams and reaches the read loop.
 	metadata := adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("203.0.113.9", 443)}
-	action := &rule.RuleActionSniff{}
+	action := &rule.RuleActionSniff{PacketSniffers: fragmentedSniffers()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -156,14 +159,6 @@ func TestFragmentedPacketSniffDoesNotWaitOnATransportWithoutAReadDeadline(t *tes
 // exists (its own deadline, or the caller's). The root router must not stop
 // sniffing every transport as a side effect of the guard.
 func TestBoundedPacketSniffStillReadsWhenTheTransportSupportsADeadline(t *testing.T) {
-	previousDefaults := defaultPacketSniffers
-	defaultPacketSniffers = []sniff.PacketSniffer{
-		func(context.Context, *adapter.InboundContext, []byte) error {
-			return sniff.ErrNeedMoreData
-		},
-	}
-	defer func() { defaultPacketSniffers = previousDefaults }()
-
 	router := &Router{logger: newSniffLogRecorder()}
 	firstDatagram := buf.NewPacket()
 	_, err := firstDatagram.Write([]byte("first"))
@@ -180,7 +175,7 @@ func TestBoundedPacketSniffStillReadsWhenTheTransportSupportsADeadline(t *testin
 	metadata := adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("203.0.113.9", 443)}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, packetBuffers, err := router.actionSniff(ctx, &metadata, &rule.RuleActionSniff{}, nil, conn, nil, []*N.PacketBuffer{staged})
+	_, packetBuffers, err := router.actionSniff(ctx, &metadata, &rule.RuleActionSniff{PacketSniffers: fragmentedSniffers()}, nil, conn, nil, []*N.PacketBuffer{staged})
 	require.NoError(t, err)
 	require.Equal(t, 1, conn.reads, "a transport with a deadline must still be read")
 	require.Len(t, packetBuffers, 1, "the extra datagram must be retained for replay")
