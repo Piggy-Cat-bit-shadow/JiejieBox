@@ -197,17 +197,28 @@ func (s *StartedService) currentInstanceID() string {
 	return s.instanceID
 }
 
-// ServiceIdentity reports the running instance and the profile revision it serves. Both are
-// empty when no instance is running. They are read under one lock so a caller cannot pair the
-// identity of one instance with the revision of its successor: a reload publishes both while
-// holding the write side of this lock.
-func (s *StartedService) ServiceIdentity() (instanceID string, activeRevision string) {
+// ServiceIdentity is the instance identity and the profile revision that instance serves. Both
+// are empty when no instance is running.
+//
+// It is returned as a struct on purpose: gomobile binds this type's methods, and a method with two
+// plain string results is not bindable (the bridge requires `(T, error)`), which failed the Android
+// binding build before this shape. A struct result is skipped by gobind, so this stays a Go-side
+// observation without becoming a new string-result frame on the bridge.
+type ServiceIdentity struct {
+	InstanceID     string
+	ActiveRevision string
+}
+
+// ServiceIdentity reports the running instance and the profile revision it serves. They are read
+// under one lock so a caller cannot pair the identity of one instance with the revision of its
+// successor: a reload publishes both while holding the write side of this lock.
+func (s *StartedService) ServiceIdentity() ServiceIdentity {
 	s.serviceAccess.RLock()
 	defer s.serviceAccess.RUnlock()
 	if s.instance == nil {
-		return s.instanceID, ""
+		return ServiceIdentity{InstanceID: s.instanceID}
 	}
-	return s.instanceID, s.instance.revision
+	return ServiceIdentity{InstanceID: s.instanceID, ActiveRevision: s.instance.revision}
 }
 
 type ServiceOptions struct {

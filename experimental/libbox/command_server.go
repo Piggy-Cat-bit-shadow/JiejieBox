@@ -791,21 +791,21 @@ func (h *platformHandler) ServiceReload(ctx context.Context) error {
 // box); this method only answers which instance and revision the caller ended up with.
 func (h *platformHandler) ServiceReloadWithRequest(ctx context.Context, requestID string, expectedInstanceID string) (*daemon.ReloadOutcome, error) {
 	server := (*CommandServer)(h)
-	previousInstanceID, _ := server.StartedService.ServiceIdentity()
-	stale := expectedInstanceID != "" && expectedInstanceID != previousInstanceID
+	previous := server.StartedService.ServiceIdentity()
+	stale := expectedInstanceID != "" && expectedInstanceID != previous.InstanceID
 	err := server.handler.ServiceReload()
 	if err != nil {
 		return nil, err
 	}
-	instanceID, activeRevision := server.StartedService.ServiceIdentity()
+	identity := server.StartedService.ServiceIdentity()
 	status := daemon.ReloadStatusStopped
-	if instanceID != "" {
+	if identity.InstanceID != "" {
 		status = daemon.ReloadStatusRestarted
 	}
 	return &daemon.ReloadOutcome{
 		RequestID:      requestID,
-		InstanceID:     instanceID,
-		ActiveRevision: activeRevision,
+		InstanceID:     identity.InstanceID,
+		ActiveRevision: identity.ActiveRevision,
 		Stale:          stale,
 		Status:         status,
 	}, nil

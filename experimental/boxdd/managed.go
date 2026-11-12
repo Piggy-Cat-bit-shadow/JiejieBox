@@ -44,8 +44,8 @@ func (h *managedHandler) serviceReload(ctx context.Context, requestID string, ex
 	if h.daemon.closed {
 		return nil, os.ErrClosed
 	}
-	previousInstanceID, _ := h.daemon.startedService.ServiceIdentity()
-	stale := expectedInstanceID != "" && expectedInstanceID != previousInstanceID
+	previous := h.daemon.startedService.ServiceIdentity()
+	stale := expectedInstanceID != "" && expectedInstanceID != previous.InstanceID
 	ownerUserID, err := loadOwner()
 	if err != nil {
 		return nil, err
@@ -67,15 +67,15 @@ func (h *managedHandler) serviceReload(ctx context.Context, requestID string, ex
 	if err != nil {
 		return nil, err
 	}
-	instanceID, activeRevision := h.daemon.startedService.ServiceIdentity()
+	identity := h.daemon.startedService.ServiceIdentity()
 	status := daemon.ReloadStatusStopped
-	if instanceID != "" {
+	if identity.InstanceID != "" {
 		status = daemon.ReloadStatusRestarted
 	}
 	return &daemon.ReloadOutcome{
 		RequestID:      requestID,
-		InstanceID:     instanceID,
-		ActiveRevision: activeRevision,
+		InstanceID:     identity.InstanceID,
+		ActiveRevision: identity.ActiveRevision,
 		Stale:          stale,
 		Status:         status,
 	}, nil
