@@ -171,6 +171,20 @@ type Policy struct {
 	// entirely. It is deliberately generous: the cost of waiting is a little battery, and the cost of
 	// not waiting is interrupting something a person is using.
 	DeepIdleAfter time.Duration
+	// OnDemandIdleAfter is the activity window of the on-demand tunnels: how long a REFERENCED tunnel
+	// may carry no payload before a device pause may suspend it.
+	//
+	// It is the one threshold behind audit F-01/Q07, and it is a duration rather than a switch because
+	// both of the two sentences this fork has already published are about time, not about intent:
+	// `common/runtimecoord/platform_events.go` says a device pause "never terminates an active flow",
+	// and `experimental/libbox/platform_events.go` narrows the suspend to "IDLE on-demand resources".
+	// "Active" therefore has to be measurable, and the only measurement that does not lie about a
+	// long download is payload that moved.
+	//
+	// Zero is the pre-existing behaviour and not a policy: a caller that does not opt in keeps
+	// suspending every referenced on-demand tunnel at a device pause, which is what this tree did
+	// before the decision. DefaultPolicy opts in.
+	OnDemandIdleAfter time.Duration
 	// Quiescent is what is permitted while the device is paused but has not yet gone deep idle.
 	Quiescent Allow
 	// DeepIdle is what is permitted once it has.
@@ -264,6 +278,22 @@ func (s WakeStagger) longest() time.Duration {
 func DefaultPolicy() Policy {
 	return Policy{
 		DeepIdleAfter: 2 * time.Minute,
+		// The on-demand activity window, and the reason it is 60 s rather than "a few seconds".
+		//
+		// A tunnel that is suspended loses every flow on it: the five implementations tear the
+		// transport down (MASQUE cancels the session, WireGuard downs the device, OpenVPN/OpenConnect
+		// fail the session, Tailscale stops WantRunning). A pause landing in the middle of a download
+		// would therefore end that download - the behaviour the platform contract says a pause never
+		// has. The window has to be longer than a transfer's normal gaps (a stalled segment, a server
+		// taking its time between ranges, TCP retransmission backoff, which alone can reach tens of
+		// seconds) or the suspend fires exactly in the gap it was meant to tolerate.
+		//
+		// It is also the period at which a sleeping device wakes once while a transfer is running, so
+		// it is the cost of the exemption. 60 s is provisional tuning, not a measured optimum: it
+		// bounds that cost at one wake-up per minute per paused transfer, and it reclaims the tunnel
+		// within a minute of the transfer ending. Both directions are adjustable here rather than in a
+		// protocol, and the device round that would tighten it is Q07's outstanding item.
+		OnDemandIdleAfter: time.Minute,
 		// Quiescent keeps statistics and provider refresh off - they are speculative and cost radio -
 		// but leaves health checking and probing alone, because a tunnel whose liveness is not checked
 		// is a tunnel that fails silently the moment the user picks the phone up.
@@ -452,6 +482,21 @@ func (g *Governor) Active() bool {
 		return false
 	}
 	return g.state == StateActive
+}
+
+// OnDemandIdleAfter reports how long a referenced on-demand tunnel may carry no payload before a
+// device pause may suspend it.
+//
+// It is a reader because the eligibility pass is the caller that owns the verdict, and the threshold
+// belongs to this policy rather than to a second constant in `route`. A governor that is closed - or
+// one that was never installed - still answers with its policy, because the caller here is not
+// asking permission to act: it is asking how to read the traffic it already observed. The
+// zero-configuration answer is therefore `power.DefaultPolicy()`'s window, chosen by the caller, not
+// a zero returned from here.
+func (g *Governor) OnDemandIdleAfter() time.Duration {
+	g.access.Lock()
+	defer g.access.Unlock()
+	return g.policy.OnDemandIdleAfter
 }
 
 // clock reads the governor's clock, which is time.Now unless a test installed one.
