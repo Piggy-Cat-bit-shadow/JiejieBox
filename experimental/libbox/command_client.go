@@ -849,11 +849,22 @@ type selectOutboundResult struct {
 //
 //	{"supported":true,"requestId":41,"appliedOutboundTag":"b","appliedRevision":7,"stale":false}
 //
+// # Why the parameters are int64 and not uint64
+//
+// They are wire values the daemon treats as uint64, but gomobile does not bind uint64 parameters:
+// a method declared with them is skipped silently, so the Android and Apple clients would compile
+// against an AAR/XCFramework that does not contain it. int64 binds to a Java/Kotlin long and a
+// Swift Int64, and the values here are non-negative counters and revisions; a negative value is
+// rejected rather than wrapped.
+//
 // A daemon that predates the identity fields answers requestId 0. That is a CAPABILITY answer,
 // not a failed selection: the selection was performed, so the document says supported=false and
 // unconfirmed=true rather than inventing a revision the caller could mistake for its own.
-func (c *CommandClient) SelectOutboundWithRequest(groupTag string, outboundTag string, requestID uint64, expectedRevision uint64) (*StringBox, error) {
-	result, err := c.selectOutbound(groupTag, outboundTag, requestID, expectedRevision)
+func (c *CommandClient) SelectOutboundWithRequest(groupTag string, outboundTag string, requestID int64, expectedRevision int64) (*StringBox, error) {
+	if requestID < 0 || expectedRevision < 0 {
+		return nil, E.New("select outbound: negative request identity")
+	}
+	result, err := c.selectOutbound(groupTag, outboundTag, uint64(requestID), uint64(expectedRevision))
 	if err != nil {
 		return nil, err
 	}
