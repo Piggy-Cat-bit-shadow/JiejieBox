@@ -535,7 +535,7 @@ func (m *ReferenceManager) retireIdleResources() int {
 //
 // The counts are owner-reach counts - see adapter.ResidencyOwnerCount for what they are not. The
 // active/idle/draining ledger of a pool, and the proof that a teardown finished, belong to that pool
-// and are not inferred here.
+// and are not inferred here. ObjectResidencySnapshot below is the half that DOES ask the pools.
 func (m *ReferenceManager) ResidencySnapshot() adapter.ResidencySnapshot {
 	var snapshot adapter.ResidencySnapshot
 	m.eachReusableOwner(func(kind reusableOwnerKind, owner any) {
@@ -546,6 +546,68 @@ func (m *ReferenceManager) ResidencySnapshot() adapter.ResidencySnapshot {
 		}
 	})
 	return snapshot
+}
+
+// ObjectResidencySnapshot is the object-identity half of the residency report (audit Q15).
+//
+// # What it is not
+//
+// It is not a second walk and not a second inventory: it reads the SAME enumeration as the retire
+// walks and the owner-reach snapshot, so an owner is visited exactly once and its objects are summed
+// once. That is the "合计不重复" the audit asks for, and it is structural rather than a convention.
+//
+// # Coverage is part of the answer
+//
+// An owner that does not implement adapter.ResidencyLedgerReporter is not a zero: it is an UNKNOWN,
+// and Unknown carries it per kind. A reader can therefore see the difference between "this kind
+// holds no objects" and "this kind's owners cannot say", which is exactly the distinction the
+// owner-reach counts used to blur.
+//
+// # Why the report can be cheap
+//
+// Each reporter answers from its own atomics (see transport/v2rayquic/residency.go for the first
+// one); nothing here walks a pool's objects, allocates a list or takes a pool lock for longer than
+// one snapshot read. A kind with a hundred owners costs a hundred constant-time reads.
+func (m *ReferenceManager) ObjectResidencySnapshot() adapter.ResidencyObjectSnapshot {
+	var snapshot adapter.ResidencyObjectSnapshot
+	m.eachReusableOwner(func(kind reusableOwnerKind, owner any) {
+		counts := objectResidencyCountsFor(&snapshot, kind)
+		counts.Owners++
+		reporter, isReporter := owner.(adapter.ResidencyLedgerReporter)
+		if !isReporter {
+			counts.Unknown++
+			return
+		}
+		ledger := reporter.ResidencyLedger()
+		counts.Reporting++
+		if !ledger.Exact {
+			counts.Estimated++
+		}
+		counts.Creating += ledger.Creating
+		counts.Active += ledger.Active
+		counts.Idle += ledger.Idle
+		counts.Draining += ledger.Draining
+		counts.Terminated += ledger.Terminated
+	})
+	return snapshot
+}
+
+// objectResidencyCountsFor returns the field of the object snapshot that a kind contributes to. The
+// panic is the same compile-time-like guard residencyCountFor has: a new owner class must be
+// reported somewhere rather than silently dropped from the ledger.
+func objectResidencyCountsFor(snapshot *adapter.ResidencyObjectSnapshot, kind reusableOwnerKind) *adapter.ResidencyObjectCounts {
+	switch kind {
+	case reusableOwnerOutbound:
+		return &snapshot.Outbounds
+	case reusableOwnerEndpoint:
+		return &snapshot.Endpoints
+	case reusableOwnerDNSTransport:
+		return &snapshot.DNSTransports
+	case reusableOwnerHTTPClient:
+		return &snapshot.HTTPClients
+	default:
+		panic("route: unknown reusable owner kind")
+	}
 }
 
 // residencyCountFor returns the field of the snapshot that a kind contributes to. The panic is the

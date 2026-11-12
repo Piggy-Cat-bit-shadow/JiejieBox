@@ -72,6 +72,10 @@ type Client struct {
 	// behaviour (see generation.go).
 	registration       *runtimecoord.Registration
 	removeRegistration func()
+	// residency is the object-identity ledger every connection of this client reports into. See
+	// residency.go. It is a VALUE, so a connection can always point at it and a client that never
+	// dials still has a (zero) ledger to answer with.
+	residency clientResidency
 	// coordinator is the generation clock itself. currentGeneration reads it directly: a
 	// registration's Epoch() is the generation its resource was last rebuilt against, which is not
 	// the same question as "what generation is current now" and cannot be used to detect a change
@@ -185,6 +189,9 @@ type clientConnection struct {
 	// It is set by generation.go and honoured by releaseStream, so a transfer that is already
 	// running finishes instead of being cut by the retirement.
 	drainAfterStreams atomic.Bool
+	// residency is the counter set this connection reports its lifecycle into, or nil for a
+	// connection a test constructed directly. See residency.go.
+	residency *clientResidency
 	// pathAccess guards the socket the connection currently sends on. It is replaced only by a
 	// successful migration, under the client's migrateAccess.
 	pathAccess sync.Mutex
@@ -290,11 +297,16 @@ func (c *clientConnection) adoptPath(path *pathSocket) {
 // closeConn tears the underlying QUIC connection down exactly once. The once guard is the release
 // confirmation: a connection can be retired by the idle policy, a reset, or a discarded late offer,
 // and only the first of them is the close.
+//
+// It is also the ONE place the residency ledger's release is recorded, which is what makes
+// Terminated a count of completed releases rather than of close attempts: the once-guarded body runs
+// exactly once per object.
 func (c *clientConnection) closeConn() {
 	c.closeOnce.Do(func() {
 		if c.closeFn != nil {
 			c.closeFn()
 		}
+		c.residency.noteReleased(c.drainAfterStreams.Load())
 	})
 }
 
@@ -464,6 +476,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientConnection, error) {
 		ctx:       quicConn.Context(),
 		closeIdle: &c.closeIdle,
 		path:      socket,
+		residency: &c.residency,
 	}
 	conn.closeFn = func() { _ = quicConn.CloseWithError(0, "") }
 	watchPathCleanup(conn, socket)
@@ -605,7 +618,7 @@ func (c *Client) ResetContext(ctx context.Context) error {
 			// waiters from attaching.
 			//
 			// Leaving it set made the first demand after a network change wait for a
-			// dial that could only ever publish net.ErrClosed 鈥?the "cannot dial again
+			// dial that could only ever publish net.ErrClosed 闂?the "cannot dial again
 			// after the change" failure Reset exists to prevent, one connection to the
 			// left of where Close used to cause it.
 			c.pending = nil

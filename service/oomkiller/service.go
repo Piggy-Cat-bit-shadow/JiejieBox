@@ -7,6 +7,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	boxService "github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/common/buildgate"
 	"github.com/sagernet/sing-box/common/resourceguard"
 	boxConstant "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -68,6 +69,21 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 	// service is constructed - and a build with no started box simply reports no key.
 	if s.recorder != nil {
 		s.recorder.SetExtraMetadata("residency", s.residencyMetadata)
+	}
+	// The object-identity ledger is the second half of the same question, contributed as its own key.
+	// It is DELIBERATELY not folded into "residency": that key's contract says its numbers are
+	// owner-reach and not resource counts, and mixing real object counts into it would restore the
+	// exact misreading the contract exists to prevent. A reader that wants "how much is resident"
+	// reads this key; a reader that wants "who can be asked" reads the other.
+	if s.recorder != nil {
+		s.recorder.SetExtraMetadata("objectResidency", s.objectResidencyMetadata)
+	}
+	// And the build reservation, which is the third ledger the audit asks to be readable from one
+	// entry: creation admission ("resourceGuard"), parked builds (this key's queue/wait/waiters) and
+	// residency ("objectResidency"). The gate is looked up lazily because the Box installs it on the
+	// construction context before this service exists; a build with no gate writes no key.
+	if s.recorder != nil {
+		s.recorder.SetExtraMetadata("buildGate", s.buildGateMetadata)
 	}
 	// The admission guard is installed ONLY for a Network Extension with a process budget.
 	//
@@ -220,6 +236,106 @@ func residencyOwnerCount(count adapter.ResidencyOwnerCount) map[string]any {
 	return map[string]any{
 		"reachableOwners":  count.Reachable,
 		"releasableOwners": count.Releasable,
+	}
+}
+
+// objectResidencyMetadata renders the object-identity ledger for the OOM report's metadata
+// document (audit Q15).
+//
+// # What the numbers are, and what they are not
+//
+// Per owner kind: how many owners the walk reaches, how many of them could answer with a ledger,
+// how many could not (Unknown), how many answered with an estimate (Estimated), and the summed
+// Creating/Active/Idle/Draining states plus the cumulative Terminated release count. The four states
+// are exclusive per object, so Live = Creating+Active+Idle+Draining cannot double count; an owner is
+// visited once by the shared walk, so summing across owners cannot either.
+//
+// "measure": "object-identity" makes the difference from the "residency" key readable from the
+// document alone. Coverage is reported rather than hidden: a kind whose owners cannot answer reads
+// {reportingOwners: 0, unknownOwners: N}, never a precise zero.
+//
+// It returns nil when no started reference manager has registered itself, or when the registered one
+// only implements owner-reach - in both cases the document is exactly what it was before this key.
+func (s *Service) objectResidencyMetadata() any {
+	if s == nil || s.ctx == nil {
+		return nil
+	}
+	ownerReporter := service.FromContext[adapter.ResidencyReporter](s.ctx)
+	if ownerReporter == nil {
+		return nil
+	}
+	reporter, isReporter := ownerReporter.(adapter.ObjectResidencyReporter)
+	if !isReporter {
+		return nil
+	}
+	snapshot := reporter.ObjectResidencySnapshot()
+	return map[string]any{
+		"measure":       "object-identity",
+		"outbounds":     objectResidencyCount(snapshot.Outbounds),
+		"endpoints":     objectResidencyCount(snapshot.Endpoints),
+		"dnsTransports": objectResidencyCount(snapshot.DNSTransports),
+		"httpClients":   objectResidencyCount(snapshot.HTTPClients),
+		"terminated":    "cumulative completed releases per kind, not part of liveObjects",
+		"unknown":       "an owner that cannot answer is counted here, never as zero objects",
+	}
+}
+
+// objectResidencyCount renders one kind's object ledger.
+func objectResidencyCount(count adapter.ResidencyObjectCounts) map[string]any {
+	return map[string]any{
+		"owners":          count.Owners,
+		"reportingOwners": count.Reporting,
+		"unknownOwners":   count.Unknown,
+		"estimatedOwners": count.Estimated,
+		"creating":        count.Creating,
+		"active":          count.Active,
+		"idle":            count.Idle,
+		"draining":        count.Draining,
+		"liveObjects":     count.Creating + count.Active + count.Idle + count.Draining,
+		"terminated":      count.Terminated,
+	}
+}
+
+// buildGateMetadata renders the build reservation for the OOM report's metadata document (Q20).
+//
+// It reports the budget the reservation is currently running under - level, limit, queue, wait and
+// the countable overlap bound - next to the counters that say what it did (admitted, deferred,
+// inflight, waiters, maxInflight). ByteBoundKnown is carried rather than assumed: the audit's rule
+// is that an estimate must not be presented as a bound, so the document states which part is exact.
+//
+// It returns nil when the Box installed no gate, so an embedder's document is unchanged.
+func (s *Service) buildGateMetadata() any {
+	if s == nil || s.ctx == nil {
+		return nil
+	}
+	gate := buildgate.FromContext(s.ctx)
+	if gate == nil {
+		return nil
+	}
+	stats := gate.Stats()
+	budget := gate.Budget()
+	return map[string]any{
+		"measure":        "build-count",
+		"level":          budget.Level.String(),
+		"limit":          budget.Limit,
+		"queueLimit":     budget.Queue,
+		"waitBudgetMs":   budget.Wait.Milliseconds(),
+		"maxOverlapping": budget.MaxOverlappingBuilds,
+		"byteBoundKnown": budget.ByteBoundKnown,
+		"budgetNote":     budget.Note,
+		"inflight":       stats.Gate.Inflight,
+		"waiters":        stats.Gate.Waiters,
+		"maxInflight":    stats.Gate.MaxInflight,
+		"requested":      stats.Gate.Requested,
+		"admitted":       stats.Gate.Admitted,
+		"queued":         stats.Gate.Queued,
+		"refused":        stats.Gate.Refused,
+		"timedOut":       stats.Gate.TimedOut,
+		"canceled":       stats.Gate.Canceled,
+		"released":       stats.Gate.Released,
+		"admittedBuilds": stats.AdmittedBuilds,
+		"deferredBuilds": stats.Deferred,
+		"transitions":    stats.Transitions,
 	}
 }
 

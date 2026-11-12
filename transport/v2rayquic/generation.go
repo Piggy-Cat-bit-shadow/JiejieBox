@@ -120,6 +120,9 @@ func (c *Client) detachStaleGeneration(conn *clientConnection) bool {
 // finish on the path they started on.
 func (conn *clientConnection) retireForGeneration() {
 	conn.drainAfterStreams.Store(true)
+	// The object left the pool and is still held: that is DRAINING, and it must be counted as
+	// resident (not as released) until closeConn records the actual release.
+	conn.residency.noteDraining()
 	conn.access.Lock()
 	closed := conn.streams == 0 && conn.markClosedLocked()
 	conn.access.Unlock()
