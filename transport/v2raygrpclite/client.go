@@ -136,8 +136,8 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 			conn.setup(response.Body, nil)
 		}
 	}()
-	c.ledger.active.Add(1)
-	return &ledgerConn{Conn: conn, ledger: &c.ledger}, nil
+	c.attachLedger(conn)
+	return conn, nil
 }
 
 func (c *Client) MultiplexEnabled() bool {

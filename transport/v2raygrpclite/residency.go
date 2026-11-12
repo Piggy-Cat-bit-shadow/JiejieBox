@@ -1,7 +1,8 @@
 package v2raygrpclite
 
-// The transport's stream-identity ledger (audit Q15). See transport/v2rayhttp/residency.go for the
-// same boundary: the HTTP/2 pool is the library's, the streams this wrapper opens are ours to count.
+// The transport's stream-identity ledger (audit Q15). Same boundary as v2rayhttp: the library's
+// pooled HTTP/2 connections are its owner; this wrapper counts the gRPC streams it opens and hooks
+// the conn's own onClose instead of wrapping it, so optional interfaces stay visible.
 
 import (
 	"net"
@@ -16,19 +17,26 @@ type clientLedger struct {
 	terminated atomic.Uint64
 }
 
-type ledgerConn struct {
-	net.Conn
-	ledger *clientLedger
-	closed atomic.Bool
-}
-
-func (c *ledgerConn) Close() error {
-	err := c.Conn.Close()
-	if c.closed.CompareAndSwap(false, true) {
-		c.ledger.active.Add(-1)
-		c.ledger.terminated.Add(1)
+func (c *Client) attachLedger(conn net.Conn) {
+	if c == nil || conn == nil {
+		return
 	}
-	return err
+	gunConn, isGunConn := conn.(*GunConn)
+	if !isGunConn {
+		return
+	}
+	var released atomic.Bool
+	previous := gunConn.onClose
+	c.ledger.active.Add(1)
+	gunConn.onClose = func() {
+		if previous != nil {
+			previous()
+		}
+		if released.CompareAndSwap(false, true) {
+			c.ledger.active.Add(-1)
+			c.ledger.terminated.Add(1)
+		}
+	}
 }
 
 func (c *Client) ResidencyLedger() adapter.ResidencyLedger {

@@ -28,6 +28,16 @@ type HTTPConn struct {
 	requestWritten bool
 	responseRead   bool
 	responseCache  *buf.Buffer
+	// onClose is the transport's release hook; it is chained, never owned, by this struct.
+	onClose func()
+}
+
+func (c *HTTPConn) Close() error {
+	err := c.Conn.Close()
+	if c.onClose != nil {
+		c.onClose()
+	}
+	return err
 }
 
 func NewHTTP1Conn(conn net.Conn, request *http.Request) *HTTPConn {

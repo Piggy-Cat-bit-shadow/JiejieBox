@@ -109,8 +109,8 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	if err != nil || conn == nil {
 		return conn, err
 	}
-	c.ledger.active.Add(1)
-	return &ledgerConn{Conn: conn, ledger: &c.ledger}, nil
+	c.attachLedger(conn)
+	return conn, nil
 }
 
 func (c *Client) dialHTTP(ctx context.Context) (net.Conn, error) {

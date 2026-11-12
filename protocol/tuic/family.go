@@ -61,10 +61,9 @@ type familyCarrier struct {
 	established bool
 	// Residency accounting (audit Q15). One object is one established session; activeFlows is
 	// the Active/Idle distinction and terminated is the lifetime session-release count.
-	creating     atomic.Int64
-	activeFlows  atomic.Int64
-	terminated   atomic.Uint64
-	lastActivity atomic.Int64
+	creating   atomic.Int64
+	terminated atomic.Uint64
+	lastDial   atomic.Int64
 }
 
 func newFamilyCarrier(newClient func(family int) (*tuic.Client, error)) *familyCarrier {
@@ -102,7 +101,8 @@ func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (
 			if err != nil {
 				return nil, err
 			}
-			return c.trackConn(conn), nil
+			c.markActivity()
+			return conn, nil
 		}
 	}
 	value, err := c.race(ctx, func(attemptCtx context.Context, client *tuic.Client) (any, error) {
@@ -111,7 +111,8 @@ func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (
 	if err != nil {
 		return nil, err
 	}
-	return c.trackConn(value.(net.Conn)), nil
+	c.markActivity()
+	return value.(net.Conn), nil
 }
 
 // ListenPacket is DialConn for a UDP session.
@@ -126,7 +127,8 @@ func (c *familyCarrier) ListenPacket(ctx context.Context) (net.PacketConn, error
 			if err != nil {
 				return nil, err
 			}
-			return c.trackPacketConn(conn), nil
+			c.markActivity()
+			return conn, nil
 		}
 	}
 	value, err := c.race(ctx, func(attemptCtx context.Context, client *tuic.Client) (any, error) {
@@ -135,7 +137,8 @@ func (c *familyCarrier) ListenPacket(ctx context.Context) (net.PacketConn, error
 	if err != nil {
 		return nil, err
 	}
-	return c.trackPacketConn(value.(net.PacketConn)), nil
+	c.markActivity()
+	return value.(net.PacketConn), nil
 }
 
 type familyResult struct {
@@ -277,11 +280,11 @@ func (c *familyCarrier) CloseIdleConnections() {
 
 // markActivity records payload movement on an established stream or packet session.
 func (c *familyCarrier) markActivity() {
-	c.lastActivity.Store(time.Now().UnixNano())
+	c.lastDial.Store(time.Now().UnixNano())
 }
 
 func (c *familyCarrier) activeWithin(window time.Duration) bool {
-	last := c.lastActivity.Load()
+	last := c.lastDial.Load()
 	return last != 0 && time.Since(time.Unix(0, last)) < window
 }
 
@@ -309,85 +312,10 @@ func (c *familyCarrier) ResidencyLedger() adapter.ResidencyLedger {
 		ledger.Creating = 1
 	case !established:
 		return ledger
-	case c.activeFlows.Load() > 0 && c.activeWithin(time.Minute):
+	case c.activeWithin(time.Minute):
 		ledger.Active = 1
 	default:
 		ledger.Idle = 1
 	}
 	return ledger
-}
-
-// trackedConn counts an established session's stream as Active while it is open, and records
-// payload movement for the Active/Idle distinction. It forwards net.Conn unchanged otherwise.
-type trackedConn struct {
-	net.Conn
-	carrier *familyCarrier
-	once    sync.Once
-}
-
-func (c *familyCarrier) trackConn(conn net.Conn) net.Conn {
-	if c == nil || conn == nil {
-		return conn
-	}
-	c.activeFlows.Add(1)
-	return &trackedConn{Conn: conn, carrier: c}
-}
-
-func (t *trackedConn) Read(p []byte) (int, error) {
-	n, err := t.Conn.Read(p)
-	if n > 0 {
-		t.carrier.markActivity()
-	}
-	return n, err
-}
-
-func (t *trackedConn) Write(p []byte) (int, error) {
-	n, err := t.Conn.Write(p)
-	if n > 0 {
-		t.carrier.markActivity()
-	}
-	return n, err
-}
-
-func (t *trackedConn) Close() error {
-	err := t.Conn.Close()
-	t.once.Do(func() { t.carrier.activeFlows.Add(-1) })
-	return err
-}
-
-// trackedPacketConn is trackedConn for a UDP session.
-type trackedPacketConn struct {
-	net.PacketConn
-	carrier *familyCarrier
-	once    sync.Once
-}
-
-func (c *familyCarrier) trackPacketConn(conn net.PacketConn) net.PacketConn {
-	if c == nil || conn == nil {
-		return conn
-	}
-	c.activeFlows.Add(1)
-	return &trackedPacketConn{PacketConn: conn, carrier: c}
-}
-
-func (t *trackedPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
-	n, addr, err := t.PacketConn.ReadFrom(p)
-	if n > 0 {
-		t.carrier.markActivity()
-	}
-	return n, addr, err
-}
-
-func (t *trackedPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
-	n, err := t.PacketConn.WriteTo(p, addr)
-	if n > 0 {
-		t.carrier.markActivity()
-	}
-	return n, err
-}
-
-func (t *trackedPacketConn) Close() error {
-	err := t.PacketConn.Close()
-	t.once.Do(func() { t.carrier.activeFlows.Add(-1) })
-	return err
 }

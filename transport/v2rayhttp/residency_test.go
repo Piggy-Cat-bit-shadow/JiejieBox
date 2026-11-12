@@ -20,9 +20,9 @@ func TestHTTPStreamResidencyLedger(t *testing.T) {
 	creating := client.ResidencyLedger()
 	require.EqualValues(t, 1, creating.Creating)
 
-	tracked := &ledgerConn{Conn: left, ledger: &client.ledger}
+	tracked := NewLateHTTPConn(left, nil)
 	client.ledger.creating.Store(0)
-	client.ledger.active.Store(1)
+	client.attachLedger(tracked)
 	active := client.ResidencyLedger()
 	require.EqualValues(t, 1, active.Active)
 
