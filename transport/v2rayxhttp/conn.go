@@ -171,6 +171,11 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient
 
 	conn := newStreamConn(pipeReader, pipeWriter, c.serverAddr, release)
 	conn.cancel = connCancel
+	// The network generation this stream is being built FOR (audit Q12). The raise returns as soon as
+	// the upload body is adopted, so the response can arrive after the network moved: publishing it
+	// then would hand the caller a stream built on the path that just ended. The comparison is taken
+	// where the response is really published, which is this goroutine.
+	startGeneration := c.currentGeneration()
 	go func() {
 		response, err := xmuxClient.roundTrip(request)
 		if err != nil {
@@ -180,6 +185,11 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient
 		if response.StatusCode != http.StatusOK {
 			response.Body.Close()
 			conn.fail(E.New("v2ray-xhttp: unexpected status: ", response.Status))
+			return
+		}
+		if c.currentGeneration() != startGeneration {
+			response.Body.Close()
+			conn.fail(staleGenerationError{})
 			return
 		}
 		conn.setupReader(response.Body, nil)
@@ -220,6 +230,9 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 	c.applyGRPCHeader(upReq)
 	conn := newSplitConn(pipeReader, pipeWriter, c.serverAddr, release)
 	conn.cancel = connCancel
+	// See dialStreamOne: the raise returns on body adoption, so the download response can arrive
+	// after the network moved and must be discarded at the point it would be published (audit Q12).
+	startGeneration := c.currentGeneration()
 	go func() {
 		downResp, err := xmuxClient.roundTrip(downReq)
 		if err != nil {
@@ -229,6 +242,11 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 		if downResp.StatusCode != http.StatusOK {
 			downResp.Body.Close()
 			conn.fail(E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
+			return
+		}
+		if c.currentGeneration() != startGeneration {
+			downResp.Body.Close()
+			conn.fail(staleGenerationError{})
 			return
 		}
 		conn.setupReader(downResp.Body, nil)
@@ -344,6 +362,9 @@ func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient 
 	}
 	conn := newPacketConn(connCtx, c, sessionID, c.serverAddr, release)
 	conn.cancel = connCancel
+	// See dialStreamOne: a download response that arrives after the network moved is discarded at the
+	// point it would be published (audit Q12).
+	startGeneration := c.currentGeneration()
 	go func() {
 		downResp, err := xmuxClient.roundTrip(downReq)
 		if err != nil {
@@ -353,6 +374,11 @@ func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient 
 		if downResp.StatusCode != http.StatusOK {
 			downResp.Body.Close()
 			conn.fail(E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
+			return
+		}
+		if c.currentGeneration() != startGeneration {
+			downResp.Body.Close()
+			conn.fail(staleGenerationError{})
 			return
 		}
 		conn.setupReader(downResp.Body, nil)
