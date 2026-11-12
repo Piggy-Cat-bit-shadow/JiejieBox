@@ -90,6 +90,7 @@ func (s *udpSession) loop(body io.Reader) error {
 		if err != nil {
 			return err
 		}
+		s.service.udp.noteReceived()
 		s.dispatch(source, destination, payload)
 	}
 }
@@ -237,7 +238,9 @@ func (s *udpSession) expireIdle() {
 			}
 			s.access.Unlock()
 			for _, flow := range expired {
-				flow.closeIfIdle(deadline)
+				if flow.closeIfIdle(deadline) {
+					s.service.udp.noteExpired()
+				}
 			}
 		}
 	}
@@ -296,6 +299,9 @@ func (s *udpSession) writeFrame(buffer *buf.Buffer, source M.Socksaddr, destinat
 	_, err = s.writer.Write(buffer.Bytes())
 	if err == nil {
 		err = flush(s.writer)
+	}
+	if err == nil {
+		s.service.udp.noteSent()
 	}
 	return err
 }

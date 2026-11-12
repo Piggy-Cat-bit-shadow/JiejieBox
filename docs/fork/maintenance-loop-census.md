@@ -43,7 +43,7 @@ longer owns a timer.
 | 18 | `service/api/web_bridge_websocket.go:97` | web bridge | WebSocket keepalive | `webSocketPingInterval` | connection context | keep, connection-scoped |
 | 19 | `service/ssmapi/server.go:109` | SSM API | persist traffic counters | 1 min | service scope `Add` stops it and saves once | keep: disk durability cadence |
 | 20 | `transport/trusttunnel/client.go:690` | TrustTunnel client | session idle teardown | `max(idleTimeout/4, 1 s)` | session context | keep: TRIM path, never dials |
-| 21 | `transport/trusttunnel/service_udp.go:223` | TrustTunnel UDP service | association expiry sweep | `timeout/4`, clamped 10 ms..15 s | service `done` | keep: the only path returning an association slot |
+| 21 | `transport/trusttunnel/service_udp.go:224` | TrustTunnel UDP service | association expiry sweep | `timeout/4`, clamped 10 ms..15 s | service `done` | keep: the only path returning an association slot |
 
 ## Recurring `AfterFunc` maintenance (self-rescheduling)
 

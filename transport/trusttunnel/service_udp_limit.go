@@ -91,6 +91,18 @@ type UDPStats struct {
 	// DroppedDatagrams counts datagrams dropped because a queue byte limit or
 	// the per-flow item queue was full.
 	DroppedDatagrams uint64
+	// DatagramsReceived counts client datagrams read from the stream before any
+	// admission decision. This is the INGRESS segment of the Q36 attribution:
+	// a datagram counted here did reach the tunnel, whatever happened next.
+	DatagramsReceived uint64
+	// DatagramsSent counts replies written to the client successfully. Together
+	// with DatagramsReceived it separates "the target never answered" from "the
+	// tunnel failed to return the answer".
+	DatagramsSent uint64
+	// AssociationsExpired counts associations reclaimed by the idle sweep. It
+	// is the DRAIN segment: the association slot and queued bytes were returned
+	// without the stream ending.
+	AssociationsExpired uint64
 }
 
 // udpBudget is the service-wide half of UDPLimits. Session counters live on
@@ -103,6 +115,9 @@ type udpBudget struct {
 	queuedBytes         int
 	refusedAssociations uint64
 	droppedDatagrams    uint64
+	datagramsReceived   uint64
+	datagramsSent       uint64
+	associationsExpired uint64
 }
 
 func newUDPBudget(limits UDPLimits) *udpBudget {
@@ -165,6 +180,24 @@ func (b *udpBudget) dropDatagram() {
 	b.access.Unlock()
 }
 
+func (b *udpBudget) noteReceived() {
+	b.access.Lock()
+	b.datagramsReceived++
+	b.access.Unlock()
+}
+
+func (b *udpBudget) noteSent() {
+	b.access.Lock()
+	b.datagramsSent++
+	b.access.Unlock()
+}
+
+func (b *udpBudget) noteExpired() {
+	b.access.Lock()
+	b.associationsExpired++
+	b.access.Unlock()
+}
+
 func (b *udpBudget) stats() UDPStats {
 	b.access.Lock()
 	defer b.access.Unlock()
@@ -173,5 +206,8 @@ func (b *udpBudget) stats() UDPStats {
 		QueuedBytes:         b.queuedBytes,
 		RefusedAssociations: b.refusedAssociations,
 		DroppedDatagrams:    b.droppedDatagrams,
+		DatagramsReceived:   b.datagramsReceived,
+		DatagramsSent:       b.datagramsSent,
+		AssociationsExpired: b.associationsExpired,
 	}
 }

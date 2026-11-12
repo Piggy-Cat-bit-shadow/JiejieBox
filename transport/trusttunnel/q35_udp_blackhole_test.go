@@ -155,6 +155,15 @@ func TestUDPBlackholeMatrix(t *testing.T) {
 			}
 			require.Equal(t, int64(4), handler.packets.Load(),
 				"the service saw a different datagram count than the test sent")
+
+			// Q36's segment attribution, on the same real path: ingress and reply are separate
+			// totals, the blackholed datagram was received but never answered, and the drain
+			// segment is the idle reclaim observed in cell 2.
+			stats := server.service.UDPStats()
+			require.EqualValues(t, 4, stats.DatagramsReceived, "ingress segment")
+			require.EqualValues(t, 3, stats.DatagramsSent, "reply segment")
+			require.Zero(t, stats.DroppedDatagrams, "no queue drop on this path")
+			require.GreaterOrEqual(t, stats.AssociationsExpired, uint64(1), "drain segment")
 		})
 	}
 }
