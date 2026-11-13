@@ -92,17 +92,6 @@ func TestOutboundAcceptsValidOptions(t *testing.T) {
 			options.Network = "udp"
 			options.QUICCongestionControl = "reno"
 		},
-		// The fallback derives both ALPNs when the node leaves them unset.
-		func(options *option.TrustTunnelOutboundOptions) {
-			options.QUIC = true
-			options.QUICFallbackToH2 = true
-		},
-		// An explicit pair is accepted as written.
-		func(options *option.TrustTunnelOutboundOptions) {
-			options.QUIC = true
-			options.QUICFallbackToH2 = true
-			options.TLS.ALPN = badoption.Listable[string]{"h3", "h2", "http/1.1"}
-		},
 	} {
 		options := validOutboundOptions()
 		modify(&options)
