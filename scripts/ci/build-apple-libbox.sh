@@ -129,6 +129,24 @@ fi
 echo "building Libbox.xcframework for: $targets"
 echo "source commit: $(git rev-parse HEAD)"
 
+# The tag set is the PRODUCT capability set, and it is resolved by the same function the build uses.
+# This gate exists because a missing tag is silent: the framework builds, links and launches, and a
+# trusttunnel configuration is rejected only on the device. The CLI profiles naming the tag is not
+# enough - the mobile builder composes mobilebuildtags, which is a different source of truth (that
+# is exactly how the Apple TestFlight artifact shipped without TrustTunnel).
+resolved_tags="$(go run ./cmd/internal/build_libbox -print-resolved-tags apple)"
+case ",$resolved_tags," in
+  *,with_trusttunnel,*)
+    ;;
+  *)
+    echo "FAIL: the Apple libbox tag set does not include with_trusttunnel." >&2
+    echo "      resolved: $resolved_tags" >&2
+    echo "      A TrustTunnel configuration would be rejected by the shipped framework." >&2
+    exit 1
+    ;;
+esac
+echo "  capability tags: with_trusttunnel present"
+
 # Where `build_libbox` actually leaves the framework. It binds to an absolute path inside its own
 # isolated working directory (`_libbox_build`) precisely so gomobile's default, which is relative
 # to a working directory that is no longer the module root, cannot scatter the artifact. This

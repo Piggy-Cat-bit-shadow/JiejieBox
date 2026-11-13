@@ -1607,7 +1607,7 @@ SH
   # slice LISTING would still match while the bundle carried nothing.
   printf 'ios\n' > "$work/apple-slices/Libbox.xcframework/ios-arm64/Info.plist"
   printf 'macos\n' > "$work/apple-slices/Libbox.xcframework/macos-arm64_x86_64/Info.plist"
-  PATH="$work/bin:$PATH" ./scripts/ci/apple-libbox-artifact.sh pack \
+  LIBBOX_BUILD_TAGS="with_quic,with_trusttunnel" PATH="$work/bin:$PATH" ./scripts/ci/apple-libbox-artifact.sh pack \
     "$work/apple-slices/Libbox.xcframework" "$work/fixtures/apple" >/dev/null
   python3 - "$work/fixtures/apple/manifest.json" "$SHA" "$work/fixtures/apple/BUILD-INFO-LIBBOX.txt" <<'PY'
 import json, sys

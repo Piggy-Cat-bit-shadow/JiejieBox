@@ -66,6 +66,11 @@ var sharedTags = []string{
 	// carry it rather than leaving it opt-in: a node configured with it must work in the app. It
 	// needs with_quic for its HTTP/3 path, which this set already has.
 	"with_xhttp",
+	// TrustTunnel is this fork's native H2/H3 tunnel. The CLI profiles already carry it; the mobile
+	// builders compose THIS set, so omitting it here silently produced an Apple/Android artifact
+	// that rejected a trusttunnel configuration at config load despite the same source tree
+	// advertising the protocol. Like XHTTP it needs with_quic for H3, which this set has.
+	"with_trusttunnel",
 	"with_clash_api",
 	"with_usbip",
 	"with_openvpn",

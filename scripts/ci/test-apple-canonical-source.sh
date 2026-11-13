@@ -278,7 +278,7 @@ printf 'macos\n' > "$SLICES/Libbox.xcframework/macos-arm64_x86_64/Info.plist"
 
 GOLDEN="$work/golden"
 mkdir -p "$GOLDEN"
-if ! "$LIBBOX" pack "$SLICES/Libbox.xcframework" "$GOLDEN" >/dev/null 2>&1; then
+if ! LIBBOX_BUILD_TAGS="with_quic,with_trusttunnel" "$LIBBOX" pack "$SLICES/Libbox.xcframework" "$GOLDEN" >/dev/null 2>&1; then
   echo "FATAL: could not pack the golden fixture - the producer's packer is not working." >&2
   exit 1
 fi
@@ -620,6 +620,30 @@ import json
 p=\"manifest.json\"
 d=json.load(open(p))
 d.pop(\"slices\",None)
+json.dump(d,open(p,\"w\"),indent=2)
+"
+' || true
+
+# A schema-2 manifest with the capability field removed. The released v0.1.46 artifact had no such
+# field and validated anyway, which is how a Libbox built without with_trusttunnel reached TF.
+run_case missing_build_tags_field invalid '
+python3 -c "
+import json
+p=\"manifest.json\"
+d=json.load(open(p))
+d.pop(\"build_tags\",None)
+json.dump(d,open(p,\"w\"),indent=2)
+"
+' || true
+
+# The field is present but the capability is not: the exact state of a mobile build whose tag set
+# omitted with_trusttunnel. It must be refused, not treated as an unknown-but-fine value.
+run_case build_tags_without_trusttunnel invalid '
+python3 -c "
+import json
+p=\"manifest.json\"
+d=json.load(open(p))
+d[\"build_tags\"]=[t for t in d[\"build_tags\"] if t!=\"with_trusttunnel\"]
 json.dump(d,open(p,\"w\"),indent=2)
 "
 ' || true

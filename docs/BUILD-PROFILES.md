@@ -7,7 +7,9 @@ the fork adds protocols and integration code as well as inheriting upstream capa
 
 For the current asset list, see the [platform table](../README.md#客户端与命令行内核).
 Windows has a separate `release/DEFAULT_BUILD_TAGS_WINDOWS` profile, including
-`with_naive_outbound,with_purego`. Mobile builds use the tags assembled by their builders.
+`with_naive_outbound,with_purego`. Mobile builds use the tags assembled by their builders;
+the Apple/Android libbox shared set includes `with_trusttunnel` and `with_xhttp`, and the Apple
+TF build asserts that tag before compiling the framework. See [TF build](TESTFLIGHT-MAC.md).
 
 | | Linux Server | macOS Client |
 | --- | --- | --- |

@@ -110,6 +110,28 @@ pack() {
   slices="$(find "$xcframework" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | tr '\n' ' ')"
   slices="${slices% }"
   [ -n "$slices" ] || fail "the xcframework at $xcframework has no slice directories"
+
+  # The capability tags the framework was compiled with. This is not decoration: the released
+  # v0.1.46 Libbox was built from a mobile tag set that omitted with_trusttunnel, so it rejected a
+  # trusttunnel configuration while the artifact manifest still validated. The TF publish path
+  # downloads this artifact and takes its word for the core; without the tag in the manifest there
+  # is no fact to check. Read it from the builder's own provenance, never re-list the tags here.
+  local build_tags
+  build_tags="${LIBBOX_BUILD_TAGS:-}"
+  if [ -z "$build_tags" ] && [ -f libbox.provenance ]; then
+    build_tags="$(sed -n 's/^tags\.apple=//p' libbox.provenance | head -n 1 | tr -d '\r')"
+  fi
+  [ -n "$build_tags" ] || fail \
+    "no Apple build tags are available. Run the build through scripts/ci/build-apple-libbox.sh, or pass LIBBOX_BUILD_TAGS."
+  case ",$build_tags," in
+    *,with_trusttunnel,*)
+      ;;
+    *)
+      fail "the Apple Libbox build tags omit with_trusttunnel: $build_tags
+  The framework cannot construct a TrustTunnel outbound, so publishing it would ship a core that
+  rejects a configuration the release advertises. Rebuild the Apple Libbox from this commit."
+      ;;
+  esac
   # Requirement, not a guess: the two clients this artifact exists for. Named here because a
   # manifest that lists whatever it happens to find would happily declare a single-slice
   # framework as valid.
@@ -135,6 +157,7 @@ build_time_utc:        $(date -u +%Y-%m-%dT%H:%M:%SZ)
 xcode_version:         $xcode_version
 go_version:            $go_version
 slices:                $slices
+build_tags:            $build_tags
 gomobile_version:      $gomobile_version
 gomobile_source:       $gomobile_source
 workflow:              $workflow_ref
@@ -176,13 +199,14 @@ EOF
   python3 - "$output/manifest.json" "$parent_sha" "$version" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$xcode_version" "$go_version" \
     "$(basename "$tarball")" "$artifact_sha" "$jj_version" "$slices" \
-    "$gomobile_version" "$gomobile_source" "$workflow_ref" "$run_id" "$run_attempt" <<'PY'
+    "$gomobile_version" "$gomobile_source" "$workflow_ref" "$run_id" "$run_attempt" \
+    "$build_tags" <<'PY'
 import json
 import sys
 
 (path, parent, version, built, xcode, goversion, artifact, digest,
  jj_version, slices, gomobile_version, gomobile_source,
- workflow, run_id, run_attempt) = sys.argv[1:16]
+ workflow, run_id, run_attempt, build_tags) = sys.argv[1:17]
 
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(
@@ -200,6 +224,9 @@ with open(path, "w", encoding="utf-8") as handle:
             "xcode_version": xcode,
             "go_version": goversion,
             "slices": slices.split(),
+            # The capability set. Required by validate(), not merely recorded: without this field a
+            # released Libbox can silently omit a protocol the release advertises.
+            "build_tags": [tag for tag in build_tags.split(",") if tag],
             "gomobile_version": gomobile_version,
             "gomobile_source": gomobile_source,
             "workflow": workflow,
@@ -291,9 +318,9 @@ validate() {
   if [ "$require_schema" = "1" ]; then
     [ "$schema" = "2" ] || fail \
       "manifest.json declares schema_version '${schema:-<absent>}', and this consumer requires 2.
-  The schema-2 fields (jj_version, slices) are what make this artifact's identity checkable;
-  an older artifact can be read with --allow-legacy-manifest, but it cannot be a canonical
-  release source. Re-run the Apple producer for this commit."
+  The schema-2 fields (jj_version, slices, build_tags) are what make this artifact's identity and
+  capability checkable; an older artifact can be read with --allow-legacy-manifest, but it cannot
+  be a canonical release source. Re-run the Apple producer for this commit."
   fi
 
   # --- identity: jj_version --------------------------------------------------
@@ -316,6 +343,31 @@ validate() {
     "checksum mismatch for $(basename "$tarball"):
   manifest: $artifact_sha
   actual:   $actual_sha"
+
+  # --- capability tags: declared and REQUIRED --------------------------------
+  #
+  # This is the check that the released v0.1.46 artifact would have failed. It was built from a
+  # mobile tag set without with_trusttunnel, yet its manifest validated because no capability was
+  # part of the contract. A release source must state the capability set, and TrustTunnel must be
+  # in it: the TF app otherwise installs, launches and only fails when a node uses the protocol.
+  if [ "$require_schema" = "1" ]; then
+    local declared_build_tags
+    declared_build_tags="$(manifest_field_list "$manifest" build_tags)" || fail \
+      "manifest.json has no build_tags array. The artifact cannot prove which protocols it was
+  compiled with; re-run the Apple producer for this commit."
+    [ -n "$declared_build_tags" ] || fail "manifest.json declares an empty build_tags array"
+    case " $declared_build_tags " in
+      *" with_trusttunnel "*)
+        ;;
+      *)
+        fail "the Libbox artifact was not compiled with with_trusttunnel:
+  declared: $declared_build_tags
+  A TrustTunnel configuration would be rejected by the shipped app. Rebuild the Apple Libbox from
+  a commit whose mobile tag set includes with_trusttunnel."
+        ;;
+    esac
+    echo "PASS: build_tags             $declared_build_tags"
+  fi
 
   # --- slices: declared AND verified against the real archive -----------------
   #

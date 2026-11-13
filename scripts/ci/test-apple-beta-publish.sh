@@ -66,7 +66,7 @@ make_xcframework() {
 build_artifact() {
   local xcframework="$1" out="$2"
   make_xcframework "$xcframework"
-  "$artifact_tool" pack "$xcframework" "$out" >/dev/null
+  LIBBOX_BUILD_TAGS="with_quic,with_trusttunnel" "$artifact_tool" pack "$xcframework" "$out" >/dev/null
 }
 
 echo "== artifact attribution =="
@@ -153,6 +153,31 @@ check "the manifest records the parent commit" \
   grep -q "\"parent_sha\": \"$parent_sha\"" "$tmp/a1/manifest.json"
 check "the manifest records the artifact checksum" \
   grep -q '"artifact_sha256":' "$tmp/a1/manifest.json"
+check "the manifest records the build tags" \
+  python3 -c 'import json,sys; assert "with_trusttunnel" in json.load(open(sys.argv[1]))["build_tags"]' \
+    "$tmp/a1/manifest.json"
+
+cp -R "$tmp/a1" "$tmp/a_no_tags"
+python3 -c '
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d.pop("build_tags", None)
+json.dump(d, open(p, "w"), indent=2)
+' "$tmp/a_no_tags/manifest.json"
+expects_fail "an artifact with no build_tags is rejected" \
+  "$artifact_tool" validate "$tmp/a_no_tags" --parent-sha "$parent_sha" --jj-version "$artifact_jj"
+
+cp -R "$tmp/a1" "$tmp/a_without_trusttunnel"
+python3 -c '
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["build_tags"] = [tag for tag in d["build_tags"] if tag != "with_trusttunnel"]
+json.dump(d, open(p, "w"), indent=2)
+' "$tmp/a_without_trusttunnel/manifest.json"
+expects_fail "an artifact built without with_trusttunnel is rejected" \
+  "$artifact_tool" validate "$tmp/a_without_trusttunnel" --parent-sha "$parent_sha" --jj-version "$artifact_jj"
 
 echo "== install =="
 

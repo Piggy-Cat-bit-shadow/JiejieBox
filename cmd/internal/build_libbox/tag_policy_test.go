@@ -278,3 +278,17 @@ func TestProfileTagFilesCarryXHTTP(t *testing.T) {
 		}
 	}
 }
+
+// TestMobileVariantsShipTrustTunnel is the regression for the shipped Apple TestFlight artifact
+// rejecting a trusttunnel configuration: the CLI profiles named with_trusttunnel, but the mobile
+// builders compose mobilebuildtags, which did not. All shipped mobile variants must carry it now.
+func TestMobileVariantsShipTrustTunnel(t *testing.T) {
+	for _, variant := range []string{"android-main", "android-legacy", "apple"} {
+		t.Run(variant, func(t *testing.T) {
+			if !HasBuildTag(variant, "with_trusttunnel") {
+				t.Fatalf("variant %s does not ship with_trusttunnel; the mobile artifact will reject "+
+					"a trusttunnel configuration even though the CLI profiles advertise it", variant)
+			}
+		})
+	}
+}
