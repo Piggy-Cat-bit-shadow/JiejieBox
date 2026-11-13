@@ -8,6 +8,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -99,6 +100,49 @@ func TestCloseFinalisesExactlyOnce(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, endCount, "the end is emitted once, so 'no more events' is a fact")
+}
+
+// TestCloseAndPublishShareOneFinalisationBoundary stresses the window the old two-step Publish
+// opened: a publisher that observed closed=false could append a stage after Close had already
+// emitted the end event. The snapshot must always end with exactly one end event, and no event may
+// be appended after it.
+func TestCloseAndPublishShareOneFinalisationBoundary(t *testing.T) {
+	emitter := newConnectionTestEmitter(emitterBounds{Queue: 8, Retention: 16, MaxBytes: 4096}, time.Now())
+	const publishers = 16
+	const eventsPerPublisher = 64
+	start := make(chan struct{})
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(publishers)
+	for index := 0; index < publishers; index++ {
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			for event := 0; event < eventsPerPublisher; event++ {
+				emitter.Publish(connectionTestEvent{Kind: eventStage, Stage: "path", Outcome: outcomeOK})
+			}
+		}()
+	}
+	closeDone := make(chan struct{})
+	go func() {
+		<-start
+		emitter.Close(time.Millisecond)
+		close(closeDone)
+	}()
+	close(start)
+	waitGroup.Wait()
+	<-closeDone
+
+	snapshot := emitter.Snapshot()
+	require.NotEmpty(t, snapshot)
+	endCount := 0
+	for index, event := range snapshot {
+		if event.Kind == eventEnd {
+			endCount++
+			require.Equal(t, len(snapshot)-1, index, "an event was appended after the end event")
+		}
+	}
+	require.Equal(t, 1, endCount, "the finalisation boundary must emit exactly one end event")
+	require.Equal(t, eventEnd, snapshot[len(snapshot)-1].Kind)
 }
 
 // recordingSink is a platform sink that keeps what it was delivered.

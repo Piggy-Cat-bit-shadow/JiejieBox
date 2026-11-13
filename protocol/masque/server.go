@@ -463,7 +463,12 @@ func (s *ServerEndpoint) writePacketBuffers(packetBuffers []*buf.Buffer) error {
 }
 
 func (s *ServerEndpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	s.flows.add(conn, source.Addr)
+	if !s.flows.add(conn, source.Addr) {
+		if onClose != nil {
+			onClose(net.ErrClosed)
+		}
+		return
+	}
 	s.newConnection(ctx, s, s.localAddresses, conn, source, destination, func(err error) {
 		s.flows.remove(conn)
 		if onClose != nil {
@@ -473,7 +478,12 @@ func (s *ServerEndpoint) NewConnectionEx(ctx context.Context, conn net.Conn, sou
 }
 
 func (s *ServerEndpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	s.flows.addPacket(conn, source.Addr)
+	if !s.flows.addPacket(conn, source.Addr) {
+		if onClose != nil {
+			onClose(net.ErrClosed)
+		}
+		return
+	}
 	s.newPacketConnection(ctx, s, s.localAddresses, conn, source, destination, func(err error) {
 		s.flows.removePacket(conn)
 		if onClose != nil {

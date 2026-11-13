@@ -240,9 +240,15 @@ func (m *ConnectionManager) CloseAll() {
 		m.connections.Remove(element)
 		element = nextElement
 	}
-	m.access.Unlock()
+	// Account the batch while it is still under the same lock that detached it. Once the objects
+	// leave the tracked set, a concurrent Close's waitForDisposals must already see them as
+	// synchronous closes; taking the account after the unlock leaves a window in which the ledger is
+	// all zero and Close can return while this caller has not started closing the sockets yet.
 	if len(closers) > 0 {
 		m.beginSynchronousCloses(len(closers))
+	}
+	m.access.Unlock()
+	if len(closers) > 0 {
 		for _, closer := range closers {
 			common.Close(closer)
 		}

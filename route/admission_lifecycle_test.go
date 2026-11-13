@@ -160,6 +160,26 @@ func TestFinalCloseWaitsForASynchronousCloseAll(t *testing.T) {
 	require.Equal(t, 0, manager.synchronousCloses())
 }
 
+// TestAcquireConnectionRefusesCancelledContextWithRoom pins the fast path: a caller that has already
+// withdrawn must not be admitted just because the manager has room. The old path consulted the
+// context only while waiting, so a cancelled dial still consumed a slot and could install a socket
+// after a drain.
+func TestAcquireConnectionRefusesCancelledContextWithRoom(t *testing.T) {
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	t.Cleanup(func() { _ = manager.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ticket, err := manager.AcquireConnection(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, ticket)
+
+	manager.disposal.mu.Lock()
+	admitted := manager.disposal.admitted
+	manager.disposal.mu.Unlock()
+	require.Zero(t, admitted, "a cancelled context must not consume an admission slot")
+}
+
 // TestColdProductionDNSStillResolvesWhenTheDisposalBacklogIsFull is red 3 fixed.
 func TestColdProductionDNSStillResolvesWhenTheDisposalBacklogIsFull(t *testing.T) {
 	harness := newInterfaceTransitionHarness(t)

@@ -604,6 +604,7 @@ func (c *Client) ResetContext(ctx context.Context) error {
 	// A creation that is still in flight belongs to the generation that just ended. It is
 	// discarded and its waiters are released, exactly as before the migration existed.
 	c.connAccess.Lock()
+	connAtStart := c.conn.Load()
 	pending := c.pending
 	if pending != nil {
 		pending.discarded = true
@@ -634,8 +635,13 @@ func (c *Client) ResetContext(ctx context.Context) error {
 	c.migrateAccess.Lock()
 	defer c.migrateAccess.Unlock()
 
+	// The pending slot was released above, so a demand can create and publish a NEW generation while
+	// this reset is waiting for migrateAccess (which may be held by a previous migration for seconds).
+	// That connection was built on the network that is current now; acting on it would retire or
+	// migrate a generation this reset does not own. Only the connection observed when the reset began
+	// is this reset's generation.
 	conn := c.conn.Load()
-	if conn == nil {
+	if conn == nil || conn != connAtStart {
 		return nil
 	}
 	if !conn.hasStreams() || !conn.migrationAvailable() {

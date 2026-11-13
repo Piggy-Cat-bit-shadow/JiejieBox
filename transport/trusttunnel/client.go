@@ -169,6 +169,9 @@ type Client struct {
 	h3Cooldown time.Duration
 	// now is the clock the cooldown reads, replaceable in tests.
 	now func() time.Time
+	// cordonHook, when non-nil, runs at the start of cordonForGeneration. Tests use it to pause the
+	// old failure between its ctx.Err() check and the generation check; production leaves it nil.
+	cordonHook func()
 	// connectH3 and connectH2 are the two legs of one creation; tests replace them to hold an attempt
 	// open or fail it without a handshake. Production always points them at connectQUIC/connectHTTP2.
 	connectH3 func(ctx context.Context) (sessionConn, error)
@@ -515,6 +518,9 @@ func (c *Client) currentGeneration() uint64 {
 // the generation, so the two operations cannot interleave. The clock read stays outside the lock
 // because it is the caller's seam, not state this client owns.
 func (c *Client) cordonForGeneration(generation uint64) {
+	if c.cordonHook != nil {
+		c.cordonHook()
+	}
 	until := c.clock().Add(c.h3Cooldown).UnixNano()
 	c.access.Lock()
 	defer c.access.Unlock()
@@ -761,6 +767,17 @@ func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *cli
 	if session.retiring.Load() {
 		return nil, errSessionRetired
 	}
+	// Count the CONNECT before it goes on the wire, not after the server answers 200. A trim or
+	// RetireSuspect that observes streams==0 while this request is in flight would close the
+	// carrier underneath it; the session must instead be drained and allowed to finish the CONNECT
+	// it already accepted. Every failure path gives the slot back and lets a retiring session close.
+	session.streams.Add(1)
+	defer func() {
+		if err != nil {
+			session.streams.Add(-1)
+			session.drainIfUnused()
+		}
+	}()
 	var status int
 	done := trace.connect(ctx, authority)
 	defer func() { done(status, err) }()
@@ -793,7 +810,6 @@ func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *cli
 		return nil, statusError
 	}
 	session.markReceived()
-	session.streams.Add(1)
 	return stream, nil
 }
 

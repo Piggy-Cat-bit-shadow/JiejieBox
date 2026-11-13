@@ -124,20 +124,20 @@ func (e *connectionTestEmitter) Dropped() uint64 {
 }
 
 // Publish appends one event unless the stream is finished. The final events are written by
-// appendAndOffer directly, because Close must publish AFTER it marks the stream finished.
+// appendAndOfferLocked directly under the same lock, so nothing can be appended after the end event.
 func (e *connectionTestEmitter) Publish(event connectionTestEvent) {
 	e.access.Lock()
-	closed := e.closed
-	e.access.Unlock()
-	if closed {
+	defer e.access.Unlock()
+	if e.closed {
 		return
 	}
-	e.appendAndOffer(event)
+	e.appendAndOfferLocked(event)
 }
 
-// appendAndOffer retains one event and offers it to the live subscriber without blocking.
-func (e *connectionTestEmitter) appendAndOffer(event connectionTestEvent) {
-	e.access.Lock()
+// appendAndOfferLocked retains one event and offers it to the live subscriber without blocking.
+// The caller holds access, which is what makes the closed check, the append and the final end event
+// one critical section; the send itself is non-blocking, so holding the lock across it is safe.
+func (e *connectionTestEmitter) appendAndOfferLocked(event connectionTestEvent) {
 	e.next++
 	event.Seq = e.next
 	if event.Kind == "" {
@@ -149,13 +149,10 @@ func (e *connectionTestEmitter) appendAndOffer(event connectionTestEvent) {
 		e.bytes -= eventSize(e.history[0])
 		e.history = e.history[1:]
 	}
-	e.access.Unlock()
 	select {
 	case e.queue <- event:
 	default:
-		e.access.Lock()
 		e.dropped++
-		e.access.Unlock()
 	}
 }
 
@@ -166,21 +163,21 @@ func (e *connectionTestEmitter) Snapshot() []connectionTestEvent {
 	return append([]connectionTestEvent(nil), e.history...)
 }
 
-// Close publishes the final snapshot exactly once and finishes the stream.
+// Close publishes the final snapshot exactly once and finishes the stream. The final events and the
+// finished signal are written under the same lock that Publish uses, so a concurrent publisher can
+// never append a stage or finding after the end event or observe a half-written final snapshot.
 func (e *connectionTestEmitter) Close(elapsed time.Duration) {
 	e.access.Lock()
+	defer e.access.Unlock()
 	if e.closed {
-		e.access.Unlock()
 		return
 	}
 	e.closed = true
-	dropped := e.dropped
-	e.access.Unlock()
-	if dropped > 0 {
-		e.appendAndOffer(connectionTestEvent{Kind: eventFinding, Outcome: outcomeDropped, Detail: "subscriber missed events", Elapsed: elapsed.Milliseconds()})
+	if e.dropped > 0 {
+		e.appendAndOfferLocked(connectionTestEvent{Kind: eventFinding, Outcome: outcomeDropped, Detail: "subscriber missed events", Elapsed: elapsed.Milliseconds()})
 	}
-	e.appendAndOffer(connectionTestEvent{Kind: eventSnapshot, Snapshot: true, Elapsed: elapsed.Milliseconds()})
-	e.appendAndOffer(connectionTestEvent{Kind: eventEnd, Elapsed: elapsed.Milliseconds()})
+	e.appendAndOfferLocked(connectionTestEvent{Kind: eventSnapshot, Snapshot: true, Elapsed: elapsed.Milliseconds()})
+	e.appendAndOfferLocked(connectionTestEvent{Kind: eventEnd, Elapsed: elapsed.Milliseconds()})
 	close(e.finished)
 }
 

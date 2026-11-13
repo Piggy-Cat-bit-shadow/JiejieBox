@@ -582,7 +582,9 @@ func tcpMetadataOf(server *testServer) []Metadata {
 // The reviewer's interleaving: the old creation has already passed its ctx.Err() check and is paused
 // inside the verdict write when Reset replaces the network and a NEW HTTP/3 session is published. The
 // old failure must then fail the generation check instead of re-arming the verdict the new network
-// cleared. Pausing is done on the clock seam, which cordonForGeneration reads before it writes.
+// cleared. The pause is on the SECOND clock read - the one cordonForGeneration performs before its
+// generation check - not on the first read (h3Cordoned, before the H3 attempt), which is how the
+// earlier version of this test accidentally never reached the check it claimed to cover.
 func TestFallbackOldFailureAfterResetCannotCordonTheNewNetwork(t *testing.T) {
 	if !quicIncluded {
 		t.Skip("HTTP/3 is not in this build")
@@ -590,7 +592,7 @@ func TestFallbackOldFailureAfterResetCannotCordonTheNewNetwork(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var h3Calls atomic.Int32
-	client, clock := newFallbackTestClient(t,
+	client, _ := newFallbackTestClient(t,
 		func(context.Context) (sessionConn, error) {
 			if h3Calls.Add(1) == 1 {
 				return nil, errors.New("old network UDP refused")
@@ -604,13 +606,9 @@ func TestFallbackOldFailureAfterResetCannotCordonTheNewNetwork(t *testing.T) {
 			return newFakeSession(), nil
 		},
 	)
-	var clockCalls atomic.Int32
-	client.now = func() time.Time {
-		if clockCalls.Add(1) == 1 {
-			close(entered)
-			<-release
-		}
-		return time.Unix(0, clock.Load())
+	client.cordonHook = func() {
+		close(entered)
+		<-release
 	}
 
 	oldDone := make(chan error, 1)

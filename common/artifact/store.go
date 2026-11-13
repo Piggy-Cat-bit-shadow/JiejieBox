@@ -40,6 +40,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -77,7 +78,10 @@ type Version struct {
 	manifest Manifest
 	dir      string
 	store    *Store
-	released bool
+	// released is the one-shot lease release latch. It is atomic because the comment on Release
+	// promises idempotence for a deferred plus an explicit call, and two owners may reach those two
+	// calls concurrently; a plain bool would race and could decrement the lease twice.
+	released atomic.Bool
 }
 
 // NewManifest builds a manifest for this build. The platform and ABI are filled from the running
@@ -108,12 +112,12 @@ func (v *Version) Path() string { return filepath.Join(v.dir, artifactName) }
 // Open opens the artifact for reading while the lease is held.
 func (v *Version) Open() (*os.File, error) { return os.Open(v.Path()) }
 
-// Release drops the lease. It is idempotent so a deferred release plus an explicit one is safe.
+// Release drops the lease. It is idempotent so a deferred release plus an explicit one is safe, and
+// the latch is atomic so the two may also be concurrent.
 func (v *Version) Release() {
-	if v == nil || v.store == nil || v.released {
+	if v == nil || v.store == nil || !v.released.CompareAndSwap(false, true) {
 		return
 	}
-	v.released = true
 	v.store.release(v.dir)
 }
 

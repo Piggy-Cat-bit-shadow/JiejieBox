@@ -320,18 +320,20 @@ func (s *Server) releaseSession(current *serverSession) {
 	if current.queue != nil {
 		current.queue.Close()
 	}
+	// Tell the handler which generation left BEFORE the addresses return to their pools. The
+	// registry matches flows by source address, so if a pool released first, a new session could
+	// receive one of these addresses and register a fresh flow that this old session's release would
+	// then close. Keeping the address out of the pool until its generation's flows are released makes
+	// that impossible.
+	if releaser, isReleaser := s.handler.(SessionReleaser); isReleaser {
+		releaser.ReleaseSession(current.addresses)
+	}
 	for _, address := range current.addresses {
 		for _, pool := range s.pools {
 			if pool.prefix.Contains(address) {
 				pool.release(address)
 			}
 		}
-	}
-	// Tell the handler which generation left. This runs AFTER the addresses returned to their pools,
-	// so a new session that receives one of them registers fresh flows instead of inheriting this
-	// close.
-	if releaser, isReleaser := s.handler.(SessionReleaser); isReleaser {
-		releaser.ReleaseSession(current.addresses)
 	}
 }
 

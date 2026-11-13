@@ -21,6 +21,9 @@ import (
 
 type flowRegistry struct {
 	access sync.Mutex
+	// closed is set by closeAll. A flow that arrives after the endpoint began teardown must not be
+	// registered: no later closeAll will run, so it would keep its socket past the endpoint.
+	closed bool
 	// flows maps each live inner connection to the inner source address it arrived from.
 	flows map[net.Conn]netip.Addr
 	// packets is the datagram half, kept separately because the two connection types do not share a
@@ -28,13 +31,19 @@ type flowRegistry struct {
 	packets map[N.PacketConn]netip.Addr
 }
 
-func (r *flowRegistry) add(conn net.Conn, source netip.Addr) {
+func (r *flowRegistry) add(conn net.Conn, source netip.Addr) bool {
 	r.access.Lock()
+	if r.closed {
+		r.access.Unlock()
+		_ = conn.Close()
+		return false
+	}
 	if r.flows == nil {
 		r.flows = make(map[net.Conn]netip.Addr)
 	}
 	r.flows[conn] = source
 	r.access.Unlock()
+	return true
 }
 
 func (r *flowRegistry) remove(conn net.Conn) {
@@ -43,13 +52,19 @@ func (r *flowRegistry) remove(conn net.Conn) {
 	r.access.Unlock()
 }
 
-func (r *flowRegistry) addPacket(conn N.PacketConn, source netip.Addr) {
+func (r *flowRegistry) addPacket(conn N.PacketConn, source netip.Addr) bool {
 	r.access.Lock()
+	if r.closed {
+		r.access.Unlock()
+		_ = conn.Close()
+		return false
+	}
 	if r.packets == nil {
 		r.packets = make(map[N.PacketConn]netip.Addr)
 	}
 	r.packets[conn] = source
 	r.access.Unlock()
+	return true
 }
 
 func (r *flowRegistry) removePacket(conn N.PacketConn) {
@@ -99,6 +114,7 @@ func (r *flowRegistry) closeFor(addresses []netip.Addr) int {
 // sockets behind the stack it is about to release.
 func (r *flowRegistry) closeAll() int {
 	r.access.Lock()
+	r.closed = true
 	var connections []net.Conn
 	for conn := range r.flows {
 		connections = append(connections, conn)

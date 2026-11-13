@@ -73,6 +73,34 @@ func poolOf(t *testing.T, config xmuxConfig) (*xmuxManager, func() []*fakeXmuxCo
 	}
 }
 
+// TestXmuxRetiredConnectionCannotBeRevived pins the reservation boundary. A client retired between
+// pool selection and stream reservation must refuse the reservation instead of having its usage
+// count raised on an already-released transport; DialContext then selects another client.
+func TestXmuxRetiredConnectionCannotBeRevived(t *testing.T) {
+	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
+	client, _ := manager.get()
+	if !client.acquireUsage() {
+		t.Fatal("a live connection must accept a usage reservation")
+	}
+	client.close()
+	if got := conns()[0].closes(); got != 0 {
+		t.Fatalf("a connection with a reserved stream was released early (%d closes)", got)
+	}
+	client.addOpenUsage(-1)
+	if got := conns()[0].closes(); got != 1 {
+		t.Fatalf("releasing the last stream must release the connection once, got %d closes", got)
+	}
+	if client.acquireUsage() {
+		t.Fatal("a released connection accepted a new reservation and would be revived")
+	}
+	if got := client.getOpenUsage(); got != 0 {
+		t.Fatalf("a refused reservation changed the usage count to %d", got)
+	}
+	if got := conns()[0].closes(); got != 1 {
+		t.Fatalf("a refused reservation must not close the connection again, got %d closes", got)
+	}
+}
+
 // TestXmuxReusesConnection is the baseline: with concurrency to spare, a second
 // stream must land on the connection the first one already opened. Without this
 // the whole feature is a no-op.

@@ -1260,7 +1260,19 @@ func (g *URLTestGroup) ApplyFailoverPolicy(policy urltest.FailoverPolicy) {
 	if g == nil {
 		return
 	}
-	g.failover = urltest.NewFailoverState(policy, g.currentSelectedTag())
+	state := urltest.NewFailoverState(policy, g.currentSelectedTag())
+	g.access.Lock()
+	g.failover = state
+	g.access.Unlock()
+}
+
+// failoverState returns the current policy pointer. The pointer is replaced by
+// ApplyFailoverPolicy, so every reader takes it under the group's access lock; the state's own
+// methods are internally locked against the round that mutates it.
+func (g *URLTestGroup) failoverState() *urltest.FailoverState {
+	g.access.Lock()
+	defer g.access.Unlock()
+	return g.failover
 }
 
 // HealthSnapshot is the per-group health state a scale or recovery run can record.
@@ -1322,18 +1334,19 @@ func (g *URLTestGroup) HealthSnapshot() HealthSnapshot {
 	snapshot := HealthSnapshot{Members: len(g.outbounds), Selected: g.currentSelectedTag()}
 	snapshot.CoordinatorInFlight, snapshot.CoordinatorQueued, snapshot.CoordinatorLimit,
 		snapshot.SharedProbesInFlight, snapshot.Participants = g.QueueSnapshot()
-	if g.failover == nil {
+	failover := g.failoverState()
+	if failover == nil {
 		snapshot.Disabled = true
 		return snapshot
 	}
-	snapshot.Disabled = g.failover.Disabled()
-	snapshot.Stable = g.failover.Stable()
-	snapshot.Widened = g.failover.Widened()
+	snapshot.Disabled = failover.Disabled()
+	snapshot.Stable = failover.Stable()
+	snapshot.Widened = failover.Widened()
 	tags := make([]string, 0, len(g.outbounds))
 	for _, member := range g.outbounds {
 		tags = append(tags, member.Tag())
 	}
-	snapshot.NextProbes = g.failover.Probes(tags)
+	snapshot.NextProbes = failover.Probes(tags)
 	return snapshot
 }
 
@@ -1502,8 +1515,8 @@ func (g *URLTestGroup) runHealthRound(ctx context.Context, force bool) (result m
 	// beside the group's own tolerance rule. AdoptStable only fills an EMPTY slot, so a policy that
 	// already holds a member is never overridden; what this guarantees is that a freshly built group
 	// (a provider republication rebuilds it) starts from what traffic actually uses.
-	if g.failover != nil {
-		g.failover.AdoptStable(g.currentSelectedTag())
+	if failover := g.failoverState(); failover != nil {
+		failover.AdoptStable(g.currentSelectedTag())
 	}
 	probeMembers := g.healthProbeMembers(members, force)
 	result, publications, evidence, roundErr := runMeasurementRound(ctx, g.outbound, g.history, g.logger, probeMembers, g.link, g.expected, g.interval, force, TestHistoryHealth)
@@ -1527,15 +1540,16 @@ func (g *URLTestGroup) runHealthRound(ctx context.Context, force bool) (result m
 // check of a healthy stable member measures that member and nothing else"; an explicit test must
 // never be narrowed.
 func (g *URLTestGroup) healthProbeMembers(members []adapter.Outbound, force bool) []adapter.Outbound {
-	if g.failover == nil || force || g.failover.Disabled() {
+	failover := g.failoverState()
+	if failover == nil || force || failover.Disabled() {
 		return members
 	}
-	g.failover.AdoptStable(g.currentSelectedTag())
+	failover.AdoptStable(g.currentSelectedTag())
 	tags := make([]string, len(members))
 	for index, member := range members {
 		tags[index] = member.Tag()
 	}
-	probes := g.failover.Probes(tags)
+	probes := failover.Probes(tags)
 	if len(probes) == len(members) {
 		return members
 	}
@@ -1567,7 +1581,8 @@ func (g *URLTestGroup) healthProbeMembers(members []adapter.Outbound, force bool
 // A success carries the provenance recorded with it: the commit re-checks it because a drop can land
 // between this decision and the selection store.
 func (g *URLTestGroup) observeFailoverRound(members []adapter.Outbound, probeMembers []adapter.Outbound, result map[string]uint16, publications map[string]roundPublication, evidence map[string]roundEvidence) (string, *roundEvidence) {
-	if g.failover == nil || g.failover.Disabled() {
+	failover := g.failoverState()
+	if failover == nil || failover.Disabled() {
 		return "", nil
 	}
 	tags := make([]string, len(members))
@@ -1587,7 +1602,7 @@ func (g *URLTestGroup) observeFailoverRound(members []adapter.Outbound, probeMem
 			// all. The policy treats "not probed" as "not a failure" by design.
 		}
 	}
-	decision := g.failover.Decide(tags, observations)
+	decision := failover.Decide(tags, observations)
 	if decision.Changed && decision.Selected != "" {
 		if recorded, hasEvidence := evidence[decision.Selected]; hasEvidence {
 			return decision.Selected, &recorded

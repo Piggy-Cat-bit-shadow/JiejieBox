@@ -167,7 +167,7 @@ func (t *http3FallbackTransport) RoundTrip(request *http.Request) (*http.Respons
 //	             header, or any body byte, have reached the peer. A connection that was never
 //	             obtained is the ONLY proof this client can have that the peer saw nothing.
 //	repeatable   the operation may be performed twice without changing its effect: RFC 9110
-//	             §9.2.2's idempotent methods, or an explicit Idempotency-Key (see
+//	             搂9.2.2's idempotent methods, or an explicit Idempotency-Key (see
 //	             requestIdempotent).
 //
 // Re-sending additionally requires a body that can be produced again (GetBody). The three are
@@ -310,6 +310,21 @@ func (t *http3FallbackTransport) cacheProbeWindow() time.Duration {
 // window expired.
 var errH3CacheProbeWindow = E.New("HTTP/3 cache probe exceeded its window while the pool entry was still dialing")
 
+// cancelAttemptOnCloseBody releases the attempt context when the response body is closed. The H3
+// attempt has its own establishment context; once the timer is stopped on success, nothing else
+// cancels it, so without this the child context stays registered on a long-lived parent after the
+// response is done. Closing the body is the natural end of the attempt's lifetime.
+type cancelAttemptOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (b *cancelAttemptOnCloseBody) Close() error {
+	b.once.Do(b.cancel)
+	return b.ReadCloser.Close()
+}
+
 func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool) h3Issue {
 	hasBody := request.Body != nil && request.Body != http.NoBody
 	attemptRequest := request
@@ -322,12 +337,14 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 		attemptRequest.Body = upload
 	}
 	var issue h3Issue
+	var attemptCancel context.CancelFunc
 	if onlyCached {
 		var (
 			established atomic.Bool
 			timedOut    atomic.Bool
 		)
 		probeCtx, cancelProbe := context.WithCancel(attemptRequest.Context())
+		attemptCancel = cancelProbe
 		timer := time.AfterFunc(t.cacheProbeWindow(), func() {
 			if !established.Load() {
 				timedOut.Store(true)
@@ -360,6 +377,7 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 	} else {
 		var established atomic.Bool
 		attemptCtx, cancelAttempt := context.WithCancel(attemptRequest.Context())
+		attemptCancel = cancelAttempt
 		var gaveUp atomic.Bool
 		// The attempt gets its own establishment bound.
 		//
@@ -424,6 +442,13 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 		}
 		// !sent: no byte was read, so the transport's error-path Close was suppressed and the body
 		// is still owned by the request, which the fallback will hand to HTTP/2.
+	}
+	if attemptCancel != nil {
+		if issue.err != nil || issue.response == nil || issue.response.Body == nil {
+			attemptCancel()
+		} else {
+			issue.response.Body = &cancelAttemptOnCloseBody{ReadCloser: issue.response.Body, cancel: attemptCancel}
+		}
 	}
 	return issue
 }

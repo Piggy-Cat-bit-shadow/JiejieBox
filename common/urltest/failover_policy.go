@@ -34,6 +34,10 @@ package urltest
 // production code, and the zero value of FailoverState keeps today's behaviour (every member in
 // the probe set) so wiring it can never silently drop probes.
 
+import (
+	"sync"
+)
+
 // FailoverPolicy is the configured part: thresholds and the tolerance band.
 //
 // A non-positive field takes its default, so a partially configured policy cannot disable widening
@@ -109,6 +113,12 @@ type FailoverDecision struct {
 // thresholds every member stays in the probe set and nothing is selected, which is exactly the
 // behaviour the group has today.
 type FailoverState struct {
+	// access serialises the policy state with the read-only snapshot methods. The health round
+	// mutates the state, while a diagnostics/scale sampler may call Stable/Widened/Probes at the
+	// same time; without this lock the state machine and its readers race even though each side is
+	// individually correct.
+	access sync.Mutex
+
 	policy FailoverPolicy
 
 	stable      string
@@ -132,6 +142,8 @@ func (s *FailoverState) Stable() string {
 	if s == nil {
 		return ""
 	}
+	s.access.Lock()
+	defer s.access.Unlock()
 	return s.stable
 }
 
@@ -146,7 +158,12 @@ func (s *FailoverState) Disabled() bool {
 // "the stable member is healthy and only it is probed" from "the set was widened because it is
 // failing", without re-deriving it from the probe set.
 func (s *FailoverState) Widened() bool {
-	if s == nil || s.policy.Disabled {
+	if s == nil {
+		return false
+	}
+	s.access.Lock()
+	defer s.access.Unlock()
+	if s.policy.Disabled {
 		return false
 	}
 	return s.widened
@@ -155,7 +172,12 @@ func (s *FailoverState) Widened() bool {
 // Probes returns the members this policy wants measured in the CURRENT round. A disabled or
 // uninitialised policy probes everything, which is the historical behaviour.
 func (s *FailoverState) Probes(members []string) []string {
-	if s == nil || s.policy.Disabled || s.stable == "" || s.widened {
+	if s == nil {
+		return append([]string(nil), members...)
+	}
+	s.access.Lock()
+	defer s.access.Unlock()
+	if s.policy.Disabled || s.stable == "" || s.widened {
 		return append([]string(nil), members...)
 	}
 	for _, member := range members {
@@ -169,7 +191,12 @@ func (s *FailoverState) Probes(members []string) []string {
 // AdoptStable seeds the stable member from the group's committed selection when the policy has none
 // yet. It never overrides a stable member the policy already holds.
 func (s *FailoverState) AdoptStable(tag string) {
-	if s == nil || s.policy.Disabled || tag == "" {
+	if s == nil || tag == "" {
+		return
+	}
+	s.access.Lock()
+	defer s.access.Unlock()
+	if s.policy.Disabled {
 		return
 	}
 	if s.stable == "" {
@@ -183,7 +210,12 @@ func (s *FailoverState) AdoptStable(tag string) {
 // from the state; a tag whose OBJECT was replaced keeps its slot, because the policy is keyed by
 // tag and a provider publication does not change a tag's meaning.
 func (s *FailoverState) Decide(members []string, observations map[string]FailoverObservation) FailoverDecision {
-	if s == nil || s.policy.Disabled {
+	if s == nil {
+		return FailoverDecision{ProbeSet: append([]string(nil), members...)}
+	}
+	s.access.Lock()
+	defer s.access.Unlock()
+	if s.policy.Disabled {
 		return FailoverDecision{ProbeSet: append([]string(nil), members...)}
 	}
 	if len(members) == 0 {

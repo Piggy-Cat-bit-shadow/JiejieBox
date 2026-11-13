@@ -142,6 +142,26 @@ func (c *xmuxClient) getOpenUsage() int {
 	return c.openUsage
 }
 
+// acquireUsage reserves one live-stream slot atomically with the retired check.
+//
+// # Why this is separate from addOpenUsage
+//
+// The pool selects a client under its own lock and returns it; the caller then used to increment the
+// usage outside that lock. A network change or trim could retire and RELEASE the connection between
+// the two steps, and the later Add(1) then revived a client whose transport was already closed -
+// dispatch on it could create a new HTTP/2 connection that no Close/trim could reach. Reserving under
+// the client's lock makes the retired check and the increment one step: a retired client refuses the
+// reservation, so the caller selects another one instead of resurrecting this object.
+func (c *xmuxClient) acquireUsage() bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.closed {
+		return false
+	}
+	c.openUsage++
+	return true
+}
+
 // takeRequest accounts one HTTP request against h_max_request_times. It is
 // called per REQUEST, not per stream: a packet-up stream issues one upload POST
 // per Write, and a connection that ignored those would outlive the limit the
@@ -690,12 +710,26 @@ func (m *xmuxManager) getContext(ctx context.Context) (*xmuxClient, error) {
 	}
 }
 
+// discardRetired removes a client whose reservation was refused because it was retired between the
+// pool's selection and the reservation. The close paths detach their clients first, but a close that
+// left the object in the list must not make DialContext select the same dead client forever.
+func (m *xmuxManager) discardRetired(client *xmuxClient) {
+	m.access.Lock()
+	for index, current := range m.clients {
+		if current == client {
+			m.clients = append(m.clients[:index], m.clients[index+1:]...)
+			break
+		}
+	}
+	m.access.Unlock()
+}
+
 // get returns a connection for a new stream, opening one when the pool cannot
 // serve it — unless the pool is empty inside the breaker's backoff window, in
 // which case it returns (nil, remaining wait) and the caller must wait and
-// retry (lx: SPEC 076; getContext does exactly that). The caller MUST pair a
-// returned client with addOpenUsage(-1) exactly once, via the release function
-// returned by Client.acquireXmux.
+// retry (lx: SPEC 076; getContext does exactly that). The caller must reserve the returned client's
+// usage with acquireUsage (production DialContext does so before dialling) and release that slot
+// exactly once through the release handle.
 func (m *xmuxManager) get() (*xmuxClient, time.Duration) {
 	m.access.Lock()
 	defer m.access.Unlock()

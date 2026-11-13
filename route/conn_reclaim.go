@@ -421,6 +421,12 @@ func (m *ConnectionManager) AcquireConnection(ctx context.Context) (adapter.Conn
 	d.mu.Lock()
 	m.initDisposalLocked()
 	for {
+		// A cancelled dial must not be admitted just because room exists: the caller has already
+		// withdrawn, and installing a socket for it would charge the manager for work nobody owns.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			d.mu.Unlock()
+			return nil, ctxErr
+		}
 		if d.shutdown || m.closed.Load() {
 			d.mu.Unlock()
 			return nil, net.ErrClosed

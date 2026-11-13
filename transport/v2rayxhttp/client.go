@@ -298,11 +298,26 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	// and every upload POST of packet-up. It is released once, when the conn
 	// closes — see releaseOnce in conn.go. getContext may wait out the breaker's
 	// backoff window before opening a transport (lx: SPEC 076).
-	xmuxClient, err := c.xmux.getContext(ctx)
-	if err != nil {
-		return nil, err
+	//
+	// The usage slot is acquired BEFORE leaving the selection loop. A client selected just before
+	// a network change/trim could otherwise be retired and released, and the old Add(1) would revive
+	// a closed transport. acquireUsage refuses a retired client; that client is out of the pool, so
+	// the next getContext opens a live one.
+	var xmuxClient *xmuxClient
+	for {
+		selected, err := c.xmux.getContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if selected.acquireUsage() {
+			xmuxClient = selected
+			break
+		}
+		// The client was retired between selection and reservation. It is already closed; remove it
+		// from the pool if a close path left it there, so the next get() opens a live client instead
+		// of selecting the same retired object again.
+		c.xmux.discardRetired(selected)
 	}
-	xmuxClient.addOpenUsage(1)
 	// lx: SPEC 077 — one release handle for the whole dial. The conn's Close and
 	// fail share it with this error path, so a raise that fails INSIDE the dial
 	// (fail already released the slot before the error surfaced here) cannot
