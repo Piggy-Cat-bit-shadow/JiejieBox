@@ -38,7 +38,7 @@ Measured, not assumed: batch 1 compared stable patch-ids at upstream tip `a13dbe
 | 071 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:157: // the dial (the WG bind dials under C.TCPTimeout since SPEC 071): on the dial | transport/v2rayxhttp/raise_failure_test.go | fork-only | - | HOLD |
 | 072 | code | 5 | 2026-11-02 | transport/http/client_h3_setup_context_test.go:193: // SPEC 072/077 property: the context that governed setup must be d… | transport/http/client_h3_setup_context_test.go, transport/v… | fork-only | - | HOLD |
 | 074 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:479: // lx: SPEC 074 — onExpire runs OUTSIDE the lock. It closes the HTTP/2 response | none names this patch | fork-only | - | HOLD |
-| 076 | code | 6 | 2026-11-02 | transport/v2rayxhttp/client.go:300: // backoff window before opening a transport (lx: SPEC 076). | transport/v2rayxhttp/packetup_drain_flow_test.go | fork-only | - | HOLD |
+| 076 | code | 7 | 2026-11-13 | transport/v2rayxhttp/client.go:300: // backoff window before opening a transport (lx: SPEC 076). | transport/v2rayxhttp/packetup_drain_flow_test.go | fork-only | - | HOLD |
 | 077 | code | 7 | 2026-11-02 | route/dial_setup.go:23: // XHTTP SPEC 077 dial-context contract, the HTTP/3 CONNECT setup context, and runtimecoord's | transport/http/client_h3_setup_context_test.go, transport/v… | fork-only | - | HOLD |
 | 080 | code | 1 | 2026-11-09 | transport/wireguard/device_awg.go:130: // AmneziaWG 3.x (SPEC 080) | none names this patch | fork-only | - | HOLD |
 | 082 | code | 3 | 2026-11-02 | common/badh2/stream_error.go:2: // conns our transports build on top of HTTP/2 bodies (lx: SPEC 082). | transport/v2rayxhttp/breaker_test.go, transport/v2rayxhttp/… | fork-only | - | HOLD |
