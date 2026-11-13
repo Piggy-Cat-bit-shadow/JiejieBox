@@ -101,6 +101,13 @@ func TestFastestWinExpiryTriggersReelection(t *testing.T) {
 	winner := harness.current()
 	require.NotEmpty(t, winner)
 	harness.awaitTotalCalls(t, 3, "the cold-start election fan")
+	// The first answer returns before the collector has necessarily drained the
+	// losing probes. Call dispatch is not election completion: while its token
+	// is held, another query correctly takes the provisional single-attempt path.
+	// Finish the first election before testing expiry of its winning record.
+	waitFor(t, "the cold-start election to finish before aging its win", func() bool {
+		return !harness.electionInFlight()
+	})
 	require.Equal(t, 1, harness.liveWins(winner))
 
 	// Age the win past win_ttl. No timer runs anywhere: the next selection simply
