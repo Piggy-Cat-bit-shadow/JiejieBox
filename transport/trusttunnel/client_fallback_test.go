@@ -17,11 +17,17 @@ package trusttunnel
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
+
+	E "github.com/sagernet/sing/common/exceptions"
 
 	M "github.com/sagernet/sing/common/metadata"
 
@@ -307,35 +313,41 @@ func TestFallbackReportsBothLegs(t *testing.T) {
 	require.True(t, client.h3Cordoned())
 }
 
+// The cost of the fallback must not scale with the number of concurrent demands: one shared creation
+// means one HTTP/3 attempt and at most one HTTP/2 session, at every concurrency the audit names.
 func TestFallbackKeepsOneSharedCreation(t *testing.T) {
-	release := make(chan struct{})
-	var h3Calls, h2Calls atomic.Int32
-	client, _ := newFallbackTestClient(t,
-		func(context.Context) (sessionConn, error) {
-			h3Calls.Add(1)
-			<-release
-			return nil, errors.New("udp unreachable")
-		},
-		func(context.Context) (sessionConn, error) { h2Calls.Add(1); return newFakeSession(), nil },
-	)
-	client.h3Budget = 10 * time.Second
+	for _, waiters := range []int{1, 32, 128} {
+		t.Run(fmt.Sprintf("%d waiters", waiters), func(t *testing.T) {
+			release := make(chan struct{})
+			var h3Calls, h2Calls atomic.Int32
+			client, _ := newFallbackTestClient(t,
+				func(context.Context) (sessionConn, error) {
+					h3Calls.Add(1)
+					<-release
+					return nil, errors.New("udp unreachable")
+				},
+				func(context.Context) (sessionConn, error) { h2Calls.Add(1); return newFakeSession(), nil },
+			)
+			client.h3Budget = 10 * time.Second
 
-	var waitGroup sync.WaitGroup
-	for range 5 {
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
-			conn, err := client.DialContext(context.Background(), fallbackDestination)
-			if err == nil {
-				_ = conn.Close()
+			var waitGroup sync.WaitGroup
+			for range waiters {
+				waitGroup.Add(1)
+				go func() {
+					defer waitGroup.Done()
+					conn, err := client.DialContext(context.Background(), fallbackDestination)
+					if err == nil {
+						_ = conn.Close()
+					}
+				}()
 			}
-		}()
+			require.Eventually(t, func() bool { return h3Calls.Load() == 1 }, 5*time.Second, time.Millisecond)
+			close(release)
+			waitGroup.Wait()
+			require.EqualValues(t, 1, h3Calls.Load(), "one logical creation is one HTTP/3 attempt")
+			require.LessOrEqual(t, h2Calls.Load(), int32(1), "and at most one HTTP/2 session")
+		})
 	}
-	require.Eventually(t, func() bool { return h3Calls.Load() == 1 }, time.Second, time.Millisecond)
-	close(release)
-	waitGroup.Wait()
-	require.EqualValues(t, 1, h3Calls.Load(), "one logical creation is one HTTP/3 attempt")
-	require.LessOrEqual(t, h2Calls.Load(), int32(1), "and at most one HTTP/2 session")
 }
 
 // The HTTP/2 leg must offer h2 and not the HTTP/3 leg's protocol; the client keeps them in separate
@@ -391,6 +403,8 @@ func TestFallbackCarriesRealPayloadOverTheRecoveredHTTP2Session(t *testing.T) {
 	require.True(t, fallbackSession, "the published session must be the recovery's own")
 	echoRoundTrip(t, conn, 256*1024)
 	require.NoError(t, conn.Close())
+	require.Len(t, tcpMetadataOf(server), 1,
+		"the recovered session carries exactly ONE CONNECT for the destination: a fallback is not a retry of business work")
 
 	packetConn, err := client.ListenPacket(ctx)
 	require.NoError(t, err)
@@ -404,5 +418,163 @@ func TestFallbackCarriesRealPayloadOverTheRecoveredHTTP2Session(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, destination, M.SocksaddrFromNet(source))
 	require.Equal(t, payload, received[:n], "the UDP association really carried the datagram")
+	require.Len(t, server.handler.udpMetadata(), 1, "one UDP association, opened once")
 	require.EqualValues(t, 1, h3Calls.Load(), "one recovery served both demands")
+}
+
+// A certificate or TLS-alert verdict is about the peer's identity or its configuration, not about UDP
+// reachability. Retrying it over TCP would repeat the same refusal (the same certificate is presented
+// on both transports), and remembering it as "HTTP/3 is down" would keep the node off UDP for a reason
+// HTTP/2 does not share. This is the classification the audit asked for: not every failure is a path.
+func TestFallbackDoesNotReactToTLSVerdicts(t *testing.T) {
+	if !quicIncluded {
+		t.Skip("HTTP/3 is not in this build")
+	}
+	verificationError := &tls.CertificateVerificationError{
+		Err: x509.UnknownAuthorityError{Cert: &x509.Certificate{}},
+	}
+	var h3Calls, h2Calls atomic.Int32
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) {
+			h3Calls.Add(1)
+			return nil, E.Cause(verificationError, "QUIC handshake")
+		},
+		func(context.Context) (sessionConn, error) { h2Calls.Add(1); return newFakeSession(), nil },
+	)
+
+	err := dialFallback(t, context.Background(), client)
+	require.Error(t, err)
+	require.ErrorIs(t, err, verificationError, "the original TLS verdict must reach the caller unchanged")
+	require.Zero(t, h2Calls.Load(), "a certificate refusal is not a reason to open HTTP/2")
+	require.False(t, client.h3Cordoned(), "and it must not keep the node off HTTP/3")
+}
+
+// TestFallbackEligibilityClassification pins the table the audit's error matrix asks for: which
+// failures may be answered with the HTTP/2 leg, and which must keep their own meaning.
+func TestFallbackEligibilityClassification(t *testing.T) {
+	certificate := &x509.Certificate{}
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"udp dial refused", E.Cause(syscall.ECONNREFUSED, "dial udp"), true},
+		{"handshake timeout", context.DeadlineExceeded, true},
+		{"handshake reset", E.New("QUIC handshake: connection reset by peer"), true},
+		{"alpn mismatch", E.New(`server negotiated ALPN "h2", expected h3`), true},
+		{"nil", nil, false},
+		{"cancelled", E.Cause(context.Canceled, "QUIC handshake"), false},
+		{"no quic in this build", ErrQUICNotIncluded, false},
+		{"unknown authority", E.Cause(x509.UnknownAuthorityError{Cert: certificate}, "QUIC handshake"), false},
+		{"certificate verification", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{Cert: certificate}}, false},
+		{"hostname mismatch", E.Cause(x509.HostnameError{Certificate: certificate, Host: "wrong.example"}, "QUIC handshake"), false},
+		{"invalid certificate", E.Cause(x509.CertificateInvalidError{Cert: certificate, Reason: x509.Expired}, "QUIC handshake"), false},
+		{"remote alert", E.Cause(tls.AlertError(40), "QUIC handshake"), false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.want, fallbackEligible(testCase.err))
+		})
+	}
+}
+
+// A late HTTP/3 success from the OLD network must not be published, and must not clear a verdict the
+// current generation owns. This is the ordering the audit's matrix calls out: an old success arriving
+// after a new failure must not re-open the path the new generation just closed.
+func TestFallbackLateHTTP3SuccessDoesNotClearTheNewGenerationsVerdict(t *testing.T) {
+	if !quicIncluded {
+		t.Skip("HTTP/3 is not in this build")
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	lateSession := newFakeSession()
+	var h3Calls atomic.Int32
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) {
+			if h3Calls.Add(1) == 1 {
+				close(entered)
+				<-release
+				return lateSession, nil // the old network's handshake completes after the reset
+			}
+			return nil, errors.New("udp still down")
+		},
+		func(context.Context) (sessionConn, error) { return newFakeSession(), nil },
+	)
+	client.h3Budget = 10 * time.Second
+
+	oldDialDone := make(chan error, 1)
+	go func() {
+		conn, err := client.DialContext(context.Background(), fallbackDestination)
+		if err == nil {
+			_ = conn.Close()
+		}
+		oldDialDone <- err
+	}()
+	<-entered
+
+	// The network changes while the old attempt is in flight.
+	client.Reset()
+
+	// The new generation runs its own creation: HTTP/3 fails, HTTP/2 carries it, the verdict is armed.
+	require.NoError(t, dialFallback(t, context.Background(), client))
+	require.True(t, client.h3Cordoned())
+
+	// The old attempt now completes successfully, late.
+	close(release)
+	require.Error(t, <-oldDialDone, "the aborted creation fails for its caller")
+	require.True(t, lateSession.closed.Load(), "a late success is closed, never published")
+	require.True(t, client.h3Cordoned(),
+		"and it must not clear the verdict the new generation armed")
+}
+
+// Without a failure the fallback must never run: an HTTP/3 node that works opens exactly one HTTP/3
+// session and no HTTP/2 session, and it publishes that session as an HTTP/3 one (no fallback marker).
+func TestFallbackPrefersHTTP3WhenItWorks(t *testing.T) {
+	if !quicIncluded {
+		t.Skip("HTTP/3 is not in this build")
+	}
+	var h3Calls, h2Calls atomic.Int32
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) { h3Calls.Add(1); return newFakeSession(), nil },
+		func(context.Context) (sessionConn, error) { h2Calls.Add(1); return newFakeSession(), nil },
+	)
+	require.NoError(t, dialFallback(t, context.Background(), client))
+	require.EqualValues(t, 1, h3Calls.Load())
+	require.Zero(t, h2Calls.Load(), "a working HTTP/3 path must not open HTTP/2")
+	require.False(t, client.h3Cordoned())
+	client.access.Lock()
+	published := client.session
+	client.access.Unlock()
+	require.NotNil(t, published)
+	require.False(t, published.fallbackH2, "the published session is not the fallback's")
+}
+
+// The verdict is per client, which is per node: a node that fell back must not decide anything about
+// another node's HTTP/3.
+func TestFallbackVerdictIsPerNode(t *testing.T) {
+	if !quicIncluded {
+		t.Skip("HTTP/3 is not in this build")
+	}
+	failingClient, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) { return nil, errors.New("udp unreachable") },
+		func(context.Context) (sessionConn, error) { return newFakeSession(), nil },
+	)
+	require.NoError(t, dialFallback(t, context.Background(), failingClient))
+	require.True(t, failingClient.h3Cordoned())
+
+	var healthyH3Calls atomic.Int32
+	healthyClient, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) { healthyH3Calls.Add(1); return newFakeSession(), nil },
+		func(context.Context) (sessionConn, error) { return newFakeSession(), nil },
+	)
+	require.NoError(t, dialFallback(t, context.Background(), healthyClient))
+	require.EqualValues(t, 1, healthyH3Calls.Load(), "the second node still uses its own HTTP/3")
+	require.False(t, healthyClient.h3Cordoned())
+}
+
+// tcpMetadataOf returns the TCP CONNECTs the test server's handler has accepted so far.
+func tcpMetadataOf(server *testServer) []Metadata {
+	server.handler.access.Lock()
+	defer server.handler.access.Unlock()
+	return append([]Metadata(nil), server.handler.tcp...)
 }

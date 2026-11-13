@@ -2,6 +2,8 @@ package trusttunnel
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net"
@@ -356,6 +358,14 @@ func (c *Client) connectSession(ctx context.Context) (sessionConn, error) {
 	conn, err := c.connectH3(attemptCtx)
 	cancel()
 	if err == nil {
+		if ctx.Err() != nil {
+			// The creation was aborted while the attempt was in flight (Close, or the Reset a network
+			// change performs). The connection belongs to the old generation: it is closed here rather
+			// than published, and it must NOT clear a verdict the new generation owns - a late success
+			// from the old network is not evidence about the new one.
+			conn.close()
+			return nil, ctx.Err()
+		}
 		c.clearH3Cordon()
 		return conn, nil
 	}
@@ -406,8 +416,17 @@ func (c *Client) h3AttemptContext(ctx context.Context) (context.Context, context
 }
 
 // fallbackEligible reports whether a failed HTTP/3 attempt is evidence that this node's UDP path is
-// unusable right now. Establishment failures are; a cancelled attempt is not, and neither is a build
-// that has no HTTP/3 at all (that is a configuration fact, not a path verdict).
+// unusable right now.
+//
+// Eligible: the UDP dial, the QUIC handshake, a transport reset, the attempt's own budget expiring
+// while the creation is alive, and a negotiated ALPN that is not h3 (a server that answers h2 on the
+// same endpoint is exactly the case the fallback exists for).
+//
+// Not eligible: a cancelled attempt, a build without HTTP/3, and every TLS verdict - certificate
+// verification, unknown authority, hostname mismatch, invalid or expired certificate, and a TLS alert
+// from the peer. Those are statements about the peer's identity or its configuration, and the HTTP/2
+// leg presents the same certificate to the same name, so retrying there repeats the refusal; remembering
+// one as "HTTP/3 is down" would keep a node off UDP for a reason HTTP/2 does not share.
 func fallbackEligible(err error) bool {
 	if err == nil {
 		return false
@@ -415,7 +434,30 @@ func fallbackEligible(err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
-	return !errors.Is(err, ErrQUICNotIncluded)
+	if errors.Is(err, ErrQUICNotIncluded) {
+		return false
+	}
+	var certificateVerificationError *tls.CertificateVerificationError
+	if errors.As(err, &certificateVerificationError) {
+		return false
+	}
+	var unknownAuthorityError x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthorityError) {
+		return false
+	}
+	var hostnameError x509.HostnameError
+	if errors.As(err, &hostnameError) {
+		return false
+	}
+	var certificateInvalidError x509.CertificateInvalidError
+	if errors.As(err, &certificateInvalidError) {
+		return false
+	}
+	var alertError tls.AlertError
+	if errors.As(err, &alertError) {
+		return false
+	}
+	return true
 }
 
 // clock is the client's time source: the cooldown is the only thing that reads it, and tests replace
@@ -524,6 +566,10 @@ func (c *Client) Reset() {
 	session := c.session
 	c.session = nil
 	pending := c.discardPendingLocked()
+	// The verdict belongs to the network it was observed on, and the outbound calls Reset on a network
+	// change. Clearing it under the same lock as the discarded creation keeps a creation that starts
+	// right after this Reset from reading the old network's verdict.
+	c.clearH3Cordon()
 	c.access.Unlock()
 	if pending != nil && pending.cancel != nil {
 		pending.cancel(net.ErrClosed)
@@ -531,9 +577,6 @@ func (c *Client) Reset() {
 	if session != nil {
 		session.close()
 	}
-	// A verdict about the UDP path belongs to the network it was observed on; the outbound calls Reset
-	// on a network change, so the next session may try HTTP/3 again.
-	c.clearH3Cordon()
 }
 
 // Close ends the client: the session and any creation in flight are discarded.
