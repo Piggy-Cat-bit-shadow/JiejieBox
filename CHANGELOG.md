@@ -4,6 +4,52 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.47](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.47) ? 2026-11-14
+
+### 本次更新
+
+v0.1.47 是 0.1.46 之后的稳定性与移动端能力收口版本，重点修复并发生命周期边界、TrustTunnel 双栈 ALPN、DNS NXDOMAIN 日志，以及 Apple/Android Libbox 的 TrustTunnel / AWG 构建标签缺失。
+
+#### 一、并发与生命周期修复
+
+- **XHTTP XMUX**：在选池与使用计数之间增加原子预约，避免换网或 Close 后旧 client 被重新唤醒并创建孤儿 HTTP/2 连接。
+- **TrustTunnel**：在途 CONNECT 在发包前计入 streams，失败路径归还；`RetireSuspect` / `CloseIdleConnections` 不再在 CONNECT 已发出、尚未收到 200 时关闭底层会话。
+- **URLTest**：`FailoverState` 增加内部同步，group 的 failover 指针在访问锁下读写，消除健康轮与诊断快照的竞态。
+- **v2rayquic**：Reset 只处理开始时捕获的连接，不会退役等待迁移期间新建的网络代次。
+- **libbox 诊断**：Publish 与 Close 共用同一个 finalisation 临界区，end 事件之后不再追加事件。
+- **route**：CloseAll 在同一临界区完成 tracked 集合摘除与同步关闭记账；admission 对已取消 context 不再发放 ticket。
+- **MASQUE**：先释放旧会话 flow，再把地址归还池；flow registry 拒绝 teardown 后到达的注册。
+- **HTTP/3 / artifact**：attempt context 在错误或响应 body 关闭时取消；`Version.Release` 使用原子一次性释放。
+- 其余审计修复包括 dual-stack recovery 的并发 map、GenerationGate Close 幂等、TUIC/Hysteria2 family single-flight、DNS ConnPool 新鲜连接归属和 URLTest 非健康共享等待。
+
+#### 二、DNS NXDOMAIN 日志
+
+NXDOMAIN 现在是正常的负答案，不再在 DNS 和连接层打印 ERROR；分类使用类型化 `IsNXDomain`，SERVFAIL、超时、网络错误和混合错误仍保持 ERROR 语义。
+
+#### 三、TrustTunnel 双栈 ALPN
+
+- 双栈入站的 TCP 与 QUIC 使用各自的 ALPN：TCP 只提供 h2，QUIC 只提供 h3；通过 `TransportALPNView` 隔离，避免复制证书/ACME/watcher 生命周期，也避免共享配置的并发改写。
+- 启动时打印最终 ALPN；服务端 QUIC 协商到非 h3、客户端 ALPN 不匹配时输出 WARN。
+- `sing-box check` 对旧式共享 ALPN 配置给出告警，不再静默接受。
+
+#### 四、Apple / Android Libbox 能力
+
+- 移动端共享构建标签补齐 `with_trusttunnel` 与 `with_awg`，Apple/Android Libbox 不再在运行时拒绝 TrustTunnel 或 AWG 配置。
+- Libbox manifest 记录 `build_tags`；Apple 构建门禁和 TF 校验要求 `with_trusttunnel`、`with_awg`，旧版没有 `build_tags` 的 Libbox 会被拒绝。
+- Mieru 没有构建标签，`include/registry.go` 无条件注册，所有移动端产物均已包含。
+
+#### 五、Naive
+
+`quic_congestion_control` 未设置时实际是库默认 CUBIC，不是 BBR。文档和启动日志明确说明这一点；BBR 需要显式设置，行为未改变。
+
+#### 六、验证与发布
+
+- 内核 tag `v0.1.47` 固定于 `c50336676eb90e03792c81284c736c1a152ff684`。
+- [Kernel release 43519793788](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43519793788) 的冻结、Verify/race、Release contract、Linux、macOS、Windows、Android、Desktop、Apple Libbox 与消费端、stage 和 publish 全部通过。
+- 公开附件共 8 项：Linux/macOS/Windows 内核、Windows x64 安装器、Android ARM64 AAR、Apple Libbox、未签名 IPA 和 `SHA256SUMS`。
+- Apple 源码 pin 保持 `aa8e16aa21a7f28aefc944fac76086c144195e3b`。本版包含对 macOS 上 half-close 契约测试初始化竞态的修复；该失败只在 macOS 单测暴露，修复后 macOS 作业通过。
+- 本页不表示 TestFlight 上传、真机验收或 Satelite APK 已完成；这些按独立指引继续。
+
 ## [v0.1.46](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.46) — 2026-11-13
 
 ### 本次更新
