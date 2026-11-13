@@ -123,15 +123,17 @@ pack() {
   fi
   [ -n "$build_tags" ] || fail \
     "no Apple build tags are available. Run the build through scripts/ci/build-apple-libbox.sh, or pass LIBBOX_BUILD_TAGS."
-  case ",$build_tags," in
-    *,with_trusttunnel,*)
-      ;;
-    *)
-      fail "the Apple Libbox build tags omit with_trusttunnel: $build_tags
-  The framework cannot construct a TrustTunnel outbound, so publishing it would ship a core that
-  rejects a configuration the release advertises. Rebuild the Apple Libbox from this commit."
-      ;;
-  esac
+  for required_tag in with_trusttunnel with_awg; do
+    case ",$build_tags," in
+      *",$required_tag,"*)
+        ;;
+      *)
+        fail "the Apple Libbox build tags omit $required_tag: $build_tags
+  The framework cannot construct the configuration the release advertises, so publishing it would
+  ship a core that rejects the node. Rebuild the Apple Libbox from this commit."
+        ;;
+    esac
+  done
   # Requirement, not a guess: the two clients this artifact exists for. Named here because a
   # manifest that lists whatever it happens to find would happily declare a single-slice
   # framework as valid.
@@ -356,16 +358,18 @@ validate() {
       "manifest.json has no build_tags array. The artifact cannot prove which protocols it was
   compiled with; re-run the Apple producer for this commit."
     [ -n "$declared_build_tags" ] || fail "manifest.json declares an empty build_tags array"
-    case " $declared_build_tags " in
-      *" with_trusttunnel "*)
-        ;;
-      *)
-        fail "the Libbox artifact was not compiled with with_trusttunnel:
+    for required_tag in with_trusttunnel with_awg; do
+      case " $declared_build_tags " in
+        *" $required_tag "*)
+          ;;
+        *)
+          fail "the Libbox artifact was not compiled with $required_tag:
   declared: $declared_build_tags
-  A TrustTunnel configuration would be rejected by the shipped app. Rebuild the Apple Libbox from
-  a commit whose mobile tag set includes with_trusttunnel."
-        ;;
-    esac
+  A configuration that needs it would be rejected by the shipped app. Rebuild the Apple Libbox from
+  a commit whose mobile tag set includes both with_trusttunnel and with_awg."
+          ;;
+      esac
+    done
     echo "PASS: build_tags             $declared_build_tags"
   fi
 

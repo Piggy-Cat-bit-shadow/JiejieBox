@@ -30,6 +30,6 @@ test -z "$(git status --porcelain)" || exit 1
 ./scripts/publish-apple-beta.sh --libbox-source release
 ```
 
-该入口默认构建两个平台，下载指定 Release 的 Libbox，验证 core SHA、版本、摘要、slices 以及 manifest 的 `build_tags`（必须包含 `with_trusttunnel`），从 manifest 读取 Apple 源码并把同一份已发布库装入两个客户端。仅需一个平台时，在包含该参数的发布提交上加 `--platform ios` 或 `--platform macos`；单平台选项要求 `--libbox-source release`。旧 tag 按该 tag 的脚本能力处理。若 Release 资产缺失或校验失败，先停止并回查内核发布，不切换到另一次 Actions Libbox。**没有 `build_tags` 字段的旧 Libbox 会被拒绝**：v0.1.46 的已发布 Libbox 在 mobile tag 集缺少 `with_trusttunnel` 时构建，不能用于 TrustTunnel；必须使用从修复后内核重新发布、manifest 中带有 `with_trusttunnel` 的 Libbox。
+该入口默认构建两个平台，下载指定 Release 的 Libbox，验证 core SHA、版本、摘要、slices 以及 manifest 的 `build_tags`（必须包含 `with_trusttunnel` 和 `with_awg`），从 manifest 读取 Apple 源码并把同一份已发布库装入两个客户端。仅需一个平台时，在包含该参数的发布提交上加 `--platform ios` 或 `--platform macos`；单平台选项要求 `--libbox-source release`。旧 tag 按该 tag 的脚本能力处理。若 Release 资产缺失或校验失败，先停止并回查内核发布，不切换到另一次 Actions Libbox。**没有 `build_tags` 字段的旧 Libbox 会被拒绝**：v0.1.46 的已发布 Libbox 在 mobile tag 集缺少 `with_trusttunnel`（以及 `with_awg`）时构建，不能用于这些能力；必须使用从修复后内核重新发布、manifest 中带有这两个 tag 的 Libbox。
 
 在 App Store Connect 分别确认上传、处理、测试组分配与测试者可用状态。记录 Release URL、core 和 Apple SHA、Libbox 摘要、平台、版本、构建号、App Store Connect 处理结果和测试组可见时间；Actions 通过或上传命令退出成功不等于测试者可用。上传超时先查询 Apple 是否已接收再决定重试。若只有一个平台失败，用已发布的相同来源恢复对应平台，并确认新构建号不会与已接收的构建冲突。

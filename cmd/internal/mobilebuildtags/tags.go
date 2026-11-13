@@ -71,6 +71,14 @@ var sharedTags = []string{
 	// that rejected a trusttunnel configuration at config load despite the same source tree
 	// advertising the protocol. Like XHTTP it needs with_quic for H3, which this set has.
 	"with_trusttunnel",
+	// AWG (AmneziaWG) is the obfuscation layer on the WireGuard endpoint. The CLI profiles carry
+	// with_awg; the mobile builders compose this set, so omitting it made the same configuration
+	// fail on a device with an explicit "not included in this build" rejection.
+	"with_awg",
+	// Mieru intentionally has no entry here: it is not build-tag gated. include/registry.go
+	// imports and registers protocol/mieru unconditionally, so every mobile artifact already
+	// carries it. Inventing a with_mieru tag here would look like a capability switch without
+	// gating any code.
 	"with_clash_api",
 	"with_usbip",
 	"with_openvpn",

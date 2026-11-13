@@ -80,7 +80,13 @@ install_into() {
     exit 1
   }
   rm -rf "$dest_client/Libbox.xcframework"
-  ditto "$source" "$dest_client/Libbox.xcframework"
+  if command -v ditto >/dev/null 2>&1; then
+    ditto "$source" "$dest_client/Libbox.xcframework"
+  else
+    # The local install path is also exercised by the macOS-independent test suite; ditto is a
+    # macOS tool, so fall back to a recursive copy rather than failing with "command not found".
+    cp -R "$source" "$dest_client/Libbox.xcframework"
+  fi
 
   echo "installed: $dest_client/Libbox.xcframework  (from $source)"
   python3 - "$dest_client/Libbox.xcframework/Info.plist" <<'PY'
@@ -131,21 +137,23 @@ echo "source commit: $(git rev-parse HEAD)"
 
 # The tag set is the PRODUCT capability set, and it is resolved by the same function the build uses.
 # This gate exists because a missing tag is silent: the framework builds, links and launches, and a
-# trusttunnel configuration is rejected only on the device. The CLI profiles naming the tag is not
-# enough - the mobile builder composes mobilebuildtags, which is a different source of truth (that
-# is exactly how the Apple TestFlight artifact shipped without TrustTunnel).
+# trusttunnel or AWG configuration is rejected only on the device. The CLI profiles naming the tags
+# is not enough - the mobile builder composes mobilebuildtags, which is a different source of truth
+# (that is exactly how the Apple TestFlight artifact shipped without TrustTunnel).
 resolved_tags="$(go run ./cmd/internal/build_libbox -print-resolved-tags apple)"
-case ",$resolved_tags," in
-  *,with_trusttunnel,*)
-    ;;
-  *)
-    echo "FAIL: the Apple libbox tag set does not include with_trusttunnel." >&2
-    echo "      resolved: $resolved_tags" >&2
-    echo "      A TrustTunnel configuration would be rejected by the shipped framework." >&2
-    exit 1
-    ;;
-esac
-echo "  capability tags: with_trusttunnel present"
+for required_tag in with_trusttunnel with_awg; do
+  case ",$resolved_tags," in
+    *",$required_tag,"*)
+      ;;
+    *)
+      echo "FAIL: the Apple libbox tag set does not include $required_tag." >&2
+      echo "      resolved: $resolved_tags" >&2
+      echo "      A configuration that needs it would be rejected by the shipped framework." >&2
+      exit 1
+      ;;
+  esac
+done
+echo "  capability tags: with_trusttunnel, with_awg present"
 
 # Where `build_libbox` actually leaves the framework. It binds to an absolute path inside its own
 # isolated working directory (`_libbox_build`) precisely so gomobile's default, which is relative

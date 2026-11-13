@@ -66,7 +66,7 @@ make_xcframework() {
 build_artifact() {
   local xcframework="$1" out="$2"
   make_xcframework "$xcframework"
-  LIBBOX_BUILD_TAGS="with_quic,with_trusttunnel" "$artifact_tool" pack "$xcframework" "$out" >/dev/null
+  LIBBOX_BUILD_TAGS="with_quic,with_trusttunnel,with_awg" "$artifact_tool" pack "$xcframework" "$out" >/dev/null
 }
 
 echo "== artifact attribution =="
@@ -178,6 +178,17 @@ json.dump(d, open(p, "w"), indent=2)
 ' "$tmp/a_without_trusttunnel/manifest.json"
 expects_fail "an artifact built without with_trusttunnel is rejected" \
   "$artifact_tool" validate "$tmp/a_without_trusttunnel" --parent-sha "$parent_sha" --jj-version "$artifact_jj"
+
+cp -R "$tmp/a1" "$tmp/a_without_awg"
+python3 -c '
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["build_tags"] = [tag for tag in d["build_tags"] if tag != "with_awg"]
+json.dump(d, open(p, "w"), indent=2)
+' "$tmp/a_without_awg/manifest.json"
+expects_fail "an artifact built without with_awg is rejected" \
+  "$artifact_tool" validate "$tmp/a_without_awg" --parent-sha "$parent_sha" --jj-version "$artifact_jj"
 
 echo "== install =="
 

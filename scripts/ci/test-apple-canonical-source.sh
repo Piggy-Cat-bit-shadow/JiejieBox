@@ -278,7 +278,7 @@ printf 'macos\n' > "$SLICES/Libbox.xcframework/macos-arm64_x86_64/Info.plist"
 
 GOLDEN="$work/golden"
 mkdir -p "$GOLDEN"
-if ! LIBBOX_BUILD_TAGS="with_quic,with_trusttunnel" "$LIBBOX" pack "$SLICES/Libbox.xcframework" "$GOLDEN" >/dev/null 2>&1; then
+if ! LIBBOX_BUILD_TAGS="with_quic,with_trusttunnel,with_awg" "$LIBBOX" pack "$SLICES/Libbox.xcframework" "$GOLDEN" >/dev/null 2>&1; then
   echo "FATAL: could not pack the golden fixture - the producer's packer is not working." >&2
   exit 1
 fi
@@ -644,6 +644,16 @@ import json
 p=\"manifest.json\"
 d=json.load(open(p))
 d[\"build_tags\"]=[t for t in d[\"build_tags\"] if t!=\"with_trusttunnel\"]
+json.dump(d,open(p,\"w\"),indent=2)
+"
+' || true
+
+run_case build_tags_without_awg invalid '
+python3 -c "
+import json
+p=\"manifest.json\"
+d=json.load(open(p))
+d[\"build_tags\"]=[t for t in d[\"build_tags\"] if t!=\"with_awg\"]
 json.dump(d,open(p,\"w\"),indent=2)
 "
 ' || true

@@ -292,3 +292,17 @@ func TestMobileVariantsShipTrustTunnel(t *testing.T) {
 		})
 	}
 }
+
+// TestMobileVariantsShipAWG is the same regression for the WireGuard endpoint's AmneziaWG layer.
+// A build without with_awg rejects AWG fields with a "not included in this build" error, so the
+// CLI profiles carrying the tag is not enough for a mobile artifact.
+func TestMobileVariantsShipAWG(t *testing.T) {
+	for _, variant := range []string{"android-main", "android-legacy", "apple"} {
+		t.Run(variant, func(t *testing.T) {
+			if !HasBuildTag(variant, "with_awg") {
+				t.Fatalf("variant %s does not ship with_awg; an AWG endpoint will be rejected on device",
+					variant)
+			}
+		})
+	}
+}

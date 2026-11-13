@@ -23,14 +23,14 @@ import (
 // verbatim, in the order the functions return them. Any reordering, tag addition or removal now
 // fails this test, which is the only way an "identical output" claim is worth anything.
 //
-// # The recorded addition: with_trusttunnel
+// # The recorded additions: with_trusttunnel and with_awg
 //
-// TrustTunnel was added to the MOBILE shared set after a shipped Apple TestFlight build rejected a
-// trusttunnel configuration. The CLI profiles already named the tag; the mobile builders compose
-// mobilebuildtags instead, so the artifact silently lacked the protocol. That is a real capability
-// change, so every frozen value below gained with_trusttunnel at the same position. It is recorded
-// here rather than hidden by regenerating the strings: the next addition must make the same
-// deliberate edit.
+// TrustTunnel and AWG were added to the MOBILE shared set after shipped Apple TestFlight builds
+// rejected those configurations. The CLI profiles already named both tags; the mobile builders
+// compose mobilebuildtags instead, so the artifact silently lacked the capabilities. That is a real
+// capability change, so every frozen value below gained both tags at the same positions. They are
+// recorded here rather than hidden by regenerating the strings: the next addition must make the
+// same deliberate edit.
 //
 // # Why order is part of the freeze
 //
@@ -41,7 +41,7 @@ import (
 // contract.
 
 // frozenResolvedTags is ResolveBuildTags(variant) joined with commas, captured before the refactor
-// and extended once, deliberately, with with_trusttunnel.
+// and extended deliberately with with_trusttunnel and with_awg.
 //
 // The two Android entries were updated when Android adopted the mobile buffer geometry: both
 // variants now append with_low_memory, so they are no longer byte-identical to the pre-refactor
@@ -51,17 +51,17 @@ import (
 // being compared would prove nothing. The apple and unknown entries otherwise remain the
 // pre-refactor bytes: macOS must not acquire the geometry.
 var frozenResolvedTags = map[string]string{
-	"android-main": "with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel," +
+	"android-main": "with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel,with_awg," +
 		"with_clash_api,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0," +
 		"with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient," +
 		"ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird," +
 		"with_dhcp,grpcnotrace,with_low_memory",
-	"android-legacy": "with_quic,with_wireguard,with_utls,with_xhttp,with_trusttunnel,with_clash_api,with_usbip," +
+	"android-legacy": "with_quic,with_wireguard,with_utls,with_xhttp,with_trusttunnel,with_awg,with_clash_api,with_usbip," +
 		"with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0,with_tailscale," +
 		"ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor," +
 		"ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_dhcp,grpcnotrace," +
 		"with_low_memory",
-	"apple": "with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel,with_clash_api," +
+	"apple": "with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel,with_awg,with_clash_api," +
 		"with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0,with_tailscale," +
 		"ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor," +
 		"ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_dhcp,grpcnotrace",
@@ -71,7 +71,7 @@ var frozenResolvedTags = map[string]string{
 }
 
 // preRefactorCommonTags is the MOBILE SHARED set as captured before the refactor, plus the recorded
-// with_trusttunnel addition. It is kept separate from frozenResolvedTags["android-main"] on purpose.
+// with_trusttunnel and with_awg additions. It is kept separate from frozenResolvedTags["android-main"] on purpose.
 //
 // The two strings were equal until Android adopted the mobile geometry, and that equality was
 // load-bearing: it proved the shared set and the Android composition were the same thing. Android
@@ -79,7 +79,7 @@ var frozenResolvedTags = map[string]string{
 // differ. A single string would force a choice between freezing the wrong value and not freezing
 // the shared set at all. macOS must still resolve exactly this value, which is what the Apple
 // comparison below asserts.
-const preRefactorCommonTags = "with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel," +
+const preRefactorCommonTags = "with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel,with_awg," +
 	"with_clash_api,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0," +
 	"with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient," +
 	"ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird," +
@@ -90,23 +90,23 @@ const preRefactorCommonTags = "with_quic,with_wireguard,with_utls,with_naive_out
 var frozenApplePlatformTags = map[string]string{
 	"ios": "badlinkname,grpcnotrace,tfogo_checklinkname0,ts_omit_aws,ts_omit_bird,ts_omit_capture," +
 		"ts_omit_doctor,ts_omit_drive,ts_omit_kube,ts_omit_logtail,ts_omit_ssh,ts_omit_synology," +
-		"ts_omit_taildrop,ts_omit_webclient,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
+		"ts_omit_taildrop,ts_omit_webclient,with_awg,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
 		"with_openconnect,with_openvpn,with_quic,with_tailscale,with_trusttunnel,with_usbip,with_utls,with_wireguard,with_xhttp",
 	"iossimulator": "badlinkname,grpcnotrace,tfogo_checklinkname0,ts_omit_aws,ts_omit_bird,ts_omit_capture," +
 		"ts_omit_doctor,ts_omit_drive,ts_omit_kube,ts_omit_logtail,ts_omit_ssh,ts_omit_synology," +
-		"ts_omit_taildrop,ts_omit_webclient,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
+		"ts_omit_taildrop,ts_omit_webclient,with_awg,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
 		"with_openconnect,with_openvpn,with_quic,with_tailscale,with_trusttunnel,with_usbip,with_utls,with_wireguard,with_xhttp",
 	"tvos": "badlinkname,grpcnotrace,tfogo_checklinkname0,ts_omit_aws,ts_omit_bird,ts_omit_capture," +
 		"ts_omit_doctor,ts_omit_drive,ts_omit_kube,ts_omit_logtail,ts_omit_ssh,ts_omit_synology," +
-		"ts_omit_taildrop,ts_omit_webclient,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
+		"ts_omit_taildrop,ts_omit_webclient,with_awg,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
 		"with_openconnect,with_openvpn,with_quic,with_tailscale,with_trusttunnel,with_usbip,with_utls,with_wireguard,with_xhttp",
 	"tvossimulator": "badlinkname,grpcnotrace,tfogo_checklinkname0,ts_omit_aws,ts_omit_bird,ts_omit_capture," +
 		"ts_omit_doctor,ts_omit_drive,ts_omit_kube,ts_omit_logtail,ts_omit_ssh,ts_omit_synology," +
-		"ts_omit_taildrop,ts_omit_webclient,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
+		"ts_omit_taildrop,ts_omit_webclient,with_awg,with_clash_api,with_dhcp,with_low_memory,with_naive_outbound," +
 		"with_openconnect,with_openvpn,with_quic,with_tailscale,with_trusttunnel,with_usbip,with_utls,with_wireguard,with_xhttp",
 	"macos": "badlinkname,grpcnotrace,tfogo_checklinkname0,ts_omit_aws,ts_omit_bird,ts_omit_capture," +
 		"ts_omit_doctor,ts_omit_drive,ts_omit_kube,ts_omit_logtail,ts_omit_ssh,ts_omit_synology," +
-		"ts_omit_taildrop,ts_omit_webclient,with_clash_api,with_dhcp,with_naive_outbound,with_openconnect," +
+		"ts_omit_taildrop,ts_omit_webclient,with_awg,with_clash_api,with_dhcp,with_naive_outbound,with_openconnect," +
 		"with_openvpn,with_quic,with_tailscale,with_trusttunnel,with_usbip,with_utls,with_wireguard,with_xhttp",
 }
 
