@@ -35,12 +35,15 @@
 
 ### TrustTunnel 与 AmneziaWG
 
-- **TrustTunnel**：原生客户端与服务端，支持 H2/H3、TCP/UDP、用户名/密码认证、健康检查与空闲会话管理；共享 session 中的 stream 与 UDP association 分别管理。
+- **TrustTunnel H2 / H3**：原生客户端与服务端。H2 在 TLS/TCP 上建立共享连接，H3 在 QUIC/UDP 上建立共享连接；两者都可用独立 stream 承载业务 TCP，并通过 `_udp2` association 保留 UDP 数据报边界和目标地址。用户名/密码认证、健康检查与空闲会话管理按协议会话执行，不为每条业务流重复建立外层连接。
+- **传输选择与业务类型分开**：出站 `quic: true` 选 H3，省略或设为 `false` 选 H2；入站 `network` 选择 H2/TCP、H3/UDP 的外层监听，出站 `network` 则限制隧道内允许的 TCP/UDP 业务。配置时不能把外层 H3/UDP 误解为只能代理 UDP 业务。H2/H3 是明确选择的传输路径，这个字段本身不承诺自动回退。
 - **协议接入**：TrustTunnel 使用内核 DNS、Dialer、TLS、路由和流量类别；UDP 关联以槽位、队列和字节预算控制占用，读期限与活动记录接到实际转发路径。
 - **AmneziaWG 3.x / 3.1**：在 `wireguard` endpoint 上提供 junk、消息前缀、范围魔数、CPS/声明式伪装、头保护、padding、随机尾部及相应握手参数，支持主动连接与 Linux 监听应答。
 - **设备复用**：普通 WireGuard 与 AWG 共用现有设备、peer、路由和按需恢复体系；修复并发流的等待/唤醒，保持设备关闭与重新绑定的所有权。
 
 TrustTunnel 使用 `type: "trusttunnel"`；AWG 扩展字段位于 `type: "wireguard"` 的 endpoint 根层。`with_trusttunnel`、`with_awg` 已纳入默认发布档位，具体平台能力仍按[构建档位](docs/BUILD-PROFILES.md)选择。
+
+TrustTunnel 的 H2 与 H3 已分别做 TCP 完整载荷和 UDP 往返互通；台架把两种传输及 UDP 包装单独计量，见下方[协议性能与并发传输](#协议性能与并发传输)。配置字段见 [H2/H3 入站](docs/configuration/inbound/trusttunnel.zh.md)和[出站](docs/configuration/outbound/trusttunnel.zh.md)。
 
 ### XHTTP
 
@@ -114,6 +117,10 @@ Cronet 的连接创建接入 Go 侧解析与双栈拨号，完成 CONNECT 后才
 CONNECT-IP 同步远端地址、路由与隧道内 DNS；H3 故障判断区分 QUIC 建连失败与 CONNECT 响应缓慢，避免应用层慢响应导致后续连接误选传输。
 
 详见 [MASQUE 使用说明](docs/masque.md)和 [CONNECT-IP 模块](KNOWLEDGE/modules/masque-connectip.md)。
+
+### H2 / H3 的选择与恢复
+
+允许版本回退的共享 HTTP 请求路径给冷 H3 建连独立尝试窗口，并按目标 authority 保存失败判断，避免一个站点的 UDP 故障影响其他站点。只有在请求体可重放、请求语义允许且尚未得到明确响应时才考虑重试；Naive 出站另以 `quic_fallback_to_h2` 显式启用其 H3→H2 路径。TrustTunnel 的 `quic` 仅选择传输，不属于这个回退开关。相关场景的速度和 CPU 以各协议各自的测试条件解读，不把 H3 视为普遍快于 H2。实现边界见[网络链路说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md)与[Naive 模块](KNOWLEDGE/modules/naive-http-transport.md)。
 
 ### AnyTLS、TLS 与传统代理
 
@@ -215,7 +222,8 @@ TLS 数据来自 2026-10-09 的九次交错采样，时间数据受共享主机�
 
 ### 规则匹配、自动测速与负载均衡
 
-- **匹配解析与拨号分开**：`resolve.match_only` 将解析地址用于后续规则判断，同时保留原有目标寻址语义，适合由远端代理解析最终目标的路径。
+- **匹配解析与拨号分开**：路由动作 `resolve` 设置 `match_only: true` 后，仍按原 DNS 服务器、策略和缓存解析域名，但只把结果交给后续 `ip_cidr`、`ip_is_private`、IP 规则集等条件判断，不把本次答案新增为拨号候选。支持域名目标的代理出站可继续收到原域名，由其自身路径解析最终目标；省略或设为 `false` 则维持普通 `resolve` 的候选行为。
+- **匹配证据有边界**：此前普通 `resolve` 已发布的拨号候选不会被 `match_only` 清空；目标改写后，旧目标的匹配地址与拨号候选一起失效。匹配所见的是本地 DNS 答案，不保证远端代理最终连接同一 IP；FakeIP、TUN 预匹配等要求真实地址的路径仍须满足自身条件。详见 [resolve 字段与示例](docs/configuration/route/rule_action.zh.md#match_only)及[规则与策略组模块](KNOWLEDGE/modules/rules-and-groups-0145.md)。
 - **关键词匹配实测**：1,024 个关键词的专项测试中，未命中从逐项匹配的 13.1–14.5 µs 降至编译匹配的 188–243 ns；末尾命中从 15.1–15.3 µs 降至 187–189 ns，两条路径均为零分配。该数字对应匹配组件，不是完整路由耗时。
 - **大型关键词集合**：`domain_keyword` 使用有界的不可变编译匹配结构，小集合与超界输入回退既有匹配方式；查询热路径保持零分配。
 - **策略组展示**：`hidden` 控制适用客户端的组展示，保留组的真实选择、引用和运行关系。
