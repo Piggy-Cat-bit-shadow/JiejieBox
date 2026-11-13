@@ -63,6 +63,13 @@ type familyCarrier struct {
 	newClient func(family int) (*hysteria2.Client, error)
 	families  int
 	winner    int // 0 none, 1 or 2; protected by access
+	// creationAccess single-flights the FIRST-creation race. The two families' clients already
+	// single-flight their own session creation, but the carrier's winner bookkeeping and loser
+	// cleanup are per-race: two concurrent races in one generation snapshot the SAME clients, each
+	// declares its own family the winner, and each retires the other race's winner - closing the
+	// session the other caller was just handed. A second demand that arrives while the first race
+	// is running therefore waits here, then dials the winner instead of racing again.
+	creationAccess sync.Mutex
 	// generation counts client REPLACEMENTS: every CloseWithError (network change, listener reset,
 	// shutdown) bumps it, and a first-creation race records the value it started under. A race is
 	// allowed to retire only the exact client instance it started with, in the generation it
@@ -167,6 +174,26 @@ type familyResult struct {
 
 // race runs the creation on both families and returns the first success.
 func (c *familyCarrier) race(ctx context.Context, attempt func(context.Context, *hysteria2.Client) (any, error)) (any, error) {
+	c.creationAccess.Lock()
+
+	// A race that started while another one was in flight must not repeat it: the first race has
+	// already published a winner, and racing again would retire that winner's client as its own
+	// loser. The demand instead uses the published winner - it wants a NEW stream/session, not the
+	// winner's stream from the first caller. The creation lock is released BEFORE that dial: the
+	// slow part is the winner's stream, and serializing every waiting demand behind one stream would
+	// turn a startup burst into a queue.
+	c.access.Lock()
+	var establishedClient *hysteria2.Client
+	if c.established && c.winner != 0 {
+		establishedClient = c.clients[c.winner-1]
+	}
+	c.access.Unlock()
+	if establishedClient != nil {
+		c.creationAccess.Unlock()
+		return attempt(ctx, establishedClient)
+	}
+	defer c.creationAccess.Unlock()
+
 	raceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c.creating.Add(1)
@@ -234,6 +261,12 @@ func (c *familyCarrier) race(ctx context.Context, attempt func(context.Context, 
 		go c.retireLosers(results, generation, result.family, candidates, settled, len(candidates)-read-1)
 		return result.value, nil
 	}
+	// No family produced a session. The failed clients are retired here for the same reason a loser
+	// is retired after a winner: a failure may have started an offer under the client lifetime, and
+	// leaving that client attached would keep an invisible half-open session (and its socket) for
+	// the next demand to inherit. It also makes the next first-creation race start from fresh
+	// clients instead of a failed instance.
+	c.retireLosers(results, generation, 0, candidates, settled, 0)
 	return nil, lastErr
 }
 
@@ -274,28 +307,33 @@ func (c *familyCarrier) retireLosers(results <-chan familyResult, generation uin
 	}
 }
 
-// retireFamily closes the client of one losing family, but only while it is still the instance this
-// race started with, in the generation it started in.
+// retireFamily closes the client of one losing family.
 //
-// The two checks are the fix for the audit's first counterexample. Clearing clients[family-1] by
+// The instance check is the fix for the audit's first counterexample. Clearing clients[family-1] by
 // index alone meant a loser that returned AFTER a network change removed the client the NEW
-// generation had just installed - the old race's cleanup closed the fresh generation's family client.
-// A client pointer is never re-installed (clientLocked creates a fresh one), so comparing the
-// instance is exact, and the generation comparison states the same fact for the whole carrier.
+// generation had just installed. A client pointer is never re-installed (clientLocked creates a
+// fresh one), so comparing the instance is exact.
 //
-// The slot is cleared under the lock and the close runs outside it: CloseWithError can block on the
-// QUIC transport, and the slot being nil already forbids every later path from handing the client out.
+// The generation check does NOT skip the close. CloseWithError is not a latch in the pinned SDK: it
+// clears the published connection and the pending offer, but a client whose attempt had not started
+// yet can still establish a session afterwards. Such an instance is already out of the carrier's
+// slots (the generation moved), so no later CloseWithError can ever reach it. Closing it here - after
+// its own attempt returned - is the only place that releases that session and its socket.
 func (c *familyCarrier) retireFamily(generation uint64, family int, client *hysteria2.Client) {
 	if client == nil {
 		return
 	}
 	c.access.Lock()
-	if c.generation != generation || c.clients[family-1] != client {
-		c.access.Unlock()
+	current := c.clients[family-1] == client
+	if current {
+		c.clients[family-1] = nil
+	}
+	generationMatches := c.generation == generation
+	c.access.Unlock()
+	if generationMatches && !current {
+		// A same-generation race already retired this instance and a newer one owns the slot.
 		return
 	}
-	c.clients[family-1] = nil
-	c.access.Unlock()
 	_ = client.CloseWithError(net.ErrClosed)
 }
 
