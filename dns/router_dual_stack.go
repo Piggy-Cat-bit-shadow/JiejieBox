@@ -123,6 +123,9 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 		}
 		access.Unlock()
 
+		// This call runs on this family's goroutine and the two families may publish at the same
+		// time. It is deliberately not serialized here: a slow callback for one family must not
+		// delay the answer of the other. The publisher owns synchronization, as the interface says.
 		publish(adapter.DNSFamilyResult{
 			IPv6:      ipv6,
 			Addresses: addresses,

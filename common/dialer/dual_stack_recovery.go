@@ -192,12 +192,32 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 
 	// seen is the identity set for this lookup: the application's own literal, which has its own
 	// attempt and its own owner, plus every address already published, with the provenance it was
-	// published under. It is touched only by the lookup goroutine.
+	// published under.
+	//
+	// # Why the identity set is guarded, and why the guard covers publication too
+	//
+	// A streaming DNS router queries A and AAAA on separate goroutines and calls the publisher from
+	// each family's goroutine as that family answers - adapter.DNSDualStackRouter requires publish to
+	// be safe to call from different goroutines. "The lookup goroutine" is therefore not one
+	// goroutine: when both families answered together, the unsynchronized map access here crashed
+	// the Network Extension with the runtime's concurrent map write fatal error.
+	//
+	// seenAccess makes the read/compare/write of one address and the publication of the batch that
+	// depends on it a single step. Two families carrying the same canonical address (for example an
+	// IPv4 answer and the same address in IPv4-mapped IPv6 form) can then never both decide it is
+	// new, and a consumer never receives a batch built from a half-updated identity set.
+	//
+	// It is held across the send to inner deliberately. That send is bounded: the outer producer
+	// drains inner while streamCtx is alive, both selects below carry a streamCtx.Done case, and
+	// stop() cancels before it waits - so a callback parked on a full channel cannot hold the other
+	// family's callback past cancellation, and stop never waits for a callback anyway (it joins the
+	// outer producer only).
 	//
 	// The provenance is kept rather than a bare set because a repeat is not always redundant: the
 	// same destination can be confirmed by the CURRENT environment after an older batch named it,
 	// and that confirmation has to reach the scheduler so it can upgrade the queued entry. Dropping
 	// every repeat here discarded the confirmation before the ordering rule could see it.
+	seenAccess := sync.Mutex{}
 	seen := make(map[netip.Addr]recoveredStamp, 4)
 	original := unmapAddress(destination.Addr)
 
@@ -232,6 +252,11 @@ func (d *resolveDialer) streamRecoveredCandidates(ctx context.Context, destinati
 		// releases its send.
 		defer close(inner)
 		deliver := func(addresses []netip.Addr, result adapter.DNSFamilyResult) bool {
+			// LookupFamilies calls this from both family goroutines concurrently. The identity
+			// set, the duplicate decision and the publication of the batch that follows from it
+			// are one critical section; see the comment on seenAccess above.
+			seenAccess.Lock()
+			defer seenAccess.Unlock()
 			// "Usable" has to mean ADMISSIBLE, and it has to be decided here rather than one layer
 			// up: the family that passes admission is a candidate for the race, while filtering it
 			// afterwards would let a refused family consume the whole answer and leave the admitted

@@ -79,7 +79,8 @@ type DNSFamilyResult struct {
 // slower one, because it silently changes what policy applies.
 type DNSDualStackRouter interface {
 	// LookupFamilies resolves both families concurrently and calls publish once per family,
-	// as each completes. publish must be safe to call from different goroutines.
+	// as each completes. The two calls run from the families' own goroutines and may overlap,
+	// so publish must synchronize any state it reads or writes.
 	//
 	// It returns an error only when neither family could be resolved at all. A family that
 	// fails while the other succeeds is reported through its own DNSFamilyResult.
