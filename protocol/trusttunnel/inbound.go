@@ -63,6 +63,23 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			return nil, E.New("unsupported network: ", networkName, ", network selects the listeners: tcp (HTTP/2) and/or udp (HTTP/3)")
 		}
 	}
+	// Construction-time warnings are what make `sing-box check` useful for ALPN: the checks below
+	// do not reject a dual listener (the per-transport view makes it safe), but they name the old
+	// shared-list shape that caused the incident so a config review can see it.
+	if len(network) > 1 && len(options.TLS.ALPN) == 0 {
+		logger.Warn("trusttunnel: network serves TCP and UDP without explicit tls.alpn; ALPN is scoped per transport (h2 on TCP, h3 on QUIC)")
+	}
+	if common.Contains(network, N.NetworkTCP) {
+		if common.Contains(options.TLS.ALPN, nextProtoH3) {
+			logger.Warn("trusttunnel: tls.alpn names h3, which is QUIC-only; it will not be offered on the TCP listener")
+		}
+		if len(options.TLS.ALPN) > 0 && !common.Contains(options.TLS.ALPN, http2.NextProtoTLS) {
+			logger.Warn("trusttunnel: tls.alpn does not name h2; it will be added because the TCP listener speaks HTTP/2")
+		}
+	}
+	if common.Contains(network, N.NetworkUDP) && len(options.TLS.ALPN) > 0 && !common.Contains(options.TLS.ALPN, nextProtoH3) {
+		logger.Warn("trusttunnel: tls.alpn does not name h3; it will be added because the UDP listener speaks HTTP/3")
+	}
 	switch options.QUICCongestionControl {
 	case "", "bbr", "cubic", "reno":
 	default:
