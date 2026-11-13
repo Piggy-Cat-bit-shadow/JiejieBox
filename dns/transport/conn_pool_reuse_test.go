@@ -133,5 +133,33 @@ func TestAnEvictedConnectionForgetsItsChain(t *testing.T) {
 	require.False(t, second.Result().Replayed, "a fresh dial is not a replay")
 }
 
+// TestAFreshConnectionLeavesNoAttribution pins the AcquireFresh boundary: a caller-owned connection
+// never enters the pool, so none of the pool's removal paths (Release, idle eviction, Reset, Close)
+// will ever run for it. Recording its chain in dialPaths would therefore retain the dead connection
+// and its steps for the life of the transport, one entry per stale-connection retry.
+func TestAFreshConnectionLeavesNoAttribution(t *testing.T) {
+	pool, closed := newPoolForReuse(t)
+	dial := func(dialCtx context.Context) (*pooledTestConn, error) {
+		adapter.DialPathFromContext(dialCtx).RecordStep("", "node-fresh", 1, true)
+		return &pooledTestConn{identifier: 9}, nil
+	}
+
+	for index := 0; index < 32; index++ {
+		path := adapter.NewDialPath()
+		path.BeginDial()
+		conn, err := pool.AcquireFresh(adapter.WithDialPath(context.Background(), path), dial)
+		require.NoError(t, err)
+		require.NotNil(t, conn)
+		require.Len(t, path.Result().Steps, 1, "the caller's own recorder still receives the dial's steps")
+		require.NoError(t, conn.Close())
+	}
+
+	pool.access.Lock()
+	retained := len(pool.dialPaths)
+	pool.access.Unlock()
+	require.Zero(t, retained, "a caller-owned fresh connection must not leave a pool attribution")
+	require.Zero(t, *closed, "the pool must not close a connection AcquireFresh handed to its caller")
+}
+
 // keepM imports used if the file grows; the dialer type below is the one these tests need.
 var _ = M.Socksaddr{}

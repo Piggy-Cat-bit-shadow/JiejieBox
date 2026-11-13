@@ -280,11 +280,13 @@ func (p *ConnPool[T]) AcquireFresh(ctx context.Context, dial func(context.Contex
 	// Dialed outside the lock so a slow dial does not block other queries, then re-checked: if
 	// Close ran while dialling, the new connection is closed here rather than being leaked.
 	//
-	// The chain is remembered even though a fresh connection is never REUSED by this pool: the caller
-	// owns this socket and may publish it (a retry that replaces a stale pooled connection still
-	// travelled a path).
-	tracked, _ := p.trackingDial(dial)
-	conn, err := tracked(ctx)
+	// The dial is called DIRECTLY, not through trackingDial. trackingDial records the chain in
+	// p.dialPaths, and this connection never enters the pool: the caller owns it and closes it, so
+	// none of the pool's removal paths (Release, idle eviction, Reset, Close) will ever run for it.
+	// Recording it there would keep the dead connection and its step slice alive for the life of
+	// the transport, one entry per stale-connection retry. The caller's own DialPath recorder still
+	// receives the dial's steps from the context; only the pool's reuse bookkeeping is skipped.
+	conn, err := dial(ctx)
 	if err != nil {
 		return conn, err
 	}
