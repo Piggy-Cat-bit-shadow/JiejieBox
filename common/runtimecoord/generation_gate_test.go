@@ -3,6 +3,7 @@ package runtimecoord
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -80,4 +81,26 @@ func TestGenerationGateCloseUnregisters(t *testing.T) {
 	gate.Close()
 	coordinator.Advance(1)
 	require.True(t, gate.Stale(), "a closed registration reports stale rather than pretending to be current")
+}
+
+// TestGenerationGateCloseIsConcurrentSafe pins the idempotence contract at the primitive, not only
+// at a sequential second call. Two owners can reach the same endpoint's Close (the Scope cleanup and
+// the manager's duplicate-tag loser); a plain `if remove != nil { remove(); remove = nil }` is an
+// unsynchronised read-modify-write that runs the unregister twice and is reported by the race
+// detector. The remove function must run exactly once.
+func TestGenerationGateCloseIsConcurrentSafe(t *testing.T) {
+	var removed atomic.Int32
+	gate := &GenerationGate{remove: func() { removed.Add(1) }}
+
+	const callers = 32
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(callers)
+	for index := 0; index < callers; index++ {
+		go func() {
+			defer waitGroup.Done()
+			gate.Close()
+		}()
+	}
+	waitGroup.Wait()
+	require.EqualValues(t, 1, removed.Load(), "the unregister must run exactly once")
 }

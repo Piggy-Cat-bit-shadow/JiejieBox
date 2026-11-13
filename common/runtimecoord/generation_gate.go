@@ -1,6 +1,9 @@
 package runtimecoord
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // GenerationGate applies a resource's network-change action at its hand-out when the coordinator
 // has published a new generation but the listener phase has not run yet.
@@ -35,6 +38,12 @@ type GenerationGate struct {
 	registration *Registration
 	remove       func()
 	reset        func(context.Context)
+	// closeOnce makes Close idempotent even when two owners reach it at the same time. A plain
+	// `if g.remove != nil { ...; g.remove = nil }` is a read-modify-write on an unsynchronised
+	// field: two close paths both read the function, both call it, and the race detector reports
+	// the unsynchronised access. The contract says Close is idempotent, so the guard belongs here
+	// rather than in every caller.
+	closeOnce sync.Once
 }
 
 // NewGenerationGate registers a resource with the coordinator and returns its hand-out gate.
@@ -85,13 +94,15 @@ func (g *GenerationGate) Stale() bool {
 	return g.registration.Stale()
 }
 
-// Close unregisters the gate from the coordinator. It is safe on a nil gate and idempotent.
+// Close unregisters the gate from the coordinator. It is safe on a nil gate and idempotent, also
+// when concurrent callers reach it.
 func (g *GenerationGate) Close() {
 	if g == nil {
 		return
 	}
-	if g.remove != nil {
-		g.remove()
-		g.remove = nil
-	}
+	g.closeOnce.Do(func() {
+		if g.remove != nil {
+			g.remove()
+		}
+	})
 }
