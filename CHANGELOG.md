@@ -4,7 +4,7 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
-## [v0.1.47](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.47) ? 2026-11-14
+## [v0.1.47](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.47) — 2026-11-14
 
 ### 本次更新
 

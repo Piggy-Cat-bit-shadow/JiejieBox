@@ -1,25 +1,26 @@
-﻿# v0.1.47 鍙戝竷浜ゆ帴
+# v0.1.47 发布交接
 
-## 鍥哄畾韬唤
+## 固定身份
 
-| 椤?| 鍊?|
+| 项 | 值 |
 | --- | --- |
-| 鐗堟湰 | `0.1.47` |
+| 版本 | `0.1.47` |
 | tag | `v0.1.47` |
-| tag 鍓ョ鎻愪氦 | `c50336676eb90e03792c81284c736c1a152ff684` |
+| tag 剥离提交 | `c50336676eb90e03792c81284c736c1a152ff684` |
 | Release | https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.47 |
 | Kernel release | [43519793788](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43519793788) |
-| Apple 婧愮爜 pin | `aa8e16aa21a7f28aefc944fac76086c144195e3b` |
-| Libbox | `jiejie-libbox-apple-0.1.47.tar.gz`锛?4,274,719 bytes |
+| Apple 源码 pin | `aa8e16aa21a7f28aefc944fac76086c144195e3b` |
+| Libbox | `jiejie-libbox-apple-0.1.47.tar.gz`，74,274,719 bytes |
 | Libbox slices | `ios-arm64`, `macos-arm64` |
-| Libbox build tags | `with_trusttunnel`, `with_awg` 鍧囧瓨鍦?|
+| Libbox build tags | `with_trusttunnel`, `with_awg` 均存在 |
 
-Libbox manifest 鐨?`parent_sha` 涓?`c50336676eb90e03792c81284c736c1a152ff684`锛宍jj_version` 涓?`0.1.47`锛涙瀯寤烘爣绛惧寘鍚?`with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel,with_awg,...`銆?
-## 鍏紑闄勪欢
+Libbox manifest 的 `parent_sha` 为 `c50336676eb90e03792c81284c736c1a152ff684`，`jj_version` 为 `0.1.47`；构建标签包含 `with_quic,with_wireguard,with_utls,with_naive_outbound,with_xhttp,with_trusttunnel,with_awg,...`。
 
-鍏?8 椤癸細
+## 公开附件
 
-| 闄勪欢 | SHA256 |
+共 8 项：
+
+| 附件 | SHA256 |
 | --- | --- |
 | `Jiejiebox-v0.1.47-windows-x64.exe` | `255ae2f6b9f1e856528d46b3e120dbd313c655f0803ce45cfade9d0014baac16` |
 | `jiejie-ios-selfsign-unsigned-0.1.47.ipa` | `db3d17da807d88af1f1e88ad8140e4ae937adbfdb22633e4eac570aa63bb060b` |
@@ -28,12 +29,31 @@ Libbox manifest 鐨?`parent_sha` 涓?`c50336676eb90e03792c81284c736c1a152ff684`�
 | `jiejie-sing-box-linux-amd64-v0.1.47.tar.gz` | `ff68689509278379e0a4d14730d9fc6c57b1ac68539b88d3acf2b24d95135b2a` |
 | `jiejie-sing-box-macos-arm64-v0.1.47.tar.gz` | `a580d1fd63c37ba9ace52d867c1246c8f88440c5e8bc48312992326d1925792e` |
 | `jiejie-sing-box-windows-amd64-v0.1.47.tar.gz` | `e02d9ffb1b5e3611f4932f2d173cc527d55a596babfcdb70620d0fdfc5779dd8` |
-| `SHA256SUMS` | 璧勪骇鏍￠獙鍜屾竻鍗曪紝746 bytes |
+| `SHA256SUMS` | 资产校验和清单，746 bytes |
 
-`SHA256SUMS` 鏈韩鏈湪娓呭崟鍐呰嚜鏍￠獙锛涗笂琛ㄥ悇琛屾潵鑷闄勪欢銆?
-## 楠岃瘉
+`SHA256SUMS` 本身未在清单内自校验；上表各行来自该附件。
 
-`Kernel release 43519793788` 鐨勪互涓嬩綔涓氬叏閮ㄦ垚鍔燂細
+## Satelite Android
+
+| 项 | 值 |
+| --- | --- |
+| 版本 / versionCode | `0.1.47` / `58` |
+| tag | `v0.1.47` |
+| 客户端提交 | `c33cd66846f3e09e4fe4b483232c2281591b8bb6` |
+| coreCommit | `c50336676eb90e03792c81284c736c1a152ff684` |
+| Release | https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.47 |
+| Release APK run | [43526300534](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/43526300534) |
+
+公开附件共 5 项：`arm64-v8a` 与 `x86_64` 两个签名 APK、`SHA256SUMS.txt`、`build-info.json`、`apksigner-verify.txt`。`build-info.json` 记录 `signature_state=signed-by-user`，`app_ref=v0.1.47`，`core_ref=pinned`；`apksigner verify` 报告两个 APK 均 SIGNED，v2 签名，证书 `CN=satelite-one`。
+
+APK SHA256：
+
+- `7c4e2f108aae66e126a6342053fe7b05efea3e80c2783e69e64a7b2b4f0d6b31` — `satelite-one-0.1.47-arm64-v8a-signed-v0.1.47.apk`
+- `acc91aa943db391ff21b38a326aae1e1497e20b065745f837c255ffcf61a8aa0` — `satelite-one-0.1.47-x86_64-signed-v0.1.47.apk`
+
+## 验证
+
+`Kernel release 43519793788` 的以下作业全部成功：
 
 - `freeze`
 - `contract / release helper tests`
@@ -52,8 +72,15 @@ Libbox manifest 鐨?`parent_sha` 涓?`c50336676eb90e03792c81284c736c1a152ff684`�
 - `stage`
 - `publish`
 
-鍏紑椤甸潰鍥炶锛氶潪 draft銆侀潪 prerelease銆? 椤归檮浠躲€佹鏂囧凡鍐欏叆銆?
-## 澶辫触涓庢仮澶嶈褰?
-1. 棣栨 `Kernel release 43471548360` 鍦?`macos-latest` 鎺掗槦绾?15 鍒嗛挓鍚?`macos` 涓?`apple / libbox` 琚彇娑堬紱鏃?runner 鍒嗛厤锛屾湭鍒涘缓 tag 鎴?Release銆?2. 绗簩娆?`43475873935` 鍚屾牱鍦?15 鍒嗛挓鍚庤鍙栨秷銆?3. 绗笁娆?`43515885484` 鎴愬姛鎷垮埌 macOS runner锛屼絾 macOS 鍗曟祴澶辫触锛歚TestHalfCloseRefusedConfigurationIsSkipped` 鍦?`newHalfCloseFixture` 鍚姩 copy goroutine 鍚庢墠璁剧疆 `configErr`锛屾祴璇曞垵濮嬪寲涓庤寮傛璺緞绔炴€併€?4. 淇 `c503366`锛氭柊澧?`newHalfCloseFixtureWithConfigErr`锛屽湪 `manager.NewConnection` 涔嬪墠璁剧疆閰嶇疆閿欒锛屽苟鏂█ `Pending == 0`銆傞殢鍚?`43519793788` 鍏ㄧ豢骞跺彂甯冦€?
-## 鏈畬鎴?
-- TestFlight 涓婁紶銆佺鍚嶃€佺湡鏈洪獙鏀讹細鏈墽琛岋紝鎸?[TF 鏋勫缓鎸囧紩](../TESTFLIGHT-MAC.md) 鐙珛杩涜銆?- Satelite Android 瀹㈡埛绔?tag/APK 鍙戝竷锛氭湭鎵ц锛岄渶鍦?Satelite 浠撳簱瀵归綈 `versionName=0.1.47`銆乣coreCommit=c50336676eb90e03792c81284c736c1a152ff684` 骞跺畬鎴愮鍚嶉獙鏀躲€?
+公开页面回读：非 draft、非 prerelease、8 项附件、正文已写入。
+
+## 失败与恢复记录
+
+1. 首次 `Kernel release 43471548360` 在 `macos-latest` 排队约 15 分钟后 `macos` 与 `apple / libbox` 被取消；无 runner 分配，未创建 tag 或 Release。
+2. 第二次 `43475873935` 同样在 15 分钟后被取消。
+3. 第三次 `43515885484` 成功拿到 macOS runner，但 macOS 单测失败：`TestHalfCloseRefusedConfigurationIsSkipped` 在 `newHalfCloseFixture` 启动 copy goroutine 后才设置 `configErr`，测试初始化与该异步路径竞态。
+4. 修复 `c503366`：新增 `newHalfCloseFixtureWithConfigErr`，在 `manager.NewConnection` 之前设置配置错误，并断言 `Pending == 0`。随后 `43519793788` 全绿并发布。
+
+## 未完成
+
+- TestFlight 上传、签名、真机验收：未执行，按 [TF 构建指引](../TESTFLIGHT-MAC.md) 独立进行。
