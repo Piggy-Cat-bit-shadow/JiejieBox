@@ -140,6 +140,11 @@ func IsAuthenticationRequired(err error) bool {
 // failure; set by the with_quic half of the package.
 var quicAuthenticationError func(error) bool
 
+// quicTLSLayerError recognises a TLS verdict as the QUIC stack represents it: a CONNECTION_CLOSE in
+// the CRYPTO_ERROR range (0x0100 plus the TLS alert code), not a tls.AlertError. Set by the with_quic
+// half of the package; nil in builds without HTTP/3, where the error cannot occur.
+var quicTLSLayerError func(error) bool
+
 // streamClosedError reports a stream that either side ended normally rather
 // than with a protocol error: io.EOF for NO_ERROR (HTTP/2) and H3_NO_ERROR,
 // net.ErrClosed for CANCEL (HTTP/2), H3_REQUEST_CANCELLED and a closed HTTP/2

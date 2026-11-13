@@ -578,3 +578,59 @@ func tcpMetadataOf(server *testServer) []Metadata {
 	defer server.handler.access.Unlock()
 	return append([]Metadata(nil), server.handler.tcp...)
 }
+
+// The reviewer's interleaving: the old creation has already passed its ctx.Err() check and is paused
+// inside the verdict write when Reset replaces the network and a NEW HTTP/3 session is published. The
+// old failure must then fail the generation check instead of re-arming the verdict the new network
+// cleared. Pausing is done on the clock seam, which cordonForGeneration reads before it writes.
+func TestFallbackOldFailureAfterResetCannotCordonTheNewNetwork(t *testing.T) {
+	if !quicIncluded {
+		t.Skip("HTTP/3 is not in this build")
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var h3Calls atomic.Int32
+	client, clock := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) {
+			if h3Calls.Add(1) == 1 {
+				return nil, errors.New("old network UDP refused")
+			}
+			return newFakeSession(), nil
+		},
+		func(ctx context.Context) (sessionConn, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return newFakeSession(), nil
+		},
+	)
+	var clockCalls atomic.Int32
+	client.now = func() time.Time {
+		if clockCalls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return time.Unix(0, clock.Load())
+	}
+
+	oldDone := make(chan error, 1)
+	go func() {
+		conn, err := client.DialContext(context.Background(), fallbackDestination)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		oldDone <- err
+	}()
+	<-entered
+
+	// The old failure passed its cancellation check. Now the network changes and the new generation
+	// proves HTTP/3 works.
+	client.Reset()
+	require.NoError(t, dialFallback(t, context.Background(), client))
+	require.False(t, client.h3Cordoned(), "the new generation just proved HTTP/3 works")
+
+	close(release)
+	require.Error(t, <-oldDone)
+	require.False(t, client.h3Cordoned(),
+		"an old generation's failure must not arm a verdict for the network that replaced it")
+}

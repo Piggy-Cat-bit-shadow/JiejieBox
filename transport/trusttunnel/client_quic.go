@@ -30,6 +30,28 @@ const maxClientIdleTimeout = 600 * time.Second
 
 func init() {
 	quicAuthenticationError = isQUICAuthenticationError
+	quicTLSLayerError = isQUICTLSLayerError
+}
+
+// quicCryptoErrorBase is the first CRYPTO_ERROR code: QUIC encodes a TLS alert as 0x0100 + the alert
+// (RFC 9001 §4.8), and the range ends at 0x01ff.
+const (
+	quicCryptoErrorBase quic.TransportErrorCode = 0x0100
+	quicCryptoErrorLast quic.TransportErrorCode = 0x01ff
+)
+
+// isQUICTLSLayerError reports whether err is a TLS verdict in its QUIC representation.
+//
+// A remote TLS alert arrives as *quic.TransportError with Remote set and a CRYPTO_ERROR code;
+// TransportError.Unwrap does not restore a tls.AlertError, so the standard-library checks in
+// fallbackEligible never see it. Reading the code is the type-level way to answer the same question,
+// and it covers certificate, name and configuration refusals for both directions of the handshake.
+func isQUICTLSLayerError(err error) bool {
+	var transportError *quic.TransportError
+	if !errors.As(err, &transportError) {
+		return false
+	}
+	return transportError.ErrorCode >= quicCryptoErrorBase && transportError.ErrorCode <= quicCryptoErrorLast
 }
 
 func isQUICAuthenticationError(err error) bool {

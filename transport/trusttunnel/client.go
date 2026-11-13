@@ -160,6 +160,10 @@ type Client struct {
 	// generation: Reset clears it because the outbound calls Reset on a network change, and a verdict
 	// about UDP reachability belongs to the network it was observed on.
 	h3CordonUntil atomic.Int64
+	// generation counts network changes (Reset). A verdict may only be written or cleared by a
+	// creation that belongs to the generation it observed: the check and the write happen under
+	// serviceAccess, which is the same lock Reset takes when it bumps this counter.
+	generation uint64
 	// h3Budget and h3Cooldown are the constants above, as fields so tests do not wait them out.
 	h3Budget   time.Duration
 	h3Cooldown time.Duration
@@ -346,6 +350,11 @@ func (c *Client) connectSession(ctx context.Context) (sessionConn, error) {
 		}
 		return c.connectH2(ctx)
 	}
+	// The verdict this creation may write or clear belongs to the network it observes. Reset bumps the
+	// generation under serviceAccess; the helpers below re-check it under the same lock, so a failure
+	// that was already past its ctx.Err() check when the network changed cannot re-arm the verdict the
+	// new generation cleared.
+	generation := c.currentGeneration()
 	if c.h3Cordoned() {
 		c.logger.DebugContext(c.ctx, "trusttunnel: HTTP/3 is cordoned for ", c.server, " after a failed attempt, opening HTTP/2")
 		return c.connectFallbackHTTP2(ctx)
@@ -366,7 +375,7 @@ func (c *Client) connectSession(ctx context.Context) (sessionConn, error) {
 			conn.close()
 			return nil, ctx.Err()
 		}
-		c.clearH3Cordon()
+		c.clearCordonForGeneration(generation)
 		return conn, nil
 	}
 	if ctx.Err() != nil {
@@ -375,7 +384,7 @@ func (c *Client) connectSession(ctx context.Context) (sessionConn, error) {
 	if !fallbackEligible(err) {
 		return nil, err
 	}
-	c.cordonH3()
+	c.cordonForGeneration(generation)
 	c.logger.DebugContext(c.ctx, "trusttunnel: HTTP/3 attempt to ", c.server, " failed (", err, "), opening HTTP/2 for this session")
 	fallbackConn, fallbackErr := c.connectFallbackHTTP2(ctx)
 	if fallbackErr != nil {
@@ -457,6 +466,14 @@ func fallbackEligible(err error) bool {
 	if errors.As(err, &alertError) {
 		return false
 	}
+	// The same TLS verdict as the QUIC stack represents it (CRYPTO_ERROR), and an authentication
+	// refusal: neither is evidence about the UDP path, and retrying them over TCP repeats the refusal.
+	if quicTLSLayerError != nil && quicTLSLayerError(err) {
+		return false
+	}
+	if quicAuthenticationError != nil && quicAuthenticationError(err) {
+		return false
+	}
 	return true
 }
 
@@ -478,13 +495,48 @@ func (c *Client) h3Cordoned() bool {
 	return c.clock().Before(time.Unix(0, until))
 }
 
-// cordonH3 arms the provisional verdict for h3Cooldown. It carries no session state: the next
-// creation after it expires probes HTTP/3 again, driven by demand, never by a timer.
-func (c *Client) cordonH3() {
-	c.h3CordonUntil.Store(c.clock().Add(c.h3Cooldown).UnixNano())
+// currentGeneration reads the network generation this client is on. A creation captures it before it
+// attempts HTTP/3, so its verdict can be tied to the network it observed.
+func (c *Client) currentGeneration() uint64 {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return c.generation
 }
 
-func (c *Client) clearH3Cordon() {
+// cordonForGeneration arms the provisional verdict for h3Cooldown, but only while the creating
+// request still belongs to the current network generation.
+//
+// # Why the clock is read outside the lock and the check inside it
+//
+// The verdict is a statement about the network, and Reset replaces the network. Checking
+// `ctx.Err()` and then storing the atomic is two steps with a window between them: a Reset that lands
+// in that window used to leave the new network carrying the old network's verdict. The generation
+// check and the store therefore happen under `serviceAccess`, the same lock Reset holds when it bumps
+// the generation, so the two operations cannot interleave. The clock read stays outside the lock
+// because it is the caller's seam, not state this client owns.
+func (c *Client) cordonForGeneration(generation uint64) {
+	until := c.clock().Add(c.h3Cooldown).UnixNano()
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.generation != generation {
+		return
+	}
+	c.h3CordonUntil.Store(until)
+}
+
+// clearCordonForGeneration drops the verdict, but only for the generation that proved HTTP/3 works:
+// a late success from the old network must not erase the new network's verdict either.
+func (c *Client) clearCordonForGeneration(generation uint64) {
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.generation != generation {
+		return
+	}
+	c.h3CordonUntil.Store(0)
+}
+
+// clearCordonLocked clears the verdict; the caller holds serviceAccess.
+func (c *Client) clearCordonLocked() {
 	c.h3CordonUntil.Store(0)
 }
 
@@ -567,9 +619,10 @@ func (c *Client) Reset() {
 	c.session = nil
 	pending := c.discardPendingLocked()
 	// The verdict belongs to the network it was observed on, and the outbound calls Reset on a network
-	// change. Clearing it under the same lock as the discarded creation keeps a creation that starts
-	// right after this Reset from reading the old network's verdict.
-	c.clearH3Cordon()
+	// change. Bumping the generation and clearing under this lock is what makes a late write from the
+	// previous network fail its check in cordonForGeneration instead of re-arming the verdict.
+	c.generation++
+	c.clearCordonLocked()
 	c.access.Unlock()
 	if pending != nil && pending.cancel != nil {
 		pending.cancel(net.ErrClosed)
