@@ -8,47 +8,87 @@
 
 ### 本次更新
 
-v0.1.47 是 0.1.46 之后的稳定性与移动端能力收口版本，重点修复并发生命周期边界、TrustTunnel 双栈 ALPN、DNS NXDOMAIN 日志，以及 Apple/Android Libbox 的 TrustTunnel / AWG 构建标签缺失。
+v0.1.47 是 0.1.46 之后的稳定性与移动端能力收口版本。除发布门禁和移动端 Libbox 能力修复外，本版集中处理了 0.1.45→0.1.46 审计中剩余的并发 map、连接生命周期、协议代次和诊断边界问题；下面按影响面列出。
 
-#### 一、并发与生命周期修复
+#### 一、双栈 / IPv6 崩溃修复（重点）
 
-- **XHTTP XMUX**：在选池与使用计数之间增加原子预约，避免换网或 Close 后旧 client 被重新唤醒并创建孤儿 HTTP/2 连接。
-- **TrustTunnel**：在途 CONNECT 在发包前计入 streams，失败路径归还；`RetireSuspect` / `CloseIdleConnections` 不再在 CONNECT 已发出、尚未收到 200 时关闭底层会话。
-- **URLTest**：`FailoverState` 增加内部同步，group 的 failover 指针在访问锁下读写，消除健康轮与诊断快照的竞态。
-- **v2rayquic**：Reset 只处理开始时捕获的连接，不会退役等待迁移期间新建的网络代次。
-- **libbox 诊断**：Publish 与 Close 共用同一个 finalisation 临界区，end 事件之后不再追加事件。
-- **route**：CloseAll 在同一临界区完成 tracked 集合摘除与同步关闭记账；admission 对已取消 context 不再发放 ticket。
-- **MASQUE**：先释放旧会话 flow，再把地址归还池；flow registry 拒绝 teardown 后到达的注册。
-- **HTTP/3 / artifact**：attempt context 在错误或响应 body 关闭时取消；`Version.Release` 使用原子一次性释放。
-- 其余审计修复包括 dual-stack recovery 的并发 map、GenerationGate Close 幂等、TUIC/Hysteria2 family single-flight、DNS ConnPool 新鲜连接归属和 URLTest 非健康共享等待。
+**这是本版最重要的崩溃修复，之前日志里只被笼统写成“dual-stack recovery 的并发 map”，没有说清楚。**
 
-#### 二、DNS NXDOMAIN 日志
+`LookupFamilies` 会把 A 和 AAAA 查询放在两个 goroutine 中并行执行，并分别从各自的 goroutine 调用 publisher。恢复消费者仍按“只有一个 lookup goroutine”的旧假设，让两个 family 的回调同时对 `dual_stack_recovery.go` 的 `seen` map 做读、比较和写；两个 family 同时返回时，Go runtime 直接以 `concurrent map read and map write` 致命错误终止进程，在 Apple Network Extension 中表现为连接恢复阶段崩溃。
 
-NXDOMAIN 现在是正常的负答案，不再在 DNS 和连接层打印 ERROR；分类使用类型化 `IsNXDomain`，SERVFAIL、超时、网络错误和混合错误仍保持 ERROR 语义。
+修复方式：
 
-#### 三、TrustTunnel 双栈 ALPN
+- 给单个 lookup 的 `deliver()` 加 per-lookup mutex，使“读取地址 → 比较代次 → 写入 seen → 发布批量结果”成为一个原子步骤。
+- 锁一直持有到向内部 channel 发送结果，避免从半更新的 identity 集合中发布批次。
+- 保持 A/AAAA 并行查询、source generation 升级规则、去重和两个 recovery consumer 的行为不变。
+- 增加同时释放两个 family publisher 的回归测试，覆盖双 family 发布、IPv4 / IPv4-mapped 重复只发一次、最新 generation 保留，以及 `stop()` 唤醒持锁等待的回调。
+- 验证：`go test -race -count=1 ./common/dialer ./dns`。
 
-- 双栈入站的 TCP 与 QUIC 使用各自的 ALPN：TCP 只提供 h2，QUIC 只提供 h3；通过 `TransportALPNView` 隔离，避免复制证书/ACME/watcher 生命周期，也避免共享配置的并发改写。
-- 启动时打印最终 ALPN；服务端 QUIC 协商到非 h3、客户端 ALPN 不匹配时输出 WARN。
-- `sing-box check` 对旧式共享 ALPN 配置给出告警，不再静默接受。
+#### 二、协议家族恢复与代次
 
-#### 四、Apple / Android Libbox 能力
+- **TUIC / Hysteria2**：并发 `DialConn` 会同时判定 `established=false`，各自竞争同一对 client，并各自宣布不同 family 为 winner；一个 race 的 loser cleanup 会把另一个 race 已开始使用的 client `CloseWithError`。`creationAccess` 现在 single-flight 首次创建，后来者等待后直接拨已发布 winner，并在 stream dial 前释放锁。
+- 会话在 `CloseWithError` 已移动代次后才建立时，旧的 `retireFamily` generation 检查会跳过它，导致 QUIC session、socket 和 goroutine 永久不可达；现在按实例身份关闭旧实例，仍拒绝触碰同代次的新实例。
+- 全失败分支不再丢失 `settled` 并遗留两个失败 client，而是先退休再返回。
+- **GenerationGate.Close**：Scope cleanup 和 manager 的重复 tag loser 都可能调用 Close，原来对 `g.remove` 的读/调用/置 nil 没有同步，既产生字段竞态，也可能执行两次 unregister；改为 `sync.Once`，32 goroutine 并发 Close 只执行一次 remove。
+- **URLTest FailoverState**：健康轮修改状态，而 `HealthSnapshot` / `ApplyFailoverPolicy` 可能并发读取或替换；`FailoverState` 内部加锁，group 的 failover 指针在 `g.access` 下读写，消除竞态。
+- **URLTest 共享测量**：`Join` 对 display/diagnostic key 返回的 leader wait 是已经关闭、且从未注册的 wait，`Publish` 只检查 `wait.closed` 为 false 就再次 close，任何遵循 leader-then-Publish 契约的调用都会确定性 panic；现在把该 wait 预先标记为 closed，`Publish` 成为 no-op。
 
-- 移动端共享构建标签补齐 `with_trusttunnel` 与 `with_awg`，Apple/Android Libbox 不再在运行时拒绝 TrustTunnel 或 AWG 配置。
-- Libbox manifest 记录 `build_tags`；Apple 构建门禁和 TF 校验要求 `with_trusttunnel`、`with_awg`，旧版没有 `build_tags` 的 Libbox 会被拒绝。
-- Mieru 没有构建标签，`include/registry.go` 无条件注册，所有移动端产物均已包含。
+#### 三、连接池与传输生命周期
 
-#### 五、Naive
+- **DNS ConnPool `AcquireFresh`**：原来把 fresh 拨号包进 `trackingDial`，但 fresh 连接从不进入池，池的 Release/空闲淘汰/Reset/Close 都不会清理 `dialPaths`，于是每个 stale-connection retry 都把已死亡的 `*multiplexConn` 和 step slice 留到 transport 生命周期结束。现在直接拨号，caller 自己的 DialPath recorder 仍从 context 收到步骤；回归测试做 32 次 AcquireFresh 并断言 `dialPaths` 为空、池未关闭任何 caller-owned 连接。
+- **XHTTP XMUX**：选池与 `addOpenUsage(1)` 之间存在窗口，换网/trim/Close 可以在两者之间关闭 client，随后 `Add(1)` 把已释放连接重新唤醒，可能发出请求或创建孤儿 HTTP/2 连接。现在在 client 锁内用 `acquireUsage()` 原子预约，失败则 `discardRetired` 后重新选池；新增回归测试禁止已退休连接复活。
+- **TrustTunnel 在途 CONNECT**：CONNECT 已经发出、尚未收到 200 时没有被计入 `streams`，`RetireSuspect` / `CloseIdleConnections` 可能据此关闭 carrier，造成重复 CONNECT 或在已关闭 session 上开流。现在在把 CONNECT 放上线之前 `streams.Add(1)`，所有失败路径归还并 `drainIfUnused()`，session 会等这次 CONNECT 结束再退休。
+- **v2rayquic Reset**：Reset 先清 pending，再等待 `migrateAccess`；等待期间新 demand 可以创建并发布新代次连接，旧 Reset 随后会错误地退役/迁移这个新连接。现在 Reset 开始时捕获连接，拿到迁移锁后只有仍是同一对象才处理。
+- **MASQUE 会话释放**：旧顺序先把地址归还池、再通知 handler 释放 flow；新 session 可能拿到回收地址并注册 flow，随后被旧 session 的 ReleaseSession 关闭。现在先 `ReleaseSession`，再把地址还给池；flow registry 增加 closed 状态，teardown 后到达的 flow 立即关闭并回调 onClose。
+- **HTTP/3 attempt**：H3 attempt context 在成功后仅停 timer，从未 cancel，长生命周期 parent 会保留子 context；现在错误路径直接 cancel，成功响应在 body Close 时 cancel，且重复 Close 安全。
+- **artifact `Version.Release`**：普通 bool 的幂等判断在并发 double release 下会重复递减 lease；改为 atomic one-shot latch。
 
-`quic_congestion_control` 未设置时实际是库默认 CUBIC，不是 BBR。文档和启动日志明确说明这一点；BBR 需要显式设置，行为未改变。
+#### 四、路由、诊断与连接关闭
 
-#### 六、验证与发布
+- **route `CloseAll`**：原来先把连接从 tracked 集合摘除、解锁后才 `beginSynchronousCloses`，并发的最终 `Close` 可能看到 pending/syncing 全为 0 而提前返回，此时 socket 还没有真正 Close。现在同步关闭计数与摘除在同一 `m.access` 临界区完成。
+- **route admission**：`AcquireConnection` 只在等待分支检查 context；即使 ctx 已取消，只要还有 room 仍会发放 ticket，可能让已撤回的拨号安装 socket。现在每轮在锁内检查 `ctx.Err()`，取消的请求不再消费 admission slot。
+- **libbox 诊断 emitter**：`Publish` 在锁内检查 `closed` 后解锁，再调用 `appendAndOffer` 重新加锁；Close 可以在这两步之间写入 end event，随后 Publish 再追加 stage/finding。现在 Publish 与 Close 共用同一个 finalisation 临界区，end 事件之后不可能再有事件。
+
+#### 五、DNS NXDOMAIN 日志
+
+原来的 NXDOMAIN 每个地址族打一条 ERROR，继承该 resolver error 的每个失败连接再打一条 ERROR。NXDOMAIN 是正常负答案，RCODE、返回错误、负缓存和拨号行为都不变，只把日志级别移到 DEBUG。
+
+新增类型化 `dns.IsNXDomain`：递归遍历 wrapped/aggregated error，要求**每一个叶子**都是 `RcodeError(NXDOMAIN)`；混合 NXDOMAIN+SERVFAIL、纯 SERVFAIL、超时、网络/协议错误和普通文本都不算 NXDOMAIN，仍保持 ERROR。DNS lookup 分支和 `ConnectionManager` 的 TCP / connected-UDP / listen-packet 失败日志都使用该分类。
+
+#### 六、TrustTunnel 双栈 ALPN
+
+双栈 TCP+QUIC 入站原来共享一个 ALPN 列表，TCP 可能协商 h3，QUIC 可能协商 h2。现在：
+
+- TCP 列表只保留 h2 和配置中的非 h3 协议，绝不含 h3；
+- QUIC 列表只提供 h3；
+- 双栈时 QUIC 使用 `tls.TransportALPNView`，只隔离 ALPN，证书 provider、ACME 和 file watcher 仍只有一份，不复制生命周期；
+- 启动时打印最终 ALPN；
+- 服务端 QUIC 协商到非 h3、客户端 ALPN 不匹配时输出 WARN；
+- `sing-box check` 对旧式共享 ALPN 配置给出告警（不直接报错，因为 view 接入后双栈形态已安全）。
+
+#### 七、Apple / Android Libbox 能力
+
+v0.1.46 的 Apple Libbox 是在移动端共享 tag 集缺少 `with_trusttunnel` 时构建的，所以 TF App 加载 trusttunnel 配置会报 `trusttunnel is not included in this build`。本版：
+
+- `cmd/internal/mobilebuildtags` 补齐 **`with_trusttunnel`** 和 **`with_awg`**，Apple/Android Libbox 不再在运行时拒绝这两类配置；
+- `build-apple-libbox.sh` 在构建前断言解析出的 Apple tag 集包含二者；
+- Libbox manifest 和 `BUILD-INFO-LIBBOX.txt` 记录 `build_tags`，`validate()` 要求同时包含 `with_trusttunnel`、`with_awg`；
+- 没有 `build_tags` 的旧 v0.1.46 Libbox 会被拒绝，不再静默安装；
+- Mieru 没有构建标签，`include/registry.go` 无条件注册，所有移动端产物均已包含；不添加无实际 gating 的 `with_mieru` 空标签。
+
+#### 八、Naive 拥塞控制说明
+
+`quic_congestion_control` 未设置时，库默认是 **CUBIC**，不是 BBR。文档和启动日志现在明确说明这一点；BBR 需要显式设置，行为没有改变。
+
+#### 九、验证与发布
 
 - 内核 tag `v0.1.47` 固定于 `c50336676eb90e03792c81284c736c1a152ff684`。
-- [Kernel release 43519793788](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43519793788) 的冻结、Verify/race、Release contract、Linux、macOS、Windows、Android、Desktop、Apple Libbox 与消费端、stage 和 publish 全部通过。
-- 公开附件共 8 项：Linux/macOS/Windows 内核、Windows x64 安装器、Android ARM64 AAR、Apple Libbox、未签名 IPA 和 `SHA256SUMS`。
-- Apple 源码 pin 保持 `aa8e16aa21a7f28aefc944fac76086c144195e3b`。本版包含对 macOS 上 half-close 契约测试初始化竞态的修复；该失败只在 macOS 单测暴露，修复后 macOS 作业通过。
-- 本页不表示 TestFlight 上传、真机验收或 Satelite APK 已完成；这些按独立指引继续。
+- [Kernel release 43519793788](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43519793788) 的 freeze、Verify/race、Release contract、Linux、macOS、Windows、Android、Desktop、Apple Libbox 与消费端、stage、publish 全部通过。
+- 公开附件 8 项：Linux/macOS/Windows 内核、Windows x64 安装器、Android ARM64 AAR、Apple Libbox、未签名 IPA、`SHA256SUMS`。
+- 公开 Libbox manifest 已回读：`parent_sha=c503366...`、`build_tags` 同时含 `with_trusttunnel` 和 `with_awg`、slices 为 `ios-arm64` 和 `macos-arm64`。
+- macOS 单测暴露的 half-close 契约测试初始化竞态也已修复：`newHalfCloseFixture` 启动 copy goroutine 后才设置 `configErr`，导致 `SkippedUnarmable` 永远等不到；修复为在 `NewConnection` 之前预置配置错误，并断言 `Pending == 0`。这是测试修复，不改变 half-close 产品行为。
+- [Satelite v0.1.47](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.47) 已发布：`versionCode=58`、`coreCommit=c503366...`，双 ABI 签名 APK、`build-info.json` 和 `apksigner-verify.txt` 均已回读。
+- TestFlight 上传、签名与真机验收尚未执行，按独立指引继续。
 
 ## [v0.1.46](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.46) — 2026-11-13
 
