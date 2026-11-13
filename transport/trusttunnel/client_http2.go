@@ -20,7 +20,14 @@ func (c *Client) connectHTTP2(ctx context.Context) (sessionConn, error) {
 	if err != nil {
 		return nil, E.Cause(err, "dial tcp")
 	}
-	tlsConn, err := aTLS.ClientHandshake(ctx, conn, c.tlsConfig)
+	// With quic_fallback_to_h2 the client keeps the HTTP/2 leg's own ALPN: this is a real HTTP/2
+	// connection to the same node, and offering h3 here would both invite a protocol the server may
+	// pick and, worse, reuse a configuration the HTTP/3 leg is concurrently handshaking with.
+	tlsConfig := c.tlsConfig
+	if c.tlsConfigH2 != nil {
+		tlsConfig = c.tlsConfigH2
+	}
+	tlsConn, err := aTLS.ClientHandshake(ctx, conn, tlsConfig)
 	if err != nil {
 		conn.Close()
 		return nil, E.Cause(err, "TLS handshake")

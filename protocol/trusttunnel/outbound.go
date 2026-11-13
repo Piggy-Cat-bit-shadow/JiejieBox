@@ -77,6 +77,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.QUIC && tlsOptions.UTLS != nil && tlsOptions.UTLS.Enabled {
 		return nil, E.New("uTLS is not supported with quic")
 	}
+	if options.QUICFallbackToH2 && !options.QUIC {
+		return nil, E.New("quic_fallback_to_h2 requires quic: true: it selects what an HTTP/3 attempt falls back FROM")
+	}
 	switch options.QUICCongestionControl {
 	case "", "bbr", "cubic", "reno":
 	default:
@@ -87,9 +90,18 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		protocol = trusttunnel.ProtocolHTTP3
 	}
 	if len(tlsOptions.ALPN) == 0 {
-		tlsOptions.ALPN = badoption.Listable[string]{protocol}
+		if options.QUICFallbackToH2 {
+			// Both legs of the fallback are real TLS connections to the same node: HTTP/3 needs
+			// h3 and the recovered HTTP/2 leg needs h2. Deriving both here keeps the default
+			// consistent with the transport that may actually be used.
+			tlsOptions.ALPN = badoption.Listable[string]{trusttunnel.ProtocolHTTP3, trusttunnel.ProtocolHTTP2}
+		} else {
+			tlsOptions.ALPN = badoption.Listable[string]{protocol}
+		}
 	} else if !common.Contains(tlsOptions.ALPN, protocol) {
 		return nil, E.New("tls.alpn must contain ", protocol)
+	} else if options.QUICFallbackToH2 && !common.Contains(tlsOptions.ALPN, trusttunnel.ProtocolHTTP2) {
+		return nil, E.New("tls.alpn must contain ", trusttunnel.ProtocolHTTP2, " for quic_fallback_to_h2")
 	}
 	tlsConfig, err := tls.NewClientWithOptions(tls.ClientOptions{
 		Context:       ctx,
@@ -121,11 +133,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		QUIC: &trusttunnel.QUICOptions{
 			CongestionControl: options.QUICCongestionControl,
 		},
-		Username:      options.Username,
-		Password:      options.Password,
-		AppName:       appName,
-		HealthCheck:   options.HealthCheck,
-		IdleTimeout:   idleWindow(options.IdleTimeout, 0),
+		Username:    options.Username,
+		Password:    options.Password,
+		AppName:     appName,
+		HealthCheck: options.HealthCheck,
+		IdleTimeout: idleWindow(options.IdleTimeout, 0),
+		// The fallback is decided inside one session creation, so the outbound only has to say
+		// whether the operator opted in; see transport/trusttunnel/client.go connectSession.
+		QUICFallback:  options.QUICFallbackToH2,
 		AdmitCreation: admitSessionFor(guard, options.ServerOptions.Build().String()),
 	})
 	if err != nil {

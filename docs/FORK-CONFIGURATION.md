@@ -15,12 +15,13 @@
   "username": "user",
   "password": "replace-me",
   "quic": true,
+  "quic_fallback_to_h2": true,
   "network": ["tcp", "udp"],
   "tls": {"enabled": true, "server_name": "proxy.example.com"}
 }
 ```
 
-H2/H3 服务器配置和 `health_check`、`idle_timeout`、`quic_congestion_control` 字段见上述专页。
+H2/H3 服务器配置和 `health_check`、`idle_timeout`、`quic_congestion_control` 字段见上述专页。`quic_fallback_to_h2`（需 `quic: true`，默认关闭）让新会话在 H3 建立失败或超出独立预算后改用 H2，并在随后 30 秒内直接走 H2；冷却到期后由真实新需求再试一次 H3，换网清除该判断。回退只影响新会话，不迁移、不重放已建立的流量；服务端需在同一节点同时提供 QUIC 与 TCP/H2 入口。
 
 ## AmneziaWG endpoint
 

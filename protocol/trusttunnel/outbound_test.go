@@ -60,6 +60,14 @@ func TestOutboundValidation(t *testing.T) {
 			options.QUIC = true
 			options.TLS.ALPN = badoption.Listable[string]{"h2"}
 		}, "tls.alpn must contain h3"},
+		{"fallback without quic", func(options *option.TrustTunnelOutboundOptions) {
+			options.QUICFallbackToH2 = true
+		}, "quic_fallback_to_h2 requires quic: true"},
+		{"fallback with alpn without h2", func(options *option.TrustTunnelOutboundOptions) {
+			options.QUIC = true
+			options.QUICFallbackToH2 = true
+			options.TLS.ALPN = badoption.Listable[string]{"h3"}
+		}, "tls.alpn must contain h2 for quic_fallback_to_h2"},
 	}
 	for _, testCase := range cases {
 		options := validOutboundOptions()
@@ -83,6 +91,17 @@ func TestOutboundAcceptsValidOptions(t *testing.T) {
 		func(options *option.TrustTunnelOutboundOptions) {
 			options.Network = "udp"
 			options.QUICCongestionControl = "reno"
+		},
+		// The fallback derives both ALPNs when the node leaves them unset.
+		func(options *option.TrustTunnelOutboundOptions) {
+			options.QUIC = true
+			options.QUICFallbackToH2 = true
+		},
+		// An explicit pair is accepted as written.
+		func(options *option.TrustTunnelOutboundOptions) {
+			options.QUIC = true
+			options.QUICFallbackToH2 = true
+			options.TLS.ALPN = badoption.Listable[string]{"h3", "h2", "http/1.1"}
 		},
 	} {
 		options := validOutboundOptions()
