@@ -316,12 +316,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "45253d2ac66ae9da169f9fe0911f84ff0739fbf5",
-      "pin": "322100096fbf",
-      "relation": "ahead",
+      "tip": "aa8e16aa21a7f28aefc944fac76086c144195e3b",
+      "pin": "aa8e16aa21a7",
+      "relation": "identical",
       "policy": "update",
       "observed_at": "2026-11-13",
-      "note": "The pin is window 03's integrated client branch: main plus the selection/reload work. Ahead is the expected relation for an integration pin; the freeze's check reports the same."
+      "note": "Moved to main's own tip after the client was compiled for the first time: aa8e16a fixes the four compile errors the 3221000 merge carried, and the branch that carried the fix was merged and deleted. Apple client run 43348165279 built Libbox plus iOS, macOS and the self-sign IPA from this revision."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",

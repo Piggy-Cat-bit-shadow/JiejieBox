@@ -339,7 +339,23 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 #   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
 #     --lang swift --root <checkout at 3221000>
 #   {"scanned": 467, "violations": [], "interface_methods": 3, "error": ""}
-VERIFIED_APPLE_SHA="322100096fbf3714d7dcb010f8c267d43547b15a"
+# Moved to aa8e16a on 2026-11-13: the 3221000 merge had never been COMPILED - the integration round
+# that produced it had no Xcode - so all three Apple targets failed on four errors: a switch over the
+# configuration outcome that was not exhaustive (`.recovered`/`.interrupted` were never accepted),
+# a provider probe handed to a summary field, an optional receipt handed to `ownership(of:)`, and
+# three call sites spelled with the Go method names instead of the imported selectors
+# (`applyServiceChangeReportWithRequest`, `selectOutboundWithRequest`). The range 3221000..aa8e16a is
+# Swift client code only and changes no Go surface in experimental/libbox, so what has to be re-proved
+# is the layer-4 caller sweep and the compile. Layer 4 was RUN against a clean checkout of this
+# revision (no submodules), not inherited:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <clone at aa8e16a>
+#   {"scanned": 467, "violations": [], "interface_methods": 3, "error": ""}
+# The compile half: Apple client run 43348165279 resolved explicit input aa8e16a and built ONE Libbox
+# from this kernel tree, then compiled all three products from this exact source - iOS, macOS and the
+# unsigned self-sign IPA all succeeded. That run is the evidence for this pin; it is not a device or
+# TestFlight result.
+VERIFIED_APPLE_SHA="aa8e16aa21a7f28aefc944fac76086c144195e3b"
 
 client_root=""
 skip_client=0
