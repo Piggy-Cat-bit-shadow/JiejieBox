@@ -6,7 +6,7 @@
 
 | 任务 / 关键路径 | 模块 |
 | --- | --- |
-| TrustTunnel H2/H3、AWG 3.x/3.1、默认构建档位 | [协议扩展](modules/protocols-0145.md)、[构建](modules/ci-release.md) |
+| TrustTunnel H2/H3、`quic_fallback_to_h2`、3 秒尝试/30 秒冷却、网络代次、AWG 3.x/3.1、默认构建档位 | [协议扩展](modules/protocols-0145.md)、[构建](modules/ci-release.md) |
 | XHTTP Box 共享上传预算、relay 增长、TUN/NAT 排队字节 | [XHTTP](modules/xhttp-client-transport.md)、[缓冲区所有权](modules/buffer-ownership.md)、[准入](modules/resource-admission.md) |
 | 网络代次、跨代池、资源驻留、OOM 回收收益 | [生命周期](modules/core-lifecycle-runtime.md)、[电源](modules/power-mobile-lifecycle.md) |
 | match_only、hidden、URLTest failover、domain_keyword | [路径选择](modules/path-selection-validation.md)、[规则与组](modules/rules-and-groups-0145.md) |

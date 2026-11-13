@@ -1,5 +1,9 @@
 # 基线（Baseline）
 
+## 0.1.46 发布后专题增量（2026-11-13）
+
+固定源码目标为已发布 `v0.1.46` / `c795bb5cbbcd9b6a4d2d2f18e854b629915335f5`。本次覆盖 TrustTunnel H3→H2 回退、DNS 测试同步修复、发布前检查与正式发布证据；见 [专题刷新](CALIBRATION-0.1.46.md)、[协议模块](modules/protocols-0145.md)和 [CI 发布模块](modules/ci-release.md)。全局广泛生产基线仍保留 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`，0.1.45 专题与更早模块仍按各自固定目标计算增量；本次不宣称全仓重新验收。
+
 ## 2026-11-13 0.1.45 专题目标（Scoped target）
 
 本轮按 [刷新报告](KNOWLEDGE_REFRESH_2026-11-13.md) 校准的源码目标为 `3032ca5199dbd151be0b2cd006fba191b87cc1e8`，在专题校准时 `testing` 与 `origin/testing` 均指向此提交；其后分支已前进，使用时须检查 `3032ca5..HEAD` 的增量。`v0.1.44^{commit}` 为 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`，是目标祖先。0.1.45 此时是候选源码，不是已发布 Release。下方广泛生产基线 `0067b03e…` 仍是旧模块完整校准点；专题文档只覆盖其明确列出的模块。760 个 v0.1.44 之后的提交与 1951 个改动路径不因专题刷新自动视为全部审核完毕；在其余模块校准前不移动全局 Production Baseline。
@@ -9,7 +13,7 @@
 
 | 范围 | 固定目标 |
 | --- | --- |
-| 最近回读的公开正式版 | [内核 v0.1.44](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44)，附注标签剥离后的提交 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；[正式运行 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 成功，8 项公开附件已回读。[Satelite v0.1.44](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44) 独立签名构建与 5 项公开附件亦已回读。 |
+| 2026-11-08 当时回读的公开正式版 | [内核 v0.1.44](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44)，附注标签剥离后的提交 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；[正式运行 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 成功，8 项公开附件已回读。[Satelite v0.1.44](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44) 独立签名构建与 5 项公开附件亦已回读。 |
 | Provider、路径图、租约、Apple 回环与发布工具的专题目标 | 同一 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；覆盖与证据边界见 [2026-11-08 专题刷新](CALIBRATION-2026-11-08.md)。 |
 | 全局广泛知识基线 | 仍保留 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` 的 v0.1.34 快照；未逐条重审的旧模块继续从该基线计算增量。 |
 

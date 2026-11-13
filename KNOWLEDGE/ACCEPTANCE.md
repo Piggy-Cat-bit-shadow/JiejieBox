@@ -1,5 +1,16 @@
 # 验收索引（Acceptance index）
 
+## 0.1.46 定向复检（Scoped acceptance）
+
+目标 `c795bb5cbbcd9b6a4d2d2f18e854b629915335f5`；证据与范围见 [专题刷新](CALIBRATION-0.1.46.md)。
+
+| 范围 | 复检与判定 |
+| --- | --- |
+| TrustTunnel 回退 | `go test -tags with_quic ./option ./protocol/trusttunnel ./transport/trusttunnel`；覆盖真实 relay 黑洞、H2 载荷、按需 H3 恢复、TLS 拒绝与代次竞态；无 QUIC 的运行不能替代 |
+| DNS 选举同步复发 | `go test -run '^TestFastestWinExpiryTriggersReelection$' -count=1000 -cpu=1,2,8,32 -failfast -timeout=90s ./dns/transport/group`；确认收集器结束再触发过期重选 |
+| 发布前账本 | 完整历史下 `python scripts/ci/check-upstream-retirement.py` 和 `python scripts/ci/check-knowledge-facts.py`，不以 Verify 成功代替独立账本 |
+| 发布与重跑身份 | 最终 SHA 门禁、preparation、正式 run；Apple resolver/Libbox/消费者 attempt 一致；内核与 Satelite 分别回读，见 Release 指引 |
+
 ## 0.1.45 专题验收入口（固定源码 3032ca5）
 
 下表是对应源码的定向复查入口，属于源码/单元/本机 loopback 层级；原始历史运行与最终候选运行必须分别看 [刷新报告](KNOWLEDGE_REFRESH_2026-11-13.md) 和归档包，不能把测试存在当作本次已运行。

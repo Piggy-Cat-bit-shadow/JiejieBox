@@ -1,5 +1,9 @@
 # 分支知识库（Fork knowledge base）
 
+## 0.1.46 发布后专题增量（2026-11-13）
+
+固定源码目标为已发布 `v0.1.46` / `c795bb5cbbcd9b6a4d2d2f18e854b629915335f5`。本次覆盖 TrustTunnel H3→H2 回退、DNS 测试同步修复、发布前检查与正式发布证据；见 [专题刷新](CALIBRATION-0.1.46.md)、[协议模块](modules/protocols-0145.md)和 [CI 发布模块](modules/ci-release.md)。全局广泛生产基线仍保留 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`，0.1.45 专题与更早模块仍按各自固定目标计算增量；本次不宣称全仓重新验收。
+
 ## 0.1.45 专题刷新（2026-11-13）
 
 本轮专题源码目标为 `3032ca5199dbd151be0b2cd006fba191b87cc1e8`，位于已发布 v0.1.44 之后。广泛知识基线仍见 [BASELINE.md](BASELINE.md)；本专题覆盖的模块与证据见 [刷新报告](KNOWLEDGE_REFRESH_2026-11-13.md)和[模块校准台账](MODULE_CALIBRATION_2026-11-13.md)。历史章节保留原固定目标，不能自动视作当前状态。
@@ -9,7 +13,7 @@
 
 ## 当前增量入口（Current delta）
 
-最近回读的公开正式版是 v0.1.44。出站 Provider 的初始专题目标与此后的发布修复分开记录，见[2026-11-07 专题刷新](CALIBRATION-2026-11-07.md)、[v0.1.44 专题增量](CALIBRATION-2026-11-08.md)和[出站 Provider 模块](modules/outbound-provider.md)。各自的固定目标见 [BASELINE.md](BASELINE.md)。
+最近回读的公开正式版是 v0.1.46，见上方专题与发布交接；以下保留较早的专题来源。出站 Provider 的初始专题目标与此后的发布修复分开记录，见[2026-11-07 专题刷新](CALIBRATION-2026-11-07.md)、[v0.1.44 专题增量](CALIBRATION-2026-11-08.md)和[出站 Provider 模块](modules/outbound-provider.md)。各自的固定目标见 [BASELINE.md](BASELINE.md)。
 
 ### v0.1.39 历史校准
 
@@ -28,14 +32,14 @@
 | 仓库 | `Piggy-Cat-bit-shadow/JiejieBox` |
 | 产品分支 | `testing` |
 | **广泛生产基线** | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 2026-10-31 完整校准的旧快照 |
-| **当前验收目标（0.1.45 专题）** | `3032ca5199dbd151be0b2cd006fba191b87cc1e8` —— 固定源码快照；范围见 [刷新报告](KNOWLEDGE_REFRESH_2026-11-13.md)。合并后的 `testing` 已前进，需另查该目标至 HEAD 的增量 |
+| **当前验收目标（0.1.46 专题）** | `c795bb5cbbcd9b6a4d2d2f18e854b629915335f5` —— 已发布固定源码；范围见 [专题刷新](CALIBRATION-0.1.46.md)。0.1.45 专题仍固定于 `3032ca5199dbd151be0b2cd006fba191b87cc1e8`，未覆盖模块按原目标计算增量 |
 | **v0.1.44 历史专题** | `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；范围与证据见 [2026-11-08 专题刷新](CALIBRATION-2026-11-08.md) |
 | 广泛基线对应发布版 | **`v0.1.34`**，仅表示旧完整校准点；较新的正式发布记录见 [BASELINE.md](BASELINE.md) |
 | **历史上游锚点** | `e4b7e692f4545890bfc9d43960328e1449fa803b` —— 供 v0.1.9 时期的对比使用，而非当前的上游合并基（merge-base） |
 | 基线之后的生产增量 | 计算 `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD`；见 `BASELINE.md` |
-| 广泛基线审阅时间 | 2026-10-31；0.1.45 专题审阅 2026-11-13 |
+| 广泛基线审阅时间 | 2026-10-31；0.1.45 / 0.1.46 专题审阅 2026-11-13 |
 | 知识修订 | 动态解析：`git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
-| 树内版本 | `release/JIEJIE_VERSION`（当前 0.1.45）—— 这是待发布的工作版本，不是已发布版本；`v0.1.44` 之后是否发布以 Release 页为准 |
+| 树内版本 | `release/JIEJIE_VERSION`（本次回读为 0.1.46）；正式发布身份另以 tag 与 Release 验收为准，见 [0.1.46 交接](../docs/releases/RELEASE-0.1.46-HANDOFF.md) |
 
 知识库描述的是上表中的源码基线，不一定与当前 `HEAD` 一致。使用前请先检查基线之后的 Git 增量。
 发布历史、上游来源的核对方法和标签注意事项见 `BASELINE.md`。

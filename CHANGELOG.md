@@ -6,23 +6,53 @@
 
 ## [v0.1.46](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.46) — 2026-11-13
 
-v0.1.46 为 TrustTunnel 增加可选的 HTTP/3 → HTTP/2 会话建立回退，改善 UDP/QUIC 被阻断时的连接体验。
+### 本次更新
 
-### TrustTunnel 回退
+v0.1.46 围绕 **TrustTunnel 在 UDP/QUIC 不可用时的连接恢复**，增加显式启用的 HTTP/3 → HTTP/2 会话建立回退。默认配置保持原来的传输选择；开启后，优先尝试 H3，在可回退的建立失败后使用同一节点的 H2，并按网络状态和真实业务需求恢复 H3。
 
-- 新增 `quic_fallback_to_h2`，默认关闭，需同时开启 `quic: true`。H3 新会话建立最多尝试 3 秒，失败或超时后在同一节点尝试 TCP/TLS 上的 H2；父请求剩余时间更短时以父请求为准。
-- 回退后 30 秒内，新会话直接使用 H2。冷却到期后由新的真实需求重试 H3，网络变化会清除原网络的判断。
-- 回退限定于新会话建立。已建立的 TCP stream 与 UDP association 不迁移，不重放业务字节；认证、证书校验、目标拒绝和请求取消不会被回退绕过。
-- 服务端需在同一节点同时提供 QUIC 与 TCP/H2 入口。缺少 `with_quic`，或显式 ALPN 仅允许 `h3` 时，启用回退会在启动阶段报错。
+### 一、TrustTunnel H3 → H2 回退
 
-### 可靠性与验证
+#### 配置与服务端条件
 
-- 将 H3 能力判断绑定到网络代次，避免换网前的异步失败覆盖新网络状态；区分 TLS 终止错误与可回退的传输错误，并识别 QUIC 携带的 TLS alert。
-- 新增真实 TCP/UDP relay 黑洞回归：丢弃 UDP、保留 TCP，验证 H3 超时后通过真实 H2 传输数据，并在冷却到期和 UDP 恢复后重新使用 H3。Linux CI 明确开启 `with_quic` 执行该场景。
-- 重新生成维护账本，对齐 TrustTunnel 源码行号与当前回归测试文件计数，修复本轮 `Maintenance ledger` 门禁失败。
-- 修复 DNS fastest 组选举过期测试的同步窗口：先等待上一轮选举回收完成，再验证获胜记录过期后的重新选举，避免将正常的选举并发保护误判为失败。
+- 新增 `quic_fallback_to_h2`，默认关闭，需同时设置 `quic: true`。服务端须在同一地址和端口提供 UDP/H3 与 TCP/H2，回退不切换节点或用户身份。
+- 未指定 `tls.alpn` 时自动配置 H3/H2；显式指定时必须同时包含 `h3`、`h2`。缺少 `with_quic`、未开启 `quic` 或 ALPN 不完整时，在构造阶段明确拒绝配置。
+- 出站的 `network` 仍选择隧道内 TCP/UDP 业务；入站的 `network` 才选择 TCP/H2 与 UDP/H3 监听。
 
-[TrustTunnel 配置说明](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/v0.1.46/docs/configuration/outbound/trusttunnel.zh.md) · [完整更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/CHANGELOG.md)
+在已有 TrustTunnel 出站中启用：
+
+```json
+{
+  "quic": true,
+  "quic_fallback_to_h2": true
+}
+```
+
+这是字段片段；完整节点、服务端条件与排查方法见 [TrustTunnel 出站配置](docs/configuration/outbound/trusttunnel.zh.md#h3--h2-回退)。
+
+#### 有限尝试与按需恢复
+
+- **H3 尝试上限 3 秒**：父级创建期限更短时以父级为准，H2 使用剩余时间，不额外延长业务等待期限。
+- **失败后冷却 30 秒**：符合回退条件的 H3 建立失败会暂时抑制新的 QUIC 尝试，窗口内新建会话直接走 H2，减少连续请求反复等待 UDP 超时。
+- **有需求才恢复 H3**：冷却到期后，新业务让回退 H2 会话退出新流分配，再尝试 H3；没有业务时不定时探测。旧 H2 会话上的 TCP stream 与 UDP association 继续完成，不迁移、不重放业务字节。
+- **换网重新判断**：清除原网络的冷却状态；异步成功和失败均核对网络代次，避免旧网络结果清除或重新设置新网络的判断。
+- **保留真实错误**：H2 也失败时同时返回两条路径的原因，便于区分 UDP 不通与节点整体不可达。
+
+#### 回退的安全边界
+
+回退只处理新会话的传输建立。认证、证书校验、对端 TLS alert、业务目标拒绝与创建取消不会被当成普通 QUIC 故障；补齐 QUIC `CRYPTO_ERROR` 所携带 TLS alert 的分类，避免绕过明确拒绝。多个等待者仍共享一次会话创建，单个等待者退出不取消其他请求仍需要的工作。
+
+### 二、回归验证与发布修复
+
+- 新增真实 TCP/UDP relay 黑洞回归：同一端口丢弃 UDP、保留 TCP，确认实际 QUIC 尝试失败后由真实 H2 传输完整载荷；恢复 UDP、等待缩短的测试冷却期到期后，由新需求重建 H3，原 H2 流仍可传输。[Linux CI 43391142474](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43391142474) 在 `ce8c07e10` 显式启用 `with_quic` 并通过该场景；相关源码至正式 tag 无变化。台架验证不等于所有公网或移动网络实测。
+- 覆盖默认关闭、短期限、取消、共享创建、节点隔离、TLS 错误分类，以及换网后旧成功/失败的并发交错。
+- 修复 DNS fastest 组选举过期测试的同步窗口：先等待上一轮选举收集器结束，再验证过期重选。保留重新向三个上游查询的断言，不改变生产选举策略；本地按 1/2/8/32 CPU 各运行 1,000 次通过，正式 macOS 单测通过。
+- 重新生成维护账本，更新源码 marker 行号与回归测试文件计数，修复发布前的账本门禁失败。
+
+### 三、正式发布与客户端对齐
+
+- 内核 tag `v0.1.46` 固定于 `c795bb5cbbcd9b6a4d2d2f18e854b629915335f5`。[Kernel release 43404981823](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43404981823) 的平台构建、Verify/race、发布契约、Apple Libbox 与消费端、stage 和 publish 全部通过，公开附件共 8 项。
+- [Satelite v0.1.46](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.46) 对齐同一内核，`versionCode=57`，发布 arm64-v8a / x86_64 两个签名 APK 及验证元数据。Apple 源码 pin 保持 `aa8e16aa21a7f28aefc944fac76086c144195e3b`；本轮不包含 TestFlight 上传或真机验收。
+- 发布耗时、失败原因与恢复证据见[交接记录](docs/releases/RELEASE-0.1.46-HANDOFF.md)；维护账本、平台冒烟和重跑身份的前置核对纳入 [Release 指引](docs/RELEASE-WINDOWS.md)。
 
 ## [v0.1.45](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.45) — 2026-11-13
 

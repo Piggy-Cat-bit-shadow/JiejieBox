@@ -36,6 +36,7 @@
 ### TrustTunnel 与 AmneziaWG
 
 - **TrustTunnel H2 / H3**：原生客户端与服务端。H2 在 TLS/TCP 上建立共享连接，H3 在 QUIC/UDP 上建立共享连接；两者都可用独立 stream 承载业务 TCP，并通过 `_udp2` association 保留 UDP 数据报边界和目标地址。用户名/密码认证、健康检查与空闲会话管理按协议会话执行，不为每条业务流重复建立外层连接。
+- **H3 → H2 自动回退**：0.1.46 起，出站可在 `quic: true` 时显式开启 `quic_fallback_to_h2`。新会话优先尝试 H3，最多 3 秒；遇到可回退的传输失败后改用同一节点的 H2，并在 30 秒冷却期间避免重复等待 QUIC。到期后由新业务需求重试 H3，已有连接继续完成；换网会清除旧判断。服务端须同时提供 TCP/H2 与 UDP/H3，认证和证书错误不会被回退绕过。详见[回退配置](docs/configuration/outbound/trusttunnel.zh.md#h3--h2-回退)。
 - **传输选择与业务类型分开**：出站 `quic: true` 选 H3，省略或设为 `false` 选 H2；入站 `network` 选择 H2/TCP、H3/UDP 的外层监听，出站 `network` 则限制隧道内允许的 TCP/UDP 业务。配置时不能把外层 H3/UDP 误解为只能代理 UDP 业务。H2/H3 是明确选择的传输路径，这个字段本身不承诺自动回退。
 - **协议接入**：TrustTunnel 使用内核 DNS、Dialer、TLS、路由和流量类别；UDP 关联以槽位、队列和字节预算控制占用，读期限与活动记录接到实际转发路径。
 - **AmneziaWG 3.x / 3.1**：在 `wireguard` endpoint 上提供 junk、消息前缀、范围魔数、CPS/声明式伪装、头保护、padding、随机尾部及相应握手参数，支持主动连接与 Linux 监听应答。
@@ -120,7 +121,7 @@ CONNECT-IP 同步远端地址、路由与隧道内 DNS；H3 故障判断区分 Q
 
 ### H2 / H3 的选择与恢复
 
-允许版本回退的共享 HTTP 请求路径给冷 H3 建连独立尝试窗口，并按目标 authority 保存失败判断，避免一个站点的 UDP 故障影响其他站点。只有在请求体可重放、请求语义允许且尚未得到明确响应时才考虑重试；Naive 出站另以 `quic_fallback_to_h2` 显式启用其 H3→H2 路径。TrustTunnel 的 `quic` 仅选择传输，不属于这个回退开关。相关场景的速度和 CPU 以各协议各自的测试条件解读，不把 H3 视为普遍快于 H2。实现边界见[网络链路说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md)与[Naive 模块](KNOWLEDGE/modules/naive-http-transport.md)。
+允许版本回退的共享 HTTP 请求路径给冷 H3 建连独立尝试窗口，并按目标 authority 保存失败判断，避免一个站点的 UDP 故障影响其他站点。只有在请求体可重放、请求语义允许且尚未得到明确响应时才考虑重试；Naive 出站另以 `quic_fallback_to_h2` 显式启用其 H3→H2 路径。TrustTunnel 从 0.1.46 起也提供同名开关，但回退发生在新会话建立阶段，不重放业务请求；`quic` 本身仍只选择首选传输。相关场景的速度和 CPU 以各协议各自的测试条件解读，不把 H3 视为普遍快于 H2。实现边界见[网络链路说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md)与[Naive 模块](KNOWLEDGE/modules/naive-http-transport.md)。
 
 ### AnyTLS、TLS 与传统代理
 

@@ -1,5 +1,13 @@
 # CI、证据与发布（CI, evidence and release）
 
+## 0.1.46 正式发布与前置检查（Observed release and preflight）
+
+固定目标 `c795bb5cbbcd9b6a4d2d2f18e854b629915335f5`。`VERIFIED_CI`：[Verify 43403457223](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43403457223)、[Release contract 43403458276](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43403458276)、[preparation 43403463500](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43403463500) 与 [正式编排 43404981823](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43404981823) 均成功；正式编排 attempt 1。公开内核 8 项附件与非空正文、Satelite 双 ABI 签名 APK 及 3 项元数据已回读，身份和摘要见 [0.1.46 交接](../../docs/releases/RELEASE-0.1.46-HANDOFF.md)。这些证据不代表 TestFlight 上传或真机验收。
+
+发布前必须区分 Verify、独立 Maintenance ledger、平台编译/headless 冒烟各自覆盖。0.1.45 的 Apple 编译和 Native API 实例身份问题、0.1.46 的账本漂移和 DNS 选举测试同步问题，都应通过便宜检查或按改动范围选择的目标平台验证尽早暴露；具体执行表见 [Release 指引](../../docs/RELEASE-WINDOWS.md)。不要用每版无差别重跑全部平台预构建代替风险定位。
+
+Apple `apple-release.json`、Libbox manifest 与消费者绑定 `run_attempt`。0.1.46 failed-only 重跑把 attempt 1 resolver 身份与 attempt 2 Libbox 混用，被校验拒绝；重跑前先查整个依赖链，无法保证身份同步就整轮重跑。禁止改元数据、放宽校验或自动假定旧成功产物可复用。runner 容量失败单独记排队时间，不能伪装成源码失败或声称已被预检消除。两轮最终成功运行约 28 分钟，不代表端到端任务只用了 28 分钟。
+
 ## 0.1.45 当前构建档位（2026-11-13 scoped delta）
 
 固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。

@@ -1,5 +1,9 @@
 # 不变量（Invariants）
 
+## 0.1.46 TrustTunnel 回退边界（Scoped invariants）
+
+在 `c795bb5cbbcd9b6a4d2d2f18e854b629915335f5` 核对：回退只在会话建立阶段进行，不能重放业务字节或绕过认证、TLS/目标拒绝；跨网络代次的迟到成功与失败都不能修改新代判断。默认关闭是兼容约定，3 秒预算/30 秒冷却是当前实现参数，不把数值升级为不可调整的协议不变量。来源与复检见[协议模块](modules/protocols-0145.md)和[验收索引](ACCEPTANCE.md)。
+
 ## 0.1.45 跨模块不变量（专题源码 3032ca5）
 
 - 新协议的认证、路由和业务承载分别处理；TrustTunnel 入站 `network` 选 H2/H3 监听，出站 `network` 选 TCP/UDP 业务。AWG 是 `wireguard` endpoint 的扩展，未启用构建标签时拒绝其配置，不静默退回普通 WG。
