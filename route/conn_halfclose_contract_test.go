@@ -251,8 +251,7 @@ func TestHalfCloseUnarmableConnectionIsSkipped(t *testing.T) {
 
 // TestHalfCloseRefusedConfigurationIsSkipped: the connection can be asked, and says no.
 func TestHalfCloseRefusedConfigurationIsSkipped(t *testing.T) {
-	fixture := newHalfCloseFixture(t)
-	fixture.client.setConfigErr(syscall.EINVAL)
+	fixture := newHalfCloseFixtureWithConfigErr(t, syscall.EINVAL)
 	require.Eventually(t, func() bool {
 		return fixture.manager.HalfCloseDiagnostics().SkippedUnarmable == 1
 	}, 3*time.Second, 2*time.Millisecond)
@@ -260,6 +259,7 @@ func TestHalfCloseRefusedConfigurationIsSkipped(t *testing.T) {
 	snapshot := fixture.manager.HalfCloseDiagnostics()
 	requireConserved(t, snapshot)
 	require.Equal(t, uint64(0), snapshot.Observed)
+	require.Equal(t, uint64(0), snapshot.Pending, "a refused configuration is skipped, not pending")
 	select {
 	case <-fixture.closed:
 		t.Fatal("a connection that refused the probe must not be closed")

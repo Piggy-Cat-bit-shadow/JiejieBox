@@ -264,6 +264,36 @@ func newHalfCloseFixture(t *testing.T) *halfCloseFixture {
 	return fixture
 }
 
+// newHalfCloseFixtureWithConfigErr installs the keepalive verdict BEFORE the connection starts its
+// copy goroutines. Calling setConfigErr after newHalfCloseFixture is a race: the upload direction
+// can read EOF and reach SetKeepAliveConfig before the test's call, so the observation is armed
+// successfully and the test waits forever for a refusal it set too late.
+func newHalfCloseFixtureWithConfigErr(t *testing.T, configErr error) *halfCloseFixture {
+	t.Helper()
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	manager.halfClose = halfCloseTestTimings
+	fixture := &halfCloseFixture{
+		manager: manager,
+		client:  newScriptedConn(),
+		closed:  make(chan struct{}),
+	}
+	fixture.client.setConfigErr(configErr)
+	t.Cleanup(func() { _ = manager.Close() })
+	sink := newPeerSink(t)
+	manager.NewConnection(context.Background(),
+		halfCloseDialer{target: sink.addr()},
+		fixture.client,
+		adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("peer.example", 443)},
+		func(err error) {
+			fixture.closeCall.Add(1)
+			if err != nil {
+				fixture.closeErr.Store(err.Error())
+			}
+			fixture.closeOnce.Do(func() { close(fixture.closed) })
+		})
+	return fixture
+}
+
 // newHalfCloseFixtureSink is the fixture with its timings and its far end exposed, for the tests
 // that need to control either.
 func newHalfCloseFixtureSink(t *testing.T, timings halfCloseOptions) (*halfCloseFixture, *peerSink) {
