@@ -49,11 +49,11 @@ Measured, not assumed: batch 1 compared stable patch-ids at upstream tip `a13dbe
 | 119 | analysis | 1 | 2026-10-10 | docs/fork/v016-handoff-310af9e69.md:332: SPEC 119 or 121. | none names this patch | fork-only | - | ANALYSIS |
 | 120 | analysis | 1 | 2026-10-10 | docs/fork/v016-final-closure-ledger.md:420: to absorb for them. SPEC 120 (MTU alignment) was addressed in this and the … | none names this patch | fork-only | - | ANALYSIS |
 | 122 | analysis | 2 | 2026-11-02 | docs/fork/audit-b1-handoff.md:58: / **SPEC 122 — uTLS retains TLS1.3 handshake state for the connection lifetime** / On… | none names this patch | fork-only | - | ANALYSIS |
-| 139 | code | 1 | 2026-11-09 | protocol/trusttunnel/outbound.go:244: return h.client.DialContext(ctx, destination) // lx: SPEC 139 — session and auth … | none names this patch | fork-only | - | HOLD |
+| 139 | code | 1 | 2026-11-09 | protocol/trusttunnel/outbound.go:259: return h.client.DialContext(ctx, destination) // lx: SPEC 139 — session and auth … | none names this patch | fork-only | - | HOLD |
 | 141 | analysis | 1 | 2026-11-02 | docs/audits/protocol-upstream-sync/UPSTREAM_LEDGER.md:96: / **X-05** / `Leadaxe/sing-box-lx` `fad4fd0633e309cf303ee88d5… | none names this patch | fork-only | - | ANALYSIS |
 | 142 | analysis | 1 | 2026-11-02 | docs/audits/protocol-upstream-sync/UPSTREAM_LEDGER.md:96: / **X-05** / `Leadaxe/sing-box-lx` `fad4fd0633e309cf303ee88d5… | none names this patch | fork-only | - | ANALYSIS |
 | 146 | analysis | 1 | 2026-11-02 | docs/audits/protocol-upstream-sync/UPSTREAM_LEDGER.md:175: / **Q-02** / `Leadaxe/sing-box-lx` `1858657b04cc5977de06295e… | none names this patch | fork-only | - | ANALYSIS |
-| 152 | code | 1 | 2026-11-09 | protocol/trusttunnel/outbound.go:117: Dialer: outboundDialer, // lx: SPEC 152 — session underlay is internal to the tun… | none names this patch | fork-only | - | HOLD |
+| 152 | code | 1 | 2026-11-09 | protocol/trusttunnel/outbound.go:129: Dialer: outboundDialer, // lx: SPEC 152 — session underlay is internal to the tun… | none names this patch | fork-only | - | HOLD |
 
 ## What each column means - and does not
 
