@@ -228,6 +228,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	default:
 		return nil, E.New("unknown quic congestion control: ", options.QUICCongestionControl)
 	}
+	if options.QUICCongestionControl == "" {
+		// The library default is Chromium's CUBIC, not BBR. This was the expensive ambiguity in
+		// the field: an operator who expected BBR from a stale note silently measured CUBIC.
+		logger.Info("naive: quic_congestion_control is unset; using the library default (CUBIC). ",
+			"Set \"bbr\" explicitly on lossy paths")
+	}
 	// InsecureConcurrencySingleEngine is passed through only when the operator asked
 	// for it. cronet-go ORs this with `runtime.GOOS == "ios"`, so leaving it false
 	// keeps the platform behaviour exactly as upstream: N engines on macOS, one

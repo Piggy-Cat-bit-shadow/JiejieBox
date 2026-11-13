@@ -209,6 +209,12 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		if options.QUICCongestionControl == "" {
+			// Unset is the library default, CUBIC; BBR is a deliberate production choice. Say so
+			// at startup instead of leaving "why is throughput poor on a lossy link?" unexplained.
+			logger.Info("naive inbound: quic_congestion_control is unset; using the library default ",
+				"(CUBIC). Set \"bbr\" explicitly on lossy paths")
+		}
 
 		quicListener, err := qtls.ListenEarly(udpConn, tlsConfig, nativeNaiveQUICConfig(options))
 		if err != nil {

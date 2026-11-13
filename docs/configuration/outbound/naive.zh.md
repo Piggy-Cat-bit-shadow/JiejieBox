@@ -109,7 +109,7 @@ QUIC 拥塞控制算法。
 | `cubic` | CUBIC |
 | `reno` | New Reno |
 
-默认使用 `cubic`（NaiveProxy 基于的 Chromium 的默认值）。
+默认使用 `cubic`（NaiveProxy 基于的 Chromium 的默认值）。BBR **不是**默认值；丢包链路请显式设置 `"quic_congestion_control": "bbr"`。
 
 #### quic_session_receive_window
 
