@@ -1,17 +1,15 @@
 # 从 Windows 构建，到 Mac 发布 TestFlight
 
-> **发布顺序更新（2026-11-07）：** 每次发布先读 [Release 与 TF 发布指南](RELEASE-PLAYBOOK.md)，
+> **当前正式版顺序：** 每次发布先读 [Release 与 TF 发布指南](RELEASE-PLAYBOOK.md)，
 > 核对其基线后的变化。用户要求内核仓库正式 Release 全部契约资产发布完成并回读验收后，才开始 TF 发布。
 > 下文的提前 `--follow-run` 路径描述工具能力，不是当前默认发布顺序；不得因为脚本允许提前上传就提前执行。
-> 正式版完成后的默认入口见本页“已发布版本的原有入口”，并核对其平台范围。
+> 正式版完成后的默认入口见本页“当前正式版入口”，并核对其平台范围。
 > 两台电脑分别执行独立任务：[Release 构建指引](RELEASE-WINDOWS.md) 完成后输出交接记录并结束；
 > [TF 构建指引](TESTFLIGHT-MAC.md) 另行读取和核验记录。本页保留工具技术说明，不作为跨电脑连续操作清单。
 
-开发和发起 Actions 在 Windows 上完成；证书、签名、归档和 TestFlight 上传留在 Mac。
-Mac 跟随指定的 Apple client 运行，自动使用那次运行的版本、核心提交、Apple 客户端提交和 Libbox。
-它不读取“最新 Release”来猜版本，也不要求本机分支恰好同步到发布提交。
+开发和发起 Actions 在 Windows 上完成；证书、签名、归档和 TestFlight 上传留在 Mac。当前正式版以已发布内核的指定 tag 和 [TF 构建指引](TESTFLIGHT-MAC.md)为准，在该 tag 的干净检出上运行 `./scripts/publish-apple-beta.sh --libbox-source release`。脚本从这次 Release 的 Libbox manifest 固定核心与 Apple 客户端来源；不从“最新 Release”或移动的客户端分支猜版本。下面的提前跟随说明保留为工具历史/诊断材料，不属于本轮正式版操作清单。
 
-## 推荐流程
+## 提前跟随模式（历史与诊断）
 
 ### 1. 在 Windows 确定发布版本并启动构建
 
@@ -91,7 +89,7 @@ App 的 `CFBundleShortVersionString` 取自固定提交中的 `release/JIEJIE_VE
 分别执行两次平台发布时，若希望构建号也相同，需要显式设置同一个 `APPLE_BUILD_NUMBER`。
 发布版本相同，不要求 TF 构建号与 GitHub Release 标签相同。
 
-## 已发布版本的原有入口
+## 当前正式版入口：已公开 Release
 
 正式 Release 已存在时，仍可以在对应提交运行：
 
@@ -101,7 +99,7 @@ App 的 `CFBundleShortVersionString` 取自固定提交中的 `release/JIEJIE_VE
 
 默认 `auto` 优先读取该版本的正式 Release；资产不存在时才回退到 Actions。资产存在却损坏时直接失败，
 不会悄悄换成另一份库。新产物还会把 Apple 客户端源码固定到 manifest 记录的提交，避免重发旧 Release
-时解析到今天的分支头。这个入口会发布两个平台；需要提前发布或只发布一个平台时，使用 `--follow-run`。
+时解析到今天的分支头。这个入口默认发布两个平台；若目标 tag 的脚本支持单平台选项，可保持 `--libbox-source release` 并加 `--platform ios` 或 `--platform macos`。正式版不使用提前跟随模式。
 
 原有 `--run-id` 入口仍要求整个 Apple 工作流和三个必要任务成功。同一提交已经有任务排队或运行时，
 现在会复用并等待该任务，避免重复触发。`--no-dispatch` 可禁止原有入口自动触发构建。

@@ -1,9 +1,18 @@
 # Release 与 TestFlight 发布指南（调查稿）
 
 **独立任务入口：[Release 构建指引](RELEASE-WINDOWS.md) / [TF 构建指引](TESTFLIGHT-MAC.md)。**
-最新补充：[0.1.40 逐产物遗漏复核](releases/RELEASE-0.1.40-READINESS-2026-11-07.md)：Release 提前启动时，Windows 安装器没有派发，自签 IPA 也没有对应运行，Satelite 仍未对齐本轮版本，但它是后续任务，不属于本次主仓发布阻断。
+[0.1.40 逐产物遗漏复核](releases/RELEASE-0.1.40-READINESS-2026-11-07.md)是历史事故材料；当前操作请以本页下方的 0.1.45 增量和两份独立指引核对。
 
 本文件供 AI 在每次发布前阅读。目标是尽早发现问题、减少重复构建和版本号消耗，并保证 **内核仓库正式 Release 的全部契约资产发布且回读验收完成后，才开始 TestFlight 发布**。本文件不授权执行发布；实际发布范围以当次用户任务为准。
+
+## 0.1.45 候选发布链路增量（2026-11-13）
+
+- `testing` 的 0.1.45 专题知识库固定于 `3032ca5`，其后已有合并和文档提交。每次从最新候选重新核对 `release/JIEJIE_VERSION`、source lock、依赖声明、父/嵌套 gitlink、工作流和产物契约；不要把知识库目标当作正式 tag SHA。
+- `release/source-lock.json` 证明 pin 与源码一致；`release/pin-runs.json` 及 `check-pin-runs.py` 绑定真实成功运行和同一 pin 集合。`check-knowledge-facts.py` 对齐知识库入口、版本与锁。`kernel-release.yml` 的 freeze 严格检查 source lock、嵌套 gitlink、分支关系和 pin-runs，并上传 `release-pin-report`；Verify 和 Release contract 仍需最终候选同 SHA 的成功记录。
+- pin 若前移，preparation 的自动冻结和旧 run 不能替代新 pin 的实际构建。先补真实运行和记录，再复核门禁；`[skip ci]` 的文档提交可避免 push 自动工作流，但正式候选必须显式取得同 SHA 门禁。
+- `kernel-release.yml` 的正式运行负责 Linux/macOS CLI、Windows core/安装器、Android AAR、Apple Libbox 与 iOS/macOS/自签 IPA 的同批生产、stage 和 publish。公开资产清单以当前 `release-artifacts.sh` 的契约为准，不能沿用下方 0.1.40 调查表当作今天的事实。内核公开回读后，Satelite APK 和 Mac TF 各自独立继续；TF 从公开 Release 的 Libbox manifest 取固定 Apple 源码。
+
+操作步骤分别见 [Windows Release 指引](RELEASE-WINDOWS.md)和[Mac TF 指引](TESTFLIGHT-MAC.md)；下面的 2026-11-07 表格与失败记录保留为历史调查证据。
 
 ## 1. 截止基线与使用方法
 
