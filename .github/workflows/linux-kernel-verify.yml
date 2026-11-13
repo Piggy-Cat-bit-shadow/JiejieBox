@@ -3,6 +3,9 @@ name: linux-kernel-verify
 # Tests that need a Linux kernel rather than the Windows development host:
 #
 #   - the TrustTunnel port (transport + protocol + include registration) with with_trusttunnel;
+#   - the HTTP/3 half of that port and the real black-hole acceptance with with_quic: one node serving
+#     HTTP/2 over TCP and HTTP/3 over UDP on one port behind a user-space relay that forwards TCP and
+#     silently drops UDP, so the fallback is exercised against real sockets, TLS and QUIC;
 #   - the procfs/netlink process search, which only compiles on Linux (common/process);
 #   - the TUN stack, which needs /dev/net/tun and root (best effort: the runner allows sudo,
 #     but a runner without the device must not fail the whole job's useful half).
@@ -61,6 +64,15 @@ jobs:
       - name: transport and protocol tests (with_trusttunnel)
         run: |
           go test -tags with_trusttunnel -count=1 -v ./transport/trusttunnel/ ./protocol/trusttunnel/
+      # The step above compiles the HTTP/3 half out. The feature's core scenario needs it enabled: a
+      # real node serving HTTP/2 over TCP and HTTP/3 over UDP on one port, reached through a user-space
+      # relay that forwards TCP and silently drops UDP until the test restores it. Nothing is mocked:
+      # the client pays a real QUIC handshake timeout, then falls back to a real TLS/TCP HTTP/2
+      # session, carries payload, and recovers HTTP/3 once the cooldown expires.
+      - name: real relay black hole falls back to HTTP/2 (with_quic)
+        run: |
+          go test -tags with_trusttunnel,with_quic -count=1 -timeout 300s -v \
+            -run 'TestRealRelayBlackholeFallsBackToHTTP2' ./transport/trusttunnel/
       - name: the tag set still builds without the feature
         run: |
           go build -tags with_quic,with_wireguard,with_utls,badlinkname ./include/ ./protocol/trusttunnel/ ./transport/trusttunnel/
