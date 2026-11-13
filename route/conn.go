@@ -24,6 +24,7 @@ import (
 	"github.com/sagernet/sing-box/common/trafficsched"
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
@@ -442,6 +443,26 @@ func destinationForError(metadata adapter.InboundContext) string {
 	return "[" + addresses + "]:" + strconv.Itoa(int(metadata.Destination.Port))
 }
 
+// logDialFailure reports one failed flow setup.
+//
+// A DNS NXDOMAIN is a normal negative answer: the name does not exist, the resolver did its job,
+// and a caller that asked for it gets the same connection failure it always did. Logging it at
+// Error once per connection (and once per address family underneath) turns ordinary traffic into
+// an ERROR stream and trains the operator to ignore the level. The error itself is unchanged and
+// is still handed to onClose and to N.CloseOnHandshakeFailure.
+//
+// The predicate is the DNS package's typed one, not a string match: it walks the whole error tree
+// and requires EVERY leaf to be RcodeError(NXDOMAIN). A mixed A=NXDOMAIN/AAAA=SERVFAIL or
+// NXDOMAIN+timeout outcome therefore keeps its Error line, which is the distinction between a
+// normal negative answer and a query that actually failed.
+func (m *ConnectionManager) logDialFailure(ctx context.Context, err error) {
+	if dns.IsNXDomain(err) {
+		m.logger.DebugContext(ctx, err)
+		return
+	}
+	m.logger.ErrorContext(ctx, err)
+}
+
 func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = adapter.WithContext(ctx, &metadata)
 	var (
@@ -483,7 +504,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		err = E.Cause(err, "open connection to ", destinationForError(metadata), dialerString)
 		m.deleteURLTestHistory(metadata.OutboundChain)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
-		m.logger.ErrorContext(ctx, err)
+		m.logDialFailure(ctx, err)
 		return
 	}
 	err = N.ReportConnHandshakeSuccess(conn, remoteConn)
@@ -774,7 +795,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 			err = E.Cause(err, "open packet connection to ", remoteString, dialerString)
 			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
-			m.logger.ErrorContext(ctx, err)
+			m.logDialFailure(ctx, err)
 			return
 		}
 		remotePacketConn = bufio.NewUnbindPacketConn(remoteConn)
@@ -807,7 +828,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 			err = E.Cause(err, "listen packet connection to ", remoteString, dialerString)
 			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
-			m.logger.ErrorContext(ctx, err)
+			m.logDialFailure(ctx, err)
 			return
 		}
 	}

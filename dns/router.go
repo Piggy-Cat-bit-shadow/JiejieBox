@@ -2177,9 +2177,14 @@ func (r *Router) lookupWithSource(ctx context.Context, domain string, options ad
 				// A rule action answered this lookup: the name was blocked on purpose, so the
 				// verdict is the configuration working and belongs at Debug. It is checked AFTER
 				// the reject/cache branches so those keep their own messages, and it is checked
-				// rather than inferred so an upstream NXDOMAIN still logs at Error - which is the
-				// distinction the marker exists to make.
+				// rather than inferred so a genuine upstream failure still takes its own branch.
 				r.logger.DebugContext(ctx, "lookup blocked by a rule for ", domain)
+			} else if IsNXDomain(err) {
+				// An upstream NXDOMAIN is a normal negative answer, not a resolver fault. The caller
+				// still receives the error (RCODE, negative cache and dial behaviour are unchanged);
+				// only its log level moves. The predicate requires EVERY leaf to be NXDOMAIN, so a
+				// mixed A=NXDOMAIN/AAAA=SERVFAIL or NXDOMAIN+timeout error stays at Error.
+				r.logger.DebugContext(ctx, E.Cause(err, "lookup failed for ", domain))
 			} else if emptyResult && options.QuietEmptyFamilyResult {
 				// One family of a dual-stack probe answered "no records of this type". That is the
 				// normal outcome for a name published only as A or only as AAAA - it happened on

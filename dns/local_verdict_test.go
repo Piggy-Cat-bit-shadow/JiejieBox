@@ -55,7 +55,8 @@ func TestLocalVerdictKeepsTheRcodeAndAddsTheMarker(t *testing.T) {
 	require.True(t, errors.Is(wrapped, RcodeError(RcodeNameError)))
 
 	// The NEGATIVE control, and it is the half that makes the marker worth having: an ordinary
-	// rcode is NOT a verdict, so an upstream NXDOMAIN keeps logging as a failure.
+	// rcode is NOT a local verdict. An upstream NXDOMAIN has its own typed log branch (Debug),
+	// but it must never be classified as a rule action's verdict.
 	require.False(t, IsLocalVerdict(RcodeError(RcodeNameError)),
 		"an upstream NXDOMAIN is not a local verdict and must not be classified as one")
 	require.False(t, IsLocalVerdict(RcodeError(RcodeServerFailure)))
