@@ -271,3 +271,37 @@ go vet ./common/... ./dns/... ./protocol/... ./transport/... ./route/... ./daemo
 4. **测试证据**：TrustTunnel 的 generation 测试目前没有真正覆盖 `cordonForGeneration` 的检查点，建议增加第二/第三次 clock 调用的 seam；完整 `./route -race` 应在 CI/更长窗口补跑。
 5. **设备级验证**：iOS NE 只做了单元/race 级验证；需要在真实设备上复跑启动 burst、网络切换、睡眠/唤醒与 DNS 双栈场景，确认无用户可见回归。
 6. **依赖与子仓**：`sing-quic`/`quic-go`/客户端 Swift 并发模型仍未全量审计；建议把本次 family/offer 相关 SDK pin 与客户端调用链纳入下一轮专项。
+
+## 8. 2026-11-13 补充修复
+
+本节记录对第 3 节残余风险的后续处理，提交为 `c5d5b92597de10cda517140a017e8a5b3948effc`。它不改变第 1–5 节的历史审计证据；下列条目的状态以本节为准。
+
+| 原条目 | 状态 | 处理 |
+| --- | --- | --- |
+| R1 XHTTP XMUX get→addOpenUsage | **已修复** | `acquireUsage()` 在 client 锁内完成 retired 检查与计数；DialContext 在选池循环中预约，失败则 `discardRetired` 后重取；回归测试 `TestXmuxRetiredConnectionCannotBeRevived`。 |
+| R2 TrustTunnel 在途 CONNECT | **已修复** | `roundTrip` 在发包前 `streams.Add(1)`，所有失败路径归还并 `drainIfUnused`；回归测试 `TestInFlightConnectIsCountedAsAStream`。 |
+| R3 FailoverState 并发 | **已修复** | `FailoverState` 内部 mutex；group 的 failover 指针在 `g.access` 下读写；回归测试 `TestFailoverStateConcurrentSnapshot`、`TestURLTestGroupFailoverInstallAndSnapshotAreConcurrentSafe`。 |
+| R4 v2rayquic ResetContext | **已修复** | Reset 开始处捕获 conn，等待 migrateAccess 后只有仍是同一对象才处理；回归测试 `TestResetDoesNotRetireAGenerationCreatedWhileWaiting`。 |
+| R5 libbox emitter Publish-after-Close | **已修复** | Publish/Close 共用同一 finalisation 临界区；回归测试 `TestCloseAndPublishShareOneFinalisationBoundary`。 |
+| R6 route CloseAll 记账窗口 | **已修复** | 同步关闭计数与“从 tracked 集合摘除”在同一 `m.access` 临界区完成。 |
+| R7 admission 已取消 ctx / settled ticket | **部分修复** | `AcquireConnection` 在快路径检查 `ctx.Err()`；回归测试 `TestAcquireConnectionRefusesCancelledContextWithRoom`。settled ticket 的 TrackConn 失败仍按原契约由调用方处理，未改动。 |
+| R8 MASQUE 回收/注册顺序 | **已修复** | `ReleaseSession` 先于地址池归还；flowRegistry 增加 closed，teardown 后注册的 flow 立即关闭并回调 onClose；回归测试 `TestSessionReleaseRunsBeforeTheAddressReturnsToThePool`、`TestFlowRegistryRejectsRegistrationAfterCloseAll`。 |
+| R9 HTTP/3 attempt context / Version.Release | **已修复** | H3 attempt context 在错误或响应 body Close 时取消（`cancelAttemptOnCloseBody`）；`Version.Release` 使用 atomic one-shot；测试 `TestCancelAttemptOnCloseBodyReleasesTheAttempt`、`TestVersionReleaseIsConcurrentSafe`。 |
+| 测试证据缺口 TrustTunnel cordon | **已修复** | 测试改用 `cordonHook`，暂停点位于 `cordonForGeneration` 内部，真正覆盖 generation 检查；`with_quic` 下通过。 |
+| `GenerationGate.AfterDial` 使用完成时代次 | **未修复（有意）** | 正确修法需要把每次 dial 的起始代次作为 token 传过 8 个 outbound 的公共 API；当前 listener phase 会对每个注册资源再次执行 reset，是权威兜底。为避免大范围 API 改动和引入新的生命周期风险，保留现状并在残余风险中说明。 |
+
+补充验证（全部 `-race`）：
+
+```text
+ok common/artifact 1.793s       ok common/urltest 12.135s
+ok protocol/group 11.250s       ok protocol/masque 4.252s
+ok experimental/libbox 11.133s  ok transport/v2rayxhttp 21.570s
+ok transport/trusttunnel 42.853s (with_quic)
+ok transport/v2rayquic 10.619s (with_quic)
+ok common/httpclient 2.021s (with_quic)
+ok transport/masque 77.193s (with_quic)
+ok route (targeted concurrency tests) 5.273s
+go vet (all touched packages, QUIC tags included): PASS
+```
+
+仍为 **NOT_RUN** 的边界与第 5 节相同：完整 `./route` race 套件、iOS 真机 NE、子仓 Swift 并发与依赖仓库全量审计。`AfterDial` 的代次 token 化是下一轮唯一保留的已识别并发语义改进项。
