@@ -49,6 +49,17 @@ func TestDisplayAndDiagnosticProbesAreNeverShared(t *testing.T) {
 			t.Fatal("a non-health probe always measures for itself, and its Done must not block")
 		}
 		require.Nil(t, wait.Context(), "a question that is not shared has no probe lifetime to run on")
+
+		// Join calls every caller a leader, and Publish's contract says a leader publishes. A
+		// non-health wait has no registry entry, so the publication is inert - but it must not
+		// close an already-closed done channel, which panics in the goroutine that does it and
+		// takes the process down.
+		require.NotPanics(t, func() {
+			share.Publish(wait, Measurement{Delay: 7}, nil)
+		}, "publishing an unshared %s measurement must be a no-op", purpose)
+		measurement, err := share.Await(context.Background(), wait)
+		require.NoError(t, err)
+		require.Zero(t, measurement, "an unshared publication is not observable through the fake wait")
 	}
 	require.Zero(t, share.InFlight())
 	require.Zero(t, share.Participants())

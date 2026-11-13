@@ -85,7 +85,11 @@ func NewMeasurementShare() *MeasurementShare {
 // wait, because its answer belongs to it alone.
 func (s *MeasurementShare) Join(ctx context.Context, key MeasurementKey) (*SharedWait, bool) {
 	if s == nil || key.Purpose != PurposeHealth {
-		return &SharedWait{key: key, done: closedChannel()}, true
+		// The wait is ALREADY CLOSED and is not registered, so there is no question to publish an
+		// answer to. Marking it closed makes Publish inert rather than a close of an already-closed
+		// done channel: Join's contract calls every caller a leader, and a caller that follows
+		// Publish's direction would otherwise panic the process on a display/diagnostic key.
+		return &SharedWait{key: key, done: closedChannel(), closed: true}, true
 	}
 	s.access.Lock()
 	defer s.access.Unlock()
