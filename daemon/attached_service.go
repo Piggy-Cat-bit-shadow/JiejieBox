@@ -14,7 +14,15 @@ func NewAttachedService(ctx context.Context) *StartedService {
 		Context:     ctx,
 		LogMaxLines: defaultAttachedLogMaxLines,
 	})
-	s.instance = instance
+	// `setInstanceLocked` is the ONE writer of the pair (instance, instanceID): a stream captures
+	// both together, and a batch that names no instance is a batch a consumer cannot attribute.
+	// Assigning s.instance directly here left instanceID empty, so every connection-event
+	// subscription on this path - the Native API service of a standalone `run`, which is what the
+	// macOS headless smoke test and the dashboard's connection list use - was refused with
+	// "service is not running" while status, logs and outbounds streamed normally.
+	s.serviceAccess.Lock()
+	s.setInstanceLocked(instance)
+	s.serviceAccess.Unlock()
 	s.serviceStatus = &ServiceStatus{Status: ServiceStatus_STARTED}
 	s.startedAt = time.Now()
 	instance.urlTestHistoryStorage.AddUpdateHook(s.urlTestSubscriber)

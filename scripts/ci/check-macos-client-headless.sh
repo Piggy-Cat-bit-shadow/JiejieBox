@@ -130,7 +130,7 @@ echo "PASS: native api ($api_port) reachable"
 # guaranteed present on macOS runners.
 API_PORT="$api_port" MIXED_PORT="$mixed_port" \
 python3 - "$binary" "$dashboard_dir" <<'PY'
-import json, os, signal, struct, subprocess, sys, threading, time, urllib.request
+import json, os, re, signal, struct, subprocess, sys, threading, time, urllib.error, urllib.request
 
 api = int(os.environ["API_PORT"])
 mixed = int(os.environ["MIXED_PORT"])
@@ -164,9 +164,27 @@ def stream(method, payload=b"", seconds=4):
         base + "/" + method, data=frame(payload), method="POST",
         headers={"Content-Type": "application/grpc-web+proto", "X-Grpc-Web": "1"})
     got = []
+    # Why this is recorded instead of swallowed: the first version of this helper caught every
+    # exception with a bare `pass`, so a subscription the server REFUSED (a gRPC status in the
+    # response headers, no message frame) and a subscription that simply stayed quiet produced the
+    # same output - "FAIL: <name>" - and the run gave no way to tell them apart. The 0.1.45 macOS
+    # gate failed exactly this way. `stream_detail` is printed beside every stream assertion, so the
+    # failure names the transport status, the gRPC status/message and any client-side exception.
+    diag = {"http": "", "grpc": "", "error": ""}
+
+    def note_headers(headers):
+        if headers is None:
+            return
+        status = headers.get("Grpc-Status")
+        message = headers.get("Grpc-Message")
+        if status not in (None, "", "0"):
+            diag["grpc"] = f"grpc-status={status} grpc-message={message or ''}"
+
     def run():
         try:
             with urllib.request.urlopen(req, timeout=seconds + 5) as r:
+                diag["http"] = f"HTTP {r.status}"
+                note_headers(r.headers)
                 while True:
                     h = r.read(5)
                     if len(h) < 5:
@@ -174,14 +192,33 @@ def stream(method, payload=b"", seconds=4):
                     flag = h[0]
                     ln = struct.unpack(">I", h[1:5])[0]
                     d = r.read(ln)
+                    if flag & 0x80:
+                        # Trailers: the final status of the stream. A non-zero status here means the
+                        # server ended the RPC with an error after sending frames. The two fields are
+                        # searched separately because an empty grpc-message is legal.
+                        text = d.decode("latin1")
+                        sm = re.search(r"grpc-status:\s*(\d+)", text)
+                        if sm and sm.group(1) != "0":
+                            mm = re.search(r"grpc-message:\s*(.*)", text)
+                            diag["grpc"] = (f"grpc-status={sm.group(1)} "
+                                            f"grpc-message={(mm.group(1).strip() if mm else '')}")
+                        break
                     if flag == 0:
                         got.append(d)
-        except Exception:
-            pass
+        except urllib.error.HTTPError as exc:
+            diag["http"] = f"HTTP {exc.code}"
+            note_headers(exc.headers)
+            diag["error"] = exc.reason or "HTTP error"
+        except Exception as exc:
+            diag["error"] = repr(exc)
     t = threading.Thread(target=run, daemon=True)
     t.start()
     t.join(seconds)
-    return got
+    return got, detail(diag)
+
+def detail(diag):
+    parts = [p for p in (diag.get("http"), diag.get("grpc"), diag.get("error")) if p]
+    return "; ".join(parts)
 
 def parse(b):
     """Minimal protobuf decoder; enough for the messages asserted here."""
@@ -224,7 +261,10 @@ def string_field(msg, field):
 def groups():
     """Return {tag: {type, selected, selectable, items:[tags]}}."""
     result = {}
-    for fr in stream("daemon.StartedService/SubscribeGroups", b"", 4):
+    frames, frames_detail = stream("daemon.StartedService/SubscribeGroups", b"", 4)
+    if not frames:
+        print(f"NOTE: SubscribeGroups stream produced no frames  [{frames_detail}]")
+    for fr in frames:
         for f, wt, v in parse(fr):
             if f != 1 or wt != 2:
                 continue
@@ -291,17 +331,21 @@ check(ok_call("daemon.StartedService/URLTest", s1(1, "auto"))[0],
       "URLTest is accepted")
 
 # --- streaming endpoints ---------------------------------------------------
-check(len(stream("daemon.StartedService/SubscribeStatus", b"\x08\x00", 4)) > 0,
-      "SubscribeStatus streams traffic")
-check(len(stream("daemon.StartedService/SubscribeLog", b"", 3)) > 0,
-      "SubscribeLog streams log batches")
-check(len(stream("daemon.StartedService/SubscribeConnections", b"\x08\x00", 3)) > 0,
-      "SubscribeConnections streams")
-outbounds = stream("daemon.StartedService/SubscribeOutbounds", b"", 4)
+status_frames, status_detail = stream("daemon.StartedService/SubscribeStatus", b"\x08\x00", 4)
+check(len(status_frames) > 0, "SubscribeStatus streams traffic", status_detail)
+log_frames, log_detail = stream("daemon.StartedService/SubscribeLog", b"", 3)
+check(len(log_frames) > 0, "SubscribeLog streams log batches", log_detail)
+# The connection list must receive its WHOLE TABLE as a Reset batch the moment the subscription
+# opens, even with no live connection: a client that only hears deltas shows an empty list until the
+# first connection appears, and an empty baseline is therefore the baseline, not "nothing to say".
+connections_frames, connections_detail = stream("daemon.StartedService/SubscribeConnections", b"\x08\x00", 3)
+check(len(connections_frames) > 0, "SubscribeConnections streams the initial Reset snapshot",
+      connections_detail)
+outbounds, outbounds_detail = stream("daemon.StartedService/SubscribeOutbounds", b"", 4)
 objs = []
 for fr in outbounds:
     objs += [v for f, wt, v in parse(fr) if wt == 2]
-check(len(outbounds) > 0, "SubscribeOutbounds streams the outbound list")
+check(len(outbounds) > 0, "SubscribeOutbounds streams the outbound list", outbounds_detail)
 
 # --- mutation --------------------------------------------------------------
 check(ok_call("daemon.StartedService/CloseAllConnections")[0],
