@@ -5,7 +5,7 @@ client packages. The two CLI profiles below are part of that product matrix, not
 list. Features are selected by the actual tag files and constructors in `include/registry.go`;
 the fork adds protocols and integration code as well as inheriting upstream capabilities.
 
-For the v0.1.39 asset list, see the [platform table](../README.md#客户端与命令行内核).
+For the current asset list, see the [platform table](../README.md#客户端与命令行内核).
 Windows has a separate `release/DEFAULT_BUILD_TAGS_WINDOWS` profile, including
 `with_naive_outbound,with_purego`. Mobile builds use the tags assembled by their builders.
 
@@ -19,8 +19,11 @@ Windows has a separate `release/DEFAULT_BUILD_TAGS_WINDOWS` profile, including
 
 The files follow the upstream profile convention, with this fork's current additions and
 platform requirements. `DEFAULT_BUILD_TAGS` is the Darwin profile despite its generic name;
-do not use it as a Windows recipe. Both current CLI tag files include `with_utls` and
-`with_xhttp`; the Darwin one additionally includes `with_naive_outbound`.
+do not use it as a Windows recipe. All three current default tag files include
+`with_utls`, `with_xhttp`, `with_trusttunnel`, and `with_awg`. The Darwin and
+Windows profiles additionally include `with_naive_outbound`; Windows also
+includes `with_purego`. Consult the tag file used by each mobile builder
+separately before claiming that a mobile artifact carries a feature.
 
 One entry is deliberately missing from both, and it is not a capability:
 `tfogo_checklinkname0`, which records that the build passes `-checklinkname=0`. The products do
@@ -46,7 +49,10 @@ The practical differences must be read from the current files:
   is a client capability. The Naive **inbound** is present in both — the live
   production configuration declares one.
 - The **Darwin client** profile adds `with_naive_outbound`; `with_utls` is present in
-  both current profiles. It does NOT add `with_gvisor`:
+  both current CLI profiles. TrustTunnel inbound/outbound and AmneziaWG endpoint
+  handling are enabled by `with_trusttunnel` and `with_awg` respectively. An AWG
+  config without `with_awg` is rejected rather than treated as plain WireGuard.
+  The Darwin profile does NOT add `with_gvisor`:
   upstream retired that tag when it removed the gVisor dependency in favour of the
   in-process Go TUN stack, and both profiles follow. `scripts/ci/build-macos-client.sh`
   asserts this in both directions - the required tags must be present, and retired

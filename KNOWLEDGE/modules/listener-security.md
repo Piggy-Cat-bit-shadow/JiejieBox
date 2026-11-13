@@ -1,5 +1,10 @@
 # TCP 监听默认值与 MPTCP（TCP listener defaults and MPTCP）
 
+## 0.1.45 新入站与监听面（固定源码 3032ca5）
+
+TrustTunnel 增加 H2/TCP 与 H3/QUIC 两种入站监听，认证和 UDP association 在协议 owner 内。原有 Linux 普通 TCP/MPTCP 默认安全规则不能因新入站存在而假定自动覆盖其所有 socket；判断需追踪 listener 创建路径与对应测试。服务端容量和认证前资源上限仍需按各协议实际入口复核。
+
+
 ## 当前设计与来源（Current design and provenance）
 
 目标 `v0.1.39`，源码加固自 v0.1.37 已交付。`common/listener/listener_tcp.go` 在 `TCPMultiPath` 为 false 时调用 `ListenConfig.SetMultipathTCP(false)`，为 true 时显式开启；`common/netx.ListenTCP` 为 API/debug 等非产品入站提供普通 TCP 监听方法。

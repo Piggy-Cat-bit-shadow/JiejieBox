@@ -1,5 +1,10 @@
 # 数据路径优化：Direct Offload、traffic class 与上传调度器（Data-path optimization: Direct Offload, traffic class, upload scheduler）
 
+## 0.1.45 当前数据路径补充（固定源码 3032ca5）
+
+route/conn.go 对每个 copy 方向使用 GrowthBudget，拒绝扩容时保持小缓冲继续传输；Go TUN/sing-tun 的排队字节限制与等待唤醒要和实际 TCP/UDP 转发一起审阅。route/route.go 对无法承诺读期限的 packet transport 停止无界补充嗅探读取并回放已有首包。原有 Direct Offload 与上传调度器仍按各自适用入口工作，不能从资格判定推断普通 TUN 的系统绕行。
+
+
 ## 入口、嗅探与系统代理路径
 
 以下为 `0067b03e377` 生产基线的源码范围；不同入口共用路由规则，但不共享所有数据面快捷路径。

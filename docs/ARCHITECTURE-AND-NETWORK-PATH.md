@@ -1,6 +1,6 @@
 # 架构与网络链路优化
 
-本文从协议与共享核心的协作关系说明 JiejieBox 的改造。实现范围以 v0.1.39 源码及 [2026-11-05 增量校准](../KNOWLEDGE/CALIBRATION-2026-11-05.md) 为参照；历史设计与测量分别链接原报告，本次文档整理没有新增性能或设备验证结果。
+本文从协议与共享核心的协作关系说明 JiejieBox 的改造。旧版机制参照 [2026-11-05 增量校准](../KNOWLEDGE/CALIBRATION-2026-11-05.md)，0.1.45 范围结合当前源码与[协议模块](../KNOWLEDGE/modules/protocols-0145.md)、[规则与策略组模块](../KNOWLEDGE/modules/rules-and-groups-0145.md)阅读；性能数据均指向对应报告，不以本页代替测试记录。
 
 [返回首页](../README.md) · [架构边界](../KNOWLEDGE/ARCHITECTURE.md) · [性能对照](PERFORMANCE-COMPARISONS.md)
 
@@ -23,6 +23,18 @@
 源码入口：[ReferenceManager](../route/reference.go)、[RuntimeCoordinator](../common/runtimecoord/coordinator.go)、[HTTP Manager](../common/httpclient/manager.go)、[路径选择与校验](../KNOWLEDGE/modules/path-selection-validation.md)。
 
 ## 2. 协议如何接入公共机制
+
+### TrustTunnel：H2/H3 外层与逻辑流
+
+TrustTunnel 入站的 `network` 控制 H2/TCP 与 H3/UDP 监听，出站的 `quic` 选择 H3，而其 `network` 控制隧道内 TCP/UDP 能力。认证、CONNECT 与 UDP association 由协议层处理；共享 session 的复用与闲置退役、网络代次切换和连接关闭必须与 socket/TLS 归属一致。H3 依赖 QUIC 的数据报、拥塞控制及资源准入，H2 走 TCP/TLS；两者共享路由语义，但不把外层协议选择误作业务网络限制。
+
+入口：[入站配置](configuration/inbound/trusttunnel.zh.md)、[出站配置](configuration/outbound/trusttunnel.zh.md)、[实现](../protocol/trusttunnel)。
+
+### AmneziaWG：WireGuard 设备上的混淆层
+
+AWG 字段附着在 `wireguard` endpoint 根层，沿用其 peer、路由、按需恢复与设备所有权。握手前 junk、魔数、CPS/声明式伪装、头保护、填充和随机尾部改变报文形态；配置与服务端不一致会在真实互通中暴露。`with_awg` 决定运行能力，缺失时显式拒绝 AWG 配置，避免静默退化为普通 WG。并发发送空间的等待/唤醒需在协议和依赖 wireguard-go 中共同核对。
+
+入口：[AWG 配置字段](configuration/endpoint/wireguard.zh.md#amneziawg-扩展)、[协议性能记录](final-audit/PERFORMANCE.md)、[WG/AWG 并发修复](final-audit/closure/WG-AWG-B7.md)。
 
 ### XHTTP：逻辑流、HTTP 连接与 XMUX
 
@@ -84,6 +96,8 @@ DNS 协调相同查询、缓存、后台刷新与地址族增量结果。每条�
 ### 组选、拨号与多层隧道
 
 规则集使用紧凑 matcher、受限扩容和流式下载解析。物理路径证明、组选预览和正式选择分别执行，成员候选列表贯穿组边界。detour 的服务器解析与最终目标解析区分归属，取消、超时和重试预算沿同一条流传递。
+
+`resolve.match_only` 只为后续规则发布解析结果，不改写最终目标的拨号语义；策略组的 `hidden` 仅影响客户端展示。URLTest 显式配置 `failover` 后，在稳定状态缩窄探测范围、退化时扩展并确认恢复；loadbalance 的同名布尔字段则控制拨号失败后的备用成员重试，两个字段不共享含义。配置与组行为详见[扩展配置](FORK-CONFIGURATION.md#规则匹配与策略组显示探测)。
 
 `common/dialer` 将接口、mark、namespace 与候选策略落实到 socket。快失败推进其他候选；落败或在取消后完成的连接负责清理。协议返回阶段化失败事实，决定是否回退或惩罚成员。外层隧道容量已知时再约束内层 QUIC；未知容量保持未知，不以猜测替代 PMTU。
 

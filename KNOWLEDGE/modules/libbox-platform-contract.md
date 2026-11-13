@@ -1,6 +1,21 @@
 # libbox 与平台契约（libbox and the platform contract）
 
-## 本轮平台范围（Current platform delta）
+## 0.1.45 控制面到客户端的完整链路
+
+配置入口先经 `experimental/libbox/analysis.go` 的轻量分析及 `daemon/service_change.go` 的内容级 ChangePlan；Provider 逐项更新与 configtx 的引用提交在各自 owner 上完成。`route/route_preview.go`、`dns/preview.go` 提供只读解释，主动诊断通过 `experimental/libbox/diagnose_connection.go` 走实际规则和拨号阶段，不能把预览结果当作实际网络成功。
+
+DNS 历史与事件由 dns owner 产生，libbox/daemon 负责分页和有界序列化；连接事件通过单次扇出分给订阅者，订阅丢事件后用分片快照恢复。切组与 reload 使用请求标识、revision、实例和 tunnel session 做归属，再由 readback 对齐界面显示与实际选择。旧客户端或旧 native binary 是否能消费新绑定，必须看对应 gitlink、生成 ABI 及目标平台构建，不从 Go 包单测推断。
+
+诊断 emitter 默认队列 64、保留 128 条、32 KiB 历史字节预算；DNS 历史同时按条数、字节和 TTL 限制。报告截断与 dropped 是可观察状态，不能静默展示为完整证据。
+
+## 0.1.45 分析、诊断与请求身份（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+experimental/libbox/analysis.go 提供配置轻量分析，diagnose_connection.go 接真实路由步骤；daemon/service_change.go 生成内容级变更计划。切组、重载与连接事件携带请求/revision/session 边界，客户端通过 readback/快照对齐实际状态。保留 StringBox/错误链和 ABI 配套消费要求。
+
+
+## v0.1.42 平台范围（Historical platform delta）
 
 v0.1.42 把 Apple gitlink 与复验过的 ABI pin 前移到 `0c7b10be`。Provider 专题目标沿用该 pin，并把 Provider 选项注册接入 Libbox 的配置解码。构建结果和证据范围见[专题刷新](../CALIBRATION-2026-11-07.md)。
 

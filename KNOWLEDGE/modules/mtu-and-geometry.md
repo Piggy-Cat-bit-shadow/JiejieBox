@@ -1,5 +1,10 @@
 # MTU、数据包大小与缓冲区几何（MTU, packet size and buffer geometry）
 
+## 0.1.45 三种容量与协议传输（固定源码 3032ca5）
+
+common/dialer/path_mtu.go 区分内层隧道 MTU、UDP payload 与 QUIC datagram ceiling；HY2/TUIC 的初始包与持续上限必须分别检查，MASQUE CONNECT-IP 按实际下层容量处理后续包及 PTB。AWG 沿用 WireGuard endpoint 的 MTU 和设备路径，TrustTunnel H2/H3 有各自 framing；不能把编译档位或协议存在当成窄 MTU 互通证明。
+
+
 **依赖路径范围：** `common/buf/buffer_standard.go`、`common/buf/buffer_low_memory.go` 和
 `common/low_memory*.go` 属于固定版本的 `github.com/sagernet/sing`，不在本仓库根目录。
 引用历史缓冲区参数或行号前，请先根据 `go.mod` 确认依赖版本并核对源码。本文列出的 MTU

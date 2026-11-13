@@ -1,5 +1,12 @@
 # 出站 Provider（Outbound provider）
 
+## 0.1.45 更新与版本恢复（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+Provider 逐节点 ApplyReport 区分提交、保留旧节点与部分成功；远程规则/Provider 构建经共享 buildgate，准入上限、实际在途与峰值分开。配置提交的权威记录与规则/Provider 精确引用协同恢复。源码：adapter/provider/manager.go、common/buildgate/buildgate.go、common/configtx/commit.go、daemon/config_recovery.go。
+
+
 本模块覆盖 `BASELINE.md` 中 2026-11-07 的 Provider 初始专题目标，以及 2026-11-08 的 v0.1.44 发布后专题目标。用户字段见[配置参考](../../docs/configuration/provider/index.zh.md)，最小可用配置见[扩展示例](../../docs/FORK-CONFIGURATION.md#出站-provider)。v0.1.43 首次发布 Provider；v0.1.44 包含本模块后述的图校验、替换窗口和拨号租约修复。
 
 ## 范围与当前设计（Scope and current design）

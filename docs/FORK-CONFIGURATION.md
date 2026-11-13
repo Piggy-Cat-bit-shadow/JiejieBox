@@ -1,5 +1,53 @@
 # JiejieBox 扩展配置示例
 
+以下字段和类型以本仓库当前分支为准；配置完整可用性还取决于构建标签、服务端参数和证书。新协议入口见 [TrustTunnel 入站](configuration/inbound/trusttunnel.zh.md)、[TrustTunnel 出站](configuration/outbound/trusttunnel.zh.md)及 [WireGuard / AWG endpoint](configuration/endpoint/wireguard.zh.md#amneziawg-扩展)。
+
+## TrustTunnel 入站与出站
+
+入站 `network` 选择 H2/TCP、H3/UDP 的外层监听；出站 `quic` 选择 H3，出站 `network` 限制隧道内的 TCP/UDP 业务。两端均需 `with_trusttunnel`。TLS、身份和服务端地址按实际环境填写。以下为出站对象示例：
+
+```json
+{
+  "type": "trusttunnel",
+  "tag": "tt-out",
+  "server": "proxy.example.com",
+  "server_port": 443,
+  "username": "user",
+  "password": "replace-me",
+  "quic": true,
+  "network": ["tcp", "udp"],
+  "tls": {"enabled": true, "server_name": "proxy.example.com"}
+}
+```
+
+H2/H3 服务器配置和 `health_check`、`idle_timeout`、`quic_congestion_control` 字段见上述专页。
+
+## AmneziaWG endpoint
+
+AWG 字段写在 `type: "wireguard"` endpoint 的根层，原有私钥、接口地址和 peers 仍须按 WireGuard 配置；没有独立的 `amneziawg` 类型。`with_awg` 为能力开关，缺失时设置 AWG 字段会报错。以下仅为应合并进 endpoint 的字段片段，数值应使用与服务端一致的参数：
+
+```json
+"jc": 4,
+"jmin": 40,
+"jmax": 80,
+"s1": 16,
+"s2": 16,
+"s3": 16,
+"s4": 16,
+"h1": "1000000000-1000000010",
+"h2": 2000000000,
+"h3": 3000000000,
+"h4": 4000000000,
+"content_padding_addition": "0-16",
+"random_trailers": true
+```
+
+`h1`–`h4`、padding 和时间/次数覆盖字段可写数字或 `"N-M"` 范围。CPS `i1`–`i5` 与声明式 `id`/`ip`/`ib` 的互斥关系、头保护密钥及所有字段见 [AWG 字段表](configuration/endpoint/wireguard.zh.md#amneziawg-扩展)。
+
+## 规则匹配与策略组显示、探测
+
+`resolve.match_only: true` 只把解析结果交给后续规则匹配，保留目标地址原本的拨号语义；具体规则动作见 [resolve 配置](configuration/route/rule_action.zh.md#match_only)。`selector`、`urltest`、`loadbalance` 的 `hidden: true` 只影响支持它的客户端列表展示，组仍可被路由和其他组引用。URLTest 的 `failover` 块启用稳定成员探测及故障扩大探测，省略它时仍按原有全成员探测运行；字段 `widen_after`、`settle_after`、`recover_after`、`tolerance` 见 [URLTest 字段页](configuration/outbound/urltest.zh.md#failover)。
+
 按需要复制对应片段，合并到自己的配置。替换示例节点、UUID、密钥、密码、证书路径和文件地址；不要用示例覆盖已有列表。
 
 ## 出站 Provider

@@ -1,5 +1,12 @@
 # 路径选择与启动期校验（Path selection and start-time validation）
 
+## 0.1.45 匹配解析与组展示（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+resolve.match_only 将解析地址供规则匹配使用，拨号目标保持其独立语义；组 hidden 控制展示，不改变运行引用与实际选择。候选列表沿组成员传递，避免每个地址重新选组。源码：route/route.go、protocol/group、daemon/group_hidden_display_test.go。
+
+
 ## v0.1.9 之后的 AnyTLS 服务器解析与失败归因（AnyTLS server resolution and failure attribution after v0.1.9）
 
 在 `011f3fdcd99`，当解析器策略为 `AsIS` 时，`protocol/anytls/outbound.go` 会让拨号器

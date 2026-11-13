@@ -15,6 +15,7 @@
   "include": "",
   "exclude": "",
   "default": "proxy-c",
+  "hidden": false,
   "interrupt_exist_connections": false
 }
 ```
@@ -57,6 +58,10 @@ Regexp: provider nodes whose rendered tag matches are skipped. `exclude` wins ov
 The default outbound tag. Use `provider/node` for a published provider member. With no usable saved
 selection, an explicit default must exist. For a provider-only group that starts empty, omit
 the default or add a static member as the default.
+
+#### hidden
+
+Optional, default `false`. Hides this group from supporting clients' group lists. The group remains registered and can be referenced by routes, other groups, and `detour`; selection and dialing continue. This field applies to `selector`, `urltest`, and `loadbalance` groups only.
 
 #### interrupt_exist_connections
 

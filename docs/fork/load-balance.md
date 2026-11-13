@@ -12,6 +12,10 @@ on the member it was given.
 }
 ```
 
+Optional `"hidden": true` hides the group from supporting clients' group lists. The
+group remains registered for routing, nested groups, and dialing. This display field
+also applies to `selector` and `urltest`, but not to arbitrary leaf outbounds.
+
 A configuration using `type: loadbalance` **cannot be loaded by official sing-box**. It is
 this fork's own type, registered by this fork's registry; upstream has no such outbound and
 does not silently ignore it — it fails to decode.

@@ -51,6 +51,9 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `with_grpc`                        | :material-close:️    | Build with standard gRPC support, see [V2Ray Transport#gRPC](/configuration/shared/v2ray-transport#grpc).                                                                                                                                                                                                                      |
 | `with_dhcp`                        | :material-check:     | Build with DHCP support, see [DHCP DNS transport](/configuration/dns/server/).                                                                                                                                                                                                                                                 |
 | `with_wireguard`                   | :material-check:     | Build with WireGuard support, see [WireGuard outbound](/configuration/outbound/wireguard/).                                                                                                                                                                                                                                    |
+| `with_awg`                         | :material-check:     | Enable AmneziaWG fields on the WireGuard endpoint; without this tag, AWG configuration is rejected. See [AmneziaWG](../configuration/endpoint/wireguard.md#amneziawg-extension). |
+| `with_trusttunnel`                 | :material-check:     | Build native TrustTunnel [inbound](../configuration/inbound/trusttunnel.md) and [outbound](../configuration/outbound/trusttunnel.md) support. |
+| `with_xhttp`                       | :material-check:     | Build XHTTP client transport support. |
 | `with_utls`                        | :material-check:     | Build with [uTLS](https://github.com/refraction-networking/utls) support for TLS outbound, see [TLS](/configuration/shared/tls#utls).                                                                                                                                                                                          |
 | `with_acme`                        | :material-check:     | Build with ACME TLS certificate issuer support, see [TLS](/configuration/shared/tls/).                                                                                                                                                                                                                                         |
 | `with_v2ray_api`                   | :material-close:️    | Build with V2Ray API support, see [Experimental](/configuration/experimental#v2ray-api-fields).                                                                                                                                                                                                                                |
@@ -68,15 +71,17 @@ It is not recommended to change the default build tag list unless you really kno
 
 !!! note "This fork"
 
-    The Jiejie fork builds both its products from the upstream tag files above:
-    `release/DEFAULT_BUILD_TAGS` for the macOS client and
-    `release/DEFAULT_BUILD_TAGS_OTHERS` for the Linux server. Build them with
+    The Jiejie fork uses target-specific default tag files:
+    `release/DEFAULT_BUILD_TAGS` for the macOS CLI client,
+    `release/DEFAULT_BUILD_TAGS_OTHERS` for the Linux server, and
+    `release/DEFAULT_BUILD_TAGS_WINDOWS` for Windows. The three current files
+    include `with_xhttp`, `with_trusttunnel`, and `with_awg`. Build the two CLI profiles with
     `scripts/ci/build-server.sh` and `scripts/ci/build-macos-client.sh`, which read
     the tag file rather than taking a tag list.
 
-    There is no fork-specific registry or protocol allowlist: both products carry
-    upstream's complete registry, so capabilities upstream adds are inherited
-    automatically.
+    There is no product-specific protocol allowlist: the fork extends the shared
+    registry with its own protocols and retains upstream registrations. A new
+    upstream capability still requires integration, tags, and build verification.
 
     One tag is deliberately absent from both files: `tfogo_checklinkname0`, which records that
     the build passes `-checklinkname=0`. The recipes above do pass it (`release/LDFLAGS`, and
@@ -98,8 +103,9 @@ It is not recommended to change the default build tag list unless you really kno
     the pinned toolchain refuses to let a build pull and requires every such pull to sit behind the
     tag.
 
-    The default capability set matches upstream's exactly, including
-    `with_clash_api`. The fork does not remove any upstream capability any more.
+    The default profiles include `with_clash_api` and the fork-specific protocol
+    tags listed above. Inspect the target builder before assuming a mobile
+    artifact has the same tags as a CLI binary.
 
     The Clash API and the Native `api` service can coexist in one instance: they are
     two different management surfaces over the same shared traffic and routing-mode
@@ -119,9 +125,9 @@ The default build tag lists and linker flags are available as files in the repos
 
 | File | Description |
 |------|-------------|
-| `release/DEFAULT_BUILD_TAGS` | Default for Linux (common architectures), Darwin, and Android. |
+| `release/DEFAULT_BUILD_TAGS` | Darwin CLI profile; mobile builders assemble their own tags. |
 | `release/DEFAULT_BUILD_TAGS_WINDOWS` | Default for Windows (includes `with_purego`). |
-| `release/DEFAULT_BUILD_TAGS_OTHERS` | Default for other platforms (no `with_naive_outbound`). |
+| `release/DEFAULT_BUILD_TAGS_OTHERS` | Linux server and other CLI targets (no `with_naive_outbound`). |
 | `release/LDFLAGS` | Required linker flags (see above). |
 
 ## :material-layers: with_naive_outbound

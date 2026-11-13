@@ -1,5 +1,19 @@
 # 值得保留的架构边界（Architecture boundaries worth preserving）
 
+## 当前全系统边界（0.1.45 固定源码 3032ca5）
+
+一次真实请求从配置和已发布 Provider/规则版本进入，经过 DNS 和控制面选组，在 PhysicalPath 对应的协议 owner 上创建或复用连接，再由路由复制、TUN/UDP 队列和底层依赖传输。网络变化、设备休眠、压力回收和配置替换可能与这些步骤并发；最终状态由 daemon/libbox 返还给客户端。各层的主要边界如下：
+
+1. **版本边界**：配置候选、规则/Provider 产物和持久化引用共同组成可恢复版本。Stage 文件不可被读者提前消费；Publish 和 commit 后旧版本由租约保护，最后读者退出才清理。参见 `common/artifact`、`common/configtx`、`daemon/config_recovery.go`。
+2. **选择边界**：DNS group、双栈候选、match_only、selector/URLTest 的决定各有身份。hidden 只改变展示。诊断预览不得推进组状态或拨号。参见 `dns`、`route`、`protocol/group`。
+3. **创建与复用边界**：创建许可在真实 TLS/QUIC/session/underlay 创建处计费，复用已有连接不重复计数；共享任务的等待者各自取消，最后无人需要才终止。协议仍拥有自身连接与认证状态。参见 `common/resourceguard` 与各 protocol owner。
+4. **数据与内存边界**：XHTTP 逻辑上传字节、仍持有的数组容量及开场控制保留分别记账；relay 大缓冲按 copy 方向持牌；TUN/NAT 按真实排队字节归还。内存压力来源单一，回收收益是观测值，不等于全进程内存硬上限。参见 `box_upload_budget.go`、`route/conn.go`、`service/oomkiller` 和 pinned sing-tun。
+5. **代次与驻留边界**：网络 epoch 推进后，新工作在协议入口与池借用处检查代次；旧资源可 drain，迟到结果须校验 owner/代次，释放后才结束驻留。session、connection、generation、stream、device 不合成一个数。参见 `common/runtimecoord`、`route/reference.go` 和各 transport pool。
+6. **平台与来源边界**：libbox/daemon 的 request、revision、session/readback 要对应真实执行；Apple/Android/Desktop 独立源码与原生库由固定 pin 消费。构建通过不证明设备行为；历史性能台架与最终候选也不能混同。参见 `experimental/libbox`、`release/source-lock.json` 与 `KNOWLEDGE/modules/child-repositories.md`。
+
+这些边界延续原有 Scope、PhysicalPath/ControlPath、governor 与 Go TUN 基础；TrustTunnel/AWG 和新配置能力进入同一运行链，却保留协议自己的资源 owner。具体维护反例在 [不变量](INVARIANTS.md) 与对应模块中。
+
+
 出站 Provider 只负责发布节点。动态出站管理器拥有节点的启动、替换与移除，策略组消费已发布节点并独立维护选择或探测状态。配置、缓存与生命周期边界见[出站 Provider](modules/outbound-provider.md)。
 
 ## v0.1.39 新的跨层边界（Current cross-layer boundaries）

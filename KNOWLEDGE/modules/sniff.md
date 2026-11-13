@@ -1,5 +1,12 @@
 # Sniff（嗅探）
 
+## 0.1.45 读期限与缓冲（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+route/route.go 在底层传输无法提供有效额外读期限时停止分片 QUIC 嗅探补读，并回放已缓存首包；TrustTunnel UDP flow 提供实际读期限。此处的“不支持 AmneziaWG”只描述嗅探器的协议识别范围，不能解释为内核没有 AWG endpoint。
+
+
 ## v0.1.9 之后的 FakeIP 与分片 QUIC（FakeIP and fragmented QUIC after v0.1.9）
 
 **VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** 如果 FakeIP 反向映射已经提供域名，

@@ -1,11 +1,17 @@
 # 子仓库与分叉依赖（Child repositories and forked dependencies）
 
+## 0.1.45 依赖融合（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+主仓 pin 消费 sing、sing-tun、sing-quic、quic-go、uTLS、wireguard-go、sing-anytls、Mieru、cronet-go 等 fork；sing-tun 与 Mieru 已迁到其默认分支提交。核对顺序为父仓 gitlink、嵌套 gitlink、Go replace、release/source-lock.json，再读子仓实现；不把移动分支头等同于固定消费。
+
+
 ## 2026-11-13 依赖仓库清单（Current dependency repositories）
 
 本节只更新**仓库名单与当前 pin**，不重写下面的历史节；完整刷新流程见 `KNOWLEDGE/REFRESH.md` §25A。
 机器可读的事实仍是 `release/dependencies.json`（仓库/分支/策略）与 `release/source-lock.json`（pin）；
-本节把它们摊平。pin 取**整合分支 `work/integration-2026-11-13` 的 pin 提交 `427889cf24b`**
-（2026-11-13 窗口 03 更新；此前取自远端 `testing` 的 `e5f5969d`）。策略含义见 `release/dependencies.json`
+本节把它们摊平。表中 pin 已按当前 `testing` 的 `release/source-lock.json`、`go.mod` 与客户端 gitlink 核对；Go 依赖与客户端 pin 最初在整合分支 `427889cf24b` 记录，后已并入 `testing`。策略含义见 `release/dependencies.json`
 （`update` = 发布准备可前移；`controlled` = 只能重建归档才能动；`report` = pin 在另一个仓库里）。
 
 ### Go 依赖（`go.mod` / `test/go.mod` 的 replace）
@@ -33,9 +39,9 @@
 | `clients/desktop` | `Piggy-Cat-bit-shadow/sing-box-for-desktop` | `main` | update | `a658231fcd97` |
 | `clients/desktop:dashboard` | `Piggy-Cat-bit-shadow/sing-box-dashboard` | `main` | report | `d9fca1b1f226` |
 
-### 2026-11-13 窗口 03：客户端 pin 已消费（不再是"待合并"）
+### 2026-11-13 窗口 03：客户端 pin 已消费
 
-前表是**整合分支** `work/integration-2026-11-13`（pin 提交 `427889cf24b`）上的实际 pin，
+前表最初记录**整合分支** `work/integration-2026-11-13`（pin 提交 `427889cf24b`）上的 pin，现已并入 `testing`；
 取自 `git ls-tree` 与 `release/source-lock.json`，并由
 `release-freeze.py verify --strict` 与 `check-libbox-abi.sh --pin-only` 双重核对。
 
@@ -53,9 +59,7 @@
 `VERIFIED_ANDROID_SHA` 早就是 `9816e006`。这些提交都是**已推送**的（`git submodule
 update --init` 从 GitHub 克隆成功即是证据），不是本地提交。
 
-注意：pin 指向前，`testing` 上的这四个 gitlink 仍是 v0.1.44/v0.1.45 的旧值
-（`9330d90` / `ba5c6b1` / `e8b48be` / `9bde90e`）；把整合分支并入 `testing` 是第 04 份
-的事，本节不预告那次合并。
+旧 `3032ca5` 快照仍使用旧客户端 pin；不要将其固定目标的结论套用到当前 `testing`。
 
 ### 与下面历史节的关系
 

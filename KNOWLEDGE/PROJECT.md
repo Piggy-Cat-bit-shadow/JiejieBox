@@ -1,6 +1,23 @@
 # 项目增量（Project delta）
 
-## 当前产品补充（v0.1.39 product delta）
+## 当前项目全貌（0.1.45 源码目标 3032ca5，2026-11-13）
+
+JiejieBox 是在 sing-box 基础上持续开发的跨平台代理内核，配套 Apple、Android、Desktop/Dashboard 与 Satelite 消费链。v0.1.5–v0.1.6 建立了低功耗 governor、PhysicalPath/ControlPath、网络代次与重建租约、Go TUN、XHTTP 等基础；此后的版本继续扩展协议和平台。本轮 0.1.45 将 TrustTunnel H2/H3 双角色与 AmneziaWG 3.x/3.1 接入相同的 DNS、拨号、路由、资源和生命周期框架，并把配置更新、诊断与客户端回执协调起来。以下是固定 `3032ca5199dbd151be0b2cd006fba191b87cc1e8` 的专题视图；本文件旧普查表仍限其自述历史区间。
+
+| 运行链路 | 当前 fork 的主要增量 | 实际 owner / 入口 |
+| --- | --- | --- |
+| 配置、订阅、规则 | Provider 动态节点、配置分析与内容级 ChangePlan、Stage/Validate/Publish 与精确引用恢复 | adapter/provider、daemon、common/configtx、common/artifact、route/rule |
+| DNS 和策略 | DNS group、共享查询、双栈候选、match_only、hidden、URLTest failover、关键词编译匹配 | dns、common/dialer、protocol/group、route/rule |
+| 协议与创建 | TrustTunnel、AWG、XHTTP、Mieru、Native Naive、REALITY/VLESS 与 MASQUE；真实昂贵创建准入 | protocol、transport、common/resourceguard 与各依赖 fork |
+| 数据转发与内存 | XHTTP Box 共享上传预算、relay copy 增长、TUN/NAT 队列、数据报所有权和 MTU | box_upload_budget.go、route/conn.go、sing-tun pin、transport |
+| 换网、电源、关闭 | 网络 epoch、各协议的池代次、active/idle/draining/terminated 驻留、governor、OOM 收益反馈 | common/runtimecoord、route/reference.go、common/power、service/oomkiller |
+| 诊断与客户端 | DNS 历史、主动连接诊断、连接事件/快照、切组与重载请求身份、libbox ABI | dns、experimental/libbox、daemon、客户端 gitlink |
+| 构建与来源 | 目标档位、Go replace、fork pin、Cronet 原生归档、客户端和嵌套 dashboard pin | release/*、go.mod、clients/*、scripts/ci |
+
+维护这些能力时，要沿一次请求的全路径确认真实调用者、失败与取消结算、网络代次和对象 owner。一个组件测试通过不代表相邻模块、原生消费或设备路径都执行。v0.1.45 的模块入口与证据等级见 [索引](INDEX.md)、[验收](ACCEPTANCE.md)和[刷新报告](KNOWLEDGE_REFRESH_2026-11-13.md)。
+
+
+## v0.1.39 历史产品补充（Historical product delta）
 
 产品能力与获取方式见 [首页](../README.md)，固定目标与范围见 [2026-11-05 校准](CALIBRATION-2026-11-05.md)。本轮新增知识包括 NE 创建准入、自签 IPA、App Group/command socket 修复、本地签名回环与 Cronet patch5 消费；MPTCP 默认安全继承自 v0.1.37。
 下文提交规模、旧 pin 与来源普查是注明区间的历史事实；不能将其累加成当前原创工作量或新的性能结果。

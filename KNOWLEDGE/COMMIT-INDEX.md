@@ -1,5 +1,16 @@
 # 提交导航（Commit navigation）
 
+
+## 0.1.45 专题关键提交（目标 3032ca5）
+
+| 主题 | 关键提交 / 当前模块 |
+| --- | --- |
+| TrustTunnel H2/H3 原生协议与共享创建 | `a82adb33cc1`、`d1a198dd7e3`、`db1288e5bca`；[协议扩展](modules/protocols-0145.md) |
+| AWG 3.x 设备接线 | `993fd056439`；[协议扩展](modules/protocols-0145.md) |
+| relay 增长预算与压力下不超额 | `712062073c9`、`9f641b88749`；[资源准入](modules/resource-admission.md) |
+| 配置与产物引用原子提交、流式下载 | `cd3dd8cf17c`；[规则与组](modules/rules-and-groups-0145.md) |
+| 网络代次在新拨号入口生效、跨 owner 驻留观测 | `f564cb89fa0`、`8b14b0ea1aa`；[生命周期](modules/core-lifecycle-runtime.md) |
+| 默认发布档位纳入 TrustTunnel 与 AWG | `3032ca5199d`；[构建](modules/ci-release.md) |
 ## v0.1.44 的关键修复（Released fixes, 2026-11-08）
 
 | 主题 | 关键提交 / 导航 |

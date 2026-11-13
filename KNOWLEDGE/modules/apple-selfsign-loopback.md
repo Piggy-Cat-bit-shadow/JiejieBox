@@ -1,5 +1,10 @@
 # Apple 自签、命令通道与本地回环（Apple self-signing, command channel and loopback）
 
+## 0.1.45 客户端消费定位（固定源码 3032ca5）
+
+当前父仓 `git ls-tree HEAD clients/apple` 为 `9330d9018c95231ac9b5d8abb6244dcc33c95830`；窗口 03 的更新候选 `15a4ab6e` 属于另一分支，不能在未合并时写作当前 pin。内核的新配置/请求合同要另核 App 与 NE 的实际调用及 ABI 常量；本文下方 v0.1.44 设备边界是历史固定消费记录，不自动证明 0.1.45 真机。
+
+
 ## v0.1.44 发布增量（Released delta, 2026-11-08）
 
 父仓 `3b6ec64f7145a2add99656d47caaa4f22a1cc478` 固定 Apple `e3283104c984d60cdf2a0250b47b7fc446e71ba6`、sing-tun `8f65451175c085a055a552898758f8594f988239`。内核 `8c1e804ea` 在 TUN 边界对配置中的 IPv4-mapped 回环地址执行 `Unmap` 后按真实地址族拆分，避免开关关闭时原样保留的 `::ffff:10.7.0.1` 被误放进 IPv6 列表；`protocol/tun/loopback_family_test.go` 和 `experimental/libbox/tun_loopback_config_test.go` 覆盖有效选项与 Libbox getter。Apple `e3283104` 将等待 `setTunnelNetworkSettings` 的最多三秒移出 `serviceLifecycleLock`，新启动重置成功标志，停止或后续启动通过 generation 使旧等待失效；reload 保留当前 TUN，不重复检查。正式 [Kernel release 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 的 Libbox、iOS、macOS 和自签 IPA 构建成功。以上为源码、测试与 CI 构建证据，不是真机 NE route/reload、SideStore 或签名后运行证明。

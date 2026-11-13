@@ -1,14 +1,21 @@
 # 高成本创建准入与 OOM 协作（Resource admission and OOM coordination）
 
+## 0.1.45 创建准入与缓冲增长（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+Guard.AdmitCreation/held.go 区分真实昂贵创建和复用；AnyTLS 新 session、HY2/TUIC 族 client、Mieru underlay 和 TrustTunnel 共享创建在各自真实创建接点处理。route/conn.go 为两个 copy 方向分别取得 GrowthBudget 许可，压力计划 Normal 256+16、Armed 128+8、Critical 0；未获许可仍以小缓冲复制。许可至 copy 结束才释放。源码：common/resourceguard/{admission.go,growth.go}、route/conn.go。
+
+
 ## 范围与当前目标（Scope and target）
 
 本模块对照 `v0.1.39` / `fc7e400243d46a451b2dffbe68cb5a3147c66289` 的源码校准，覆盖 `common/resourceguard`、共享 TLS、AnyTLS、`trafficclass` 与 OOMKiller 接线。证据为 `VERIFIED_SOURCE` / `VERIFIED_GIT`；历史测试与 CI 各自限定在对应提交。本次文档维护没有重新执行压力实验或 iOS 真机测试。
 
-## 最终设计及原因（Current design and rationale）
+## v0.1.39 创建准入设计及原因（Historical design and rationale）
 
 已有 OOMKiller 在 `policyModeNetworkExtension` 安装进程级 guard，使用其既有 atomic pressure 来源。guard 本身不采样内存，不拥有常驻 goroutine 或 timer。没有 guard 的进程通过 nil-safe `Acquire` 保留原有路径。
 
-准入限制的是**创建阶段的并发**：AnyTLS 拨号在 SDK 决定复用或新建前进入 `dialWithAdmission`，TCP 与 UoT 共用；TLS-based 调用通过 `common/tls.handshakeWithAdmission`。许可在拨号返回后释放，不能包装返回连接、持有到整个会话结束，否则会改变连接数语义并遮蔽 buffer/geometry 等接口。
+v0.1.39 的准入限制的是**创建阶段的并发**：当时 AnyTLS 在 SDK 决定复用或新建前进入 `dialWithAdmission`；0.1.45 已将新 session 准入移到 pinned SDK 的真实创建接点，复用不再按创建收费。TCP 与 UoT 共用相关入口；TLS-based 调用通过 `common/tls.handshakeWithAdmission`。许可在拨号返回后释放，不能包装返回连接、持有到整个会话结束，否则会改变连接数语义并遮蔽 buffer/geometry 等接口。
 
 | 默认状态 | 普通创建额度 | 队列 | 最大等待 |
 | --- | ---: | ---: | --- |

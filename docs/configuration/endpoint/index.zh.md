@@ -21,7 +21,7 @@
 
 | 类型               | 格式                                      |
 |------------------|-----------------------------------------|
-| `wireguard`      | [WireGuard](./wireguard/)               |
+| `wireguard`      | [WireGuard / AmneziaWG](./wireguard.zh.md) |
 | `tailscale`      | [Tailscale](./tailscale/)               |
 | `openconnect`    | [OpenConnect 客户端](./openconnect/)       |
 | `openvpn-client` | [OpenVPN 客户端](./openvpn-client/)         |

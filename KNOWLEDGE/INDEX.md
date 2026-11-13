@@ -1,5 +1,20 @@
 # 知识索引：按任务查找文档（Knowledge index — route first, read narrowly）
 
+## 0.1.45 专题入口（固定源码 3032ca5）
+
+先读 [项目全貌](PROJECT.md)、[架构边界](ARCHITECTURE.md)、[模块校准台账](MODULE_CALIBRATION_2026-11-13.md)，再按任务进入下表。
+
+| 任务 / 关键路径 | 模块 |
+| --- | --- |
+| TrustTunnel H2/H3、AWG 3.x/3.1、默认构建档位 | [协议扩展](modules/protocols-0145.md)、[构建](modules/ci-release.md) |
+| XHTTP Box 共享上传预算、relay 增长、TUN/NAT 排队字节 | [XHTTP](modules/xhttp-client-transport.md)、[缓冲区所有权](modules/buffer-ownership.md)、[准入](modules/resource-admission.md) |
+| 网络代次、跨代池、资源驻留、OOM 回收收益 | [生命周期](modules/core-lifecycle-runtime.md)、[电源](modules/power-mobile-lifecycle.md) |
+| match_only、hidden、URLTest failover、domain_keyword | [路径选择](modules/path-selection-validation.md)、[规则与组](modules/rules-and-groups-0145.md) |
+| Stage/Publish、configtx、Provider ApplyReport、恢复 | [Provider](modules/outbound-provider.md)、[规则与组](modules/rules-and-groups-0145.md) |
+| DNS 请求预算与历史、诊断、客户端回执 | [DNS](modules/dns-demand.md)、[平台契约](modules/libbox-platform-contract.md) |
+| fork pin、原生来源与客户端 gitlink | [子仓库](modules/child-repositories.md)、[构建](modules/ci-release.md) |
+
+
 
 ## 2026-11-11 归档：0.1.45 集成（最终）
 

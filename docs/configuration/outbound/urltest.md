@@ -19,6 +19,7 @@
   "interval": "",
   "tolerance": 0,
   "idle_timeout": "",
+  "hidden": false,
   "interrupt_exist_connections": false
 }
 ```
@@ -118,6 +119,10 @@ default.
 The policy filters the group's own rounds; it does not add a second scheduler. Selection, history
 and measurement identity are unchanged, so a configuration without the block behaves exactly as
 before.
+
+#### hidden
+
+Optional, default `false`. Affects presentation in supporting clients only. The group still participates in routing, group references, probes, and dialing. Applies to `selector`, `urltest`, and `loadbalance` only.
 
 #### interrupt_exist_connections
 

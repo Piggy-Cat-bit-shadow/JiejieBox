@@ -1,5 +1,10 @@
 # Windows 守护进程及其信任边界（Windows daemon and daemon trust boundary）
 
+## 0.1.45 控制面请求身份（固定源码 3032ca5）
+
+daemon/service_change.go 与关联 RPC 将请求、revision、实例状态关联到实际配置应用和切组 readback；旧 worker/旧会话结果不能覆盖新实例界面状态。Windows 守护进程的可执行文件身份、IPC 与安装隔离继续由本模块原有安全边界负责，不能因请求合同更新而放宽。
+
+
 ## 基线后复核与运行证据（Post-baseline review and run evidence）(2026-10-28)
 
 在 `cb71cf80d72`，[Windows 守护进程测试 40605271303](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271303)

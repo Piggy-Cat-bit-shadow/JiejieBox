@@ -1,5 +1,12 @@
 # 功耗与移动端生命周期（Power and mobile lifecycle）
 
+## 0.1.45 按需隧道与回收反馈（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+route/traffic_activity.go 以 payload 活动保护适用的按需隧道，活动窗口到期重新裁决；service/oomkiller/reclaim_observation.go 在现有回收执行器上记录层级、前后 footprint、低收益和冷却，最近动作固定环形容量。没有新增第二套压力采样器。
+
+
 ## v0.1.39：准入与既有 OOMKiller 协作（Current admission delta）
 
 NE 的 OOMKiller 现在提供 resourceguard，并把同一压力观察交给昂贵创建准入；回收执行器、内存采样与准入不是三套重复实现。当前许可、类别、压力版本与已知设备边界见 [resource-admission](resource-admission.md)。

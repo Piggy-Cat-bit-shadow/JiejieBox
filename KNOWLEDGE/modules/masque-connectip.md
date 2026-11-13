@@ -1,5 +1,12 @@
 # MASQUE 与 CONNECT-IP（MASQUE / CONNECT-IP）
 
+## 0.1.45 包与请求边界（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+CONNECT-IP 的首包/后继包按内层 MTU、UDP payload 与 QUIC ceiling 分别约束；H3→H2 回退区分握手失败和慢 CONNECT 响应，关闭与 datagram 所有权由实际 owner 结算。源码：protocol/masque、transport/masque、common/dialer/path_mtu.go。
+
+
 ## 经由 TUN 栈的端点本地流量（Endpoint-local flows through the TUN stack, 2026-10-29）
 
 `protocol/masque/endpoint.go` 会判断流量是否发往端点自身的本地地址。在 system 模式下，

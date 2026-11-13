@@ -1,5 +1,20 @@
 # 验收索引（Acceptance index）
 
+## 0.1.45 专题验收入口（固定源码 3032ca5）
+
+下表是对应源码的定向复查入口，属于源码/单元/本机 loopback 层级；原始历史运行与最终候选运行必须分别看 [刷新报告](KNOWLEDGE_REFRESH_2026-11-13.md) 和归档包，不能把测试存在当作本次已运行。
+
+| 范围 | 定向命令或检查 |
+| --- | --- |
+| TrustTunnel、AWG 与 WG | `go test -tags 'with_trusttunnel,with_awg,with_wireguard,with_quic' ./protocol/trusttunnel/... ./transport/trusttunnel/... ./protocol/wireguard/... ./transport/wireguard/...` |
+| XHTTP、创建与驻留 | `go test -tags 'with_xhttp,with_quic' ./transport/v2rayxhttp/... ./transport/v2rayhttp/... ./common/resourceguard/... ./adapter/...` |
+| DNS、规则、URLTest、Provider | `go test ./dns/... ./route/rule/... ./common/urltest/... ./adapter/provider/... ./common/artifact/... ./common/configtx/...` |
+| 配置与诊断 | `go test ./daemon/... ./experimental/libbox/...`；需用目标平台构建档位复验门禁 |
+| 依赖和发布合同 | `python scripts/ci/release-freeze.py verify`；对照当前 `release/source-lock.json`、`go.mod` 与客户端 gitlink；命令以脚本现有 CLI 为准 |
+
+v0.1.44 的已发布 CI 只证明当时的发布目标。本轮 25/25 代码完整性复核只覆盖指定 25 项；原审核中保留的 19 项和设备/性能层级不因此升级为已验证。报告中的 WG/AWG 并发与协议性能数字是特定 WSL2 本机台架结果，不直接代表公网或设备收益。
+
+
 ## 出站 Provider
 
 初始目标见 [BASELINE.md](BASELINE.md) 的 2026-11-07 专题 SHA；v0.1.44 的发布目标和证据见下方。以下本地命令来自该专题及后续修复的复验记录，证据范围为相应源码与测试，并不自动覆盖所有平台。

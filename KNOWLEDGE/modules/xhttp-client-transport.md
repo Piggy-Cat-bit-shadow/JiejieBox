@@ -1,5 +1,12 @@
 # XHTTP 客户端传输（XHTTP client transport）
 
+## 0.1.45 Box 上传预算与池代次（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+同一 Box 中多个 XHTTP outbound 共用一份 packet-up 上传预算；逻辑字节、数组容量与新旧数组重叠分别观测。网络变化时池在取用处 RetireSuspect，旧代排空；响应发布前检查代次。源码：box_upload_budget.go、transport/v2rayxhttp/{uplink_budget.go,client.go}。
+
+
 ## v0.1.39 目标的新增修复与性能入口（Current delta）
 
 v0.1.37 已纳入 stream-up 上传被非 200 拒绝时的状态传递、pending 下载取消和管道关闭修复，v0.1.39 继承这些行为；`transport/v2rayxhttp/client.go`/`conn.go` 的 uploadRefused 与 awaitRaise 是当前锚点。成功 200 的响应体仍需按契约 drain/close，不能为统一错误路径过早 reset 配对下载。

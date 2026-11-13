@@ -1,5 +1,12 @@
 # CI、证据与发布（CI, evidence and release）
 
+## 0.1.45 当前构建档位（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+release/DEFAULT_BUILD_TAGS（Darwin）、DEFAULT_BUILD_TAGS_WINDOWS、DEFAULT_BUILD_TAGS_OTHERS 当前均纳入 with_trusttunnel 与 with_awg；未启用 AWG 的构建对相关配置明确报错。Windows 的 Cronet 消费仍需要 with_purego。构建标签、root pin、嵌套 pin 与 source-lock 必须作为同一版本合同核对。
+
+
 ## v0.1.44 的已执行发布与阻塞（Observed release and gates）
 
 `VERIFIED_CI`：[Release preparation 42391062041](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391062041) 在最终候选 `3b6ec64f7145a2add99656d47caaa4f22a1cc478` 上通过；[Verify 42391024793](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024793) 和 [Release contract 42391024692](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024692) 同 SHA 成功。[Kernel release 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 的全部生产、Verify、race、stage、publish 作业成功。公开 [内核 v0.1.44 Release](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44) 非 draft、非 prerelease，tag 剥离到该 SHA，8 项附件经 API 回读；自动发布时正文为空，后来按本版 `CHANGELOG.md` 补写，当前正文非空。独立的 [Satelite Release APK 42393794665](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/42393794665) 由客户端 tag push 触发，在客户端 `22ba907d62c23f09272117134a04e3bc96962520` 上完成双 ABI APK 构建、`signed-by-user` 校验和发布；[公开 Satelite v0.1.44](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44) 的 5 项附件经 API 回读。附件元数据及工作流内部校验不等于本地重新下载逐字节验包，也不证明设备行为。
@@ -21,7 +28,7 @@
 
 ## v0.1.34 Apple 检查与证据（v0.1.34 Apple checks and evidence (2026-10-31)）
 
-父仓库中的 Apple gitlink、ABI 检查常量和冻结锁文件现在都指向 `044e6d5447eb`；
+在 v0.1.34 固定目标上，父仓库中的 Apple gitlink、ABI 检查常量和冻结锁文件都指向 `044e6d5447eb`；
 此前的候选版本已合入 Apple `main`。
 
 Libbox 的构建和打包迁移到共享 composite action 后，`check-apple-source-selection.sh` 和

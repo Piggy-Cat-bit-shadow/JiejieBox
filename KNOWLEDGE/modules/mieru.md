@@ -1,5 +1,12 @@
 # Mieru 协议集成（Mieru protocol integration）
 
+## 0.1.45 underlay 生命周期（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+Mieru SDK fork 在 underlay attach 与 close 间串行化状态，防止新 session 附着已退出承载；主仓在真实 socket 创建处准入，跨代结果由 owner 清理。当前 pin 以 go.mod 与 release/source-lock.json 为准。
+
+
 ## v0.1.39 依赖与测量边界（Current dependency and evidence）
 
 当前 SDK 为 **v3.39.0**，自 v0.1.37 纳入；修复持续单向上传的读 deadline 及相关空数据报/空闲 underlay 边界。下文集成机制的历史审阅目标与当时 SDK 应分别阅读。

@@ -1,8 +1,14 @@
 # JiejieBox
 
-基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发的跨平台代理内核，扩展出站 Provider、XHTTP、Mieru、VLESS 加密与 Native Naive，优化 DNS、双栈拨号、链式代理、网络恢复及资源管理，并提供配套桌面端和移动端集成。
+基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发的跨平台代理内核，扩展出站 Provider、XHTTP、Mieru、TrustTunnel、AmneziaWG、VLESS 加密与 Native Naive，在共享的路径模型、运行时协调与生命周期框架上，完善 DNS、双栈拨号、链式代理、内存控制和配置恢复，并提供配套桌面端和移动端集成。
 
 [下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [更新日志](CHANGELOG.md) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [问题反馈](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
+
+## AI 与维护者阅读指引
+
+读到本页后，请主动进入[知识库入口](KNOWLEDGE/README.md)，不要只凭 README 的功能概览推断实现。先读 [AGENTS.md](AGENTS.md) 与[知识库基线](KNOWLEDGE/BASELINE.md)，再读[项目总览](KNOWLEDGE/PROJECT.md)、[架构](KNOWLEDGE/ARCHITECTURE.md)和[主题索引](KNOWLEDGE/INDEX.md)。按当前问题进入[模块索引](KNOWLEDGE/modules/README.md)及相关模块，核对[跨模块约束](KNOWLEDGE/INVARIANTS.md)和[验收范围](KNOWLEDGE/ACCEPTANCE.md)。
+
+知识库中的部分章节保留历史基线：落到具体行为或配置字段时，继续核对当前分支的源码、构建标签、`release/source-lock.json`、依赖仓库 gitlink 与基线后的 Git 增量；发现文档与实现不一致，按[知识库更新指引](KNOWLEDGE/REFRESH.md)修订相关入口和引用页。本次协议、规则、策略组与内存实现可从 [0.1.45 协议模块](KNOWLEDGE/modules/protocols-0145.md)、[规则与策略组模块](KNOWLEDGE/modules/rules-and-groups-0145.md)开始。
 
 ## 客户端与命令行内核
 
@@ -19,13 +25,22 @@
 
 ## 配置与使用
 
-[常规配置](docs/configuration) · [出站 Provider](docs/configuration/provider/index.zh.md) · [本项目扩展配置与示例](docs/FORK-CONFIGURATION.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md) · [DNS 广告拦截](KNOWLEDGE/modules/dns-adblock-action.md) · [本地回环](#ios-本地回环)
+[常规配置](docs/configuration) · [TrustTunnel 入站](docs/configuration/inbound/trusttunnel.zh.md) / [出站](docs/configuration/outbound/trusttunnel.zh.md) · [AmneziaWG endpoint](docs/configuration/endpoint/wireguard.zh.md#amneziawg-扩展) · [出站 Provider](docs/configuration/provider/index.zh.md) · [本项目扩展配置与示例](docs/FORK-CONFIGURATION.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md) · [DNS 广告拦截](KNOWLEDGE/modules/dns-adblock-action.md) · [本地回环](#ios-本地回环)
 
-常规配置参考已纳入的 sing-box **v1.15.0-alpha.13**；XHTTP、Mieru、负载均衡、上传调度等扩展按本项目文档配置。协议可用性取决于平台与[构建档位](docs/BUILD-PROFILES.md)。当前 Naive 引擎为 **Chromium 154.0.8037.49 + NaiveProxy patch5 相关修复**，Mieru SDK 为 **v3.39.0**。
+常规配置参考已纳入的 sing-box **v1.15.0-alpha.13**；XHTTP、Mieru、负载均衡、上传调度等扩展按本项目文档配置。协议可用性取决于平台与[构建档位](docs/BUILD-PROFILES.md)。当前 Naive 引擎为 **Chromium 154.0.8037.49 + NaiveProxy patch5 相关修复**，Mieru 基础 SDK 为 **v3.39.0**，实际消费 fork `v3.39.1-0.20261112135526-b5934f7136b4`。
 
 下文结合具体实现与历史对照介绍功能；性能数字保留测试场景，完整方法与原始记录见 [性能专页](docs/PERFORMANCE-COMPARISONS.md)。
 
 ## 协议与网络能力
+
+### TrustTunnel 与 AmneziaWG
+
+- **TrustTunnel**：原生客户端与服务端，支持 H2/H3、TCP/UDP、用户名/密码认证、健康检查与空闲会话管理；共享 session 中的 stream 与 UDP association 分别管理。
+- **协议接入**：TrustTunnel 使用内核 DNS、Dialer、TLS、路由和流量类别；UDP 关联以槽位、队列和字节预算控制占用，读期限与活动记录接到实际转发路径。
+- **AmneziaWG 3.x / 3.1**：在 `wireguard` endpoint 上提供 junk、消息前缀、范围魔数、CPS/声明式伪装、头保护、padding、随机尾部及相应握手参数，支持主动连接与 Linux 监听应答。
+- **设备复用**：普通 WireGuard 与 AWG 共用现有设备、peer、路由和按需恢复体系；修复并发流的等待/唤醒，保持设备关闭与重新绑定的所有权。
+
+TrustTunnel 使用 `type: "trusttunnel"`；AWG 扩展字段位于 `type: "wireguard"` 的 endpoint 根层。`with_trusttunnel`、`with_awg` 已纳入默认发布档位，具体平台能力仍按[构建档位](docs/BUILD-PROFILES.md)选择。
 
 ### XHTTP
 
@@ -45,6 +60,8 @@ VLESS/XHTTP 的旧连接池退役后停止承接新流，已有流排空后释�
 
 该组上传约为早期实现的 12.6 倍；另一轮 RTT 扫描中，100 ms 下双方为 7.88 / 7.80 MB/s，200 ms 下为 3.92 / 4.04 MB/s。完整条件、后续混合负载与实现说明见 [性能对照](docs/PERFORMANCE-COMPARISONS.md#2-xhttp与-xray-的实现速度对比)和 [XHTTP 模块](KNOWLEDGE/modules/xhttp-client-transport.md)。
 
+XHTTP 的上传控制同时覆盖待发送与正在发送的数据。同一 Box 内多个 XHTTP 节点共用上传预算，避免节点越多、各自缓冲上限相乘；主池、开场控制池和短流保留分别保障大流吞吐与新请求进展。逻辑额度先于分配申请，底层数组按实际容量记账，共享切片不重复计费，替换期间的新旧数组同时计入峰值。
+
 ### Mieru
 
 - 基于官方 SDK 提供客户端和服务端，支持 TCP、UDP、端口范围及协议参数。
@@ -63,7 +80,7 @@ TCP/UDP 回退分别维护会话，切换偏好只影响新连接；切网重建
 | 低复用 TCP 上传 | −6.1% | 0.95× |
 | UDP underlay 上传 | +16.0% | 1.27× |
 
-官方对照使用 SDK v3.38.1，Mihomo v1.19.32 使用 SDK v3.38.0。1200 字节 UoT 帧微基准中，适配层写入为 118.8 ns/op，官方包装路径为 666.1 ns/op；分配量为 64 / 1280 B/op，读取分配次数为 0 / 2。当前 SDK 已升级至 v3.39.0，历史矩阵尚未按新 SDK 全量重测。完整结果见 [Mieru 性能对照](docs/PERFORMANCE-COMPARISONS.md#3-mieru官方-sdk官方客户端与-mihomo-对照)与 [集成说明](KNOWLEDGE/modules/mieru.md)。
+官方对照使用 SDK v3.38.1，Mihomo v1.19.32 使用 SDK v3.38.0。1200 字节 UoT 帧微基准中，适配层写入为 118.8 ns/op，官方包装路径为 666.1 ns/op；分配量为 64 / 1280 B/op，读取分配次数为 0 / 2。当前基础 SDK 已升级至 v3.39.0，实际消费上述 fork；历史矩阵尚未按当前 pin 全量重测。完整结果见 [Mieru 性能对照](docs/PERFORMANCE-COMPARISONS.md#3-mieru官方-sdk官方客户端与-mihomo-对照)与 [集成说明](KNOWLEDGE/modules/mieru.md)。
 
 ### REALITY 与 VLESS
 
@@ -110,6 +127,10 @@ CONNECT-IP 同步远端地址、路由与隧道内 DNS；H3 故障判断区分 Q
 
 ### Hysteria2、TUIC 与网络端点
 
+- **双栈与真实创建**：HY2/TUIC 在地址族竞争的真实会话创建处接准入，复用 stream 不重复计费；失败族、落败连接与换网后迟到的结果按轮次和对象身份释放。
+- **QUIC 发送调度**：sing-quic / quic-go 修正 ACK-only 包与拥塞控制 pacing 的衔接，并处理混淆数据报的有效长度及载荷所有权，减少错误调度和不必要的数据修改。
+- **共享会话生命周期**：网络代次、异步认证与结果发布协调，避免已经退出的创建工作重新交付旧连接。
+
 - Hysteria2/TUIC 通过 sing-quic 与 quic-go fork 衔接数据报所有权、UDP socket、会话复用和网络变化，减少载荷复制及接收队列对大缓冲区的长期引用。
 - 嵌套代理时，将已知下层容量传到 QUIC 包大小约束；Hysteria2 的硬上限在 ChromeParrot 指纹覆盖后应用，TUIC 同样区分初始包偏好与持续约束。
 - WireGuard 协调暂停、重新绑定与关闭，设备发布时继承已经生效的暂停状态；避免在睡眠或停止后残留底层 bind。
@@ -117,10 +138,47 @@ CONNECT-IP 同步远端地址、路由与隧道内 DNS；H3 故障判断区分 Q
 
 隧道包大小、重建时机和平台接口分别按协议处理。详见 [MTU 与缓冲区几何](KNOWLEDGE/modules/mtu-and-geometry.md)、[endpoint 数据面](KNOWLEDGE/modules/masque-connectip.md)和 [生命周期](KNOWLEDGE/modules/core-lifecycle-runtime.md)。
 
+### 协议性能与并发传输
+
+协议优化同时关注吞吐、并发扩展和每单位业务的成本。WG/AWG 修复发送空间的等待/唤醒链：原先在同机双进程、用户态隧道上传测试中停滞的并发组合，修复后能够完整传输。WG 四流零间隔启动达到 **49.8–54.8 MiB/s**，AWG 同组达到 **41.5–53.8 MiB/s**；两协议、三种启动间隔、两种并发度各重复三次的矩阵为 **36/36 完成**。
+
+下表记录协议台架的单流与四流表现。箭头表示 **1 → 4 条并发流**，不是版本升级倍数；环境为 WSL2 同机 loopback、真实客户端/服务端进程、5 秒载荷、多次运行中位数。
+
+| 协议/承载 | 上传 MiB/s（1 → 4 流） | 下载 MiB/s（1 → 4 流） |
+| --- | ---: | ---: |
+| VLESS Vision | 264.7 → 809.1 | 542.3 → 1409.0 |
+| REALITY | 266.2 → 814.2 | 528.0 → 1455.5 |
+| AnyTLS | 255.9 → 769.4 | 538.9 → 1234.3 |
+| TrustTunnel H2 | 172.5 → 213.5 | 140.3 → 140.7 |
+| TrustTunnel H3 | 145.7 → 202.2 | 194.8 → 233.0 |
+| Naive H2 | 130.5 → 238.2 | 234.6 → 371.6 |
+| Naive H3 | 58.5 → 78.1 | 91.5 → 76.4 |
+| XHTTP H2 | 32.7 → 126.3 | 89.6 → 368.6 |
+| XHTTP H3 | 32.8 → 127.4 | 119.8 → 203.9 |
+| MASQUE | 70.1 → 80.5 | 72.3 → 79.2 |
+| Mieru TCP | 122.6 → 483.1 | 103.5 → 689.4 |
+| Mieru UDP | 30.4 → 73.0 | 31.2 → 39.9 |
+
+吞吐之外，同一台架四流客户端的上传/下载 CPU 成本分别为：Vision **5.21/3.00 s/GiB**、REALITY **5.16/2.92 s/GiB**、AnyTLS **5.47/4.11 s/GiB**。这些数据描述指定本机环境下的实现表现，公网速度仍取决于链路、服务器和配置。
+
+原始条件与分项结果见 [协议性能报告](docs/final-audit/PERFORMANCE.md)、[最终台架对照](docs/final-audit/closure/PERF-COMPARISON.md)与 [WG/AWG 并发修复](docs/final-audit/closure/WG-AWG-B7.md)。
+
 ## 网络链路优化
+
+### 路径模型与启动前校验
+
+PhysicalPath 描述数据实际经过的代理与隧道，ControlPath 描述代理组选择等控制决策。两者共同组织多层代理、detour、目标解析和传输能力，避免把组选择顺序误当成实际网络路径。
+
+- 启动前只读检查出站引用、跨类型循环、路径截断和能力要求；检查不主动拨号，也不推进组的轮询位置。
+- 网络需求按实际可达路径判断，目标 DNS 归属与代理服务器解析分开，避免无关节点的能力要求影响其他路径。
+- 嵌套路径沿已知下层容量传递 MTU 与封装约束；只读逐跳视图帮助定位结构和失败归属。
+- 动态 Provider 发布与组成员替换沿用引用和路径检查，旧对象由实际引用及在途拨号租约保护。
+
+详见 [路径选择与校验](KNOWLEDGE/modules/path-selection-validation.md)和 [链路实现说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md)。
 
 ### 入口与首包处理
 
+- **Go TUN 栈**：以 Go 栈连接设备收包、路由、出站与回包，处理 TCP、UDP、IPv4 分片及 ICMP 包大小反馈；队列预算、栈解绑与设备关闭沿实际数据所有权清理。
 - **TUN 收包**：DNS 地址与端口劫持先于路由地址集判断，避免 DNS 查询提前绕出；当前 FakeIP 范围内的地址交回路由器恢复域名，保留后续规则判断。
 - **系统代理 / Mixed**：复用同一个读取器识别 HTTP 与 SOCKS，握手缓存的首包直接交给后续连接；保留用户认证和原目标，减少重复读取与包装。
 
@@ -156,6 +214,13 @@ TLS 数据来自 2026-10-09 的九次交错采样，时间数据受共享主机�
 配置和边界见 [NXDOMAIN](docs/DNS-NXDOMAIN.md)、[adblock](KNOWLEDGE/modules/dns-adblock-action.md)与 [DNS 模块](KNOWLEDGE/modules/dns-demand.md)。
 
 ### 规则匹配、自动测速与负载均衡
+
+- **匹配解析与拨号分开**：`resolve.match_only` 将解析地址用于后续规则判断，同时保留原有目标寻址语义，适合由远端代理解析最终目标的路径。
+- **关键词匹配实测**：1,024 个关键词的专项测试中，未命中从逐项匹配的 13.1–14.5 µs 降至编译匹配的 188–243 ns；末尾命中从 15.1–15.3 µs 降至 187–189 ns，两条路径均为零分配。该数字对应匹配组件，不是完整路由耗时。
+- **大型关键词集合**：`domain_keyword` 使用有界的不可变编译匹配结构，小集合与超界输入回退既有匹配方式；查询热路径保持零分配。
+- **策略组展示**：`hidden` 控制适用客户端的组展示，保留组的真实选择、引用和运行关系。
+- **显式省电 failover**：稳定健康时集中探测稳定槽位，退化后扩大候选，故障与恢复分别确认；省略配置保留原有测速策略。
+- **共享测量**：等价探测合并真实工作，轮入口与 worker 协调任务生产；取消一个等待者不终止其他调用者仍需要的测量。
 
 - **规则匹配**：使用紧凑域名 / IP 匹配结构；更新时先构建并校验新规则，再发布切换，失败保留旧代规则。大规则集的加载优化见下方低内存设计。
 - **路径预检**：启动时检查出站引用、跨类型循环和能力要求，尽早发现无效代理链；检查过程不发起网络访问，也不推进组的轮询位置。
@@ -228,20 +293,66 @@ Provider 支持解析的客户端配置与订阅格式：
 
 - **TUN 回写**：常见单包写回复用调用方切片，减少临时切片与对象。dispatcher + portNAT 单包微基准由 **236–238 ns、72 B、2 次分配** 降至 **约 156 ns、0 B、0 次分配**；批量数据报按下层容量分块提交，仅对尚未交接的部分回退和释放。
 - **包大小控制**：嵌套隧道按已知下层容量扣除封装开销，向支持硬上限的 QUIC 路径传递约束；CONNECT-IP 包过大时按条件返回 ICMP Packet Too Big，避免静默丢包。
+- **生命周期收尾**：Scope 按资源依赖组织清理，关闭与在途创建协调，迟到取得的资源由所属 owner 收尾；阶段记录和有预算的 watchdog 帮助观察等待释放的对象。
 - **TCP 与 TLS 尾部**：先交付缓存首包和有效尾部数据，再报告后续错误；链式包装保留半关闭与复制能力，连接接管后沿原有跟踪、释放链清理资源，避免提前关闭或重复释放。
 
 详见 [缓冲区所有权](KNOWLEDGE/modules/buffer-ownership.md)、[MTU 与包大小](KNOWLEDGE/modules/mtu-and-geometry.md)及 [链路实现说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md)。
 
 ### 网络切换与休眠恢复
 
+运行时协调器统一提供网络代次、重建所有权和后台工作许可；协议仍负责自己的连接、池和设备。初始网络环境在启动交接中建立，后续网络事件由所属监视器发布，避免旧监视器和旧重建操作影响当前实例。
+
 - **隔离旧结果**：DNS 查询、缓存提交、拨号和隧道重建携带网络代次，避免旧网络的迟到结果覆盖当前状态；重建租约合并同一窗口内的重复恢复。
 - **按状态处理复用**：短暂休眠保留可用池；需要退役时，支持排空的协议池停止承接新流，已有流按协议约定结束，空闲资源随后释放。网络变化与普通空闲清理使用不同动作。
 - **缓解集中重连**：路径退役后的短窗口对普通与批量拨号实施有等待预算的软限制，交互 / 实时流优先；槽位释放通过事件通知等待者，减少轮询唤醒。
+- **池取用与结果发布**：HTTP/2、gRPC-lite、XHTTP 在借用和响应发布处核对代次；双栈竞争按轮次与 client 身份清理落败和迟到结果，避免旧清理误伤新对象。
+- **重置与永久关闭分离**：VLESS、VMess、Trojan 在换网时使用适用 transport 的 reset 能力，保留后续重建连接的客户端寿命；活跃 QUIC 流按自身迁移能力处理。
 - **启动与关闭交接**：合并 TUN 启动前的待处理网络更新，在启动后复查；关闭及重载时取消旧任务、结清资源所有权，防止迟到回调继续操作新实例。
 
 详见 [运行时与生命周期](KNOWLEDGE/modules/core-lifecycle-runtime.md)和 [拨号调速器](KNOWLEDGE/modules/data-path-optimization.md#part-c--拨号调速器the-dial-governor)。
 
 ## 低内存与低功耗设计
+
+资源管理由设备状态、真实业务活动和内存压力共同驱动，覆盖创建、传输、更新和释放全过程。既控制单条流的缓冲大小，也关注多节点、多流以及新旧代同时存在时的占用。
+
+### 控制增长与实际占用
+
+| 环节 | 当前机制 | 作用范围 |
+| --- | --- | --- |
+| 高成本创建 | 在真实 session/socket/握手创建接点准入，复用不重复计费，嵌套调用继承许可 | 已接入的协议创建路径与适用平台策略 |
+| XHTTP 上传 | 主池、开场控制池、短流保留；逻辑字节与底层数组容量分别记账 | 同一 Box 的 XHTTP clients 共用上传预算 |
+| relay 缓冲 | 按 copy 方向领取增长许可，压力升高时限制新扩容，无许可仍用小缓冲传输 | 每个 ConnectionManager；许可持有至对应 copy 结束 |
+| TUN / UDP | 单会话、NAT 聚合与 Memory TUN 设备级字节边界，入队前预留、出队后归还 | 对应队列及设备实现 |
+| 规则与订阅 | 共享构建准入、流式临时产物、校验后发布、旧版本租约 | Provider 与远程规则构建/加载 |
+| 驻留与回收 | 区分 active、idle、draining、terminated，记录回收前后收益 | 协议 owner、连接池与现有 OOM 执行器 |
+
+XHTTP 先取得逻辑额度再分配数组，等待中的大写入不预占一批空数组；同一数组的多个切片只按真实所有权记容量，新旧数组替换的重叠也计入峰值。TUN/NAT 的读取快速路径、取消、detach 与关闭分别归还额度，等待记录随连接迁移和退出清理。
+
+网络变化后，旧池停止承接新工作，活动流按合同排空；最后使用者离开、资源真正释放后才结束驻留记录。构建准入上限、实际在途数与观察到的重叠峰值分别呈现，压力变化不会让账面提前消除仍在使用的内存。
+
+这些预算约束各自可追踪的对象和字节，不等同于进程 RSS 的统一硬上限。内存诊断同时观察创建、队列、构建、驻留与回收，回收历史采用固定环形记录，避免观测自身无限增长。
+
+### 字节预算、背压与释放
+
+- **XHTTP 双重记账**：pending/in-flight 逻辑字节与仍持有的数组容量分别控制。一个确定性样本中逻辑占用为 65,536 B，真实数组为 81,920 B；容量账记录后者，避免小切片掩盖大数组。最后引用退出才归还容量，失败、取消、部分写入和 Close 均结算。
+- **控制请求保留空间**：长流不能花掉开场控制池；等待大写入先等逻辑额度，不预先占住空数组。分配不足等待真实容量变化，避免领取/回滚额度形成自唤醒忙等。
+- **relay 按需扩容**：普通可增长 copy 方向默认由 Normal 的 256 降为 Armed 的 128，Critical 停止新的普通增长；交互额外保留分别为 16、8、0。未获得增长许可仍用小缓冲完成传输，两个方向独立结算，已增长缓冲持牌至 copy 结束。
+- **UDP NAT 分层上限**：对应依赖实现默认每会话 256 KiB、NAT 聚合 8 MiB；Memory TUN 默认设备级队列预算 8 MiB。额度在入队前申请，普通读取、read waiter 与批量快速读取均在出队后归还。
+- **反压与跨队列唤醒**：适用的 TCP 写入在容量不足时等待；UDP 按数据报语义丢弃并计数。同设备其他队列释放空间后通知等待者，按实际包长判断能否继续。
+- **完整退出**：等待需求归属于连接，迁移前撤销旧记录；取消和关闭清理全部等待者。栈 detach 逐帧归还，设备关闭不提前清零仍由调用者队列持有的数据。
+
+上述数字分别对应 copy 方向和特定队列，不能互换为连接总数或进程物理内存上限。协议所需的强制缓冲几何扩容保留独立处理。
+
+### 更新峰值、共享工作与长期驻留
+
+- **下载与构建**：规则正文流式落盘并计算摘要，校验后发布；Provider 与远程规则共用构建准入，压力收紧后仍记录已有在途和新旧版本重叠。
+- **版本租约**：旧规则仍有读者时继续保留，最后使用者退出后才可清理；恢复使用配置对应的精确规则和 Provider 产物引用。
+- **减少重复工作**：等价测速和 DNS 查询共享实际工作，调用者独立取消；显式省电 failover 在稳定状态减少全组探测，进程查询合并同 UID 工作并按需获取路径。
+- **驻留按实际对象计数**：session、connection、generation、stream、device 分开观察。旧池从可借用列表移除后仍计 draining，真正释放后才计 terminated。
+- **回收反馈**：沿用同一压力来源与回收执行器，记录执行层、前后 footprint、低收益和冷却；最近动作固定保留 8 条，避免诊断历史持续增长。
+- **观测预算**：DNS 历史限制条数、字节和 TTL，诊断事件限制队列与保留容量，历史分页、连接快照分片，控制读取诊断时的额外分配。
+
+这些机制共同控制突发建连、慢速接收、集中订阅更新和反复换网时的资源叠加。局部缓冲预算、累计分配与进程 footprint 分别测量，避免把某个队列下降直接表述为整机内存下降。
 
 ### 移动端缓冲区档位
 
@@ -300,7 +411,7 @@ Android 与 iOS/tvOS 的 Libbox 构建启用 `with_low_memory`，macOS 保留默
 
 同组 Go runtime 管理内存的连续采样峰值中位数为 37.5 → 38.9 MiB，体现减少 GC 与保留更多内存的取舍。这是进程内压力基准，不能当作代理网络吞吐、iOS footprint 或耗电改善比例；[原始样本与完整对照](docs/PERFORMANCE-COMPARISONS.md#受限内存下的-gc-策略)保留了复算入口。
 
-### iOS 高成本创建准入
+### 高成本创建准入与移动端压力策略
 
 Network Extension 模式使用 OOMKiller 已有压力状态，限制 AnyTLS TCP/UoT 与共享 TLS 握手的创建并发、等待队列和等待时长，缓解突发建连阶段的内存压力。压力升高时逐级收紧额度：
 
@@ -312,15 +423,44 @@ Network Extension 模式使用 OOMKiller 已有压力状态，限制 AnyTLS TCP/
 
 交互流量另有 4 个预留额度；流量类别沿拨号上下文传递，TLS、AnyTLS 与多跳 detour 共用已持许可，避免嵌套调用重复排队。许可在创建返回后释放，不占用整个连接生命周期；压力更新带版本校验，诊断记录排队、拒绝、取消和在途计数。
 
-该准入默认不作用于非 NE 平台，也尚未为所有 QUIC、Cronet、Mieru 创建路径提供统一预算；实际 iOS footprint 与 Jetsam 改善仍需对应设备验证。
+创建接点覆盖适用的 QUIC、TrustTunnel、AnyTLS、Mieru 与 Cronet 路径。准入位置随协议真实资源边界确定，不把每个复用 stream 当作一次昂贵创建；NE 的严格压力配额与其他平台策略分别处理。并发额度描述创建控制，不能直接换算为进程 footprint 或设备耗电降幅。
 
 ### 后台任务与设备唤醒
+
+低功耗 governor 汇集设备休眠、真实业务流量、深度空闲截止时间与后台工作许可，协调各模块的暂停与恢复。屏幕关闭不直接等同于清空连接池，业务活动可以推迟深度空闲。
+
+- **分批恢复**：后台检查、规则刷新和统计写入按工作窗口恢复，减少唤醒瞬间集中建连；旧截止时间回调不能推进新状态。
+- **按需隧道活动保护**：适用路径以实际 payload 活动判断活跃豁免，活动窗口到期重新裁决，协调业务连续性与闲置释放。
 
 - 暂停或深度空闲时抑制非必要 DNS 乐观刷新；规则集与 Dashboard 周期更新等待适当工作窗口，首次必要初始化照常执行。
 - 屏幕亮起、解锁、扩展 resume 与真实睡眠边界分别处理，避免重复退役连接或错误计算休眠时长。
 - 内存看门狗按压力自适应采样；必要的恢复观察继续运行，非必要后台任务不主动唤醒按需隧道或重新拨号。
 
 设计与适用范围见 [低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md#5-低内存几何-profilethe-low-memory-geometry-profile)、[分层内存管理](docs/FAST-PATH-AND-MEMORY.md#内存管理的分层设计)、[创建准入](KNOWLEDGE/modules/resource-admission.md)和 [移动端电源策略](KNOWLEDGE/modules/power-mobile-lifecycle.md)。
+
+## 配置管理、诊断与客户端协作
+
+### 配置与订阅更新
+
+- **分层分析**：轻量配置分析检查声明、引用与能力要求；内容级变更计划区分可应用的变化和需要重启的部分。
+- **明确应用结果**：Provider 更新报告逐项提交、保旧和持久化状态，客户端可以区分请求已接收与更新实际完成。
+- **版本化产物**：规则下载流式写入临时文件，计算摘要并校验后发布；租约保护正在读取的版本，清理按实际引用执行。
+- **精确恢复**：配置提交记录对应的规则与 Provider 产物引用，候选失败保留可用版本，恢复按配套版本组合进行。
+
+### 诊断与运行状态
+
+- **DNS 与路径解释**：提供只读路由/DNS 预览、查询事件和历史，保留实际执行环境及请求归因。
+- **主动连接诊断**：沿真实路由执行适用的连接步骤，输出阶段、事件与结构化结果。
+- **连接事件与快照**：共享事件扇出，订阅记录丢失后可通过分片快照重同步，支持客户端重新连接。
+- **有界观测**：历史条数、字节、TTL、事件队列与返回结果分别设边界，查询使用分页，避免长时间运行持续积累诊断对象。
+
+### 跨端请求与回执
+
+Apple 与 Android 将平台状态接入共享移动端策略，区分持续状态快照与一次性恢复事件，避免重读状态反复触发恢复。Libbox、桌面守护进程和各端桥接提供对应的管理入口，客户端与内核按配套接口构建。
+
+切组与重载关联请求、配置 revision、服务实例或隧道 session；切组后读取真实选择，客户端按所属请求结算，减少旧回执覆盖新操作。Apple App / Network Extension、Android、Satelite、Desktop / Dashboard 通过各自桥接和管理入口消费这些能力。Libbox 保留字符串、错误链与 ABI 的配套检查。
+
+架构与接口入口见 [生命周期](KNOWLEDGE/modules/core-lifecycle-runtime.md)、[知识库任务索引](KNOWLEDGE/INDEX.md)与 [配置参考](docs/configuration)。
 
 <a id="ios-本地回环"></a>
 
@@ -380,7 +520,14 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 
 ## 依赖与验证
 
-项目维护 sing、sing-tun、sing-quic、quic-go、uTLS、cronet-go 等依赖 fork，将协议改动延伸到 socket、TUN、QUIC 和原生引擎。构建固定 Go 模块、客户端及原生库来源，测试覆盖真实载荷、协议互通、网络切换、取消关闭、缓冲区交接与故障注入。
+项目维护 sing、sing-tun、sing-quic、quic-go、uTLS、wireguard-go、AnyTLS、Mieru、cronet-go 等依赖 fork，将协议改动延伸到 socket、TUN、QUIC 和原生引擎。构建固定 Go 模块、客户端及原生库来源，测试覆盖真实载荷、协议互通、网络切换、取消关闭、缓冲区交接与故障注入。
+
+依赖与主内核的协作包括：
+
+- **sing / sing-tun**：缓冲区所有权、并行拨号、批处理、GSO/UDP 回包、队列字节预算与等待唤醒。
+- **sing-quic / quic-go / uTLS**：数据报与混淆边界、ACK-only pacing、QUIC 创建接点，以及 ClientHello 预设和传输参数的衔接。
+- **wireguard-go / AnyTLS / Mieru**：WG/AWG 并发唤醒、session 创建与复用分开计费、underlay 附着与关闭协调。
+- **Cronet 与客户端**：原生绑定、ABI、来源锁与配套消费版本；构建记录区分 Go 层、原生产物和各平台客户端。
 
 [关联仓库](FORK_REPOSITORIES.md) · [依赖整合](docs/fork/UPSTREAM-DEPENDENCY-INTEGRATION.md) · [测试范围与验收记录](KNOWLEDGE/ACCEPTANCE.md)
 
@@ -391,7 +538,7 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 - **性能与设计**：[链路实现说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md) · [性能对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [Fast Path 与内存管理](docs/FAST-PATH-AND-MEMORY.md) · [工程架构评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 - **开发维护**：[Fork 差异](docs/FORK-DIFF.md) · [知识库](KNOWLEDGE/README.md) · [任务索引](KNOWLEDGE/INDEX.md) · [维护指引](KNOWLEDGE/REFRESH.md)
 
-开发及 AI 助手从 [AGENTS.md](AGENTS.md) 进入，先确认知识库基线与 Git 增量，再按任务查阅模块。
+开发及 AI 助手请遵循本页开头的[阅读顺序](#ai-与维护者阅读指引)，并在更新实现时同步检查配置页及其入口引用。
 
 - [Release 构建指引](docs/RELEASE-WINDOWS.md)：在 Windows 发布并验收内核正式版，随后构建、发布并验收 Satelite 安卓客户端。
 - [TF 构建指引](docs/TESTFLIGHT-MAC.md)：内核正式版发布并验收后，在 Mac 构建并上传 TestFlight。

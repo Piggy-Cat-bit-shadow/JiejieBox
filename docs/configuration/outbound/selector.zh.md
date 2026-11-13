@@ -15,6 +15,7 @@
   "include": "",
   "exclude": "",
   "default": "proxy-c",
+  "hidden": false,
   "interrupt_exist_connections": false
 }
 ```
@@ -52,6 +53,10 @@
 #### default
 
 默认出站标签。Provider 节点用 `provider/node`。没有可用的已保存选择时，缺失的显式默认标签会报错。Provider 尚未加载时，建议省略此字段或使用静态成员。
+
+#### hidden
+
+可选，默认 `false`。让支持此字段的客户端不在策略组列表中展示本组；本组仍注册在出站命名空间，可被路由、其他组与 `detour` 引用，选择与拨号行为不变。仅适用于 `selector`、`urltest`、`loadbalance` 组，不是通用出站字段。
 
 #### interrupt_exist_connections
 

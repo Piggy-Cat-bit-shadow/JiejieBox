@@ -1,5 +1,12 @@
 # DNS（域名系统）
 
+## 0.1.45 查询共享与历史（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+DNS 组有总请求预算、选举 token 与输家取消；共享查询键包含问题、transport、ECS、环境与超时边界，响应仍由各 caller 检查。dns/history.go 对条数、估算字节及 TTL 设界，读取有分页和输出预算。源码：dns/client.go、dns/transport/group/group.go、dns/history.go。
+
+
 ## v0.1.39：异步建连与消息所有权（Current DNS delta）
 
 `dns/transport/multiplexer.go:dispatch` 将串行池 exchangeSingle 移到调用方 goroutine 之外，避免冷 TCP/TLS 建连阻塞 TUN 收包；池仍约束同一连接的查询使用。TCP/UDP/HTTPS/H3 和 libbox DNS 的打包使用 message.Copy，不用浅复制共享可变消息。

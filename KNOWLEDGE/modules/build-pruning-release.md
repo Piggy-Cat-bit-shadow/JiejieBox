@@ -1,6 +1,11 @@
 # 构建、裁剪与发布配置（Build, pruning and release profiles）
 
-## v0.1.39 的实际平台与依赖（Current product delta）
+## 0.1.45 当前三档标签（固定源码 3032ca5）
+
+当前 `release/DEFAULT_BUILD_TAGS`（Darwin）、`_WINDOWS`、`_OTHERS` 均列出 `with_trusttunnel,with_awg`。Windows 档同时含 `with_naive_outbound,with_purego`；OTHERS 不含 Naive outbound。`release/dependency-final-shas.json` 的生成时间与主仓 head 较旧，核对当前消费要读 go.mod、source-lock、客户端 gitlink 和原生产物来源，不把旧 JSON 中的 main_repo.head 误当候选。
+
+
+## v0.1.39 的实际平台与依赖（Historical product delta）
 
 源码平台、构建档位与正式附件分开判断。[首页平台表](../../README.md#客户端与命令行内核) 对照公开附件；Android AAR 不是 APK，iOS 自签 IPA 需签名，macOS DMG 不在本版正式附件中。
 Windows 档包含 with_naive_outbound/with_purego，Darwin 档有 Cronet 出站，OTHERS 缺少该出站标签但保留 Naive 入站；with_utls 在三份当前标签文件中都有。不要把旧的“两产品/与上游完全一致”叙述当作当前完整标签普查。

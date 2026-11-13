@@ -1,5 +1,12 @@
 # 原生 Naive 与 HTTP 传输栈（Native Naive and the HTTP transport stack）
 
+## 0.1.45 Cronet 消费边界（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+本轮围绕 native 创建回调、关闭与来源锁整合 Cronet 消费；Chromium 仍为 154.0.8037.49 的 patch5 线，不把绑定更新表述成 Chromium 大版本升级。当前 ABI/原生来源以 release/source-lock.json、Cronet provenance 与构建档位为准。
+
+
 ## v0.1.39：patch5、解析归属与 Linux DNS（Current delta）
 
 目标 `fc7e40024` 的 31 模块成套消费 root/libs `362e63b14ce2`、all `7ce9c49b464a`，保留 fork replace；Chromium 为 154.0.8037.49。新增 8 SPKI、QUIC 64/128 MiB 与调节修复；原生五目标重建不代表全部 29 模块重建。

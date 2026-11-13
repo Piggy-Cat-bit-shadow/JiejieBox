@@ -1,5 +1,10 @@
 # DNS Adblock 动作（DNS Adblock Action）
 
+## 0.1.45 与 DNS 共享查询的边界（固定源码 3032ca5）
+
+本地 adblock 仍按规则生成 NXDOMAIN，和上游 DNS group 的请求预算、共享查询及历史事件分开管理。相同域名在不同 environment/ECS/transport/timeout 下不能错误共享一次查询；本地结论也不能用上游缓存结果覆盖。具体当前查询键见 dns/client.go，adblock 行为见本模块历史实现段。
+
+
 ## 原始评审之后的本地判定与多地址族错误（Local verdicts and multi-family errors after the original review）
 
 `dns/verdict_marker.go` 为本地规则结果标记 rcode，不改变 rcode 匹配的原有语义。

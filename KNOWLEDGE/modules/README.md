@@ -1,5 +1,10 @@
 # 模块地图 —— 哪个任务该读哪个文件（Module map — which file to read for which task）
 
+## 0.1.45 专题模块与跨域接点
+
+[协议扩展](protocols-0145.md)记录 TrustTunnel 与 AWG 的 fork 边界；[规则与组](rules-and-groups-0145.md)记录 match_only、hidden、URLTest、关键词编译匹配与产物发布。旧模块在其首页的 2026-11-13 专题段记录资源、DNS、生命周期、客户端与依赖的新增接点。所有专题段固定到 `3032ca5`，旧基线章节仍按各自固定版本读取。
+
+
 ## v0.1.39 新的所有权域（New ownership domains）
 
 | 模块 | 主责与原模块的关系 |

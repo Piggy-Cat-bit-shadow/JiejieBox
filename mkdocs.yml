@@ -153,7 +153,7 @@ nav:
           - Unshare: configuration/network-namespace/unshare.md
       - Endpoint:
           - configuration/endpoint/index.md
-          - WireGuard: configuration/endpoint/wireguard.md
+          - WireGuard / AmneziaWG: configuration/endpoint/wireguard.md
           - Tailscale: configuration/endpoint/tailscale.md
           - OpenConnect Client: configuration/endpoint/openconnect.md
           - OpenVPN Client: configuration/endpoint/openvpn-client.md
@@ -177,6 +177,7 @@ nav:
           - Hysteria2: configuration/inbound/hysteria2.md
           - AnyTLS: configuration/inbound/anytls.md
           - Mieru: configuration/inbound/mieru.md
+          - TrustTunnel: configuration/inbound/trusttunnel.md
           - Snell: configuration/inbound/snell.md
           - Tun: configuration/inbound/tun.md
           - Redirect: configuration/inbound/redirect.md
@@ -202,6 +203,7 @@ nav:
           - Hysteria2: configuration/outbound/hysteria2.md
           - AnyTLS: configuration/outbound/anytls.md
           - Mieru: configuration/outbound/mieru.md
+          - TrustTunnel: configuration/outbound/trusttunnel.md
           - Snell: configuration/outbound/snell.md
           - Tailcat: configuration/outbound/tailcat.md
           - Tor: configuration/outbound/tor.md
@@ -209,6 +211,7 @@ nav:
           - DNS: configuration/outbound/dns.md
           - Selector: configuration/outbound/selector.md
           - URLTest: configuration/outbound/urltest.md
+          - LoadBalance: fork/load-balance.md
       - Provider:
           - configuration/provider/index.md
       - Service:

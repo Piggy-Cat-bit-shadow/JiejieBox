@@ -1,5 +1,10 @@
 # fast_path —— 逻辑组策略（logical group policy）
 
+## 0.1.45 动态组与展示（固定源码 3032ca5）
+
+hidden 只影响适用客户端的组展示，不能改选中成员、Provider 订阅关系或 fast_path 的资格计算。match_only 用于规则地址判断时，仍应核对真实拨号目标与 Direct Offload 的语义一致性。实际入口在 option/group.go、protocol/group 和 route 侧；原有 fast_path 合同仍独立成立。
+
+
 > 状态：`VERIFIED_SOURCE`
 >
 > 审阅对象为仓库 `Piggy-Cat-bit-shadow/sing-box`，分支 `testing`。

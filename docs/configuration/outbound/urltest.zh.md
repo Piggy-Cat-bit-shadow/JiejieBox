@@ -19,6 +19,7 @@
   "interval": "",
   "tolerance": 50,
   "idle_timeout": "",
+  "hidden": false,
   "interrupt_exist_connections": false
 }
 ```
@@ -110,6 +111,10 @@ Provider 刷新会重建测速组：新成员集合会重新测量，共享的 U
 
 该策略是对本组自身轮次的过滤，不引入第二个调度器；选路、历史与测量标识都不变，因此不写该块的
 配置行为与之前完全一致。
+
+#### hidden
+
+可选，默认 `false`。只影响支持此字段的客户端展示；本组仍参与路由、组引用、测速与实际拨号。仅适用于 `selector`、`urltest`、`loadbalance`。
 
 #### interrupt_exist_connections
 

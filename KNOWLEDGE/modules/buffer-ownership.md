@@ -1,5 +1,22 @@
 # 缓冲区所有权与内存（Buffer ownership and memory）
 
+## 0.1.45 内存控制的完整账本
+
+内存治理沿创建、排队、实际分配、驻留、构建和回收六种不同成本展开，不存在一个能精确覆盖 Go 堆、原生库和系统 socket 的单一字节计数。`resourceguard` 管并发创建，XHTTP/TUN 管队列字节，GrowthBudget 管 relay 大缓冲方向，buildgate 管新旧版本构建重叠，residency 记录已创建对象，oomkiller 观察压力与回收收益。
+
+XHTTP `box_upload_budget.go` 在每个 Box 第一个 client 创建时尺寸化聚合，后续 XHTTP client 共享；其 Main/Control/Reserve 三池分别服务 bulk、开场控制和短流。逻辑额度覆盖 pending 与 inflight，数组账覆盖仍持有的底层容量；同一数组的切片不重复扣费，替换时两份数组均计入峰值。65,536 B 逻辑字节对应 81,920 B 实际数组的测试例说明两种账不能互换，也不是进程 RSS。等待 bulk 在取得逻辑额度前不分配空数组，避免一批等待写者先占满开场空间。测试位于 `transport/v2rayxhttp/packetup_*budget*_test.go`。
+
+sing-tun 的每 UDP NAT 会话 256 KiB、NAT 聚合 8 MiB 与 Memory TUN 设备级 8 MiB 是不同 owner 的默认排队预算。读取快速路径、批读、detach、调用者队列关闭及设备关闭分别归还自身持有的字节；TCP 适用路径反压，UDP 按包语义丢弃。等待需求绑定每条活连接，释放后按最小真实包长通知，不把队列描述上限误读为总 goroutine 上限。验证需要 pin 到当前 `go.mod`，不能从主仓源码推断依赖内部行为。
+
+relay `GrowthBudget` Normal 256+16、Armed 128+8、Critical 0 是可扩容 **copy 方向** 的许可数，不是连接数或 MiB 上限。已扩容方向直到 copy 返回仍持牌；压力提升只收紧新增长，拒绝许可的方向继续用小缓冲。OOM 的 L1/L2/L3 回收执行器沿用既有实现，本轮新增的是可归因的前后 footprint、收益和冷却记录。更新期的规则构建/租约以及新旧连接池需要连同这些账查看，才能解释为何资源仍驻留。
+
+## 0.1.45 跨流字节账与归还（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+box_upload_budget.go 将同一 Box 的 XHTTP clients 绑定一个上传预算；transport/v2rayxhttp 的 pending/inflight 逻辑字节与仍被引用的底层数组容量分别记账，opening/control/short flow 保留空间。sing-tun 的 NAT/Memory TUN 预算在入队前申请、出队和取消/关闭归还；等待需求绑定活连接。源码：box_upload_budget.go、transport/v2rayxhttp/uplink_budget.go；依赖 pin 见 release/source-lock.json。
+
+
 **依赖路径范围：** 本模块提到的 `common/buf/*`、`common/bufio/*` 和 `common/cond.go`
 属于 `github.com/sagernet/sing` 的固定替代版本，不在本仓库根目录。使用历史行号或缓冲池
 参数前，应通过 `go.mod` 确定实际使用的 fork 和版本，再核对对应源码。

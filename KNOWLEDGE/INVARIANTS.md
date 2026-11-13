@@ -1,5 +1,15 @@
 # 不变量（Invariants）
 
+## 0.1.45 跨模块不变量（专题源码 3032ca5）
+
+- 新协议的认证、路由和业务承载分别处理；TrustTunnel 入站 `network` 选 H2/H3 监听，出站 `network` 选 TCP/UDP 业务。AWG 是 `wireguard` endpoint 的扩展，未启用构建标签时拒绝其配置，不静默退回普通 WG。
+- 许可在真实高成本创建处获取；已有 session/stream 复用不重复计费。XHTTP 逻辑字节与仍持有的底层数组容量分别守恒；relay 增长许可在 copy 方向真正结束时才归还。
+- 旧池不再借给新请求；活动使用者退场前保持 draining。迟到成功只有在原 owner 和当前代次仍允许时才能发布，否则由原 owner 释放。
+- Stage 的临时正文先校验再 Publish；配置提交、规则与 Provider 引用必须指向同一版本组合。失败候选不能覆盖 last-good。
+- `resolve.match_only` 的地址仅参与匹配，不直接改写拨号目标；组 `hidden` 只影响展示，不能移除运行引用。DNS 共享查询仍要逐 caller 检查响应与取消。
+- 观察计数按 session、connection、generation、stream、device 等单位分开；聚合数不能伪装精确物理内存。诊断历史和事件必须同时遵守条数与字节界限。
+
+
 ## 出站 Provider 约束（Outbound provider invariants）
 
 订阅只能影响其出站命名空间。无有效节点的文档不能清空已发布节点，Provider 不能夺取静态出站标签。动态替换必须先启动新对象，依赖仍被引用的对象保留其所有权记录。单节点应用失败允许部分更新，不能把整批刷新描述为原子事务。

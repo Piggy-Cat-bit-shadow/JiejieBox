@@ -33,6 +33,7 @@
 | `hysteria2`    | [Hysteria2](./hysteria2/)       |
 | `anytls`       | [AnyTLS](./anytls/)             |
 | `mieru`        | [Mieru](./mieru/)               |
+| `trusttunnel` | [TrustTunnel](./trusttunnel.zh.md) |
 | `snell`        | [Snell](./snell/)               |
 | `tailcat`      | [Tailcat](./tailcat/)           |
 | `tor`          | [Tor](./tor/)                   |
@@ -40,6 +41,7 @@
 | `dns`          | [DNS](./dns/)                   |
 | `selector`     | [Selector](./selector/)         |
 | `urltest`      | [URLTest](./urltest/)           |
+| `loadbalance`  | [LoadBalance](../../fork/load-balance.md) |
 | `naive`        | [NaiveProxy](./naive/)          |
 
 #### tag

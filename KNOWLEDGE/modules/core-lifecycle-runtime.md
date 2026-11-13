@@ -1,5 +1,12 @@
 # 核心生命周期与运行时协调（Core lifecycle and runtime coordination）
 
+## 0.1.45 跨代驻留与关闭（2026-11-13 scoped delta）
+
+固定源码目标：`3032ca5199dbd151be0b2cd006fba191b87cc1e8`。以下为本轮源码锚点与既有定向回归层级；设备、性能和发布结论另见验收索引。
+
+HTTP/2、gRPC-lite、XHTTP 在取用/结果发布处检查网络代次；旧代停止新借用，活动流排空，真实释放后才结算 terminated。HY2/TUIC 双栈竞速按轮次和 client 身份清理落败及迟到结果。驻留按 session/connection/generation/stream/device 区分，不把混合单位相加。源码：common/runtimecoord/generation_gate.go、adapter/residency.go、route/reference.go、transport/v2rayhttp/generation.go。
+
+
 ## v0.1.39：设备变化与创建边界（Current lifecycle delta）
 
 `transport/device/stack.go` 在地址变化时中断对应地址族的 UDP sockets，再发布新地址/interrupt group；地址与组受同一锁保护。OpenVPN/OpenConnect 的 endpoint 本地流量与 HostPort 裁决对齐，来源与限制见 [上游逐项核对](../../docs/fork/upstream-merge-2026-11-03.md)。

@@ -21,7 +21,7 @@ An endpoint is a protocol with inbound and outbound behavior.
 
 | Type             | Format                                  |
 |------------------|-----------------------------------------|
-| `wireguard`      | [WireGuard](./wireguard/)               |
+| `wireguard`      | [WireGuard / AmneziaWG](./wireguard.md) |
 | `tailscale`      | [Tailscale](./tailscale/)               |
 | `openconnect`    | [OpenConnect Client](./openconnect/)    |
 | `openvpn-client` | [OpenVPN Client](./openvpn-client/)     |
