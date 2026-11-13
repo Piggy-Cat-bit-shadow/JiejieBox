@@ -4,6 +4,8 @@
 
 [下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [更新日志](CHANGELOG.md) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [问题反馈](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
+**当前正式版：** [v0.1.45](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.45)（2026-11-13）。本版将 TrustTunnel H2/H3、AmneziaWG、规则与策略组扩展、跨流内存控制、网络恢复、配置版本恢复、诊断与客户端协作纳入同一发布；主仓与依赖仓库的具体变更、测试条件和数据见[完整 v0.1.45 更新日志](CHANGELOG.md)。
+
 ## AI 与维护者阅读指引
 
 读到本页后，请主动进入[知识库入口](KNOWLEDGE/README.md)，不要只凭 README 的功能概览推断实现。先读 [AGENTS.md](AGENTS.md) 与[知识库基线](KNOWLEDGE/BASELINE.md)，再读[项目总览](KNOWLEDGE/PROJECT.md)、[架构](KNOWLEDGE/ARCHITECTURE.md)和[主题索引](KNOWLEDGE/INDEX.md)。按当前问题进入[模块索引](KNOWLEDGE/modules/README.md)及相关模块，核对[跨模块约束](KNOWLEDGE/INVARIANTS.md)和[验收范围](KNOWLEDGE/ACCEPTANCE.md)。
@@ -21,7 +23,7 @@
 | **iOS / iPadOS arm64** | 未签名 IPA，支持自行签名安装 · [安装指南](docs/IOS-SELFSIGN-AND-LOOPBACK.md) |
 | **Apple 开发集成** | Libbox |
 
-附件与校验和见 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。**TestFlight / Apple GUI 构建**：Windows 发起 Actions，Mac 获取同次 Libbox 后完成签名、归档与上传；支持 iOS、macOS 或同时构建，见 [构建步骤与签名配置](docs/APPLE-BETA-RELEASE.md)。
+附件与校验和见 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。**TestFlight / Apple GUI 构建**：内核正式 Release 公开并验收后，Mac 从该版本获取已发布的 Libbox 与固定 Apple 源码，完成签名、归档和上传；支持 iOS、macOS 或同时构建，见 [TF 指引](docs/TESTFLIGHT-MAC.md)与[签名配置](docs/APPLE-BETA-RELEASE.md)。
 
 ## 配置与使用
 
