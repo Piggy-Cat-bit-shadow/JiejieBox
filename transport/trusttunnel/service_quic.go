@@ -5,6 +5,7 @@ package trusttunnel
 import (
 	"context"
 	"net"
+	"strconv"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
@@ -45,6 +46,14 @@ func (s *Service) ServeQUIC(conn net.PacketConn, tlsConfig aTLS.ServerConfig) er
 		IdleTimeout: serverIdleTimeout,
 		ConnContext: func(ctx context.Context, conn *quic.Conn) context.Context {
 			conn.SetCongestionControl(congestionControl(conn))
+			if negotiated := conn.ConnectionState().TLS.NegotiatedProtocol; negotiated != http3.NextProtoH3 {
+				// This is the failure that used to be completely silent on the server: the
+				// client offered a shared ALPN list, QUIC picked h2, and the only trace was a
+				// client-side fallback. One line per connection is cheap and names the shape.
+				s.logger.WarnContext(ctx, "trusttunnel: HTTP/3 connection negotiated ALPN ",
+					strconv.Quote(negotiated), ", expected ", strconv.Quote(http3.NextProtoH3),
+					"; clients that require h3 cannot use this listener")
+			}
 			return ctx
 		},
 	}

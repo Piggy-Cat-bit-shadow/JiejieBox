@@ -132,6 +132,9 @@ func (c *Client) connectQUICOnce(ctx context.Context, congestionControl func(*qu
 		quicConn.CloseWithError(0, "")
 		udpConn.Close()
 		err = E.New("server negotiated ALPN ", strconv.Quote(negotiated), ", expected h3")
+		c.logger.Warn("trusttunnel: HTTP/3 server negotiated ALPN ", strconv.Quote(negotiated),
+			", expected ", strconv.Quote(http3.NextProtoH3),
+			"; check tls.alpn on both sides. Falling back to HTTP/2 for this network generation")
 		return nil, attempt.Done(err), err
 	}
 	attempt.Done(nil)

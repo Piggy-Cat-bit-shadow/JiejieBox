@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/json/badoption"
+
+	"golang.org/x/net/http2"
 )
 
 func testCertificate(t *testing.T) (string, string) {
@@ -60,6 +63,58 @@ func validInboundOptions(t *testing.T) option.TrustTunnelInboundOptions {
 	}
 }
 
+func TestResolveTransportALPNSeparatesQUICAndTCP(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		configured []string
+		serveTCP   bool
+		serveQUIC  bool
+		wantTCP    []string
+		wantQUIC   []string
+	}{
+		{
+			name:     "dual adds h2 and h3",
+			serveTCP: true, serveQUIC: true,
+			wantTCP: []string{http2.NextProtoTLS}, wantQUIC: []string{nextProtoH3},
+		},
+		{
+			name:       "dual removes configured h3 from TCP",
+			configured: []string{nextProtoH3},
+			serveTCP:   true, serveQUIC: true,
+			wantTCP: []string{http2.NextProtoTLS}, wantQUIC: []string{nextProtoH3},
+		},
+		{
+			name:       "dual keeps configured TCP protocols in order",
+			configured: []string{"acme-tls/1", nextProtoH3},
+			serveTCP:   true, serveQUIC: true,
+			wantTCP: []string{http2.NextProtoTLS, "acme-tls/1"}, wantQUIC: []string{nextProtoH3},
+		},
+		{
+			name:       "tcp only drops h3",
+			configured: []string{nextProtoH3},
+			serveTCP:   true, serveQUIC: false,
+			wantTCP: []string{http2.NextProtoTLS}, wantQUIC: nil,
+		},
+		{
+			name:       "quic only is h3 and never h2",
+			configured: []string{http2.NextProtoTLS},
+			serveTCP:   false, serveQUIC: true,
+			wantTCP: nil, wantQUIC: []string{nextProtoH3},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			gotTCP, gotQUIC := resolveTransportALPN(testCase.configured, testCase.serveTCP, testCase.serveQUIC)
+			if !slices.Equal(gotTCP, testCase.wantTCP) {
+				t.Fatalf("tcp ALPN = %v, want %v", gotTCP, testCase.wantTCP)
+			}
+			if !slices.Equal(gotQUIC, testCase.wantQUIC) {
+				t.Fatalf("quic ALPN = %v, want %v", gotQUIC, testCase.wantQUIC)
+			}
+		})
+	}
+}
 func TestInboundValidation(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

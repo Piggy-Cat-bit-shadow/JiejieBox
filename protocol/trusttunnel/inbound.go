@@ -3,6 +3,7 @@ package trusttunnel
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
@@ -129,14 +130,28 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	}
 	// ALPN is settled before either listener serves, so that the two serve
 	// loops never rewrite the shared config concurrently.
-	nextProtos := h.tlsConfig.NextProtos()
-	if serveTCP && !common.Contains(nextProtos, http2.NextProtoTLS) {
-		nextProtos = append([]string{http2.NextProtoTLS}, nextProtos...)
+	//
+	// A dual TCP+QUIC inbound must not share one ALPN list. h3 is QUIC-only and
+	// h2/http1.1 are TCP-only; a shared list lets a TCP client negotiate h3 (a
+	// protocol it cannot speak) and a QUIC client negotiate h2. The TCP side keeps
+	// the shared config; the QUIC side gets a transport-scoped view, because cloning
+	// the shared config would drop the certificate provider, ACME service and file
+	// watcher, and mutating the shared list per handshake would race TCP.
+	tcpProtos, quicProtos := resolveTransportALPN(h.tlsConfig.NextProtos(), serveTCP, serveQUIC)
+	if serveTCP && common.Contains(h.tlsConfig.NextProtos(), nextProtoH3) {
+		h.logger.Warn("trusttunnel: tls.alpn contains h3; h3 is QUIC-only and is not offered on the TCP listener")
 	}
-	if serveQUIC && !common.Contains(nextProtos, nextProtoH3) {
-		nextProtos = append(append([]string{}, nextProtos...), nextProtoH3)
+	if serveTCP {
+		h.tlsConfig.SetNextProtos(tcpProtos)
+	} else if serveQUIC {
+		h.tlsConfig.SetNextProtos(quicProtos)
 	}
-	h.tlsConfig.SetNextProtos(nextProtos)
+	quicTLSConfig := h.tlsConfig
+	if serveTCP && serveQUIC {
+		quicTLSConfig = tls.TransportALPNView(h.tlsConfig, quicProtos)
+	}
+	h.logger.Info("trusttunnel: ALPN resolved: tcp=", strings.Join(tcpProtos, ","),
+		" quic=", strings.Join(quicProtos, ","))
 	if serveTCP {
 		tcpListener, err := h.listener.ListenTCP()
 		if err != nil {
@@ -155,13 +170,36 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			return err
 		}
 		go func() {
-			sErr := h.service.ServeQUIC(udpConn, h.tlsConfig)
+			sErr := h.service.ServeQUIC(udpConn, quicTLSConfig)
 			if sErr != nil && !E.IsClosed(sErr) {
 				h.logger.Error("serve HTTP/3: ", sErr)
 			}
 		}()
 	}
 	return nil
+}
+
+// resolveTransportALPN computes each transport's ALPN list from the configured list.
+//
+// The TCP list never contains h3 and always contains h2. The QUIC list is h3 only:
+// h2/http1.1 are not valid over QUIC, and the QUIC view must not expose a protocol
+// the transport cannot serve. Keeping this pure is what lets the invariant be tested
+// without binding listeners.
+func resolveTransportALPN(configured []string, serveTCP, serveQUIC bool) (tcpProtos, quicProtos []string) {
+	if serveTCP {
+		for _, protocol := range configured {
+			if protocol != nextProtoH3 {
+				tcpProtos = append(tcpProtos, protocol)
+			}
+		}
+		if !common.Contains(tcpProtos, http2.NextProtoTLS) {
+			tcpProtos = append([]string{http2.NextProtoTLS}, tcpProtos...)
+		}
+	}
+	if serveQUIC {
+		quicProtos = []string{nextProtoH3}
+	}
+	return tcpProtos, quicProtos
 }
 
 func (h *Inbound) NewConnection(ctx context.Context, conn *trusttunnel.ServerConn, request trusttunnel.Metadata) {
