@@ -228,8 +228,19 @@ func TestRaceSimultaneousCompletionsDeliverExactlyOneResponse(t *testing.T) {
 
 	require.Eventually(t, func() bool { return h3Body.closes.Load() == 1 }, time.Second, time.Millisecond)
 	require.Eventually(t, func() bool { return h2Body.closes.Load() == 1 }, time.Second, time.Millisecond)
+	// The winner is whichever leg the race loop reports first (asserted above), and a WINNING HTTP/3
+	// leg calls clearH3Broken, which deliberately KEEPS the entry and only disarms its window so the
+	// ladder rung and the attempt ordering survive. An empty map is therefore not the property this
+	// test owns; "no verdict armed" is. Counting entries failed on the H3 win while saying nothing
+	// about whether the cancelled leg armed anything - the thing the test is named for.
+	authority := requestAuthority(request)
+	require.False(t, transport.h3Broken(authority),
+		"a leg cancelled by the race must not arm the HTTP/3 verdict")
 	transport.verdictAccess.Lock()
-	broken := len(transport.broken)
+	entry, found := transport.broken[authority]
 	transport.verdictAccess.Unlock()
-	require.Zero(t, broken)
+	if found {
+		require.Zero(t, entry.backoff, "a disarmed entry must carry no ladder rung")
+		require.True(t, entry.until.IsZero(), "a disarmed entry must hold no open window")
+	}
 }
