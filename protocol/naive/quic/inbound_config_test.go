@@ -4,6 +4,7 @@ package quic
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -141,20 +142,52 @@ func TestNativeNaiveCongestionControlAcceptsDocumentedValues(t *testing.T) {
 				t.Fatalf("the production resolver refused %q, which is documented "+
 					"as accepted: %v", name, err)
 			}
-			// An unset value and the explicit "default" must both mean "keep
-			// quic-go's sender", which the constructor represents as nil. The
-			// named values must produce a sender.
-			if name == "" || name == "default" {
-				if sender != nil {
-					t.Fatalf("%q must select the library default (nil sender), got a "+
-						"sender factory", name)
-				}
-				return
-			}
+			// Every accepted value resolves to a concrete sender. Unset and
+			// "default" select CUBIC explicitly; they are not "leave it to the
+			// library", because this fork's quic-go defaults to Reno.
 			if sender == nil {
 				t.Fatalf("%q must produce a sender factory, got nil", name)
 			}
 		})
+	}
+}
+
+// TestNativeNaiveCongestionControlUnsetIsCubic pins the product default.
+//
+// The default is CUBIC, and it is selected explicitly: the factory for "", for
+// "default" and for "cubic" must be the SAME factory, so "unset" cannot drift
+// from "cubic" when a dependency changes its own default. This fork's quic-go
+// builds its default sender with `use Reno = true`, so a nil factory here would
+// have meant Reno.
+func TestNativeNaiveCongestionControlUnsetIsCubic(t *testing.T) {
+	cubicFactory, err := newNaiveCongestionControl("cubic", time.Now)
+	if err != nil {
+		t.Fatalf("explicit cubic must resolve: %v", err)
+	}
+	if cubicFactory == nil {
+		t.Fatal("explicit cubic must produce a sender factory")
+	}
+	cubicPointer := reflect.ValueOf(cubicFactory).Pointer()
+	for _, name := range []string{"", "default"} {
+		factory, err := newNaiveCongestionControl(name, time.Now)
+		if err != nil {
+			t.Fatalf("%q must resolve: %v", name, err)
+		}
+		if factory == nil {
+			t.Fatalf("%q produced no factory; the default must be an explicit sender", name)
+		}
+		if reflect.ValueOf(factory).Pointer() != cubicPointer {
+			t.Fatalf("%q must select the same sender factory as explicit \"cubic\"", name)
+		}
+	}
+	for _, name := range []string{"bbr", "reno"} {
+		factory, err := newNaiveCongestionControl(name, time.Now)
+		if err != nil {
+			t.Fatalf("%q must resolve: %v", name, err)
+		}
+		if reflect.ValueOf(factory).Pointer() == cubicPointer {
+			t.Fatalf("%q must not resolve to the CUBIC factory", name)
+		}
 	}
 }
 

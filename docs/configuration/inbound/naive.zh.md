@@ -55,7 +55,7 @@ QUIC 拥塞控制算法。
 | `cubic`        | CUBIC              |
 | `reno`         | New Reno           |
 
-默认使用 `bbr`。
+默认使用 `cubic`；`bbr` 与 `reno` 为显式选项。未设置时**显式**选择 CUBIC，不依赖 quic-go 的库默认值（该 fork 的库默认是 Reno）。
 
 #### tls
 

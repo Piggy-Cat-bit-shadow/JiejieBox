@@ -62,7 +62,7 @@ type ServiceOptions struct {
 	Logger  logger.ContextLogger
 	Handler Handler
 	Users   []auth.User
-	// QUIC configures the HTTP/3 transport; nil means BBR.
+	// QUIC configures the HTTP/3 transport; nil means CUBIC.
 	QUIC *QUICOptions
 	// UDPLimits bounds the _udp2 associations of the service; zero takes the
 	// defaults in UDPLimits. Tests lower the limits to reach the refusal paths

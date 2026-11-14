@@ -20,7 +20,7 @@ The native `trusttunnel` client uses H2 over TLS/TCP or H3 over QUIC/UDP for TCP
 }
 ```
 
-Credentials and TLS are required. Set `tls.server_name` when the server is a literal IP. `quic_congestion_control` accepts `bbr`, `cubic`, or `reno`. `health_check` enables health checks; `idle_timeout` controls idle session retention. Streams may share a session, which remains under its protocol owner's lifecycle. H3 cannot be combined with uTLS; keep TLS ALPN consistent with the selected transport.
+Credentials and TLS are required. Set `tls.server_name` when the server is a literal IP. `quic_congestion_control` accepts `bbr`, `cubic`, or `reno`; unset uses `cubic`. `health_check` enables health checks; `idle_timeout` controls idle session retention. Streams may share a session, which remains under its protocol owner's lifecycle. H3 cannot be combined with uTLS; keep TLS ALPN consistent with the selected transport.
 
 ## H3 → H2 fallback
 

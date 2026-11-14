@@ -907,11 +907,13 @@ func NewQUICConfig(options option.QUICOptions) *quic.Config {
 // NewClientCongestionControl resolves `quic_congestion_control` to a sender
 // factory for a CLIENT HTTP/3 connection.
 //
-// It returns (nil, nil) for an unset or explicitly "default" value, which means
-// "leave quic-go's own sender in place". That is the important case: the upstream
-// default is CUBIC, and this fork must not silently select a different algorithm,
-// because a congestion control choice changes wire behaviour and would not be
-// visible in the configuration.
+// Unset and the explicit "default" both select CUBIC, and they select it
+// EXPLICITLY. Leaving quic-go's sender in place would mean Reno: this fork's
+// quic-go builds its default sender with `use Reno = true`
+// (internal/ackhandler/sent_packet_handler.go). An earlier revision of this
+// function returned nil for unset and documented the library default as CUBIC,
+// which was wrong for the pinned fork. Selecting the sender here is what makes
+// "unset" mean the same algorithm as the naive and trusttunnel paths.
 //
 // It is a separate function from the option parsing so the VALUE VALIDATION can be
 // tested without opening a QUIC connection: a test that wanted to check "bogus is
@@ -922,23 +924,20 @@ func NewQUICConfig(options option.QUICOptions) *quic.Config {
 // " bbr" would make a typo look like it worked.
 func NewClientCongestionControl(name string) (func(conn *quic.Conn) congestion.CongestionControl, error) {
 	switch name {
-	case "", "default":
-		// nil leaves quic-go's own sender, which is CUBIC.
-		return nil, nil
-	case "bbr":
-		// The congestion_meta2 BBR profile, the same implementation the HTTP/3
-		// server selects through bbr_profile, so a client and server that both
-		// name BBR get the same sender rather than two different BBRs.
-		return func(conn *quic.Conn) congestion.CongestionControl {
-			return congestion_meta2.NewBbrSenderWithProfile(conn.InitialPacketSize(), congestion_meta2.ProfileStandard)
-		}, nil
-	case "cubic":
+	case "", "default", "cubic":
 		return func(conn *quic.Conn) congestion.CongestionControl {
 			return congestion_meta1.NewCubicSender(
 				congestion_meta1.DefaultClock{},
 				conn.InitialPacketSize(),
 				false,
 			)
+		}, nil
+	case "bbr":
+		// The congestion_meta2 BBR profile, the same implementation the HTTP/3
+		// server selects through bbr_profile, so a client and server that both
+		// name BBR get the same sender rather than two different BBRs.
+		return func(conn *quic.Conn) congestion.CongestionControl {
+			return congestion_meta2.NewBbrSenderWithProfile(conn.InitialPacketSize(), congestion_meta2.ProfileStandard)
 		}, nil
 	case "reno":
 		// congestion_meta1's CubicSender with `reno=true` IS the Reno
@@ -959,9 +958,9 @@ func NewClientCongestionControl(name string) (func(conn *quic.Conn) congestion.C
 // ApplyClientCongestionControl installs the configured congestion control on a
 // freshly dialled client QUIC connection.
 //
-// A nil factory is the "leave the library default" case and is deliberately NOT an
-// error: that is what an unset option resolves to, and it is the upstream
-// behaviour.
+// The resolver now returns a factory for every accepted value, so nil no longer
+// occurs in production. The guard stays because this is the function that runs on
+// every dial: a future caller passing nil must be a no-op, not a panic.
 func ApplyClientCongestionControl(conn *quic.Conn, factory func(conn *quic.Conn) congestion.CongestionControl) {
 	if factory == nil {
 		return

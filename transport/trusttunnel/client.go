@@ -64,8 +64,9 @@ var ErrQUICNotIncluded = E.New("trusttunnel: HTTP/3 requires the with_quic build
 
 // QUICOptions configures the HTTP/3 transport.
 type QUICOptions struct {
-	// CongestionControl is "bbr" (default), "cubic" or "new_reno" ("reno" is
-	// accepted as an alias).
+	// CongestionControl is "cubic" (default), "bbr" or "new_reno" ("reno" is
+	// accepted as an alias). An unset value selects CUBIC explicitly; the
+	// algorithm does not follow a library default.
 	CongestionControl string
 }
 
