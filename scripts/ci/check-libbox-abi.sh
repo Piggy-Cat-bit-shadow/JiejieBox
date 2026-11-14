@@ -355,7 +355,19 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 # from this kernel tree, then compiled all three products from this exact source - iOS, macOS and the
 # unsigned self-sign IPA all succeeded. That run is the evidence for this pin; it is not a device or
 # TestFlight result.
-VERIFIED_APPLE_SHA="749509f214d97f43cbc66f903fd17b0b50eb6399"
+# Moved from 749509f2 to 09473938 for the 0.1.50 preparation. The range carries the two Apple fixes
+# merged after 749509f2 (screen-state unlock recovery, Debug diagnostics cost) and the client-side
+# repairs the same window added; it is Swift client code only and changes no Go surface in
+# experimental/libbox, so what had to be re-proved is the layer-4 caller sweep and the compile.
+# Layer 4 was RUN against a clean checkout of this revision (no submodules), not inherited:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <clone at 09473938>
+#   {"scanned": 483, "violations": [], "interface_methods": 3, "error": ""}
+# The compile half: Apple client run 43627843866 resolved explicit input 09473938 and built ONE
+# Libbox from kernel 61f61e17, then compiled all three products from this exact source - iOS, macOS
+# and the unsigned self-sign IPA all succeeded. That run is the evidence for this pin; it is not a
+# device or TestFlight result.
+VERIFIED_APPLE_SHA="09473938322bddfc6c30fc3886e747e808c3d526"
 
 client_root=""
 skip_client=0
