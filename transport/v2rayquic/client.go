@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
@@ -67,6 +68,22 @@ type Client struct {
 	// shared-task tests replace it so they can hold a dial open and decide its result without a QUIC
 	// handshake. Production never reads it from outside this package.
 	dialConn func(ctx context.Context) (*clientConnection, error)
+	// admission bounds one SHARED creation of this connection. It is asked exactly once per
+	// creation and never for a reuse, because the creation - UDP socket, TLS handshake, transport
+	// state, run loop - is the expensive event, while every later demand only opens a stream on the
+	// connection that already exists.
+	//
+	// # Why this transport needs it when the pinned sing-quic clients have it
+	//
+	// This client deliberately mirrors their shared offer (one creation, many waiters). Those
+	// clients were given a CreationAdmission hook when the process admission policy was introduced;
+	// without the same hook here, a `transport.type=quic` VLESS/VMess/Trojan connection was the one
+	// shared-QUIC family member whose creation was never charged, so a NetworkExtension's 32-slot
+	// budget did not bound it at all.
+	//
+	// Nil admits everything, which is every platform without a process budget and every test that
+	// does not opt in.
+	admission func(ctx context.Context, create func(context.Context) error) error
 	// registration is this pool's view of the network generation. It is nil when the transport was
 	// built without a runtime coordinator, and every generation check then degrades to the previous
 	// behaviour (see generation.go).
@@ -349,6 +366,15 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		quicConfig: quicConfig,
 	}
 	client.dialConn = client.offerNew
+	// The process admission policy, when this build has one. A nil guard keeps the client on its
+	// previous path with no hook, which is what every platform outside an iOS Network Extension and
+	// every unit test gets.
+	if guard := resourceguard.FromContext(ctx); guard != nil {
+		admissionKey := "v2rayquic/" + serverAddr.String()
+		client.admission = func(admitCtx context.Context, create func(context.Context) error) error {
+			return guard.AdmitCreation(admitCtx, admissionKey, create)
+		}
+	}
 	// The generation the pool rebuilds itself against. A transport built in a test or by an
 	// embedder without a coordinator gets no registration and keeps its previous behaviour.
 	client.coordinator = service.FromContext[*runtimecoord.Coordinator](ctx)
@@ -361,8 +387,10 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 //
 // The waiter's ctx is only ever used for waiting: it must be able to end THIS caller's wait without
 // cancelling the shared dial, because the dial's result belongs to the client and may serve callers
-// that are still there. That is why the dial context is derived from the client lifetime below and
-// never from ctx.
+// that are still there. That is why the dial's LIFETIME comes from the client below and never
+// from ctx; its VALUES (traffic class, an already-held admission permit) do come from the demand that
+// started the creation, because those describe the work being created and are what the admission
+// hook has to see. See newOfferContext for the split.
 func (c *Client) offer(ctx context.Context) (*clientConnection, error) {
 	for {
 		c.connAccess.Lock()
@@ -386,7 +414,7 @@ func (c *Client) offer(ctx context.Context) (*clientConnection, error) {
 			c.connAccess.Unlock()
 			return pending.wait(ctx)
 		}
-		offerCtx, cancel := context.WithCancelCause(c.ctx)
+		offerCtx, cancel := c.newOfferContext(ctx)
 		pending = &clientOffer{
 			done:   make(chan struct{}),
 			cancel: cancel,
@@ -396,6 +424,34 @@ func (c *Client) offer(ctx context.Context) (*clientConnection, error) {
 
 		go c.completeOffer(pending, offerCtx)
 		return pending.wait(ctx)
+	}
+}
+
+// newOfferContext builds the context one shared creation runs under.
+//
+// # The two halves, and why they come from different contexts
+//
+// LIFETIME comes from the client: a waiter that gives up, or a request with a short deadline, must
+// not tear down a dial whose result the client may still hand to someone else. Cancellation is
+// therefore chained to c.ctx, which Close cancels with its cause, and never to the caller's
+// cancellation.
+//
+// VALUES come from the demand that started the creation: the resolved traffic class and, when this
+// creation is nested inside an already-admitted dial, the held-permit marker. Those are properties of
+// the work being created, not of the caller's patience, so context.WithoutCancel keeps them while
+// dropping the deadline and the cancellation, and the AfterFunc adds the client lifetime back.
+//
+// The registration the AfterFunc creates is removed by the release function the offer calls when the
+// creation returns, so a long-lived client does not accumulate one registration per creation.
+func (c *Client) newOfferContext(callerCtx context.Context) (context.Context, context.CancelCauseFunc) {
+	detached := context.WithoutCancel(callerCtx)
+	offerCtx, cancel := context.WithCancelCause(detached)
+	stop := context.AfterFunc(c.ctx, func() {
+		cancel(context.Cause(c.ctx))
+	})
+	return offerCtx, func(err error) {
+		stop()
+		cancel(err)
 	}
 }
 
@@ -409,7 +465,7 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 	// comparison is one number taken twice, and it is the same clock the dialer itself compares
 	// against, so "a result from the previous generation" has one definition in the tree.
 	startGeneration := c.currentGeneration()
-	conn, err := c.dialConn(offerCtx)
+	conn, err := c.createConnection(offerCtx)
 	// The dial context is no longer needed once the dial returned; releasing it here keeps the
 	// per-offer timer/context from outliving the work even when the result is discarded.
 	pending.cancel(nil)
@@ -455,6 +511,40 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 		// epoch from drifting behind the coordinator's.
 		c.acknowledgeGeneration()
 	}
+}
+
+// createConnection runs the shared creation under the process admission policy, when this client has
+// one.
+//
+// # Why the permit wraps only this call
+//
+// The permit bounds CREATION concurrency. It is released as soon as the constructor returns - success
+// or failure - so a healthy process establishes connections as fast as the gate allows and then
+// behaves exactly as before. Holding it for the connection's lifetime would additionally cap live
+// connections, but that is a different policy with a different unit, and the gate's counters would
+// then describe sessions instead of creations.
+//
+// A nil hook admits everything and is the whole point of the optional field: on every platform
+// without a process budget this is one nil check around the construction.
+func (c *Client) createConnection(offerCtx context.Context) (*clientConnection, error) {
+	if c.admission == nil {
+		return c.dialConn(offerCtx)
+	}
+	var created *clientConnection
+	err := c.admission(offerCtx, func(admitCtx context.Context) error {
+		var createErr error
+		created, createErr = c.dialConn(admitCtx)
+		return createErr
+	})
+	if err != nil {
+		// A refusal returns no connection even if the constructor somehow produced one: the policy
+		// owns the answer, and publishing a connection it refused would make the budget untrue.
+		if created != nil {
+			created.closeConn()
+		}
+		return nil, err
+	}
+	return created, nil
 }
 
 func (c *Client) offerNew(ctx context.Context) (*clientConnection, error) {
