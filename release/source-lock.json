@@ -2,7 +2,7 @@
   "clients": [
     {
       "path": "clients/apple",
-      "pinned": "aa8e16aa21a7f28aefc944fac76086c144195e3b"
+      "pinned": "749509f214d97f43cbc66f903fd17b0b50eb6399"
     },
     {
       "path": "clients/android",
@@ -29,9 +29,9 @@
     },
     {
       "module": "github.com/sagernet/sing-tun",
-      "pinned": "ab63d63ac306",
+      "pinned": "53aeb6bfa60b",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-tun",
-      "version": "v0.9.7-0.20261114051221-ab63d63ac306"
+      "version": "v0.9.7-0.20261114075304-53aeb6bfa60b"
     },
     {
       "module": "github.com/sagernet/sing-quic",
@@ -89,6 +89,6 @@
       "pinned": "d9fca1b1f226e9555c63190cbad7b630eb3ae01d"
     }
   ],
-  "release_version": "0.1.48",
+  "release_version": "0.1.49",
   "schema": 1
 }
