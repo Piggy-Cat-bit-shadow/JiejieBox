@@ -107,23 +107,17 @@ func TestJiejieNaiveTCPALPNMatrix(t *testing.T) {
 // TestJiejieNaiveTCPALPNPrefersH2OverH3AfterH3Starts covers the ORDERING hazard.
 //
 // The contamination worth guarding against is a QUIC-path mutation changing what
-// a TCP client NEGOTIATES. On a tcp+udp inbound h3 is legitimately present in the
-// shared ALPN list - it must be, or the HTTP/3 listener could never handshake -
-// so the property that can actually be asserted for TCP is the PREFERENCE: a
-// client offering a usable protocol alongside h3 must get the usable one.
+// a TCP client NEGOTIATES. The handshakes are deliberately performed AFTER an
+// HTTP/3 connection has been established, because that is when the QUIC
+// initialiser has run. A test that only handshook before H3 started would pass
+// even with a mutation bug.
 //
-// The handshakes are deliberately performed AFTER an HTTP/3 connection has been
-// established, because that is when the QUIC initialiser has run. A test that
-// only handshook before H3 started would pass even with a mutation bug.
-//
-// Scope note, stated so this is not over-read: h3 appearing in a tcp+udp
-// inbound's ALPN list is sing-box's established behaviour, not something specific
-// to this inbound. transport/http/server.go prepends h3 to the same shared config
-// for the shipped MASQUE inbound, whose production configuration is tcp+udp. This
-// test pins the preference and the absence of post-hoc mutation; it does not
-// claim per-listener ALPN, which the shared ServerConfig architecture does not
-// support (and which cannot be obtained by cloning, since STDServerConfig.Clone
-// drops the certificate provider, ACME service and watcher).
+// Scope note, stated so this is not over-read: each transport now reads its own
+// list through tls.TransportALPNView (the TCP side builds one in the inbound,
+// the QUIC side in quicTLSConfig), so the shared config is no longer what either
+// listener negotiates. This test pins the TCP preference; the QUIC list is pinned
+// by TestJiejieNaiveDualStackQUICALPNNegotiatesH3 below, which asserts the
+// negotiated protocol of a real QUIC handshake.
 func TestJiejieNaiveTCPALPNPrefersH2OverH3AfterH3Starts(t *testing.T) {
 	port := startNaiveInboundWithNetwork(t, "tcp\nudp")
 

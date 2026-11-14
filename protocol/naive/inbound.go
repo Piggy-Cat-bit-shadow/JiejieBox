@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -139,6 +140,15 @@ func (n *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			return E.Cause(err, "create TLS config")
 		}
 		scope.Add(n.tlsConfig.Close)
+		// Make the derived ALPN visible at startup. Both lists are computed, not
+		// configured: h2/http/1.1 on TCP, h3 on QUIC. A mismatch here used to be
+		// observable only at handshake time (or not at all), which is what made
+		// the dual-transport incident expensive to diagnose.
+		alpnMessage := []any{"naive inbound: ALPN tcp=", strings.Join(n.tcpNextProtos(), ",")}
+		if common.Contains(n.network, N.NetworkUDP) {
+			alpnMessage = append(alpnMessage, " quic=", strings.Join(n.quicNextProtos(), ","))
+		}
+		n.logger.Info(alpnMessage...)
 	}
 	scope.Add(n.listener.Close)
 	if common.Contains(n.network, N.NetworkTCP) {
