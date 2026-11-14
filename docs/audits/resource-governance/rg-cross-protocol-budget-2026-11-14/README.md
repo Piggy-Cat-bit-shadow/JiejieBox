@@ -190,7 +190,8 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 
 ## 8. 验证
 
-- sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试 + 1 个 2000/4096 规模测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`、`raw/scale_cost.txt`）。\n- `-race` 原始输出：Go Stack snapshot `raw/go_snapshot_race.txt`（全量 verbose）；XHTTP 全包 `raw/xhttp_race.txt`（986 行，`ok ... 21.956s`）。报告里的 PASS 均可在这些日志中复核。
+- sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试 + 1 个 2000/4096 规模测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`、`raw/scale_cost.txt`）。
+- `-race` 原始输出：Go Stack snapshot `raw/go_snapshot_race.txt`（全量 verbose）；XHTTP 全包 `raw/xhttp_race.txt`（986 行，`ok ... 21.956s`）。报告里的 PASS 均可在这些日志中复核。
 - sing-tun 全包：**BLOCKED_BY_ENVIRONMENT**——Windows 上 `stack_go_integration_test.go` 的 raw socket/TUN 用例 `Access is denied`（需要管理员/Npcap），不是代码失败；原始输出在 `raw/full_package_env.txt`，未记为 PASS。
 - 主仓：pin 到 `v0.9.7-0.20261114050708-938b89dcb159`；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` exit 0。
 - 本轮无 CI 触发（路径过滤不含 `go.mod`/docs；最近代码 CI 仍是 `43555135120` @ `324a3b011`，success）。
