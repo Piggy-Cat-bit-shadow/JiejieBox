@@ -5,8 +5,10 @@
 > `未执行` 或 `BLOCKED_BY_ENVIRONMENT` 标注，不以“编译通过”代替运行证据。
 > 主内核改动只存在于 `work/upstream-smart-integration-20261114` 分支；`testing` 未被本任务修改。
 > 交付入口：Draft PR <https://github.com/Piggy-Cat-bit-shadow/JiejieBox/pull/8>（base `testing`，由施工方
-> 创建且不合并）。集成交付提交为 `b5590ae008b8fe314f1f8217edb7d3933261e983`，评审补充与 CI 证据随后
-> 追加（见 §7）；分支 head 以 PR 页面为准。
+> 创建且不合并）。分支上的提交依次为：集成交付 `b5590ae`、审计报告 `99bdccbe`、CI 证据绑定 `375c13c3`、
+> 评审补充与再 pin `afaf7787`、评审 pin 集的运行证据 `d4c8146`，最后是本报告的收尾提交。`d4c8146`
+> 上的 7 个检查全部通过（awg / ledger / linux-process / race checks / release helper tests /
+> trusttunnel / verify）。
 
 ## A. 高层结论
 
@@ -66,7 +68,7 @@
 | sing-anytls | SagerNet/sing-anytls `main` `580984e4` | `8473492a5afe` | 未改动 | NO-OP（0 落后） | — | 无 |
 | mieru | enfein/mieru `main` `1367cf2d2dd8` | `b5934f7136b4` | 未改动 | NO-OP（0 落后） | — | 无 |
 | cronet-go | controlled native 29 模块 / `all` | `4c96192d73f6` | 未改动 | NO-OP（受控 pin） | — | 未执行 native 重编译（不需要也不允许） |
-| **JiejieBox** | 自身 | **base `c63086991b6d` (`origin/testing`)** | 集成 `b5590ae008b8fe314f1f8217edb7d3933261e983`；head 为本报告提交 | 修改（pin + 关闭顺序 + 本报告） | `work/upstream-smart-integration-20261114` | 见 §4：构建、包测试、config check、netns 端到端起停、模块完整性、release freeze verify |
+| **JiejieBox** | 自身 | **base `c63086991b6d` (`origin/testing`)** | 集成 `b5590ae`、报告 `99bdccbe`、CI 证据 `375c13c3`、评审补充 `afaf7787`、评审证据 `d4c8146`；head 为本报告收尾提交 | 修改（pin + 关闭顺序 + 评审补充 + 本报告） | `work/upstream-smart-integration-20261114` | 见 §4：构建、包测试、config check、netns 端到端起停、模块完整性、release freeze verify、PR #8 全部 7 个检查通过 |
 
 **`testing` / `main` 未被本任务修改、推送或合并。**
 
@@ -263,6 +265,10 @@ python scripts/ci/release-freeze.py verify --lock release/source-lock.json
 由此产生的 pin 变化：`sing-tun dev` → `24e6bfd`（新增测试 + UIDRange 收紧），`wireguard-go awg3-inject`
 → `c308e20`（GRO 测试）。两者的 `go.mod` / `test/go.mod` / `go.sum` / `release/source-lock.json`
 已同步，`release-freeze.py verify` 仍为 PASS。
+
+评审 pin 集的执行证据：`afaf7787`（携带上述新 pin）上 `linux-kernel-verify` 43614907446 与
+`Release contract verification` 43614907448 均真实成功，已记入 `release/pin-runs.json`；随后
+`d4c8146` 的 7 个检查全部通过，包含此前失败的 `verify`（`check-pin-runs.py` 在其中 PASS）。
 
 > 注：`tun/offload_linux_test.go` 里 passthrough 用例在旧代码下也能通过——旧实现用“编码一个零值
 > virtioNetHdr”达到同样效果，该用例守的是不变量而不是本次改动，保留它是为了防止以后把 `clear()`
