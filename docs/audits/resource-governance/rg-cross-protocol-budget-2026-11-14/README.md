@@ -12,8 +12,8 @@
 
 | sing-tun UDP NAT 观测 | **FIXED**：`UDPNat.Stats()`：entries / max / sessionsCreated / queuedBytes / caps / drops |
 | sing-tun TCP Dispatcher 观测 | **FIXED**：`TCPDispatcherStats()`：accepted / active handler 调用；四个 dispatch 点统一走 `goDispatch` |
-| 每条逻辑流消耗 | **MEASURED（host Go runtime）**：每条 UDP 流 ≈ 3.4–3.7 KiB HeapAlloc（**已包含** 1.2 KiB 首包）+ 约 7.1–8.0 KiB goroutine 栈；结构成本 heap−queued ≈ 2.2–2.5 KiB/flow。1000 流 ≈ 3.7 MiB heap + 7.1 MiB 栈 ≈ **11 MiB**（不是首版写的 7 MiB） |
-| 是否做 TUN→Route 逻辑流准入 | **DECISION（本轮不做）**：修正前的 7 MiB 低估了栈；实测约 11 MiB/1000 流、10.8–11.4 KiB/flow 已越过 8 KiB/flow 触发线，因此该问题升级为**下一轮第一优先决策**；本轮施工边界仍排除长期入口架构 |
+| 每条逻辑流消耗 | **MEASURED（host Go runtime）**：每条 UDP 流 ≈ 3.2–3.7 KiB HeapAlloc（**已包含** 1.2 KiB 首包）+ 约 6.4–7.5 KiB goroutine 栈（run 间有 GC/栈增长波动）；结构成本 heap−queued ≈ 2.0–2.5 KiB/flow。1000 流实测 heap 3.53 MiB + 栈 7.19 MiB ≈ **10.7 MiB**（不是首版写的 7 MiB） |
+| 是否做 TUN→Route 逻辑流准入 | **DECISION（本轮不做）**：修正前的 7 MiB 低估了栈；实测约 11 MiB/1000 流、9.4–11.0 KiB/flow 已越过 8 KiB/flow 触发线，因此该问题升级为**下一轮第一优先决策**；本轮施工边界仍排除长期入口架构 |
 | XMUX 物理连接 | **PARTIAL**：`xmuxPoolStats` 统计的是 **Pool Entry（transport wrapper）**，不是物理 socket；已统计 Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released；**Creating 不是可持久状态**；本轮不新增预算 |
 | HTTP/2 请求体 | **OPEN**：现有请求体由 `net/http` 客户端拥有并在 RoundTrip 结束时关闭；没有复现泄漏，不做无证据修改 |
 | 其它 Owner 报告 | NAT/Dispatcher/XMUX 有；AnyTLS Session、QUIC 物理连接/流、Mieru Underlay、MASQUE Tunnel、PacketFlow、Native Engine 见 §5 |
@@ -53,29 +53,50 @@ func TCPDispatcherStats() DispatcherStats
 
 ### 1.3 每流成本（本机 Go runtime，**不是 iOS phys_footprint**）
 
-`go test . -run 'TestUDPNatStatsReportLogicalFlows|TestUDPNatPerFlowCost|TestTCPDispatcherPerDispatchCost' -v`：
+`go test . -run 'TestUDPNatStatsReportLogicalFlows|TestUDPNatPerFlowCost|TestTCPDispatcherPerDispatchCost' -v`
+（原始输出：`raw/flow_cost.txt`，对应当前依赖提交）：
 
 ```text
 udp flows=200  entries=200  sessions=200  queued=240000  goroutines+200
-  heap=814576 B (4072 B/flow, includes queued) structural=574576 B (2872 B/flow)
-  stack=1605632 B (8028 B/flow) queued=1200 B/flow
+  heap=642704 B (3213 B/flow, includes queued) structural=402704 B (2013 B/flow)
+  stack=1277952 B (6389 B/flow) queued=1200 B/flow
 udp flows=1000 entries=1000 sessions=1000 queued=1200000 goroutines+1000
-  heap=3668480 B (3668 B/flow, includes queued) structural=2468480 B (2468 B/flow)
-  stack=7143424 B (7143 B/flow) queued=1200 B/flow
+  heap=3705168 B (3705 B/flow, includes queued) structural=2505168 B (2505 B/flow)
+  stack=7536640 B (7536 B/flow) queued=1200 B/flow
 tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no per-dispatch heap claim)
 ```
 
 口径（修正了首版的重复计算）：
 
 - `heap` 是 `HeapAlloc` 增量，**已经包含**队列里的首包（1200 B/flow）；首包是 heap 的子集，**不能**再加到 heap 上。
-- `structural = heap − queued`，是本层 entry/表结构/map 等剩余结构成本（≈2.5–2.9 KiB/flow）。
-- `stack` 是 `StackInuse` 增量，**不在 HeapAlloc 里**，必须单独计；每条被 park 的 dispatcher goroutine 实际约 7.7–8 KiB 栈。
-- 因此每条 UDP 逻辑流 ≈ **3.4–3.7 KiB heap + 7.1–8.0 KiB stack ≈ 10.8–11.4 KiB**；1000 流 ≈ **11 MiB**（heap 3.7 MiB，栈 7.1 MiB），不是首版写的 7 MiB。
+- `structural = heap − queued`，是本层 entry/表结构/map 等剩余结构成本（本次 2.0–2.5 KiB/flow）。
+- `stack` 是 `StackInuse` 增量，**不在 HeapAlloc 里**，必须单独计；每条被 park 的 dispatcher goroutine 约 6.4–7.5 KiB 栈（Go 栈按需增长，run 间会波动）。
+- 因此每条 UDP 逻辑流本次实测 ≈ **3.2–3.7 KiB heap + 6.4–7.5 KiB stack ≈ 9.4–11.0 KiB**；1000 流 ≈ **10.7 MiB**（heap 3.53 MiB + 栈 7.19 MiB）。数字随 GC/栈增长有 run 间波动，报告不把它压成单一常数。
 - TCP 计数器含义：`TCPAccepted` 是累计的 **handler 调用次数（逻辑 dispatch）**；`TCPActive` 是当前 in-flight 的 handler 调用数（≈ 正在处理的 TCP 逻辑流）。它**不是** TCP 栈 flow-table entry，也**不是** socket 数；四个 dispatch 点包含 system/redirect，所以是进程级而非仅 TUN。该测试只测 dispatcher 的 goroutine 开销，不把空闭包 handler 的 heap 当作 per-dispatch 成本。
 - 全部是 **host Go runtime**；iOS `phys_footprint` 还含 PacketFlow、native、runtime 预留，未测。
+
+### 1.4 Go Stack UDP 首包快照的生命周期（仅当前生产 Go Stack）
+
+**对象**：`GoPacketConn.snapshot`（`slices.Clone(data.packet)`，堆上的 `[]byte`，用于握手失败时构造 ICMP unreachable），不是引用计数 buffer；"释放"= 丢弃最后一个引用。
+
+**核查前**：
+
+- `HandshakeSuccess`：`w.snapshot = nil`，释放。
+- `HandshakeFailure`：取出 snapshot、置 nil，再构造 ICMP；无论 reply 是否构造成功，引用都已释放。
+- `Close`：**没有清 snapshot**。它只把 flow 从 `directory.udpFlows` 删除并处理 splice。若 flow 在握手回调之前被关闭，且 `GoPacketConn` 仍被 NAT 侧对象引用，首包会一直保留到该对象不可达（GC 才能回收）。
+
+**这是保留窗口，不是已证明的泄漏**：NAT 释放 conn 后对象不可达，GC 会回收；没有证据显示跨 Generation 或永久持有。但 Close 是显式结束点，不应该依赖 GC 时机。
+
+**本轮最小修复**：`Close` 在 `snapshotAccess` 锁内清空 snapshot，与两个握手回调使用同一把锁；没有改 gVisor（已退休）、没有改 NAT 账本。
+
+**证据**（`raw/go_snapshot.txt`）：
+
+- `TestGoPacketConnSnapshotReleasedOnEveryEnding`：success / failure（含 `BuildICMPError` 拒绝路径）/ Close 三条路径后 `len(snapshot)==0`，重复调用安全；
+- `TestGoPacketConnSnapshotCloseRacesHandshake`：Close 与 HandshakeSuccess 并发 100 次，`-race` 通过；
+- 仅 Go Stack；gVisor 未触碰。
 ## 2. 入口准入决策：本轮不做，但触发线已被越过
 
-**修正后的证据**：1000 条 UDP 逻辑流 ≈ **11 MiB** Go 侧（heap 3.7 + 栈 7.1），约为 50 MiB 观测预算的 23%；per-flow ≈ 10.8–11.4 KiB，**已经越过首版设定的 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
+**修正后的证据**：1000 条 UDP 逻辑流 ≈ **10.7 MiB** Go 侧（heap 3.53 + 栈 7.19，随 GC/栈增长有 run 间波动），约为 50 MiB 观测预算的 21%；per-flow ≈ 9.4–11.0 KiB，**已经越过首版设定的 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
 
 **决策**：本轮仍不在 TUN→Route 增加逻辑流 gate，但理由变为"边界与验证条件"而不是"证据不足"：
 
@@ -111,9 +132,10 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 
 | Owner | 资源 | 状态 |
 |---|---|---|
-| sing-tun UDP NAT | Entries / Buffer（queued bytes）/ caps | **DONE**（`UDPNat.Stats()`） |
-| sing-tun TCP Dispatcher | Accepted / Active | **DONE**（`TCPDispatcherStats()`） |
-| XMUX | 物理连接 Active/Idle/Draining/跨代 | **EXISTS（内部）**；未导出为公共 API |
+| sing-tun UDP NAT | Entries / Buffer（queued bytes）/ caps | **FIXED**（`UDPNat.Stats()`） |
+| sing-tun TCP Dispatcher | Accepted / Active | **FIXED**（`TCPDispatcherStats()`） |
+| sing-tun Go Stack 首包 | snapshot 释放（success/failure/Close） | **FIXED**（Close 补清空；两条测试 + `-race`） |
+| XMUX | Pool Entry（transport wrapper）的 Active/Idle/Draining/跨代；物理 socket 不在本层 | **PARTIAL**；内部 inventory，未导出公共 API |
 | AnyTLS | Session 数 | **PARTIAL**：SDK 有 `PendingCreationWaiters`，无 Session 计数；本轮未改（观察项） |
 | QUIC（HY2/TUIC/v2rayquic） | 物理连接 / Stream | **NOT_RUN**：quic-go 有 `ConnectionStats`，仓内未聚合成 owner 报告 |
 | Mieru | Underlay / Session | **UNAVAILABLE**：SDK 内部，未改加密实现 |
@@ -127,15 +149,33 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 
 **最小方案（下一轮）**：在 `route` 的 transition 测试里注入一个 `pressure()` 返回 Critical 的 guard，统计 `ResetNetwork` 调用次数，断言一次切换只产生一次 reset（或明确记录两次来源）；不新增生产抽象。
 
-## 7. 验证
+## 7. 版本与证据对应
 
-- sing-tun 定向测试：3 个全部 PASS（`raw/flow_cost.txt`）。
+| 对象 | 值 |
+|---|---|
+| 主仓代码 HEAD（本报告测量时） | `fd5eec54b3d54b43486e4b1eef3e19e35f63aa89` |
+| sing-tun 分支 | `work/flow-observation-2026-11-14` |
+| sing-tun 观测提交 | `6e7483019752f4fc3d37fafc97af80bcb3eedc6d`（API + 计数） |
+| sing-tun 口径修正提交 | `b253963c99275edb29639472065e777f44a3b2a0`（heap/stack/TCP 语义） |
+| sing-tun 首包修复提交 | `938b89dcb159ff8bf55b2c24e832f02374241e33`（Close 清 snapshot） |
+| 主仓 pin | `v0.9.7-0.20261114050708-938b89dcb159` |
+| pseudo-version 时间戳 | 2026-11-14T05:07:08Z = 提交时间 13:07:08+08:00 |
+| flow cost 原始日志 | `raw/flow_cost.txt`（在 938b89d 树上执行） |
+| snapshot 原始日志 | `raw/go_snapshot.txt`（在 938b89d 树上执行） |
+
+## 8. 验证
+
+- sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`）。
 - sing-tun 全包：**BLOCKED_BY_ENVIRONMENT**——Windows 上 `stack_go_integration_test.go` 的 raw socket/TUN 用例 `Access is denied`（需要管理员/Npcap），不是代码失败；原始输出在 `raw/full_package_env.txt`，未记为 PASS。
-- 主仓：pin 到 `v0.9.7-0.20261114041520-6e7483019752`；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` exit 0。
+- 主仓：pin 到 `v0.9.7-0.20261114050708-938b89dcb159`；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` exit 0。
 - 本轮无 CI 触发（路径过滤不含 `go.mod`/docs；最近代码 CI 仍是 `43555135120` @ `324a3b011`，success）。
 - 未运行：iOS 真机、Apple 构建、XMUX 预算、HTTP/2 body 实验、组合测试——全部明确 `NOT_RUN`/`UNAVAILABLE`，没有用 host 数据替代。
 
-## 8. 交付边界
+## 9. ExchangeAsync 的补充说明（非重写）
+
+`Router.ExchangeAsync` 的 admission 是**同步**的：调用可能先在 query gate 队列等待（最多 gate 的 wait budget）；拒绝时，或 client 同步完成时，回调会在函数返回前执行。此语义已在 `dns/router.go` 的 doc comment 写明，并由 `TestExchangeAsyncRefusalCallsBackBeforeReturning` 与 `TestExchangeAsyncMayCallBackBeforeReturning` 钉住；本轮只补说明，没有改行为、没有重写。
+
+## 10. 交付边界
 
 - 改了什么：sing-tun 两个只读观测 API + 四个 dispatch 点计数 + 三个测量测试 + 主仓 pin + 本文档。
 - 没改什么：没有 TUN→Route gate、没有 XMUX 预算、没有改 Mieru/HTTP2/XHTTP/UI、没有 ResourceGuard/OOMKiller 重构。
