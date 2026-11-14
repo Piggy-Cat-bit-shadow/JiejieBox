@@ -1,0 +1,29 @@
+﻿# Full route package run on work/resource-governance-closure-2026-11-14
+# command: go test ./route -count=1 -v   (cwd: repo root, CGO_ENABLED=0)
+# note: the verbose log is ~176 KB and is not committed; this is its machine-checkable summary.
+
+total lines      : 2490
+FAIL test lines  : 0
+PASS test lines  : 1182
+final summary    : PASS
+ok line          : ok  	github.com/sagernet/sing-box/route	446.867s
+
+## first 4 lines
+=== RUN   TestActionResolvePlansByEffectiveStrategy
+=== RUN   TestActionResolvePlansByEffectiveStrategy/router_prefer_ipv6,_IPv4_original
+=== RUN   TestActionResolvePlansByEffectiveStrategy/router_prefer_ipv4,_IPv6_original
+--- PASS: TestActionResolvePlansByEffectiveStrategy (0.00s)
+
+## last 12 lines
+=== RUN   FuzzApplySniffOverride/seed#3
+=== RUN   FuzzApplySniffOverride/seed#4
+=== RUN   FuzzApplySniffOverride/seed#5
+--- PASS: FuzzApplySniffOverride (0.00s)
+    --- PASS: FuzzApplySniffOverride/seed#0 (0.00s)
+    --- PASS: FuzzApplySniffOverride/seed#1 (0.00s)
+    --- PASS: FuzzApplySniffOverride/seed#2 (0.00s)
+    --- PASS: FuzzApplySniffOverride/seed#3 (0.00s)
+    --- PASS: FuzzApplySniffOverride/seed#4 (0.00s)
+    --- PASS: FuzzApplySniffOverride/seed#5 (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/route	446.867s

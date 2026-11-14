@@ -78,12 +78,12 @@ github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77 h1
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261110222322-4abfaed41727 h1:FOQfkSfAtacUfvz1iCd6yi/79K8XwhWu8jkUcmk6fpw=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261110222322-4abfaed41727/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
-github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261112100203-f4acc22de770 h1:36S7SvgHv5HWZ8yCvshOJjsnieuDaEC2jYmQ2n55WpM=
-github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261112100203-f4acc22de770/go.mod h1:VRKLnj0ObEsN228h+zuzf91p+6sjtYE8SBaLPVsBy5o=
+github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe h1:zRxvkshi6nqk50ZNeo0xy5GljyUS40nyCwfVI5PaWHk=
+github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe/go.mod h1:ZjH8X9awKp6xdfgbJJZXH76Q0RNbDxxV/fgkXvt083o=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261112101651-c1b074f1f868 h1:eqLPXg03bzMqVThf52mNEDIs3fdFoO+H0NVCWNeIVjw=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261112101651-c1b074f1f868/go.mod h1:GeOfu2884pUacFYBnjUsYzUa7gU8iunJ2gMVXwvssRo=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261112091034-3c0ead27405b h1:4iMmtK4dY4ye67FqDeFZaR9D7Egpuu3oRj4Ln03soLI=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261112091034-3c0ead27405b/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
+github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114050708-938b89dcb159 h1:WZpTX02/4J00Dy8DJbFe5otc+7qUrDtG1Scqqypf7xc=
+github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114050708-938b89dcb159/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80 h1:oiJWYot1KZOqcUt0dnPwDuMdgOZhMZHoqf2fjXtQ9K4=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
 github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d h1:/OAiy3sQiUYcc09cL/AHs1KSd+ozkn0zFhqpmsbPcOQ=

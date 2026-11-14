@@ -1,0 +1,31 @@
+﻿# Full sing-tun package test on Windows (environment)
+    stack_go_integration_packet_test.go:124: Access is denied.
+--- FAIL: TestGoKernelPacket (0.00s)
+    --- FAIL: TestGoKernelPacket/mtu=1500/gso=false/mq=false (0.00s)
+        stack_go_integration_packet_test.go:258: Access is denied.
+    --- FAIL: TestGoKernelPacket/mtu=65535/gso=false/mq=false (0.00s)
+        stack_go_integration_packet_test.go:258: Access is denied.
+--- FAIL: TestGoKernelPacketBatchIdle (0.00s)
+    --- FAIL: TestGoKernelPacketBatchIdle/mtu=1500/gso=false/mq=false (0.00s)
+        stack_go_integration_packet_test.go:618: Access is denied.
+    --- FAIL: TestGoKernelPacketBatchIdle/mtu=65535/gso=false/mq=false (0.00s)
+        stack_go_integration_packet_test.go:618: Access is denied.
+--- FAIL: TestGoKernelStream (0.00s)
+    --- FAIL: TestGoKernelStream/mtu=1500/gso=false/mq=false/memory=false (0.00s)
+        stack_go_integration_test.go:533: Access is denied.
+    --- FAIL: TestGoKernelStream/mtu=9000/gso=false/mq=false/memory=false (0.00s)
+        stack_go_integration_test.go:533: Access is denied.
+    --- FAIL: TestGoKernelStream/mtu=65535/gso=false/mq=false/memory=false (0.00s)
+        stack_go_integration_test.go:533: Access is denied.
+--- FAIL: TestGoKernelFlowControl (0.00s)
+    --- FAIL: TestGoKernelFlowControl/mtu=1500/gso=false/mq=false (0.00s)
+        stack_go_integration_test.go:619: Access is denied.
+    --- FAIL: TestGoKernelFlowControl/mtu=9000/gso=false/mq=false (0.00s)
+        stack_go_integration_test.go:619: Access is denied.
+    --- FAIL: TestGoKernelFlowControl/mtu=65535/gso=false/mq=false (0.00s)
+        stack_go_integration_test.go:619: Access is denied.
+--- FAIL: TestGoKernelSequenceWrap (0.00s)
+    stack_go_integration_test.go:758: Access is denied.
+FAIL
+FAIL	github.com/sagernet/sing-tun	2.525s
+FAIL

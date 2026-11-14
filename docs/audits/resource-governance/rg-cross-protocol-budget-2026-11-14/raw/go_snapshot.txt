@@ -1,0 +1,12 @@
+﻿=== RUN   TestGoPacketConnSnapshotReleasedOnEveryEnding
+=== RUN   TestGoPacketConnSnapshotReleasedOnEveryEnding/handshake_success
+=== RUN   TestGoPacketConnSnapshotReleasedOnEveryEnding/handshake_failure
+=== RUN   TestGoPacketConnSnapshotReleasedOnEveryEnding/close
+--- PASS: TestGoPacketConnSnapshotReleasedOnEveryEnding (0.00s)
+    --- PASS: TestGoPacketConnSnapshotReleasedOnEveryEnding/handshake_success (0.00s)
+    --- PASS: TestGoPacketConnSnapshotReleasedOnEveryEnding/handshake_failure (0.00s)
+    --- PASS: TestGoPacketConnSnapshotReleasedOnEveryEnding/close (0.00s)
+=== RUN   TestGoPacketConnSnapshotCloseRacesHandshake
+--- PASS: TestGoPacketConnSnapshotCloseRacesHandshake (0.00s)
+PASS
+ok  	github.com/sagernet/sing-tun	0.085s

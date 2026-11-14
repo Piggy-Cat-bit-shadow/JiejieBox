@@ -1,0 +1,11 @@
+﻿# Full route package run on the debug branch, AFTER the narrowed D3 fix
+# command: go test ./route -count=1 -v   (cwd: repo root, CGO_ENABLED=0)
+
+total lines      : 2498
+FAIL test lines  : 0
+PASS test lines  : 1186
+exit summary     : PASS
+ok line          : ok  	github.com/sagernet/sing-box/route	446.573s
+elapsed          : 448.6 s
+
+## failures (empty expected)

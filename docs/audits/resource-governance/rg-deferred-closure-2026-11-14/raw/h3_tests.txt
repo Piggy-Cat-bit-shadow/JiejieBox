@@ -1,0 +1,12 @@
+﻿=== RUN   TestH3CreationIsRefusedBeforeTheDial
+--- PASS: TestH3CreationIsRefusedBeforeTheDial (0.00s)
+=== RUN   TestNilGuardKeepsTheOldPath
+--- PASS: TestNilGuardKeepsTheOldPath (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/common/httpclient	0.097s
+=== RUN   TestH3CreationIsRefusedBeforeTheUDPDial
+--- PASS: TestH3CreationIsRefusedBeforeTheUDPDial (0.00s)
+=== RUN   TestH3RefusalIsClassifiedAsLocalRejection
+--- PASS: TestH3RefusalIsClassifiedAsLocalRejection (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	0.110s

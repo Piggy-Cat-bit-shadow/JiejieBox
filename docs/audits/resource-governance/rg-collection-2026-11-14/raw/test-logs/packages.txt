@@ -1,0 +1,105 @@
+﻿# Test evidence at collection HEAD (f1f0ac4e9)
+# CGO_ENABLED=0, go1.25.5 windows/amd64
+
+## go test ./common/resourceguard ./service/oomkiller ./common/trafficclass ./common/buildgate ./common/tls
+ok  	github.com/sagernet/sing-box/common/resourceguard	0.962s
+ok  	github.com/sagernet/sing-box/service/oomkiller	0.831s
+ok  	github.com/sagernet/sing-box/common/trafficclass	0.080s
+ok  	github.com/sagernet/sing-box/common/buildgate	0.130s
+ok  	github.com/sagernet/sing-box/common/tls	3.638s
+
+## go test ./protocol/anytls ./protocol/hysteria2 ./transport/v2rayquic (with_quic)
+ok  	github.com/sagernet/sing-box/protocol/anytls	6.986s
+ok  	github.com/sagernet/sing-box/protocol/hysteria2	1.110s
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	9.835s
+
+## named admission/reuse/lifecycle tests (-v)
+=== RUN   TestReuseDoesNotWaitForACreationPermit
+--- PASS: TestReuseDoesNotWaitForACreationPermit (0.08s)
+=== RUN   TestCreationAdmissionSeamDoesNotAskOnReuse
+--- PASS: TestCreationAdmissionSeamDoesNotAskOnReuse (0.02s)
+=== RUN   TestNestedCreationDoesNotAskTheGateAgain
+--- PASS: TestNestedCreationDoesNotAskTheGateAgain (0.00s)
+=== RUN   TestFailedCreationReleasesThePermit
+--- PASS: TestFailedCreationReleasesThePermit (0.00s)
+=== RUN   TestCreationAdmissionIsWiredOnlyWithAGuard
+--- PASS: TestCreationAdmissionIsWiredOnlyWithAGuard (0.12s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/anytls	0.324s
+=== RUN   TestCloseDuringAdmissionReleasesTheCreationWaiter
+--- PASS: TestCloseDuringAdmissionReleasesTheCreationWaiter (0.00s)
+=== RUN   TestFailedCreationReleasesThePermit
+--- PASS: TestFailedCreationReleasesThePermit (0.00s)
+=== RUN   TestAStaleCreationDoesNotChargeTheNextOne
+--- PASS: TestAStaleCreationDoesNotChargeTheNextOne (0.00s)
+=== RUN   TestSaturatedAdmissionRefusesTheSharedCreation
+--- PASS: TestSaturatedAdmissionRefusesTheSharedCreation (0.00s)
+=== RUN   TestEstablishedSessionIsReusedWithoutASecondPermit
+--- PASS: TestEstablishedSessionIsReusedWithoutASecondPermit (0.00s)
+=== RUN   TestTheSharedCreationSeesTheTriggeringFlowClass
+--- PASS: TestTheSharedCreationSeesTheTriggeringFlowClass (0.00s)
+=== RUN   TestAnAlreadyAdmittedDialIsNotChargedTwice
+--- PASS: TestAnAlreadyAdmittedDialIsNotChargedTwice (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	0.094s
+=== RUN   TestAdmitCreationReleasesThePermitWhenTheCreatePanics
+--- PASS: TestAdmitCreationReleasesThePermitWhenTheCreatePanics (0.00s)
+=== RUN   TestAdmitCreationRefusalDoesNotRunTheConstructor
+--- PASS: TestAdmitCreationRefusalDoesNotRunTheConstructor (0.00s)
+=== RUN   TestAdmitCreationDoubleReleaseIsInert
+--- PASS: TestAdmitCreationDoubleReleaseIsInert (0.00s)
+=== RUN   TestAdmitCreationCarriesTheCallersClass
+--- PASS: TestAdmitCreationCarriesTheCallersClass (0.00s)
+=== RUN   TestConcurrentSnapshotsKeepLevelAndLimitInStep
+--- PASS: TestConcurrentSnapshotsKeepLevelAndLimitInStep (0.00s)
+=== RUN   TestShedIsNotRunByAConcurrentSnapshotAfterTheFirst
+--- PASS: TestShedIsNotRunByAConcurrentSnapshotAfterTheFirst (0.00s)
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#01
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#02
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#03
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#04
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#05
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#06
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#07
+--- PASS: TestAttackMixedOutcomesKeepTheAccountingExact (0.03s)
+=== RUN   TestAttackPinnedGateRefusesFastRatherThanQueueing
+--- PASS: TestAttackPinnedGateRefusesFastRatherThanQueueing (0.10s)
+=== RUN   TestAttackStatsSnapshotCannotPairAStaleLevelWithANewerPlan
+--- PASS: TestAttackStatsSnapshotCannotPairAStaleLevelWithANewerPlan (0.00s)
+=== RUN   TestPermitWaitReportsAdmissionNotHolding
+--- PASS: TestPermitWaitReportsAdmissionNotHolding (0.03s)
+=== RUN   TestPermitWaitCountsAQueuedWaiter
+--- PASS: TestPermitWaitCountsAQueuedWaiter (0.02s)
+=== RUN   TestQueueBoundRefusesBeyondItsLimit
+--- PASS: TestQueueBoundRefusesBeyondItsLimit (0.00s)
+=== RUN   TestQueuedCancellationLeavesNoWaiter
+--- PASS: TestQueuedCancellationLeavesNoWaiter (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/common/resourceguard	0.274s
+=== RUN   TestUnmeasurableFootprintDoesNotPublishAllClear
+--- PASS: TestUnmeasurableFootprintDoesNotPublishAllClear (0.00s)
+=== RUN   TestUnmeasurableFootprintKeepsCrisis
+--- PASS: TestUnmeasurableFootprintKeepsCrisis (0.00s)
+=== RUN   TestUnmeasurableFootprintHoldsArmed
+--- PASS: TestUnmeasurableFootprintHoldsArmed (0.00s)
+=== RUN   TestGuardLevelMapsEveryPublishedPressure
+--- PASS: TestGuardLevelMapsEveryPublishedPressure (0.00s)
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS/default
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS/explicit-memory-limit
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS/override
+--- PASS: TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS (0.00s)
+=== RUN   TestUnavailableFootprintRuleIsScopedToFootprintModes
+--- PASS: TestUnavailableFootprintRuleIsScopedToFootprintModes (0.00s)
+=== RUN   TestAvailableMemoryModeStillUsesTheAvailableFigure
+--- PASS: TestAvailableMemoryModeStillUsesTheAvailableFigure (0.00s)
+=== RUN   TestStalePollCannotPublishAnOlderObservation
+--- PASS: TestStalePollCannotPublishAnOlderObservation (0.00s)
+=== RUN   TestCriticalPublicationFromReclaimIsCorrectedByTheNextMeasuredPoll
+--- PASS: TestCriticalPublicationFromReclaimIsCorrectedByTheNextMeasuredPoll (0.00s)
+=== RUN   TestCriticalPressureTightensTheRealGate
+--- PASS: TestCriticalPressureTightensTheRealGate (0.10s)
+PASS
+ok  	github.com/sagernet/sing-box/service/oomkiller	0.186s

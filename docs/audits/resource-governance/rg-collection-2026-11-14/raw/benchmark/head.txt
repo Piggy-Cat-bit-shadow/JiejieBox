@@ -1,0 +1,51 @@
+﻿# Benchmarks at collection HEAD (worktree f1f0ac4e9). go1.25.5 windows/amd64, CGO_ENABLED=0.
+# flags: -count=5 -benchtime=300ms -benchmem
+
+## route BenchmarkNonConnectedPacketSetup (HEAD)
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/route
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkNonConnectedPacketSetup-16    	  188282	      1848 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  190222	      1872 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  213693	      1869 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  206619	      1885 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  198957	      1817 ns/op	    1440 B/op	      16 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/route	2.100s
+
+## v2rayquic BenchmarkSharedOfferCreation (HEAD)
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/transport/v2rayquic
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkSharedOfferCreation/NoGuard-16         	  186616	      1930 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  179473	      1968 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  182197	      1920 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  193885	      1867 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  184987	      1934 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  125578	      2910 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  130004	      2770 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  125557	      2808 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  130005	      2808 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  125210	      2920 ns/op	     672 B/op	      14 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	4.261s
+
+## resourceguard admission cost (HEAD, unchanged by rounds 1-2)
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/common/resourceguard
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkGateAcquireRelease-16             	 1446050	       250.8 ns/op	      80 B/op	       1 allocs/op
+BenchmarkGateAcquireRelease-16             	 1430757	       252.4 ns/op	      80 B/op	       1 allocs/op
+BenchmarkGateAcquireRelease-16             	 1406389	       251.1 ns/op	      80 B/op	       1 allocs/op
+BenchmarkGateAcquireRelease-16             	 1430154	       250.9 ns/op	      80 B/op	       1 allocs/op
+BenchmarkGateAcquireRelease-16             	 1432898	       251.7 ns/op	      80 B/op	       1 allocs/op
+BenchmarkGateAcquireReleaseContended-16    	  173494	      2005 ns/op	     535 B/op	       6 allocs/op
+BenchmarkGateAcquireReleaseContended-16    	  180999	      2021 ns/op	     535 B/op	       6 allocs/op
+BenchmarkGateAcquireReleaseContended-16    	  182414	      2050 ns/op	     535 B/op	       6 allocs/op
+BenchmarkGateAcquireReleaseContended-16    	  158180	      2111 ns/op	     535 B/op	       6 allocs/op
+BenchmarkGateAcquireReleaseContended-16    	  182664	      2026 ns/op	     535 B/op	       6 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/common/resourceguard	5.063s

@@ -1,0 +1,8 @@
+﻿=== RUN   TestUDPNatFlowCostAtScale
+    dispatcher_observation_test.go:239: flows=2000 BURST entries=2000 sessions=2000 queued=2400000 goroutines=2003 heap=10096560 objects=26688 stack=16678912 | STABLE(after GC) heap=8797528 objects=24912 stack=16678912 goroutines=2003 entries=2000 queued=2400000
+    dispatcher_observation_test.go:268: flows=2000 RECOVERED entries=0 queued=0 goroutines=2 (baseline 3) after1GC heap=5701824 objects=7927 stack=5701632 | after3GC heap=1395648 objects=3889 stack=5701632 heapInuse=2170880 heapReleased=6307840
+    dispatcher_observation_test.go:239: flows=4096 BURST entries=4096 sessions=4096 queued=4915200 goroutines=4099 heap=18536208 objects=51525 stack=36143104 | STABLE(after GC) heap=17795096 objects=50588 stack=36143104 goroutines=4099 entries=4096 queued=4915200
+    dispatcher_observation_test.go:268: flows=4096 RECOVERED entries=0 queued=0 goroutines=2 (baseline 3) after1GC heap=11482000 objects=15044 stack=9437184 | after3GC heap=2557344 objects=6812 stack=9437184 heapInuse=3432448 heapReleased=6701056
+--- PASS: TestUDPNatFlowCostAtScale (0.06s)
+PASS
+ok  	github.com/sagernet/sing-tun	0.140s

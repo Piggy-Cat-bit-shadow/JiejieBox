@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/deprecated"
@@ -45,6 +46,21 @@ type Router struct {
 	outbound     adapter.OutboundManager
 	powerManager *powerreport.Manager
 	client       adapter.DNSClient
+	// queryGate bounds how many DNS exchanges this router may run at once.
+	//
+	// # Why a DNS query needs a bound at all
+	//
+	// The hijacked-DNS entry already has a cap (route/dns.go), but every other query path - rule
+	// resolution, sniffing, dual-stack family probes, provider lookups - reaches the client without
+	// one, and the client spawns work per exchange (a dual-stack lookup is two exchanges, each with
+	// its own goroutine). A burst of flows therefore multiplies into an unbounded number of query
+	// goroutines and per-query state, on the same process budget the admission guard protects.
+	//
+	// The gate is deliberately independent of the memory-pressure level: DNS is control-plane work
+	// that recovers flows, so it should not be throttled harder just because the process is under
+	// pressure. It is a goroutine/queue bound, not a policy knob; the queue absorbs a burst and a
+	// caller beyond it fails fast with a clear local error instead of piling up.
+	queryGate *resourceguard.Gate
 	// concreteClient is the same client, typed.
 	//
 	// The network reset needs one internal operation on it - re-pinning each transport's environment
@@ -177,6 +193,30 @@ type Router struct {
 	testReverseMappingComparisonHook func(captured, current uint64)
 }
 
+// DNS query admission defaults.
+//
+// 256 concurrent exchanges is far above a healthy process (a handful) and at the size of the
+// observed burst the guard was built for; the queue is the same size, so a burst is absorbed rather
+// than refused, and the wait is short because resolution delays flows.
+const (
+	defaultDNSQueryLimit = 256
+	defaultDNSQueryQueue = 256
+	defaultDNSQueryWait  = 2 * time.Second
+)
+
+func (r *Router) admitQuery(ctx context.Context) (*resourceguard.Permit, error) {
+	// A router built by hand in a unit test has no gate; it keeps the previous behaviour. Every
+	// production router is built by NewRouter, which always installs one.
+	if r.queryGate == nil {
+		return nil, nil
+	}
+	permit, err := r.queryGate.Acquire(ctx, resourceguard.ClassNormal)
+	if err != nil {
+		return nil, E.Cause(err, "dns query admission")
+	}
+	return permit, nil
+}
+
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOptions) (*Router, error) {
 	router := &Router{
 		ctx:                   ctx,
@@ -188,6 +228,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOp
 		rules:                 make([]adapter.DNSRule, 0, len(options.Rules)),
 		defaultDomainStrategy: C.DomainStrategy(options.Strategy),
 	}
+	router.queryGate = resourceguard.NewBoundedGate(defaultDNSQueryLimit, defaultDNSQueryQueue, defaultDNSQueryWait)
 	router.policyStoreGuard.router = router
 	if options.DNSClientOptions.IndependentCache {
 		deprecated.Report(ctx, deprecated.OptionIndependentDNSCache)
@@ -2056,6 +2097,11 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
 		return earlyResponse, err
 	}
 	ctx = exchangeCtx.ctx
+	permit, gateErr := r.admitQuery(ctx)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer permit.Release()
 	var (
 		response    *mDNS.Msg
 		transport   adapter.DNSTransport
@@ -2085,6 +2131,22 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
 	return response, nil
 }
 
+// ExchangeAsync starts a DNS exchange asynchronously AFTER it has been admitted.
+//
+// # It is not non-blocking at the call boundary
+//
+// Admission is synchronous: this call may wait in the query gate's queue for up to the gate's wait
+// budget before it returns, and a refusal invokes the callback before returning. Once admitted, the
+// exchange itself runs asynchronously and the permit stays held until the callback fires (success,
+// error or a callback short-circuit). Callers must therefore:
+//
+//   - not treat a return from ExchangeAsync as "the query was started";
+//   - not assume the callback runs on another goroutine or after the return - a refusal and a
+//     client that completes synchronously both invoke it before ExchangeAsync returns;
+//   - not hold a lock across the call that the callback needs.
+//
+// The callback is expected exactly once by the client contract. This router releases the permit
+// through sync.Once, so a misbehaving transport that calls back twice cannot release it twice.
 func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options adapter.DNSQueryOptions, callback func(response *mDNS.Msg, err error)) {
 	started := time.Now()
 	exchangeCtx, earlyResponse, err := r.prepareExchange(ctx, message)
@@ -2096,13 +2158,26 @@ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options a
 		return
 	}
 	ctx = exchangeCtx.ctx
+	permit, gateErr := r.admitQuery(ctx)
+	if gateErr != nil {
+		callback(nil, gateErr)
+		return
+	}
+	// The permit is released exactly once, on whichever path completes the exchange. releaseOnce is
+	// what makes "a callback is called twice by a misbehaving transport" unable to double-release.
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(permit.Release)
+	}
 	if options.Transport != nil {
 		transport := options.Transport
 		r.client.ExchangeAsync(ctx, transport, message, r.finalizeExchangeOptions(options), nil, func(response *mDNS.Msg, exchangeErr error) {
+			defer release()
 			r.finishExchangeAsync(message, transport, response, exchangeErr, exchangeCtx.generation, callback)
 		})
 	} else if !exchangeCtx.legacyDNSMode {
 		r.exchangeWithRulesAsync(ctx, exchangeCtx.rules, message, options, true, func(result exchangeWithRulesResult) {
+			defer release()
 			if result.transport == nil {
 				r.emitFinalQueryEvent(started, message, localVerdictSource(result), result.rule, result.response, result.err)
 			}
@@ -2110,6 +2185,7 @@ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options a
 		})
 	} else {
 		go func() {
+			defer release()
 			response, transport, exchangeErr := r.exchangeLegacy(ctx, exchangeCtx, message, options)
 			if transport == nil {
 				r.emitFinalQueryEvent(started, message, legacyLocalVerdictSource(response, exchangeErr), nil, response, exchangeErr)
@@ -2153,6 +2229,16 @@ func (r *Router) lookupWithSource(ctx context.Context, domain string, options ad
 	rules := r.rules
 	legacyDNSMode := r.legacyDNSMode
 	r.rulesAccess.RUnlock()
+	// Lookup is the other public entry into the client. It does not pass through Exchange (it has
+	// its own rule walk and may combine two family exchanges), so it needs the same query budget;
+	// otherwise a flow burst that resolves names for dialing would still create unbounded query work
+	// while the Exchange path was correctly bounded. The permit is held across the whole lookup:
+	// the two families of a complete lookup are one caller's work.
+	permit, gateErr := r.admitQuery(ctx)
+	if gateErr != nil {
+		return nil, 0, false, gateErr
+	}
+	defer permit.Release()
 	var (
 		responseAddrs       []netip.Addr
 		sourceGeneration    uint64

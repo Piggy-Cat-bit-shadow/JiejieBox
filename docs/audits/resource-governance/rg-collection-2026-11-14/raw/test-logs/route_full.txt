@@ -1,0 +1,6 @@
+﻿# Full route package at collection HEAD (f1f0ac4e9; no production changes in this round)
+# command: go test ./route -count=1 -v   (cwd: repo root, CGO_ENABLED=0)
+
+lines=2498 pass=1186 fail=0 elapsed=448.5s
+summary=PASS
+ok_line=ok  	github.com/sagernet/sing-box/route	446.472s

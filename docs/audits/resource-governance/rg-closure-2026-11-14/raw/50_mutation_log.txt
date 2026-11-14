@@ -1,0 +1,35 @@
+﻿# Mutation log - each mutation is applied to the committed tree, the named test is run, and
+# the file is restored with git checkout. The final tree is verified clean at the end.
+
+## M3 v2rayquic: bypass admission
+exit=1
+--- FAIL: TestSaturatedAdmissionRefusesTheSharedCreation (0.00s)
+        	Messages:   	a saturated process budget must refuse the shared QUIC creation, not start it anyway
+FAIL
+FAIL	github.com/sagernet/sing-box/transport/v2rayquic	0.089s
+FAIL
+## M4 resourceguard: queue bound disabled
+exit=1
+--- FAIL: TestQueueBoundRefusesBeyondItsLimit (2.00s)
+        	Messages:   	the queue admitted more than its bound: {Limit:1 QueueLimit:2 WaitBudget:1s Inflight:1 Waiters:0 MaxInflight:1 Requested:1 Admitted:1 Queued:0 Refused:0 TimedOut:0 Canceled:0 Released:0}
+FAIL
+FAIL	github.com/sagernet/sing-box/common/resourceguard	2.071s
+FAIL
+## M5 oomkiller: stale poll ordering check removed
+exit=1
+--- FAIL: TestStalePollCannotPublishAnOlderObservation (0.00s)
+        	Messages:   	a poll that started before the newest observation was allowed to publish after it
+FAIL
+FAIL	github.com/sagernet/sing-box/service/oomkiller	0.075s
+FAIL
+## M6 resourceguard: cancel does not withdraw the waiter
+exit=1
+--- FAIL: TestQueuedCancellationLeavesNoWaiter (0.00s)
+        	Messages:   	the cancelled waiter stayed in the queue
+FAIL
+FAIL	github.com/sagernet/sing-box/common/resourceguard	0.072s
+FAIL
+
+## post-mutation tree state
+?? common/resourceguard/queue_bound_test.go
+?? docs/audits/resource-governance/rg-closure-2026-11-14/raw/50_mutation_log.txt

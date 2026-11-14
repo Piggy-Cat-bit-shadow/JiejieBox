@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -14,7 +15,26 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
+// creationAdmission bounds one physical transport creation this package owns.
+//
+// It is the process admission hook (common/resourceguard) reduced to the one thing this package
+// needs: "create, or be refused". A nil hook admits everything, which is what every platform without
+// a process budget gets.
+type creationAdmission func(ctx context.Context, create func(context.Context) error) error
+
+// h3AdmissionFromContext returns the hook when the construction context carries a guard.
+func h3AdmissionFromContext(ctx context.Context) creationAdmission {
+	guard := resourceguard.FromContext(ctx)
+	if guard == nil {
+		return nil
+	}
+	return func(admitCtx context.Context, create func(context.Context) error) error {
+		return guard.AdmitCreation(admitCtx, "httpclient/h3", create)
+	}
+}
+
 func NewTransport(ctx context.Context, logger logger.ContextLogger, tag string, options option.HTTPClientOptions) (*ManagedTransport, error) {
+	admission := h3AdmissionFromContext(ctx)
 	rawDialer, err := dialer.NewWithOptions(dialer.Options{
 		Context:                 ctx,
 		Options:                 options.DialerOptions,
@@ -65,7 +85,7 @@ func NewTransport(ctx context.Context, logger logger.ContextLogger, tag string, 
 	if err != nil {
 		return nil, err
 	}
-	inner, err := newTransport(rawDialer, baseTLSConfig, options)
+	inner, err := newTransport(rawDialer, baseTLSConfig, options, admission)
 	if err != nil {
 		return nil, err
 	}
@@ -77,14 +97,14 @@ func NewTransport(ctx context.Context, logger logger.ContextLogger, tag string, 
 		detour:          options.Detour,
 		defaultOutbound: options.DefaultOutbound,
 		factory: func() (innerTransport, error) {
-			return newTransport(rawDialer, baseTLSConfig, options)
+			return newTransport(rawDialer, baseTLSConfig, options, admission)
 		},
 	}
 	managedTransport.epoch.Store(&transportEpoch{transport: inner})
 	return managedTransport, nil
 }
 
-func newTransport(rawDialer N.Dialer, baseTLSConfig tls.Config, options option.HTTPClientOptions) (innerTransport, error) {
+func newTransport(rawDialer N.Dialer, baseTLSConfig tls.Config, options option.HTTPClientOptions, admission creationAdmission) (innerTransport, error) {
 	version := options.Version
 	if version == 0 {
 		version = 2
@@ -112,14 +132,14 @@ func newTransport(rawDialer N.Dialer, baseTLSConfig tls.Config, options option.H
 			}
 		}
 		if options.DisableVersionFallback {
-			transport, err = newHTTP3Transport(rawDialer, baseTLSConfig, options.HTTP3Options)
+			transport, err = newHTTP3Transport(rawDialer, baseTLSConfig, options.HTTP3Options, admission)
 		} else {
 			var h2Fallback innerTransport
 			h2Fallback, err = newHTTP2FallbackTransport(rawDialer, baseTLSConfig, options.HTTP2Options)
 			if err != nil {
 				return nil, err
 			}
-			transport, err = newHTTP3FallbackTransport(rawDialer, baseTLSConfig, h2Fallback, options.HTTP3Options, fallbackDelay)
+			transport, err = newHTTP3FallbackTransport(rawDialer, baseTLSConfig, h2Fallback, options.HTTP3Options, fallbackDelay, admission)
 		}
 	default:
 		return nil, E.New("unknown HTTP version: ", version)

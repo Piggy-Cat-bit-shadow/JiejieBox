@@ -1,0 +1,14 @@
+﻿=== RUN   TestBackgroundAllowedSuppressesOnlyCritical
+--- PASS: TestBackgroundAllowedSuppressesOnlyCritical (0.00s)
+=== RUN   TestGateStatsReportTheWaiterHighWaterMark
+--- PASS: TestGateStatsReportTheWaiterHighWaterMark (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/common/resourceguard	0.079s
+=== RUN   TestOptimisticRefreshIsSuppressedOnlyUnderCriticalPressure
+--- PASS: TestOptimisticRefreshIsSuppressedOnlyUnderCriticalPressure (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/dns	0.099s
+=== RUN   TestBackgroundHealthRoundsAreSuppressedOnlyUnderCriticalPressure
+--- PASS: TestBackgroundHealthRoundsAreSuppressedOnlyUnderCriticalPressure (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/group	0.100s

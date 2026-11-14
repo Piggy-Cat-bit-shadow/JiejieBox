@@ -1,0 +1,50 @@
+# Round-3 (collection) push and remote verification
+
+# repository : https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git
+# branch     : work/resource-governance-closure-2026-11-14 (same branch as rounds 1 and 2)
+# collection start: f1f0ac4e9 (round-2 tip, verified = origin before this round)
+# base       : testing @ fa61500731b1237e9ef44029b7469ee5373af4ba (unchanged)
+
+## commit added by this round
+
+    5ff7dd7f0 docs(audit): collect round-3 resource-governance evidence
+
+## push #1
+
+command:
+    git push origin work/resource-governance-closure-2026-11-14
+
+remote:
+   f1f0ac4e9..5ff7dd7f0  work/resource-governance-closure-2026-11-14 -> work/resource-governance-closure-2026-11-14
+
+verification:
+    $ git ls-remote --heads origin work/resource-governance-closure-2026-11-14
+    5ff7dd7f09a136c419a9f6f25aae76adf8e4e962  refs/heads/work/resource-governance-closure-2026-11-14
+    $ git ls-remote --heads origin testing
+    fa61500731b1237e9ef44029b7469ee5373af4ba  refs/heads/testing
+    $ git rev-list --left-right --count origin/work/...-2026-11-14...HEAD
+    0  0
+
+## push #2 - this record
+
+This file is a docs-only commit added after push #1, so the branch tip advances by one. The
+authoritative check is the `git ls-remote` command above; the handoff message reports the tip after
+push #2, verified the same way.
+
+## working tree / production code
+
+- Production code in this round: NONE. `git diff --name-only f1f0ac4e9..5ff7dd7f0` lists only
+  `docs/audits/resource-governance/**`.
+- Working tree before the commit: only `docs/...rg-collection-2026-11-14/` (untracked) and one
+  pointer line in the round-1/2 bundle README.
+- No force-push, no rebase of pushed history, no tag, no Release, no merge into `testing`.
+- Temporary harness directory (`harness_tmp/`) was removed before staging; the harness source is
+  preserved as text in `raw/harness/main.go.txt` so the module build is unaffected.
+
+## CI
+
+- No workflow ran for `5ff7dd7f0`: the only path-matched workflow (`resource-guard.yml`) filters on
+  `common/resourceguard/**`, `common/tls/**`, `protocol/anytls/**`, `service/oomkiller/**`, and this
+  commit is docs-only.
+- The last path-matched run remains `43545040780` at `354a74fbb` (conclusion: success). See
+  `00_REPOSITORY_SNAPSHOT.md` §6. This round does not claim CI at its HEAD.

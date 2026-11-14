@@ -1,0 +1,4 @@
+check,left,right,ok,note
+requested == admitted+refused+timed_out+canceled,2424,2424,true,queue depth is not part of the partition; queued is a cumulative enqueue counter
+admitted-released == inflight,0,0,true,a granted-then-abandoned waiter is counted in neither admitted nor released
+final waiters,0,0,true,every waiter must leave the queue at the end

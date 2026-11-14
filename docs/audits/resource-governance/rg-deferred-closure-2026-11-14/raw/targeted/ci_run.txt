@@ -1,0 +1,10 @@
+﻿# GitHub Actions for the targeted-fix round
+{"conclusion":"success","headSha":"324a3b01155ed89fe91eb2f5dd38178eba2cad04","status":"completed","url":"https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43555135120"}
+
+gh : accepts at most 1 arg(s), received 2
+所在位置 行:8 字符: 9
++ $ci += (gh run view 43555135120 --json jobs --jq '.jobs[] | "\(.name) ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (accepts at most 1 arg(s), received 2:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

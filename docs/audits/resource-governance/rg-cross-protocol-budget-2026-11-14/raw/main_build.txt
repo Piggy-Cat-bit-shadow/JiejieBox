@@ -1,0 +1,3 @@
+﻿# main repo build at final pin
+pin: replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114050708-938b89dcb159
+exit=0

@@ -1,0 +1,4 @@
+level,plan_limit,plan_queue_limit,plan_wait_ms,note
+normal,32,256,5000,observed through Guard.Stats() at this level
+armed,16,128,2500,observed through Guard.Stats() at this level
+critical,8,32,100,observed through Guard.Stats() at this level

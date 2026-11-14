@@ -1,0 +1,44 @@
+# Round-2 push and remote verification
+
+# repository : https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git
+# branch     : work/resource-governance-closure-2026-11-14 (the round-1 branch; no second task branch)
+# debug start: ce95f50ea (round-1 tip, verified = origin before this round)
+# base       : testing @ fa61500731b1237e9ef44029b7469ee5373af4ba (unchanged)
+
+## commits added by the debug round
+
+    6d887ee49 fix(resourceguard): report the level the gate is publishing, not the stale observation
+    f52b8102a fix(resourceguard): measure admission wait, not holding time
+    c92ae7f34 fix(route): keep local admission refusals out of node health
+    26eaf64a1 test: adversarial coverage for the round-1 admission seams
+    5914597b4 test: pin the gate queue bound and the platform scope of the pressure policy
+    a6b7d5135 test(bench): price the two setup paths the round-1 change touches
+    354a74fbb docs(audit): record the round-2 adversarial debug and its bug ledger
+
+## push #1 - the debug commits and their evidence
+
+command:
+    git push origin work/resource-governance-closure-2026-11-14
+
+remote:
+   ce95f50ea..354a74fbb  work/resource-governance-closure-2026-11-14 -> work/resource-governance-closure-2026-11-14
+
+verification:
+    $ git ls-remote --heads origin work/resource-governance-closure-2026-11-14
+    354a74fbb975c2621c2becdf2316dfd1299a941d  refs/heads/work/resource-governance-closure-2026-11-14
+    $ git ls-remote --heads origin testing
+    fa61500731b1237e9ef44029b7469ee5373af4ba  refs/heads/testing
+    $ git rev-list --left-right --count origin/work/...-2026-11-14...HEAD
+    0  0
+
+## push #2 - this record
+
+This file is committed after push #1, so its own commit advances the branch tip by one docs-only
+commit. That is exactly why the authoritative statement is the `git ls-remote` command above rather
+than a SHA copied into prose; the handoff message reports the tip after push #2, verified the same way.
+
+## invariants held
+
+- No force-push, no rebase of pushed history, no tag, no Release, no merge into `testing`.
+- `testing` remained at fa6150073 for the whole round.
+- The tree was clean before push; the final verification runs after push #2.

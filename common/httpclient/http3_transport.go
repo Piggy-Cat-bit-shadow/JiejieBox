@@ -7,6 +7,7 @@ import (
 	stdTLS "crypto/tls"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/congestion"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 	congestion_meta1 "github.com/sagernet/sing-quic/congestion_meta1"
@@ -67,6 +69,7 @@ func newHTTP3RoundTripper(
 	rawDialer N.Dialer,
 	baseTLSConfig tls.Config,
 	options option.QUICOptions,
+	admission creationAdmission,
 ) *http3.Transport {
 	var handshakeTimeout time.Duration
 	if baseTLSConfig != nil {
@@ -79,47 +82,79 @@ func newHTTP3RoundTripper(
 	h3Transport := &http3.Transport{
 		TLSClientConfig: &stdTLS.Config{},
 		QUICConfig:      quicConfig,
-		Dial: func(ctx context.Context, addr string, tlsConfig *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
-			if handshakeTimeout > 0 && quicConfig.HandshakeIdleTimeout == 0 {
-				quicConfig = quicConfig.Clone()
-				quicConfig.HandshakeIdleTimeout = handshakeTimeout
-			}
-			if baseTLSConfig != nil {
-				var err error
-				tlsConfig, err = buildSTDTLSConfig(baseTLSConfig, M.ParseSocksaddr(addr), []string{http3.NextProtoH3})
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				tlsConfig = tlsConfig.Clone()
-				tlsConfig.NextProtos = []string{http3.NextProtoH3}
-			}
-			conn, err := rawDialer.DialContext(ctx, N.NetworkUDP, M.ParseSocksaddr(addr))
-			if err != nil {
-				return nil, err
-			}
-			quicConn, err := quic.DialEarlyConn(ctx, conn, tlsConfig, quicConfig)
-			if err != nil {
-				conn.Close()
-				return nil, err
-			}
-			go func() {
-				<-quicConn.Context().Done()
-				conn.Close()
-			}()
-			return quicConn, nil
-		},
+		Dial:            newHTTP3DialFunc(rawDialer, baseTLSConfig, handshakeTimeout, admission),
 	}
 	return h3Transport
+}
+
+// newHTTP3DialFunc builds the Dial callback of the pooled H3 transport.
+//
+// It is a named function so the admission seam can be driven directly by a test: the real http3
+// transport reaches it only through a full handshake, while the property that matters here - the
+// constructor is not entered when the gate refuses - is visible at this boundary.
+func newHTTP3DialFunc(rawDialer N.Dialer, baseTLSConfig tls.Config, handshakeTimeout time.Duration, admission creationAdmission) func(ctx context.Context, addr string, tlsConfig *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	return func(ctx context.Context, addr string, tlsConfig *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+		if handshakeTimeout > 0 && quicConfig.HandshakeIdleTimeout == 0 {
+			quicConfig = quicConfig.Clone()
+			quicConfig.HandshakeIdleTimeout = handshakeTimeout
+		}
+		var err error
+		if baseTLSConfig != nil {
+			tlsConfig, err = buildSTDTLSConfig(baseTLSConfig, M.ParseSocksaddr(addr), []string{http3.NextProtoH3})
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			tlsConfig = tlsConfig.Clone()
+			tlsConfig.NextProtos = []string{http3.NextProtoH3}
+		}
+		var (
+			packetConn net.Conn
+			quicConn   *quic.Conn
+		)
+		create := func(dialCtx context.Context) error {
+			conn, dialErr := rawDialer.DialContext(dialCtx, N.NetworkUDP, M.ParseSocksaddr(addr))
+			if dialErr != nil {
+				return dialErr
+			}
+			created, handshakeErr := quic.DialEarlyConn(dialCtx, conn, tlsConfig, quicConfig)
+			if handshakeErr != nil {
+				conn.Close()
+				return handshakeErr
+			}
+			packetConn = conn
+			quicConn = created
+			return nil
+		}
+		// On a COLD-START connection DialEarlyConn blocks until the QUIC handshake completes or
+		// times out on the pinned quic-go fork (measured in h3_zero_rtt_test.go), so this admission
+		// covers that handshake, not only the socket. The 0-RTT resume path is NOT_VERIFIED: no
+		// session ticket is installed there, and a resumed DialEarlyConn may return earlier.
+		if admission != nil {
+			err = admission(ctx, create)
+		} else {
+			err = create(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// quic-go does not own the socket it was given: close it when the connection ends.
+		go func() {
+			<-quicConn.Context().Done()
+			packetConn.Close()
+		}()
+		return quicConn, nil
+	}
 }
 
 func newHTTP3Transport(
 	rawDialer N.Dialer,
 	baseTLSConfig tls.Config,
 	options option.QUICOptions,
+	admission creationAdmission,
 ) (innerTransport, error) {
 	return &http3Transport{
-		h3Transport: newHTTP3RoundTripper(rawDialer, baseTLSConfig, options),
+		h3Transport: newHTTP3RoundTripper(rawDialer, baseTLSConfig, options, admission),
 	}, nil
 }
 
@@ -129,9 +164,10 @@ func newHTTP3FallbackTransport(
 	h2Fallback innerTransport,
 	options option.QUICOptions,
 	fallbackDelay time.Duration,
+	admission creationAdmission,
 ) (innerTransport, error) {
 	return &http3FallbackTransport{
-		h3Transport:   newHTTP3RoundTripper(rawDialer, baseTLSConfig, options),
+		h3Transport:   newHTTP3RoundTripper(rawDialer, baseTLSConfig, options, admission),
 		h2Fallback:    h2Fallback,
 		fallbackDelay: fallbackDelay,
 		broken:        make(map[string]http3BrokenEntry),
@@ -819,6 +855,14 @@ func (t *http3FallbackTransport) recordH3AttemptFailure(request *http.Request, a
 	if isH3RequestRejected(err) {
 		// The peer explicitly did not process the request: a retry may be safe, but the
 		// transport itself is not known to be broken.
+		return
+	}
+	if resourceguard.IsLocalRejection(err) {
+		// THIS PROCESS refused (or ran out of budget for) the creation: the gate's queue was full,
+		// the wait expired, the rate window was armed, or the caller's context ended. The peer was
+		// never involved, so the authority learned nothing and must not advance the HTTP/3 broken
+		// ladder - otherwise one memory-pressure episode would demote a healthy authority to HTTP/2
+		// for five minutes and count as an H3 failure in the next diagnosis.
 		return
 	}
 	t.markH3Broken(authority, attempt)

@@ -449,6 +449,23 @@ func destinationForError(metadata adapter.InboundContext) string {
 	return "[" + addresses + "]:" + strconv.Itoa(int(metadata.Destination.Port))
 }
 
+// admissionBackpressure reports whether err is this process's creation policy refusing or delaying
+// the work, rather than a dial that ran and failed.
+//
+// # Why this is narrower than resourceguard.IsLocalRejection
+//
+// IsLocalRejection is the admission package's wider notion: it also covers a caller cancellation and
+// a deadline. Those are "local" in the sense that the far side did not answer, but they are NOT
+// evidence that the process refused to start the work - a dial that timed out is exactly the kind of
+// path failure the URLTest ledger and the ERROR log exist for, and this fork's logging contract pins
+// that a timeout keeps its ERROR line (route/conn_nxdomain_log_test.go).
+//
+// Only the three gate outcomes mean "the expensive creation never started": queue full, wait
+// timeout, and the fast-fail rate window.
+func admissionBackpressure(err error) bool {
+	return E.IsMulti(err, resourceguard.ErrQueueFull, resourceguard.ErrWaitTimeout, resourceguard.ErrRateLimited)
+}
+
 // logDialFailure reports one failed flow setup.
 //
 // A DNS NXDOMAIN is a normal negative answer: the name does not exist, the resolver did its job,
@@ -461,12 +478,41 @@ func destinationForError(metadata adapter.InboundContext) string {
 // and requires EVERY leaf to be RcodeError(NXDOMAIN). A mixed A=NXDOMAIN/AAAA=SERVFAIL or
 // NXDOMAIN+timeout outcome therefore keeps its Error line, which is the distinction between a
 // normal negative answer and a query that actually failed.
+//
+// Admission backpressure is the same kind of non-event for the log: the gate refused to START this
+// process's work, so nothing about the path was learned. Under pressure every flow of the burst would
+// otherwise produce an ERROR line, which is exactly when the log is most expensive and least
+// informative. See recordSetupFailure for the health ledger half of the same rule.
 func (m *ConnectionManager) logDialFailure(ctx context.Context, err error) {
-	if dns.IsNXDomain(err) {
+	if dns.IsNXDomain(err) || admissionBackpressure(err) {
 		m.logger.DebugContext(ctx, err)
 		return
 	}
 	m.logger.ErrorContext(ctx, err)
+}
+
+// recordSetupFailure reports a failed flow setup and updates the URLTest health ledger.
+//
+// # Why the two halves are decided together
+//
+// Clearing the selected leaf's measurement on a dial failure is correct when the dial learned
+// something about the path. It is wrong when the error is this process's own admission decision:
+// resourceguard.ErrQueueFull / ErrWaitTimeout / ErrRateLimited mean the far side was never tried.
+// Deleting the measurement then forces the group to treat a healthy member as unmeasured and can
+// make it re-select because the process was busy - local backpressure turned into node-health
+// evidence.
+//
+// The exposure is shared by every creation-admission seam (AnyTLS, the QUIC clients, TrustTunnel,
+// Mieru, Naive, shared TLS) and round 1 added one more of them for transport.type=quic, so the rule
+// lives here, once, rather than in each protocol.
+//
+// A real dial failure - including a timeout or a caller cancellation - keeps the previous behaviour:
+// the measurement is cleared and the error is logged at its usual level.
+func (m *ConnectionManager) recordSetupFailure(ctx context.Context, metadata adapter.InboundContext, err error) {
+	if !admissionBackpressure(err) {
+		m.deleteURLTestHistory(metadata.OutboundChain)
+	}
+	m.logDialFailure(ctx, err)
 }
 
 func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
@@ -508,9 +554,8 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 			dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 		}
 		err = E.Cause(err, "open connection to ", destinationForError(metadata), dialerString)
-		m.deleteURLTestHistory(metadata.OutboundChain)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
-		m.logDialFailure(ctx, err)
+		m.recordSetupFailure(ctx, metadata, err)
 		return
 	}
 	err = N.ReportConnHandshakeSuccess(conn, remoteConn)
@@ -799,9 +844,8 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "open packet connection to ", remoteString, dialerString)
-			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
-			m.logDialFailure(ctx, err)
+			m.recordSetupFailure(ctx, metadata, err)
 			return
 		}
 		remotePacketConn = bufio.NewUnbindPacketConn(remoteConn)
@@ -810,13 +854,32 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 			destinationAddress = connRemoteAddr
 		}
 	} else {
+		// The same three properties the connected arm above gets, on the arm that carries ORDINARY
+		// proxied UDP.
+		//
+		// The TUN's NAT connection names a peer, but it does not report IsUDPConnect, so a
+		// STUN/mDNS/QUIC burst - the traffic this fork's admission policy was built from - takes
+		// THIS branch, not the one above. Without the gate the setup of such a flow was uncancellable
+		// by a network transition and outlived the path it was dialled on; without the class the
+		// outbound's admission seam saw background work even when a person was waiting, so the
+		// interactive reserve was unreachable for UDP; without the dial gate the reconnect herd this
+		// manager smooths for streams and connected UDP was unsmoothed here.
+		//
+		// The class has to reach the admission seam inside the outbound, which only receives a
+		// context. See dial_setup.go: setup authority covers the listen and ends at establishment,
+		// and releaseDial is called with finishSetup for the same reason as on the stream path.
+		ctx = trafficclass.WithClass(ctx, metadata.TrafficClass)
+		releaseDial := m.enterDialGate(ctx, metadata.TrafficClass)
+		setupCtx, finishSetup := m.dialSetups.begin(ctx)
 		if len(metadata.DestinationAddresses) > 0 {
-			remotePacketConn, destinationAddress, err = dialer.ListenSerialNetworkPacket(ctx, this, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
+			remotePacketConn, destinationAddress, err = dialer.ListenSerialNetworkPacket(setupCtx, this, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
 		} else if packetDialer, withDestination := this.(dialer.PacketDialerWithDestination); withDestination {
-			remotePacketConn, destinationAddress, err = packetDialer.ListenPacketWithDestination(ctx, metadata.Destination)
+			remotePacketConn, destinationAddress, err = packetDialer.ListenPacketWithDestination(setupCtx, metadata.Destination)
 		} else {
-			remotePacketConn, err = this.ListenPacket(ctx, metadata.Destination)
+			remotePacketConn, err = this.ListenPacket(setupCtx, metadata.Destination)
 		}
+		finishSetup()
+		releaseDial()
 		if err != nil {
 			// The destination is part of this message, not decoration.
 			//
@@ -832,9 +895,8 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "listen packet connection to ", remoteString, dialerString)
-			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
-			m.logDialFailure(ctx, err)
+			m.recordSetupFailure(ctx, metadata, err)
 			return
 		}
 	}

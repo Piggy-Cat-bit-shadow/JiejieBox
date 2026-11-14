@@ -1,0 +1,33 @@
+﻿# Performance A/B: BASE fa6150073 (round-1 code absent)
+# benchmark files copied from the branch; same flags.
+
+## BASE route BenchmarkNonConnectedPacketSetup
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/route
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkNonConnectedPacketSetup-16    	  357397	       939.0 ns/op	    1144 B/op	      10 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  420703	       893.6 ns/op	    1144 B/op	      10 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  447504	       890.6 ns/op	    1144 B/op	      10 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  405661	       900.9 ns/op	    1144 B/op	      10 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  425521	       875.5 ns/op	    1144 B/op	      10 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/route	2.046s
+
+## BASE v2rayquic BenchmarkSharedOfferCreation
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/transport/v2rayquic
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkSharedOfferCreation/NoGuard-16         	  250483	      1421 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  269515	      1459 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  247938	      1438 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  265834	      1431 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  249218	      1614 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  207754	      1539 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  246168	      1477 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  260613	      1424 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  251054	      1421 ns/op	     320 B/op	       5 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  264919	      1407 ns/op	     320 B/op	       5 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	3.932s

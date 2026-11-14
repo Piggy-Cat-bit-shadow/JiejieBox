@@ -388,8 +388,16 @@ type xmuxManager struct {
 	backoffArmed atomic.Bool
 }
 
-// xmuxPoolStats is a consistent snapshot of the pool's OWN inventory: connections it created, holds,
-// is draining, and has confirmed closed.
+// xmuxPoolStats is a consistent snapshot of the pool's OWN inventory: entries it created, holds, is
+// draining, and has confirmed closed.
+//
+// # What one unit is
+//
+// Every field counts POOL ENTRIES, not physical sockets. One entry is one xmuxClient wrapping one HTTP
+// transport: for HTTP/3 that wrapper carries its QUIC connection, while for HTTP/2 the wrapper owns an
+// http2.Transport whose internal pool may hold several TCP/TLS sockets. The net/http, http2 and
+// http3 layers own those sockets. Nothing here counts them, and no field may be added to another
+// layer's socket count as if the units matched.
 //
 // # What it can and cannot prove
 //
@@ -405,19 +413,20 @@ type xmuxManager struct {
 type xmuxPoolStats struct {
 	// Generation is the current pool boundary counter (see xmuxManager.generation).
 	Generation uint64
-	// Pooled is the number of connections the pool currently holds (Active + Idle).
+	// Pooled is the number of pool ENTRIES currently held (Active + Idle); not a socket count.
 	Pooled int
-	// Active is pooled connections carrying at least one stream.
+	// Active is pooled entries carrying at least one stream.
 	Active int
-	// Idle is pooled connections carrying none. These are what CloseIdleConnections may retire.
+	// Idle is pooled entries carrying none. These are what CloseIdleConnections may retire.
 	Idle int
-	// Draining is detached connections whose teardown is deferred until their last stream releases.
+	// Draining is detached entries whose teardown is deferred until their last stream releases.
 	Draining int
 	// DrainingOldGeneration is the subset of Draining opened before the current generation.
 	DrainingOldGeneration int
-	// Opened is how many connections the pool created over its life.
+	// Opened is how many ENTRIES (transport wrappers) the pool created over its life.
 	Opened uint64
-	// Released is how many underlying connections were actually closed over the pool's life.
+	// Released is how many entries had their underlying transport Close actually run over the
+	// pool's life. This is the release confirmation the wrapper can give, not a socket count.
 	Released uint64
 }
 

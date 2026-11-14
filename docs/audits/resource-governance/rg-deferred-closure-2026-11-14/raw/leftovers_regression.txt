@@ -1,0 +1,21 @@
+﻿# Round-3 leftovers closure - regression at code HEAD 3f92a0f8b
+
+## go test ./common/resourceguard ./dns/... ./protocol/group -count=1
+ok  	github.com/sagernet/sing-box/common/resourceguard	1.012s
+ok  	github.com/sagernet/sing-box/dns	8.657s
+ok  	github.com/sagernet/sing-box/dns/transport	6.092s
+ok  	github.com/sagernet/sing-box/dns/transport/dhcp	0.105s
+ok  	github.com/sagernet/sing-box/dns/transport/fakeip	0.198s
+ok  	github.com/sagernet/sing-box/dns/transport/group	0.921s
+ok  	github.com/sagernet/sing-box/dns/transport/hosts	0.096s
+?   	github.com/sagernet/sing-box/dns/transport/local	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/local/systemconfig	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/mdns	[no test files]
+ok  	github.com/sagernet/sing-box/dns/transport/quic	0.161s
+ok  	github.com/sagernet/sing-box/protocol/group	7.346s
+
+## go test -tags with_quic ./common/httpclient -count=1
+ok  	github.com/sagernet/sing-box/common/httpclient	0.795s
+
+## go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...
+build exit=0

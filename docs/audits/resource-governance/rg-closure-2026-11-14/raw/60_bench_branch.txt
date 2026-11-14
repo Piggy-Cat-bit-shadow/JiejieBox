@@ -1,0 +1,34 @@
+﻿# Performance A/B: branch (round-1 + debug fixes) vs base fa6150073
+# Both trees: same host, same Go (go1.25.5 windows/amd64), CGO_ENABLED=0, -benchtime=300ms -count=5 -benchmem.
+# The benchmark files are test-only; they are copied into the base worktree unchanged.
+
+## BRANCH route BenchmarkNonConnectedPacketSetup
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/route
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkNonConnectedPacketSetup-16    	  186655	      1927 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  185989	      1908 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  186580	      1921 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  204211	      1941 ns/op	    1440 B/op	      16 allocs/op
+BenchmarkNonConnectedPacketSetup-16    	  181136	      1944 ns/op	    1440 B/op	      16 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/route	2.372s
+
+## BRANCH v2rayquic BenchmarkSharedOfferCreation
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/transport/v2rayquic
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkSharedOfferCreation/NoGuard-16         	  158916	      2123 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  170173	      2094 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  166413	      2011 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  181252	      1985 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/NoGuard-16         	  181125	      1965 ns/op	     512 B/op	      10 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  121129	      2850 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  120150	      2997 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  123144	      2881 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  119898	      2885 ns/op	     672 B/op	      14 allocs/op
+BenchmarkSharedOfferCreation/WithGuard-16       	  129286	      2906 ns/op	     672 B/op	      14 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	3.894s

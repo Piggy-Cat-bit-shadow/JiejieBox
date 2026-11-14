@@ -1,0 +1,203 @@
+﻿# Closure-round regression (branch work/resource-governance-closure-2026-11-14)
+
+## go test ./protocol/anytls ./dns/... ./common/httpclient ./transport/v2rayxhttp (with tags as needed)
+--- FAIL: TestSessionBurstWithoutGuardReproducesTheAmplification (5.00s)
+    session_burst_test.go:196: 
+        	Error Trace:	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/session_burst_test.go:196
+        	Error:      	Should be zero, but was 200
+        	Test:       	TestSessionBurstWithoutGuardReproducesTheAmplification
+        	Messages:   	every flow must reach session creation
+--- FAIL: TestSessionBurstWithGuardBoundsConcurrentCreation (5.00s)
+    session_burst_test.go:251: 
+        	Error Trace:	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/session_burst_test.go:251
+        	Error:      	Condition never satisfied
+        	Test:       	TestSessionBurstWithGuardBoundsConcurrentCreation
+        	Messages:   	the gate did not admit exactly the limit: {Limit:8 QueueLimit:256 WaitBudget:5s Inflight:3 Waiters:0 MaxInflight:3 Requested:3 Admitted:3 Queued:0 Refused:0 TimedOut:0 Canceled:0 Released:0}
+panic: test timed out after 10m0s
+	running tests:
+		TestTLSHandshakeBurstAmplificationIsBounded (9m44s)
+
+goroutine 10221 [running]:
+testing.(*M).startAlarm.func1()
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:2682 +0x345
+created by time.goFunc
+	C:/Deepseek/.tools/go1.25.5/src/time/sleep.go:215 +0x2d
+
+goroutine 1 [chan receive, 9 minutes]:
+testing.(*T).Run(0xc000003a40, {0x7ff62b2d0a9c?, 0x7ff903655d00?}, 0x7ff62b2fedf8)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:2005 +0x469
+testing.runTests.func1(0xc000003a40)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:2477 +0x37
+testing.tRunner(0xc000003a40, 0xc0000f9c70)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1934 +0xc3
+testing.runTests(0xc0000082b8, {0x7ff62b788b40, 0x35, 0x35}, {0x7?, 0xc00018c2c0?, 0x7ff62b790f20?})
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:2475 +0x4b4
+testing.(*M).Run(0xc000090960)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:2337 +0x63a
+main.main()
+	_testmain.go:157 +0x9b
+
+goroutine 24 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc000106a80)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1708 +0x225
+github.com/sagernet/sing-box/protocol/anytls.TestAnInteractiveFlowMayUseTheReserve(0xc000106a80)
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/admission_class_test.go:19 +0x2a
+testing.tRunner(0xc000106a80, 0x7ff62b2fec88)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1934 +0xc3
+created by testing.(*T).Run in goroutine 1
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1997 +0x44b
+
+goroutine 25 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc000106c40)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1708 +0x225
+github.com/sagernet/sing-box/protocol/anytls.TestABackgroundFlowDoesNotUseTheReserve(0xc000106c40)
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/admission_class_test.go:79 +0x27
+testing.tRunner(0xc000106c40, 0x7ff62b2fec60)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1934 +0xc3
+created by testing.(*T).Run in goroutine 1
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1997 +0x44b
+
+goroutine 61 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc000296540)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1708 +0x225
+github.com/sagernet/sing-box/protocol/anytls.TestANestedAnyTLSDialReusesTheHeldPermit(0xc000296540)
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/admission_nested_test.go:21 +0x2a
+testing.tRunner(0xc000296540, 0x7ff62b2fec68)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1934 +0xc3
+created by testing.(*T).Run in goroutine 1
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1997 +0x44b
+
+goroutine 10202 [sync.WaitGroup.Wait, 9 minutes]:
+sync.runtime_SemacquireWaitGroup(0xc00018a840?, 0xc0?)
+	C:/Deepseek/.tools/go1.25.5/src/runtime/sema.go:114 +0x2e
+sync.(*WaitGroup).Wait(0xc000134000)
+	C:/Deepseek/.tools/go1.25.5/src/sync/waitgroup.go:206 +0x85
+github.com/sagernet/sing-box/protocol/anytls.burstWithTLSHandshakes(0xc000106380, 0x0, 0xc8, 0x17d78400)
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:144 +0x385
+github.com/sagernet/sing-box/protocol/anytls.TestTLSHandshakeBurstAmplificationIsBounded(0xc000106380)
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:167 +0x36
+testing.tRunner(0xc000106380, 0x7ff62b2fedf8)
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1934 +0xc3
+created by testing.(*T).Run in goroutine 1
+	C:/Deepseek/.tools/go1.25.5/src/testing/testing.go:1997 +0x44b
+
+goroutine 10218 [select, 9 minutes]:
+crypto/tls.(*Conn).handshakeContext.func2()
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:1551 +0x86
+created by crypto/tls.(*Conn).handshakeContext in goroutine 9269
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:1550 +0x265
+
+goroutine 10203 [IO wait, 9 minutes]:
+internal/poll.runtime_pollWait(0x2c45a36ea00, 0x72)
+	C:/Deepseek/.tools/go1.25.5/src/runtime/netpoll.go:351 +0x85
+internal/poll.(*pollDesc).wait(0x884?, 0x7ff62ac8cba6?, 0x0)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_poll_runtime.go:84 +0x27
+internal/poll.waitIO(0x7ff62ac9fef6?)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_windows.go:187 +0x65
+internal/poll.execIO(0xc0009327a0, 0xc0001fbd08)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_windows.go:240 +0x13a
+internal/poll.(*FD).acceptOne(0xc000932788, 0x4e8, {0xc00045e000?, 0x7ff62b7da520?, 0x320018?}, 0xc0001fbd98?)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_windows.go:1059 +0x65
+internal/poll.(*FD).Accept(0xc000932788, 0xc0001fbee8)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_windows.go:1093 +0x1b6
+net.(*netFD).accept(0xc000932788)
+	C:/Deepseek/.tools/go1.25.5/src/net/fd_windows.go:202 +0x4b
+net.(*TCPListener).accept(0xc000464180)
+	C:/Deepseek/.tools/go1.25.5/src/net/tcpsock_posix.go:159 +0x1b
+net.(*TCPListener).Accept(0xc000464180)
+	C:/Deepseek/.tools/go1.25.5/src/net/tcpsock.go:380 +0x30
+github.com/sagernet/sing-box/protocol/anytls.newSilentServer.func1()
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:38 +0x69
+created by github.com/sagernet/sing-box/protocol/anytls.newSilentServer in goroutine 10202
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:36 +0xf1
+
+goroutine 9269 [IO wait, 9 minutes]:
+internal/poll.runtime_pollWait(0x2c45a6da800, 0x72)
+	C:/Deepseek/.tools/go1.25.5/src/runtime/netpoll.go:351 +0x85
+internal/poll.(*pollDesc).wait(0x934?, 0x7ff62ac8cba6?, 0x0)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_poll_runtime.go:84 +0x27
+internal/poll.waitIO(0x7ff62b7da520?)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_windows.go:187 +0x65
+internal/poll.execIO(0xc000932020, 0x7ff62b2ff5c8)
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_windows.go:240 +0x13a
+internal/poll.(*FD).Read(0xc000932008, {0xc0008a4240, 0x240, 0x240})
+	C:/Deepseek/.tools/go1.25.5/src/internal/poll/fd_windows.go:533 +0x1ee
+net.(*netFD).Read(0xc000932008, {0xc0008a4240?, 0x7ff62ad8da0f?, 0x0?})
+	C:/Deepseek/.tools/go1.25.5/src/net/fd_posix.go:68 +0x25
+net.(*conn).Read(0xc0000f2000, {0xc0008a4240?, 0x2c45a593348?, 0x2c414a80108?})
+	C:/Deepseek/.tools/go1.25.5/src/net/net.go:196 +0x45
+crypto/tls.(*atLeastReader).Read(0xc000508078, {0xc0008a4240?, 0xc0008df138?, 0x7ff62ad8d41d?})
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:816 +0x3b
+bytes.(*Buffer).ReadFrom(0xc00012e628, {0x7ff62b3a4cc0, 0xc000508078})
+	C:/Deepseek/.tools/go1.25.5/src/bytes/buffer.go:217 +0x98
+crypto/tls.(*Conn).readFromUntil(0xc00012e388, {0x7ff62b3a4ba0, 0xc0000f2000}, 0x7ff62b2ff600?)
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:838 +0xde
+crypto/tls.(*Conn).readRecordOrCCS(0xc00012e388, 0x0)
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:627 +0x3db
+crypto/tls.(*Conn).readRecord(...)
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:589
+crypto/tls.(*Conn).readHandshakeBytes(0xc00012e388, 0x4)
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:1085 +0x51
+crypto/tls.(*Conn).readHandshake(0xc00012e388, {0x0, 0x0})
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:1096 +0x39
+crypto/tls.(*Conn).clientHandshake(0xc00012e388, {0x7ff62b3a7df8, 0xc000280050})
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/handshake_client.go:328 +0x505
+crypto/tls.(*Conn).handshakeContext(0xc00012e388, {0x7ff62b3a7df8, 0xc000280000})
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:1575 +0x372
+crypto/tls.(*Conn).HandshakeContext(0x7ff62b3aa488?, {0x7ff62b3a7df8?, 0xc000280000?})
+	C:/Deepseek/.tools/go1.25.5/src/crypto/tls/conn.go:1515 +0x1d
+github.com/sagernet/sing-box/protocol/anytls.burstWithTLSHandshakes.tlsDialOut.func3({0x7ff62b3a7df8, 0xc000280000})
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:74 +0x1c5
+github.com/sagernet/sing-anytls.(*Client).createSessionDirect(0xc0007a60f0, {0x7ff62b3a7df8, 0xc000280000})
+	D:/Go/mod-cache/github.com/!piggy-!cat-bit-shadow/sing-anytls@v0.0.0-20261114024208-8df0170e7211/client.go:273 +0xf5
+github.com/sagernet/sing-anytls.(*Client).createSession(0xc0007a60f0?, {0x7ff62b3a7df8?, 0xc000280000?})
+	D:/Go/mod-cache/github.com/!piggy-!cat-bit-shadow/sing-anytls@v0.0.0-20261114024208-8df0170e7211/client.go:252 +0xd3
+github.com/sagernet/sing-anytls.(*Client).sessionForCreation(0xc0007a60f0, {0x7ff62b3a7e68, 0xc000300070})
+	D:/Go/mod-cache/github.com/!piggy-!cat-bit-shadow/sing-anytls@v0.0.0-20261114024208-8df0170e7211/client.go:196 +0x2f6
+github.com/sagernet/sing-anytls.(*Client).DialContext(0xc0007a60f0, {0x7ff62b3a7e68, 0xc000300070}, {{{0x0, 0x0}, {0x0}}, 0x1bb, {0x7ff62b2b79ef, 0xb}})
+	D:/Go/mod-cache/github.com/!piggy-!cat-bit-shadow/sing-anytls@v0.0.0-20261114024208-8df0170e7211/client.go:144 +0x325
+github.com/sagernet/sing-box/protocol/anytls.dialWithAdmissionFor.func1({0x7ff62b3a7e68?, 0xc000300070?})
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/admission.go:82 +0x47
+github.com/sagernet/sing-box/common/resourceguard.(*Guard).AdmitCreation(0x7ff62b3a7d18?, {0x7ff62b3a7e68?, 0xc000300070?}, {0x0?, 0x7ff62ad0dca5?}, 0x0?)
+	C:/Deepseek/rg-collection-2026-11-14/common/resourceguard/admission.go:35 +0xca
+github.com/sagernet/sing-box/protocol/anytls.admit(...)
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/admission.go:47
+github.com/sagernet/sing-box/protocol/anytls.dialWithAdmissionFor({0x7ff62b3a7e68?, 0xc000300070?}, 0x0?, {0x0?, 0x0?}, 0xc000474000?, {{{0x0, 0x0}, {0x0}}, 0x1bb, ...})
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/admission.go:80 +0xb1
+github.com/sagernet/sing-box/protocol/anytls.dialWithAdmission(...)
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/admission.go:67
+github.com/sagernet/sing-box/protocol/anytls.burstWithTLSHandshakes.func2()
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:141 +0xaf
+created by github.com/sagernet/sing-box/protocol/anytls.burstWithTLSHandshakes in goroutine 10202
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:138 +0x2d0
+
+goroutine 9268 [select]:
+github.com/sagernet/sing-box/protocol/anytls.newPeakHeapSampler.func1()
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:93 +0xa9
+created by github.com/sagernet/sing-box/protocol/anytls.newPeakHeapSampler in goroutine 10202
+	C:/Deepseek/rg-collection-2026-11-14/protocol/anytls/tls_amplification_test.go:90 +0x98
+FAIL	github.com/sagernet/sing-box/protocol/anytls	600.096s
+FAIL
+ok  	github.com/sagernet/sing-box/dns	8.655s
+ok  	github.com/sagernet/sing-box/dns/transport	6.098s
+ok  	github.com/sagernet/sing-box/dns/transport/dhcp	0.107s
+ok  	github.com/sagernet/sing-box/dns/transport/fakeip	0.203s
+ok  	github.com/sagernet/sing-box/dns/transport/group	0.937s
+ok  	github.com/sagernet/sing-box/dns/transport/hosts	0.104s
+?   	github.com/sagernet/sing-box/dns/transport/local	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/local/systemconfig	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/mdns	[no test files]
+ok  	github.com/sagernet/sing-box/dns/transport/quic	0.223s
+--- FAIL: TestTransportFactoryServesFromH2WhenUDPIsSilent (0.00s)
+    factory_fallback_test.go:50: 
+        	Error Trace:	C:/Deepseek/rg-collection-2026-11-14/common/httpclient/factory_fallback_test.go:50
+        	Error:      	Received unexpected error:
+        	            	listen udp 127.0.0.1:58383: bind: An attempt was made to access a socket in a way forbidden by its access permissions.
+        	Test:       	TestTransportFactoryServesFromH2WhenUDPIsSilent
+FAIL
+FAIL	github.com/sagernet/sing-box/common/httpclient	0.640s
+FAIL
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	20.473s
+
+## build all with OTHERS tags
+build exit=0

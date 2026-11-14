@@ -77,7 +77,7 @@ func TestTransportFactoryServesFromH2WhenUDPIsSilent(t *testing.T) {
 				FallbackDelay: badoption.Duration(20 * time.Millisecond),
 			},
 		},
-	})
+	}, nil)
 	require.NoError(t, err)
 	defer transport.Close()
 

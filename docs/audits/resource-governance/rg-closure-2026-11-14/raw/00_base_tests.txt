@@ -1,0 +1,15 @@
+﻿# baseline package tests on fa6150073 (pristine worktree, no round test files)
+# CGO_ENABLED=0, Windows/amd64, go1.25.5
+
+## go test ./common/resourceguard ./common/trafficclass ./protocol/anytls ./service/oomkiller ./common/buildgate -count=1
+ok  	github.com/sagernet/sing-box/common/resourceguard	0.892s
+ok  	github.com/sagernet/sing-box/common/trafficclass	0.089s
+ok  	github.com/sagernet/sing-box/protocol/anytls	6.874s
+ok  	github.com/sagernet/sing-box/service/oomkiller	0.721s
+ok  	github.com/sagernet/sing-box/common/buildgate	0.127s
+
+## go test ./common/tls -run 'HandshakeWithAdmission|ChainedDial|HandshakeMayUseTheReserve|BothSeams' -count=1
+ok  	github.com/sagernet/sing-box/common/tls	0.126s
+
+## go test -tags with_quic ./transport/v2rayquic -count=1
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	9.508s
