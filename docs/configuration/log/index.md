@@ -22,7 +22,7 @@ Disable logging, no output after start.
 
 #### level
 
-Log level. One of: `trace` `debug` `info` `warn` `error` `fatal` `panic`.
+Log level. One of: `trace` `debug` `info` `warn` `error` `fatal` `panic`. Default: `info`.
 
 #### output
 

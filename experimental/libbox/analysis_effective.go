@@ -7,8 +7,8 @@ package libbox
 //
 //   - Defaults: for the load-bearing fields a document can leave unset, the value the core applies
 //     and where it came from (declared or default). They are not decoration. An unset log.level is
-//     TRACE in this core, not info, and an unset log.output discards every line - facts a caller
-//     otherwise learns from silence.
+//     INFO in this core, and an unset log.output discards every line - facts a caller otherwise
+//     learns from silence.
 //   - Requirements: the facts the PLATFORM must supply before a declared condition can ever match.
 //     Process attribution, Wi-Fi state and network classification are not core facts: the core asks
 //     the platform for them (CommandServer.NeedFindProcess, CommandServer.NeedWIFIState), so a
@@ -91,9 +91,9 @@ func logDefaults(options *option.Options) []ConfigValue {
 	}
 	level := ConfigValue{Field: "log.level", Declared: declaredLevel, Effective: declaredLevel, Source: configValueDeclared}
 	if declaredLevel == "" {
-		level.Effective = "trace"
+		level.Effective = "info"
 		level.Source = configValueDefault
-		level.Reason = "level is unset: this core configures log/trace"
+		level.Reason = "level is unset: this core configures log/info"
 	}
 	output := ConfigValue{Field: "log.output", Declared: declaredOutput, Effective: declaredOutput, Source: configValueDeclared}
 	switch declaredOutput {
