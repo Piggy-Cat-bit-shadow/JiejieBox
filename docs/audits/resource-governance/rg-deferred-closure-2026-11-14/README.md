@@ -9,7 +9,7 @@
 
 | 方向 | 判定 | 落点 | 证据 |
 |---|---|---|---|
-| 会话创建 coalescing | `CLOSED_FIXED` | `sing-anytls` 8473492（8df0170 共享创建 → d3e6d49 期限修正 → 8473492 waiter gauge；分支已 push）+ 主仓 pin + `protocol/anytls/coalescing_integration_test.go` | 200 并发首流 → **1** 次 admission、0 失败、物理 accept 通常 1 次（`-race` 下调度滞后者可能建第 2–3 条；SDK 确定性测试用 waiter hook 断言恰好 1 条） |
+| 会话创建 coalescing | `CLOSED_FIXED` | `sing-anytls` 8473492（8df0170 共享创建 → d3e6d49 期限修正 → 8473492 waiter gauge；分支已 push）+ 主仓 pin + `protocol/anytls/coalescing_integration_test.go` | 200 并发首流 → **1** 次创建、**1** 次 admission、**1** 个物理 accept、0 失败（`PendingCreationWaiters` 等到全部附着后放行；`-race` 同样通过） |
 | H3 物理创建准入 | `CLOSED_FIXED` | `common/httpclient`（共享 H3 客户端，覆盖 MASQUE/DoH3/provider）+ `transport/v2rayxhttp` H3 | 饱和时构造器不执行（两个包各一组测试）；官方 HTTP/3 包全绿 |
 | DNS 并发 | `CLOSED_FIXED` | `dns.Router` 查询 gate（256 并发 / 256 队列 / 2 s） | 同步与异步 Exchange 在饱和时快速拒绝、客户端不执行；`dns` 全包回归通过 |
 | NAT 首包账本 | `CLOSED_REJECT`（带边界与设计） | 不修改生产代码 | 首包归 gvisor `UDPBackWriter.packet` / go stack snapshot 所有，释放点是 `HandshakeSuccess/Failure`；跨两套 stack 与 route handshake 桥接，无 TUN 环境验证；量化上界见 `04_NAT_FIRST_PACKET_DECISION.md` |
