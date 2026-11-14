@@ -38,6 +38,33 @@
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Android Core ARM64",
+      "run_id": 43565910015,
+      "head_sha": "064bc8a22af2bf213af2c558deaa372a112b0e3e",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43565910015"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 43565910111,
+      "head_sha": "064bc8a22af2bf213af2c558deaa372a112b0e3e",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43565910111"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 43565910019,
+      "head_sha": "064bc8a22af2bf213af2c558deaa372a112b0e3e",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43565910019"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
       "run_id": 43350914802,
       "head_sha": "efe37e130c3e0e68a9c37fceaf5495df32a09436",
       "event": "push",
@@ -333,12 +360,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "aa8e16aa21a7f28aefc944fac76086c144195e3b",
+      "tip": "a867f61a18ce489335a0b9beaa1bb1dfd8d114d5",
       "pin": "aa8e16aa21a7",
-      "relation": "identical",
-      "policy": "update",
-      "observed_at": "2026-11-13",
-      "note": "Moved to main's own tip after the client was compiled for the first time: aa8e16a fixes the four compile errors the 3221000 merge carried, and the branch that carried the fix was merged and deleted. Apple client run 43348165279 built Libbox plus iOS, macOS and the self-sign IPA from this revision."
+      "relation": "behind",
+      "policy": "report",
+      "observed_at": "2026-11-14",
+      "note": "HELD at the verified aa8e16a. Main head a867f61 does not compile: run 43565916842 fails both the iOS and macOS jobs at ProfileCard.swift:627 and ProfilePickerSheet.swift:418 with 'missing argument label report:' in RemoteProfileUpdateAlertError(report). The aa8e16a evidence remains Apple client run 43348165279."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
@@ -353,22 +380,22 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
       "branch": "main",
-      "tip": "e8b48beadd7d11a9bce46f62e12820f3e3773518",
+      "tip": "1bd68313caaca2986983a93d6dae18d11af80541",
       "pin": "a658231fcd97",
-      "relation": "ahead",
-      "policy": "update",
-      "observed_at": "2026-11-13",
-      "note": "The pin is window 03's integrated desktop branch, which also carries the nested dashboard pin d9fca1b1f226."
+      "relation": "behind",
+      "policy": "report",
+      "observed_at": "2026-11-14",
+      "note": "HELD with Apple at a658231 so the client set stays the previously verified pair. Main head 1bd68313 is one app-layer provider-status commit plus dashboard b6e3193; it is taken with the next client update after the Apple head compiles."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
       "branch": "main",
-      "tip": "d828b130b374f21f1003017de77af065bb589f43",
+      "tip": "b6e3193abbedc4c8b84c0c79a60f995d08bc95ec",
       "pin": "d9fca1b1f226",
-      "relation": "ahead",
+      "relation": "behind",
       "policy": "report",
-      "observed_at": "2026-11-13",
-      "note": "The nested pin is window 03's integrated dashboard branch: main's design-token and Pages commits plus the selection ledger. The tool still never writes this gitlink; the Desktop repository owns it."
+      "observed_at": "2026-11-14",
+      "note": "The nested pin stays d9fca1b1 because the Desktop client is held at a658231. Main's head b6e3193 is one commit ahead; the Desktop repository owns this gitlink and takes it with the next client update."
     }
   ],
   "not_covered": [
