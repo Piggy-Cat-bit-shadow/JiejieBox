@@ -53,7 +53,7 @@ QUIC 拥塞控制算法。
 | `cubic`        | CUBIC              |
 | `reno`         | New Reno           |
 
-默认使用 `bbr`。
+默认使用 `bbr`；`cubic` 与 `reno` 为显式选项。拥塞控制不改变线上行为，默认值属于性能选择而非协议选择。
 
 #### tls
 

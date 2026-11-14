@@ -75,10 +75,10 @@ QUIC congestion control algorithm.
 | `cubic`        | CUBIC                           |
 | `reno`         | New Reno                        |
 
-Unset leaves quic-go's own sender in place, which is **CUBIC**. That is the
-reference-like default: Caddy's HTTP/3 listener sets no congestion control, so an
-unset value matches the reference rather than silently choosing BBR. `bbr`,
-`cubic` and `reno` are explicit production choices and must be named.
+Unset uses **BBR**, the product default for the high-loss links this fork serves;
+`cubic` and `reno` remain explicit choices. Congestion control does not change
+wire behaviour, so the default is a performance decision rather than a protocol
+one.
 
 #### masquerade
 
