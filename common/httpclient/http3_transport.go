@@ -7,6 +7,7 @@ import (
 	stdTLS "crypto/tls"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"sync"
@@ -67,6 +68,7 @@ func newHTTP3RoundTripper(
 	rawDialer N.Dialer,
 	baseTLSConfig tls.Config,
 	options option.QUICOptions,
+	admission creationAdmission,
 ) *http3.Transport {
 	var handshakeTimeout time.Duration
 	if baseTLSConfig != nil {
@@ -79,47 +81,75 @@ func newHTTP3RoundTripper(
 	h3Transport := &http3.Transport{
 		TLSClientConfig: &stdTLS.Config{},
 		QUICConfig:      quicConfig,
-		Dial: func(ctx context.Context, addr string, tlsConfig *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
-			if handshakeTimeout > 0 && quicConfig.HandshakeIdleTimeout == 0 {
-				quicConfig = quicConfig.Clone()
-				quicConfig.HandshakeIdleTimeout = handshakeTimeout
-			}
-			if baseTLSConfig != nil {
-				var err error
-				tlsConfig, err = buildSTDTLSConfig(baseTLSConfig, M.ParseSocksaddr(addr), []string{http3.NextProtoH3})
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				tlsConfig = tlsConfig.Clone()
-				tlsConfig.NextProtos = []string{http3.NextProtoH3}
-			}
-			conn, err := rawDialer.DialContext(ctx, N.NetworkUDP, M.ParseSocksaddr(addr))
-			if err != nil {
-				return nil, err
-			}
-			quicConn, err := quic.DialEarlyConn(ctx, conn, tlsConfig, quicConfig)
-			if err != nil {
-				conn.Close()
-				return nil, err
-			}
-			go func() {
-				<-quicConn.Context().Done()
-				conn.Close()
-			}()
-			return quicConn, nil
-		},
+		Dial:            newHTTP3DialFunc(rawDialer, baseTLSConfig, handshakeTimeout, admission),
 	}
 	return h3Transport
+}
+
+// newHTTP3DialFunc builds the Dial callback of the pooled H3 transport.
+//
+// It is a named function so the admission seam can be driven directly by a test: the real http3
+// transport reaches it only through a full handshake, while the property that matters here - the
+// constructor is not entered when the gate refuses - is visible at this boundary.
+func newHTTP3DialFunc(rawDialer N.Dialer, baseTLSConfig tls.Config, handshakeTimeout time.Duration, admission creationAdmission) func(ctx context.Context, addr string, tlsConfig *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	return func(ctx context.Context, addr string, tlsConfig *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+		if handshakeTimeout > 0 && quicConfig.HandshakeIdleTimeout == 0 {
+			quicConfig = quicConfig.Clone()
+			quicConfig.HandshakeIdleTimeout = handshakeTimeout
+		}
+		var err error
+		if baseTLSConfig != nil {
+			tlsConfig, err = buildSTDTLSConfig(baseTLSConfig, M.ParseSocksaddr(addr), []string{http3.NextProtoH3})
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			tlsConfig = tlsConfig.Clone()
+			tlsConfig.NextProtos = []string{http3.NextProtoH3}
+		}
+		var (
+			packetConn net.Conn
+			quicConn   *quic.Conn
+		)
+		create := func(dialCtx context.Context) error {
+			conn, dialErr := rawDialer.DialContext(dialCtx, N.NetworkUDP, M.ParseSocksaddr(addr))
+			if dialErr != nil {
+				return dialErr
+			}
+			created, handshakeErr := quic.DialEarlyConn(dialCtx, conn, tlsConfig, quicConfig)
+			if handshakeErr != nil {
+				conn.Close()
+				return handshakeErr
+			}
+			packetConn = conn
+			quicConn = created
+			return nil
+		}
+		if admission != nil {
+			err = admission(ctx, create)
+		} else {
+			err = create(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// quic-go does not own the socket it was given: close it when the connection ends.
+		go func() {
+			<-quicConn.Context().Done()
+			packetConn.Close()
+		}()
+		return quicConn, nil
+	}
 }
 
 func newHTTP3Transport(
 	rawDialer N.Dialer,
 	baseTLSConfig tls.Config,
 	options option.QUICOptions,
+	admission creationAdmission,
 ) (innerTransport, error) {
 	return &http3Transport{
-		h3Transport: newHTTP3RoundTripper(rawDialer, baseTLSConfig, options),
+		h3Transport: newHTTP3RoundTripper(rawDialer, baseTLSConfig, options, admission),
 	}, nil
 }
 
@@ -129,9 +159,10 @@ func newHTTP3FallbackTransport(
 	h2Fallback innerTransport,
 	options option.QUICOptions,
 	fallbackDelay time.Duration,
+	admission creationAdmission,
 ) (innerTransport, error) {
 	return &http3FallbackTransport{
-		h3Transport:   newHTTP3RoundTripper(rawDialer, baseTLSConfig, options),
+		h3Transport:   newHTTP3RoundTripper(rawDialer, baseTLSConfig, options, admission),
 		h2Fallback:    h2Fallback,
 		fallbackDelay: fallbackDelay,
 		broken:        make(map[string]http3BrokenEntry),

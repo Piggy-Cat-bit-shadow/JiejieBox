@@ -98,7 +98,7 @@ func http3PathMTUDiscovery() bool {
 
 // newHTTP3Transport returns the factory of pooled HTTP/3 connections. warn
 // receives the load-time warnings of SPEC 104 §6.
-func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Config, keepAlivePeriod time.Duration, warn func(string)) (func() xmuxConn, error) {
+func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Config, keepAlivePeriod time.Duration, warn func(string), admission creationAdmission) (func() xmuxConn, error) {
 	stdConfig, fromUTLS, err := tls.STDConfigForQUIC(tlsConfig)
 	var dialErr error
 	if err != nil {
@@ -146,31 +146,57 @@ func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Co
 			// The address argument is the URL host, which is serverAddr anyway; the
 			// TLS config is ours, not the transport's copy, which would put the URL
 			// host into an SNI that disable_sni left empty.
-			Dial: func(ctx context.Context, _ string, _ *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
-				if dialErr != nil {
-					return nil, dialErr
-				}
-				packetConn, err := dialer.DialContext(ctx, N.NetworkUDP, serverAddr)
-				if err != nil {
-					return nil, E.Cause(err, "v2ray-xhttp: HTTP/3 needs UDP to the server")
-				}
-				quicConn, err := quic.DialEarlyConn(ctx, packetConn, stdConfig.Clone(), quicConfig)
-				if err != nil {
-					packetConn.Close()
-					return nil, err
-				}
-				// quic-go does not own the conn it was given: close it when the QUIC
-				// connection ends.
-				go func() {
-					<-quicConn.Context().Done()
-					packetConn.Close()
-				}()
-				conn.conn.Store(quicConn)
-				return quicConn, nil
-			},
+			Dial: newHTTP3DialFunc(dialer, serverAddr, stdConfig, dialErr, admission, conn),
 		}
 		return conn
 	}, nil
+}
+
+// newHTTP3DialFunc builds the Dial callback of one pooled HTTP/3 connection.
+//
+// It is a named function so the admission seam can be driven directly: the property that matters is
+// "when the gate refuses, the UDP dial and the QUIC handshake are never entered", and reaching that
+// through a full http3 round trip would test the test more than the seam.
+func newHTTP3DialFunc(dialer N.Dialer, serverAddr M.Socksaddr, stdConfig *stdTLS.Config, dialErr error, admission creationAdmission, owner *http3XmuxConn) func(ctx context.Context, _ string, _ *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	return func(ctx context.Context, _ string, _ *stdTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+		if dialErr != nil {
+			return nil, dialErr
+		}
+		var (
+			packetConn net.Conn
+			quicConn   *quic.Conn
+		)
+		create := func(dialCtx context.Context) error {
+			conn, err := dialer.DialContext(dialCtx, N.NetworkUDP, serverAddr)
+			if err != nil {
+				return E.Cause(err, "v2ray-xhttp: HTTP/3 needs UDP to the server")
+			}
+			created, handshakeErr := quic.DialEarlyConn(dialCtx, conn, stdConfig.Clone(), quicConfig)
+			if handshakeErr != nil {
+				conn.Close()
+				return handshakeErr
+			}
+			packetConn = conn
+			quicConn = created
+			return nil
+		}
+		var err error
+		if admission != nil {
+			err = admission(ctx, create)
+		} else {
+			err = create(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// quic-go does not own the conn it was given: close it when the QUIC connection ends.
+		go func() {
+			<-quicConn.Context().Done()
+			packetConn.Close()
+		}()
+		owner.conn.Store(quicConn)
+		return quicConn, nil
+	}
 }
 
 // quicHiddenError replaces a quic-go / http3 error at the conn boundary. It keeps

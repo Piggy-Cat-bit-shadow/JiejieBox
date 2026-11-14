@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
@@ -98,6 +99,29 @@ type Client struct {
 	removeRegistration func()
 }
 
+// creationAdmission bounds one physical HTTP/3 connection creation of this transport.
+//
+// # Why this seam exists
+//
+// HTTP/1.1 and HTTP/2 connections are charged through common/tls, because every one of them performs
+// its TLS handshake through that dialer. HTTP/3 does not: it calls quic.DialEarlyConn directly on a
+// UDP socket, which is a full QUIC handshake and transport state - exactly the expensive creation the
+// process budget exists to bound. Before this, an H3 XHTTP route could open as many QUIC connections
+// as the demand asked for while the H2 sibling was capped at 32 concurrent creations.
+//
+// The hook wraps the UDP dial and the handshake only; a reused pooled connection never reaches it.
+type creationAdmission func(ctx context.Context, create func(context.Context) error) error
+
+func h3AdmissionFromContext(ctx context.Context) creationAdmission {
+	guard := resourceguard.FromContext(ctx)
+	if guard == nil {
+		return nil
+	}
+	return func(admitCtx context.Context, create func(context.Context) error) error {
+		return guard.AdmitCreation(admitCtx, "xhttp/h3", create)
+	}
+}
+
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
 // selects the HTTP version (lx: SPEC 104): HTTP/2 over the TLS dialer by
 // default, HTTP/1.1 for tls.alpn ["http/1.1"] and for a cleartext server,
@@ -163,6 +187,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	// given stream (SPECS/TASKS/059).
 	realityEnabled := tlsConfigIsReality(tlsConfig)
 	version := decideHTTPVersion(tlsConfig, realityEnabled)
+	admission := h3AdmissionFromContext(ctx)
 	var (
 		scheme  string
 		newConn func() xmuxConn
@@ -170,7 +195,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	switch version {
 	case httpVersion3:
 		scheme = "https"
-		newConn, err = newHTTP3Transport(dialer, serverAddr, tlsConfig, xmuxConfig.keepAlivePeriod, warn)
+		newConn, err = newHTTP3Transport(dialer, serverAddr, tlsConfig, xmuxConfig.keepAlivePeriod, warn, admission)
 		if err != nil {
 			return nil, err
 		}
