@@ -10,6 +10,8 @@
 > 上的 7 个检查全部通过（awg / ledger / linux-process / race checks / release helper tests /
 > trusttunnel / verify）。
 
+> **2026-11-15 数据刷新**：§1 / §A 的数字是 2026-11-14 施工时点，当前实测见 **§8**。一句话：13 个依赖/客户端仓里 **9 个 behind = 0**；仍有上游独有提交的是 `sing-tun` 50（含 3 个 Go 栈重写未采纳）、`sing-quic` 1、`quic-go` 1（后两个是同一改动的不同 SHA）、`sing-box-for-android` 10（客户端 DEFER）。`JiejieBox` 的 0 来自同日的 `-s ours` 审阅基线，口径不同，见 §8。
+
 ## A. 高层结论
 
 1. **QUIC 双仓的 socket 缓冲区缺失已真实修好**，并形成“quic-go 导出 → sing-quic 入口调用”的成套 API：
@@ -35,7 +37,7 @@
 6. 客户端（Apple / Android / Desktop / Dashboard）**未升级**：它们落后于各自分支 tip，但属于次级
    范围且可能与其他窗口的 UI 施工冲突，按 `DEFER` 处理，见 §5。
 
-## 1. 开工快照（2026-11-14，复核用）
+## 1. 开工快照（2026-11-14，复核用）（本节数字为施工时点，当前值见 §8）
 
 | 仓库 | 授权分支 | 开工 HEAD | 当时上游基线 | 关系 |
 |---|---|---|---|---|
@@ -212,7 +214,7 @@
    （内存重构）。这些是针对 fork 已经深度改造过的热路径的大规模重写，缺少可判定的缺陷复现与
    Linux 实机全量集成套件，按 `DEFER` 处理；若后续要吸收，应在 fork 的 Go 栈上单独一轮，
    以 `stack_go_integration_*` 全量套件 + 2000/4096 流量测量作为门槛。
-4. **客户端落后**（P3）：`clients/apple` 落后 1 个提交、`clients/desktop` 落后（含嵌套 dashboard）。
+4. **客户端落后**（P3）：`clients/apple` 落后 1 个提交、`clients/desktop` 落后（含嵌套 dashboard）。（2026-11-15 刷新：`clients/apple` 的 pin 仍为 `749509f214d9`，`sing-box-for-apple/main` 已到 `6e285fc65ae4`；`clients/desktop`、`sing-box-for-desktop/main` `1bd68313caac`、dashboard `b6e3193abbed` 均未前移。见 §8。）
    本轮不动，避免与其他窗口的 UI 施工冲突；按 `Dashboard → Desktop → kernel` 顺序单独收尾。
 5. **新 pin 的 CI 证据来自 PR 运行**（P3）：`release/pin-runs.json` 现在记录 PR #8 的
    `linux-kernel-verify` 与 `Release contract verification`（head `99bdccbe`，两者都在该 pin 集上真实成功）。
@@ -273,3 +275,54 @@ python scripts/ci/release-freeze.py verify --lock release/source-lock.json
 > 注：`tun/offload_linux_test.go` 里 passthrough 用例在旧代码下也能通过——旧实现用“编码一个零值
 > virtioNetHdr”达到同样效果，该用例守的是不变量而不是本次改动，保留它是为了防止以后把 `clear()`
 > 改回去时静默退化；真正修复的是删除路径，其用例已用旧代码验证会失败。
+
+## 8. 数据刷新（2026-11-15，以本节为准）
+
+本节是对上游差异的重新实测，用于替代 §1 / §A 中已被后续施工改变的数字；
+§1 保留其“2026-11-14 施工时点”的快照身份，不改写历史。测量只用本地克隆，
+不依赖 GitHub 页面（仓库首页那条 “N commits behind” 横幅就是同一组 behind 数，
+且页面会缓存）。
+
+`fork`为各仓库正式分支；`上游 tip` 为当日拉取的真实上游分支 tip。
+
+| 仓库 | fork 分支 | fork tip | 上游分支 | 上游 tip | ahead | behind | 判读 |
+|---|---|---|---|---|---|---|---|
+| `sing` | `dev` | `4abfaed41727` | `SagerNet/sing:dev` | `27b73774b240` | 65 | **0** | 已对齐 |
+| `utls` | `main` | `e14b88879d80` | `MetaCubeX/utls:v1.9.0-mod-meta` | `89a07ad380e2` | 69 | **0** | 已对齐 |
+| `sing-anytls` | `main` | `8473492a5afe` | `SagerNet/sing-anytls:main` | `580984e4d8cb` | 4 | **0** | 已对齐 |
+| `mieru` | `main` | `b5934f7136b4` | `enfein/mieru:main` | `1367cf2d2dd8` | 1 | **0** | 已对齐 |
+| `cronet-go` | `main` | `4c96192d73f6` | `SagerNet/cronet-go:main` | `73349ff2a587` | 29 | **0** | 已对齐（29 个 native 仍为 controlled） |
+| `wireguard-go` | `awg3-inject` | `c308e20419f5` | `sagernet/wireguard-go:main` | `e4d85ef2ed38` | 25 | **0** | 已对齐（§1 记的 3 个上游修复已吸收） |
+| `sing-box-for-apple` | `main` | `6e285fc65ae4` | `SagerNet/sing-box-for-apple:dev` | `768b3de2baf2` | 290 | **0** | 已对齐（客户端主线） |
+| `sing-box-for-desktop` | `main` | `1bd68313caac` | `SagerNet/sing-box-for-desktop:main` | `8aab8eab0223` | 51 | **0** | 已对齐 |
+| `sing-box-dashboard` | `main` | `b6e3193abbed` | `SagerNet/sing-box-dashboard:main` | `3e4bf08e5bf5` | 17 | **0** | 已对齐 |
+| `sing-quic` | `main` | `08c6abd9b3fc` | `SagerNet/sing-quic:main` | `0979e001618d` | 13 | 1 | 上游那条是同一改动的自身 SHA（见下） |
+| `quic-go` | `sagernet` | `a99a3c489772` | `SagerNet/quic-go:dev` | `60006eccf11c` | 33 | 1 | 同上 |
+| `sing-tun` | `dev` | `24e6bfd21ba8` | `SagerNet/sing-tun:dev` | `40bd6cff5647` | 235 | 50 | 多数是同一改动的上游 SHA；未采纳的是 3 个 Go 栈重写 |
+| `sing-box-for-android` | `main` | `9816e0068c82` | `SagerNet/sing-box-for-android:dev` | `07376b138862` | 20 | 10 | 客户端 DEFER（版本号、Android auto-redirect、翻译与资源） |
+| `JiejieBox` | `testing` | `61f61e172f4a` | `SagerNet/sing-box:testing` | `3dd8aa48d403` | 4121 | **0** | 0 来自 `-s ours` 审阅基线，不等于内容全采纳 |
+
+复现方法（对每个仓库，只需本地克隆）：
+
+```bash
+git fetch --no-tags <upstream-url> +refs/heads/<branch>:refs/upstream/measure-<branch>
+git rev-list --count refs/upstream/measure-<branch> --not <fork-branch>   # behind
+git rev-list --count <fork-branch> --not refs/upstream/measure-<branch>   # ahead
+```
+
+逐条说明：
+
+1. **9 个仓 behind = 0**：`sing`、`utls`、`sing-anytls`、`mieru`、`cronet-go`、`wireguard-go`、`sing-box-for-apple`、`sing-box-for-desktop`、`sing-box-dashboard`。
+   它们的上游修复已在各自分支上。
+2. **`sing-quic` 1 / `quic-go` 1**：`0979e00 Fix buffer sizes of sockets hidden from quic-go` 与
+   `60006ecc Export SetDesiredBufferSizes` 正是 §3.1 修的那一件事，上游与 fork 各自落了一次，SHA 不同，
+   内容等价（quic-go `a99a3c4` + sing-quic `08c6abd`）。
+3. **`sing-tun` 50**：其中 `40bd6cf`（uid 规则）、`e51634c`（nftables 能力回退）、`010332d`（mark 归属）、
+   `7d7649e`（Android 厂商 mark）、`38f31a2`（Go 栈 ENOBUFS）等都已以 `24e6bfd` 在 fork 落地；
+   剩下未采纳的是 `2b8cf65` / `e5c595b` / `9fbd68a` 三个 Go 栈并发/内存重写，理由见 §5-3（P3）。
+4. **`sing-box-for-android` 10**：客户端次级范围，本轮未升级（§A-6 / §5-4）；含 `07376b1` 版本号、
+   `4fd5a36` Android auto-redirect、翻译与资源改动。
+5. **`JiejieBox` 的 0 与上面不同口径**：它是 2026-11-15 建立的“审阅基线”
+   （`git merge -s ours` 对 上游 `3dd8aa48`），68 个上游独有提交逐条记在
+   `docs/fork/UPSTREAM-BASELINE-2026-11-15.md`：45 已吸收 / 2 fork 等价 / 5 仅文档 / 16 待评审。
+   不要把这一行的 0 读成“上游 68 个提交的代码都进来了”。
