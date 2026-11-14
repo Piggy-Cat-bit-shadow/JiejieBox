@@ -36,7 +36,7 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-14",
+  "recorded_at": "2026-11-15",
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
@@ -316,6 +316,24 @@
       "event": "pull_request",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43614907448"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "linux-kernel-verify",
+      "run_id": 43631412925,
+      "head_sha": "6735233ff13e1d994cc23c54b570700946d6e496",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43631412925"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 43631416287,
+      "head_sha": "6735233ff13e1d994cc23c54b570700946d6e496",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43631416287"
     }
   ],
   "child_runs": [],
@@ -411,12 +429,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "ef372758435c4b14fb4836ed19e237c21beabf94",
-      "pin": "749509f214d9",
-      "relation": "behind",
+      "tip": "09473938322bddfc6c30fc3886e747e808c3d526",
+      "pin": "09473938322b",
+      "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-14",
-      "note": "Apple main moved one commit after the pin; the client pair (Apple + Desktop) is still held at the previously verified pair, so the lag is recorded rather than lifted. Three Swift initializer call sites were fixed and ios/macOS compiled in Apple client run 43584135709 at this pin."
+      "observed_at": "2026-11-15",
+      "note": "Lifted to 0947393 for 0.1.50. Layer 4 was re-run against a clean checkout of this revision (probe-accessors.py: 483 files scanned, 0 violations, 3 interface methods), and Apple client run 43627843866 resolved this revision, built one Libbox and compiled iOS, macOS and the unsigned self-sign IPA - 4/4 success. Not device or TestFlight evidence."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
@@ -432,21 +450,21 @@
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
       "branch": "main",
       "tip": "1bd68313caaca2986983a93d6dae18d11af80541",
-      "pin": "a658231fcd97",
-      "relation": "behind",
+      "pin": "1bd68313caac",
+      "relation": "identical",
       "policy": "report",
-      "observed_at": "2026-11-14",
-      "note": "HELD with Apple at a658231 so the client set stays the previously verified pair. Main head 1bd68313 is one app-layer provider-status commit plus dashboard b6e3193; it is taken with the next client update after the Apple head compiles."
+      "observed_at": "2026-11-15",
+      "note": "Lifted to 1bd68313 together with Apple so the client pair moves as one, and its tree records the dashboard gitlink b6e3193. Its build evidence is the Windows installer audit run dispatched on this candidate; release-kind artifacts stay the release workflow's job."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
       "branch": "main",
       "tip": "b6e3193abbedc4c8b84c0c79a60f995d08bc95ec",
-      "pin": "d9fca1b1f226",
-      "relation": "behind",
+      "pin": "b6e3193abbed",
+      "relation": "identical",
       "policy": "report",
-      "observed_at": "2026-11-14",
-      "note": "The nested pin stays d9fca1b1 because the Desktop client is held at a658231. Main's head b6e3193 is one commit ahead; the Desktop repository owns this gitlink and takes it with the next client update."
+      "observed_at": "2026-11-15",
+      "note": "Follows the Desktop pin: 1bd68313's tree names this gitlink, so the nested pin is the branch tip. Still not readable by verify.yml; kernel-release's freeze job reads it with submodules checked out."
     }
   ],
   "not_covered": [
