@@ -1,0 +1,10 @@
+﻿# Targeted-fix round race tests
+
+## go test -race -tags with_quic ./common/httpclient
+ok  	github.com/sagernet/sing-box/common/httpclient	4.011s
+
+## go test -race ./dns
+ok  	github.com/sagernet/sing-box/dns	9.852s
+
+## go test -race ./protocol/anytls
+ok  	github.com/sagernet/sing-box/protocol/anytls	8.402s

@@ -41,6 +41,8 @@
 
 这条记录是必须的：它说明 coalescing 的"保护等待者"不能以移除所有上界为代价；也说明旧测试确实在守一个真实契约。
 
+> 后续定向修复轮的测试与构建（H3 本地拒绝、Lookup gate、异步 permit、创建者 deadline、0-RTT 生命周期、Release 标签构建）见 [`07_TARGETED_FIXES.md`](07_TARGETED_FIXES.md) 与 `raw/targeted/`；耗时为该轮实测（AnyTLS 7.1 s、DNS 8.6 s、httpclient with_quic 2.7 s），本文旧数字保留为当时日志。
+
 ## 5. 未运行 / 设备项
 
 | 项 | 原因 |

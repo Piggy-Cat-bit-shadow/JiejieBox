@@ -3,7 +3,8 @@
 > 对象：第一阶段台账 D11–D13 中标记 `DEFERRED` 的四条研究方向
 > 分支：`work/resource-governance-closure-2026-11-14`（同一 feature branch）
 > 依赖分支：`Piggy-Cat-bit-shadow/sing-anytls` → `work/creation-coalescing-2026-11-14`
-> 判定：**3 项 `CLOSED_FIXED`，1 项 `CLOSED_REJECT`（带量化边界与明确设计）**。没有留下第五个 DEFER。
+> 判定：**5 项 `CLOSED_FIXED`，1 项 `CLOSED_REJECT`（带量化边界与明确设计）**。没有留下第五个 DEFER。
+> 定向修复轮（H3 本地拒绝、Lookup 并发、异步 permit、AnyTLS 优先级、0-RTT 生命周期、Release 构建、统计修正）见 [`07_TARGETED_FIXES.md`](07_TARGETED_FIXES.md)。
 
 ## 闭环台账
 

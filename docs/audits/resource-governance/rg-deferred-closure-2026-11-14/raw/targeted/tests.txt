@@ -1,0 +1,27 @@
+﻿# Targeted-fix tests (verbose)
+
+## H3 local rejection / permit lifetime
+=== RUN   TestLocalAdmissionRejectionDoesNotMarkTheAuthorityBroken
+--- PASS: TestLocalAdmissionRejectionDoesNotMarkTheAuthorityBroken (0.00s)
+=== RUN   TestH3PermitIsHeldAcrossTheHandshake
+--- PASS: TestH3PermitIsHeldAcrossTheHandshake (2.00s)
+PASS
+ok  	github.com/sagernet/sing-box/common/httpclient	2.107s
+
+## DNS Lookup gate / async permit
+=== RUN   TestSaturatedDNSGateRefusesRouterLookup
+--- PASS: TestSaturatedDNSGateRefusesRouterLookup (0.00s)
+=== RUN   TestAsyncExchangeHoldsOnePermitUntilCallback
+--- PASS: TestAsyncExchangeHoldsOnePermitUntilCallback (0.00s)
+=== RUN   TestAsyncExchangeErrorReleasesThePermit
+--- PASS: TestAsyncExchangeErrorReleasesThePermit (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/dns	0.137s
+
+## AnyTLS creator deadline / mixed priority
+=== RUN   TestSharedCreationKeepsTheCreatorsDeadline
+--- PASS: TestSharedCreationKeepsTheCreatorsDeadline (0.30s)
+=== RUN   TestMixedPriorityWaitersShareTheCreatorsAdmission
+--- PASS: TestMixedPriorityWaitersShareTheCreatorsAdmission (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/anytls	0.414s
