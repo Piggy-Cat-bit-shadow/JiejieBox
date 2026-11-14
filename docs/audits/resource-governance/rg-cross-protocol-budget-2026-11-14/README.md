@@ -22,7 +22,7 @@
 
 ## 1. 第一层观测：实现与证据
 
-### 1.1 UDP NAT（sing-tun 分支 `work/flow-observation-2026-11-14`，tip `938b89dcb159`；观测 API 提交 `6e7483019752`）
+### 1.1 UDP NAT（sing-tun 分支 `work/flow-observation-2026-11-14`，合并后 dev tip `ab63d63ac306`；测量在 `938b89d` 上执行，观测 API 提交 `6e7483019752`）
 
 ```go
 type UDPNatStats struct {
@@ -183,7 +183,7 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 | sing-tun 口径修正提交 | `b253963c99275edb29639472065e777f44a3b2a0`（heap/stack/TCP 语义） |
 | sing-tun 首包修复提交 | `938b89dcb159ff8bf55b2c24e832f02374241e33`（Close 清 snapshot） |
 | sing-tun 规模测试提交（仅测试） | `ab63d63ac306ec315d5a89e8057d5f6ea0157fa2`（2000/4096 流） |
-| 主仓 pin | `v0.9.7-0.20261114050708-938b89dcb159` |
+| 主仓 pin（合并后） | `v0.9.7-0.20261114051221-ab63d63ac306` |
 | pseudo-version 时间戳 | 2026-11-14T05:07:08Z = 提交时间 13:07:08+08:00 |
 | flow cost 原始日志 | `raw/flow_cost.txt`（在 938b89d 树上执行） |
 | snapshot 原始日志 | `raw/go_snapshot.txt`（在 938b89d 树上执行） |
@@ -193,7 +193,7 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 - sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试 + 1 个 2000/4096 规模测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`、`raw/scale_cost.txt`）。
 - `-race` 原始输出：Go Stack snapshot `raw/go_snapshot_race.txt`（全量 verbose）；XHTTP 全包 `raw/xhttp_race.txt`（986 行，`ok ... 21.956s`）。报告里的 PASS 均可在这些日志中复核。
 - sing-tun 全包：**BLOCKED_BY_ENVIRONMENT**——Windows 上 `stack_go_integration_test.go` 的 raw socket/TUN 用例 `Access is denied`（需要管理员/Npcap），不是代码失败；原始输出在 `raw/full_package_env.txt`，未记为 PASS。
-- 主仓：pin 到 `v0.9.7-0.20261114050708-938b89dcb159`；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` exit 0。
+- 主仓：合并后 pin 到 `v0.9.7-0.20261114051221-ab63d63ac306`；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` exit 0。原始测量在 `938b89d` 树上执行，`ab63d63` 仅在其上增加 2000/4096 规模测试，生产代码相同。
 - 本轮无 CI 触发（路径过滤不含 `go.mod`/docs；最近代码 CI 仍是 `43555135120` @ `324a3b011`，success）。
 - 未运行：iOS 真机、Apple 构建、XMUX 预算、H2 端到端 body 实验、组合测试——全部明确 `NOT_RUN`/`UNAVAILABLE`，没有用 host 数据替代。
 

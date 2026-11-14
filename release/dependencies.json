@@ -49,7 +49,7 @@
       "slug": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
       "policy": "update",
-      "note": "TUN/route/nfqueue stack. Tracks SagerNet/sing-tun dev. The pin now includes 3c0ead2, the three test-portability commits the full race suite needed; they change tests only, and dev carries nothing else after the old 99abf3c pin."
+      "note": "TUN/route/nfqueue stack. Tracks SagerNet/sing-tun dev. The pin now includes the flow-observation branch merged as dev ab63d63: read-only UDP NAT and TCP dispatcher stats, the Go stack first-packet snapshot release fix, and the 2000/4096-flow scale tests. The production code is 938b89d (the measured tree); ab63d63 adds only the scale test commit on top."
     },
     {
       "module": "github.com/sagernet/sing-quic",
@@ -84,7 +84,7 @@
       "slug": "Piggy-Cat-bit-shadow/sing-anytls",
       "branch": "main",
       "policy": "update",
-      "note": "The AnyTLS session pool. Consumed for audit Q10: the client asks AdmitCreation only on a real session creation, so reusing an idle session is neither charged nor blocked by the creation budget. The fix is merged into main (f4acc22de770 is main's tip) and the temporary fix branch is retired; the residual boundary - the external API still cannot answer would-this-dial-reuse before the attempt - stays documented in docs/coupling/ISSUES.md F-06."
+      "note": "The AnyTLS session pool. Consumed for audit Q10: the client asks AdmitCreation only on a real session creation, so reusing an idle session is neither charged nor blocked by the creation budget. Main now carries the creation-coalescing work merged from work/creation-coalescing-2026-11-14: one shared session creation for concurrent first flows, the caller deadline preserved, and a PendingCreationWaiters gauge (8473492 is main's tip). The residual boundary - the external API still cannot answer would-this-dial-reuse before the attempt - stays documented in docs/coupling/ISSUES.md F-06."
     },
     {
       "module": "github.com/enfein/mieru/v3",

@@ -372,7 +372,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // them the Android/Mobile libbox build does not compile.
 replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d
 
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114050708-938b89dcb159
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114051221-ab63d63ac306
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //

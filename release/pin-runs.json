@@ -33,7 +33,7 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-13",
+  "recorded_at": "2026-11-14",
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
@@ -256,12 +256,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
-      "tip": "3c0ead27405be239176ddb857b099b957ae3a4b5",
-      "pin": "3c0ead27405b",
+      "tip": "ab63d63ac306ec315d5a89e8057d5f6ea0157fa2",
+      "pin": "ab63d63ac306",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-13",
-      "note": "The pin the window-01/02 tree consumes is now dev's tip; the earlier observation saw it two test-only commits behind."
+      "observed_at": "2026-11-14",
+      "note": "The flow-observation branch was merged into dev (ab63d63). The measured production tree is its parent 938b89d; ab63d63 adds only the 2000/4096-flow scale test."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
@@ -303,12 +303,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-anytls",
       "branch": "main",
-      "tip": "f4acc22de770e02720a5056b3a2175f7f8b7b14a",
-      "pin": "f4acc22de770",
+      "tip": "8473492a5afe56222de4da366c3859b560127842",
+      "pin": "8473492a5afe",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-13",
-      "note": "Added to the observation set in window 03: the module is consumed by go.mod but had no recorded tip."
+      "observed_at": "2026-11-14",
+      "note": "Main now carries the creation-coalescing branch (8df0170 shared creation, d3e6d49 deadline, 8473492 waiter gauge); the temporary work branch is merged and retired."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/mieru",

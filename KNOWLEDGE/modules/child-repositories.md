@@ -19,12 +19,12 @@
 | 模块 | 仓库 | 分支 | 策略 | 当前 pin |
 |---|---|---|---|---|
 | `github.com/sagernet/sing` | `Piggy-Cat-bit-shadow/sing` | `dev` | update | `4abfaed41727` |
-| `github.com/sagernet/sing-tun` | `Piggy-Cat-bit-shadow/sing-tun` | `dev` | update | `3c0ead27405b` |
+| `github.com/sagernet/sing-tun` | `Piggy-Cat-bit-shadow/sing-tun` | `dev` | update | `ab63d63ac306` |
 | `github.com/sagernet/sing-quic` | `Piggy-Cat-bit-shadow/sing-quic` | `main` | update | `c1b074f1f868` |
 | `github.com/sagernet/quic-go` | `Piggy-Cat-bit-shadow/quic-go` | `sagernet` | update | `158445cdda77` |
 | `github.com/metacubex/utls` | `Piggy-Cat-bit-shadow/utls` | `main` | update | `e14b88879d80` |
 | `github.com/sagernet/wireguard-go` | `Piggy-Cat-bit-shadow/wireguard-go` | `awg3-inject` | update | `7ece3d66d79d` |
-| `github.com/sagernet/sing-anytls` | `Piggy-Cat-bit-shadow/sing-anytls` | `main` | update | `f4acc22de770` |
+| `github.com/sagernet/sing-anytls` | `Piggy-Cat-bit-shadow/sing-anytls` | `main` | update | `8473492a5afe` |
 | `github.com/enfein/mieru/v3` | `Piggy-Cat-bit-shadow/mieru` | `main` | update | `b5934f7136b4` |
 | `github.com/sagernet/cronet-go` | `Piggy-Cat-bit-shadow/cronet-go` | `main` | update | `362e63b14ce2` |
 | `github.com/sagernet/cronet-go/all` | `Piggy-Cat-bit-shadow/cronet-go` | `main` | update | `7ce9c49b464a` |
