@@ -1,0 +1,51 @@
+﻿# GREEN evidence on work/resource-governance-closure-2026-11-14
+# CGO_ENABLED=0; commands are reproduced above each block
+
+## go test ./route -run '<round tests>' -count=1 -v
+=== RUN   TestNetworkTransitionCancelsAnInFlightPacketSetup
+--- PASS: TestNetworkTransitionCancelsAnInFlightPacketSetup (0.00s)
+=== RUN   TestPacketSetupCarriesTheTrafficClass
+--- PASS: TestPacketSetupCarriesTheTrafficClass (0.00s)
+=== RUN   TestEstablishedPacketFlowSurvivesATransition
+--- PASS: TestEstablishedPacketFlowSurvivesATransition (0.05s)
+PASS
+ok  	github.com/sagernet/sing-box/route	0.206s
+
+## go test ./service/oomkiller -run '<round tests>' -count=1 -v
+=== RUN   TestUnmeasurableFootprintDoesNotPublishAllClear
+--- PASS: TestUnmeasurableFootprintDoesNotPublishAllClear (0.00s)
+=== RUN   TestUnmeasurableFootprintKeepsCrisis
+--- PASS: TestUnmeasurableFootprintKeepsCrisis (0.00s)
+=== RUN   TestUnmeasurableFootprintHoldsArmed
+--- PASS: TestUnmeasurableFootprintHoldsArmed (0.00s)
+=== RUN   TestFootprintZeroIsUnavailable
+--- PASS: TestFootprintZeroIsUnavailable (0.00s)
+=== RUN   TestTimelineReportsUnavailableFootprint
+--- PASS: TestTimelineReportsUnavailableFootprint (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/service/oomkiller	0.074s
+
+## go test -tags with_quic ./transport/v2rayquic -run '<round tests>' -count=1 -v
+=== RUN   TestSaturatedAdmissionRefusesTheSharedCreation
+--- PASS: TestSaturatedAdmissionRefusesTheSharedCreation (0.00s)
+=== RUN   TestEstablishedSessionIsReusedWithoutASecondPermit
+--- PASS: TestEstablishedSessionIsReusedWithoutASecondPermit (0.00s)
+=== RUN   TestTheSharedCreationSeesTheTriggeringFlowClass
+--- PASS: TestTheSharedCreationSeesTheTriggeringFlowClass (0.00s)
+=== RUN   TestAnAlreadyAdmittedDialIsNotChargedTwice
+--- PASS: TestAnAlreadyAdmittedDialIsNotChargedTwice (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	0.088s
+
+## regression: go test ./common/resourceguard ./common/trafficclass ./common/buildgate ./protocol/anytls ./protocol/hysteria2 ./protocol/mieru ./service/oomkiller -count=1
+ok  	github.com/sagernet/sing-box/common/resourceguard	0.874s
+ok  	github.com/sagernet/sing-box/common/trafficclass	0.091s
+ok  	github.com/sagernet/sing-box/common/buildgate	0.140s
+ok  	github.com/sagernet/sing-box/protocol/anytls	6.930s
+ok  	github.com/sagernet/sing-box/protocol/hysteria2	1.093s
+ok  	github.com/sagernet/sing-box/protocol/mieru	95.333s
+ok  	github.com/sagernet/sing-box/service/oomkiller	0.719s
+
+## regression: go test -tags with_quic ./transport/v2rayquic ./common/tls -count=1
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	9.690s
+ok  	github.com/sagernet/sing-box/common/tls	3.567s
