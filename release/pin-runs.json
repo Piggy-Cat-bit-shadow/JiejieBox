@@ -37,6 +37,15 @@
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 43585890178,
+      "head_sha": "7460c6318cd82114183c2631da0ca0a107487077",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43585890178"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Android Core ARM64",
       "run_id": 43565910015,
       "head_sha": "064bc8a22af2bf213af2c558deaa372a112b0e3e",
@@ -79,7 +88,8 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43350914799"
-    },    {
+    },
+    {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Mobile contract verification",
       "run_id": 43303390856,
@@ -283,12 +293,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
-      "tip": "ab63d63ac306ec315d5a89e8057d5f6ea0157fa2",
-      "pin": "ab63d63ac306",
+      "tip": "53aeb6bfa60b",
+      "pin": "53aeb6bfa60b",
       "relation": "identical",
       "policy": "update",
       "observed_at": "2026-11-14",
-      "note": "The flow-observation branch was merged into dev (ab63d63). The measured production tree is its parent 938b89d; ab63d63 adds only the 2000/4096-flow scale test."
+      "note": "Latest dev includes test-only linter corrections after ab63d63."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
@@ -360,12 +370,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "a867f61a18ce489335a0b9beaa1bb1dfd8d114d5",
-      "pin": "aa8e16aa21a7",
-      "relation": "behind",
-      "policy": "report",
+      "tip": "749509f214d97f43cbc66f903fd17b0b50eb6399",
+      "pin": "749509f214d9",
+      "relation": "identical",
+      "policy": "update",
       "observed_at": "2026-11-14",
-      "note": "HELD at the verified aa8e16a. Main head a867f61 does not compile: run 43565916842 fails both the iOS and macOS jobs at ProfileCard.swift:627 and ProfilePickerSheet.swift:418 with 'missing argument label report:' in RemoteProfileUpdateAlertError(report). The aa8e16a evidence remains Apple client run 43348165279."
+      "note": "Three Swift initializer call sites fixed; iOS/macOS compiled in Apple client run 43584135709."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
