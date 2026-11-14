@@ -1,0 +1,12 @@
+﻿# Mieru e2e flake retry (first run failed on Windows ephemeral-port allocation, not on an assertion)
+
+## attempt 1: the original failing test
+=== RUN   TestMieruOutboundCloseTerminatesSessions
+--- PASS: TestMieruOutboundCloseTerminatesSessions (3.05s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/mieru	3.153s
+exit=0
+
+## attempt 2: the whole mieru package
+ok  	github.com/sagernet/sing-box/protocol/mieru	93.219s
+exit=0

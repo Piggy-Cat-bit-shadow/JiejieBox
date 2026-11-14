@@ -1,5 +1,9 @@
 # 第一阶段｜跨层资源预算与生命周期：收尾报告（rg-closure-2026-11-14）
 
+> 后续：第二阶段的独立对抗 Debug 见 [`09_DEBUG_REPORT.md`](09_DEBUG_REPORT.md) 与
+> [`10_BUG_LEDGER.md`](10_BUG_LEDGER.md)。Debug 在同一分支上修复了 3 个真实缺陷并补充了
+> 变异/性能证据；本文保留第一阶段收尾时的结论，未按 Debug 结果改写。
+
 > 分支：`work/resource-governance-closure-2026-11-14`
 > 基线：`testing` @ `fa61500731b1237e9ef44029b7469ee5373af4ba`
 > 本文所有结论都带证据级别。没有真机的地方标 `NEEDS_DEVICE`；没有运行的项标 `UNTESTED`，不写成 PASS。

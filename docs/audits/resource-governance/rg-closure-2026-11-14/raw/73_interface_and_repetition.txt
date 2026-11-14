@@ -1,0 +1,15 @@
+﻿# Interface regression: XHTTP/XMUX package and the new debug tests under repetition
+
+## go test -tags with_xhttp ./transport/v2rayxhttp -count=1 (round 1 did not change this package)
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	20.115s
+exit=0
+
+## repeated runs of the debug-round tests (-count=5)
+ok  	github.com/sagernet/sing-box/common/resourceguard	0.371s
+exit=0
+ok  	github.com/sagernet/sing-box/route	0.514s
+exit=0
+ok  	github.com/sagernet/sing-box/service/oomkiller	0.598s
+exit=0
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	0.102s
+exit=0

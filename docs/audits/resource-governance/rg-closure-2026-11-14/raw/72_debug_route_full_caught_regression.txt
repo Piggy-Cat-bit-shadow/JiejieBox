@@ -1,0 +1,15 @@
+﻿# Full route package run on the debug branch (after the debug fixes)
+# command: go test ./route -count=1 -v   (cwd: repo root, CGO_ENABLED=0)
+# verbose log is not committed; this is its machine-checkable summary.
+
+total lines      : 2507
+FAIL test lines  : 3
+PASS test lines  : 1182
+exit summary     : FAIL
+ok line          : 
+elapsed          : 449.1 s
+
+## any failures
+--- FAIL: TestConnectionNXDomainLoggingIsDebug (0.00s)
+    --- FAIL: TestConnectionNXDomainLoggingIsDebug/timeout (0.00s)
+    --- FAIL: TestConnectionNXDomainLoggingIsDebug/NXDOMAIN_mixed_with_a_real_failure (0.00s)

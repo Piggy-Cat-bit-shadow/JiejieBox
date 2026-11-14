@@ -15,7 +15,9 @@
 | `06_TEST_MATRIX.md` | 新增测试、RED/GREEN、`-race`、未运行项、复现命令 |
 | `07_PERFORMANCE_COMPARISON.md` | 结构性影响；本轮未跑基准，给出下一轮测量方案 |
 | `08_OPEN_QUESTIONS.md` | Q1–Q10：下轮攻击面与最小实验 |
-| `raw/` | 基线测试、RED、GREEN、构建/vet、全量 route 运行摘要 |
+| `09_DEBUG_REPORT.md` | 第二阶段定向对抗 Debug：调用链证明、确定性交错、变异、性能 A/B、`DEBUG_CLOSED` 判定 |
+| `10_BUG_LEDGER.md` | Debug 缺陷台账（D1–D14）：级别、证据、修复提交、DEFERRED/ENVIRONMENT 分类 |
+| `raw/` | 基线测试、RED、GREEN、构建/vet、全量 route 运行摘要、变异日志、A/B 基准、Debug 回归与 push 记录 |
 
 快速验证：
 
