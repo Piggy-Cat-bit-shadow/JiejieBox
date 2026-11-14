@@ -15,6 +15,7 @@ import (
 	"github.com/sagernet/sing-box/common/compatible"
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/common/power"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -674,6 +675,13 @@ func (c *Client) Start() {
 // A nil governor means no power concept was installed - the CLI, every non-Apple caller, every
 // fixture - and the previous behaviour is preserved exactly.
 func (c *Client) backgroundRefreshSuppressed() bool {
+	// Memory pressure first: this refresh renews an entry the caller was already served, so under
+	// Critical it is exactly the speculative work that must not compete with the flows being kept.
+	// Armed still refreshes (see resourceguard.BackgroundAllowed for why the line is Critical), and a
+	// process without a guard is unaffected.
+	if !resourceguard.BackgroundAllowed(c.ctx) {
+		return true
+	}
 	governor := c.powerGovernor
 	if governor == nil {
 		return false

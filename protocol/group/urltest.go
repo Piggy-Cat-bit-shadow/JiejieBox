@@ -18,6 +18,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	D "github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/interrupt"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
@@ -1212,8 +1213,15 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 	return minOutbound, true
 }
 
+// backgroundRoundAllowed reports whether the periodic health round may run now.
+//
+// A manual/forced round is not gated: an operator asking for a measurement is not background work.
+func (g *URLTestGroup) backgroundRoundAllowed() bool {
+	return resourceguard.BackgroundAllowed(g.ctx)
+}
+
 func (g *URLTestGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{}) {
-	if time.Since(g.lastActive.Load()) > g.interval {
+	if time.Since(g.lastActive.Load()) > g.interval && g.backgroundRoundAllowed() {
 		g.lastActive.Store(time.Now())
 		g.CheckOutbounds(g.ctx, false)
 	}
@@ -1234,7 +1242,9 @@ func (g *URLTestGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{})
 			g.access.Unlock()
 			return
 		}
-		g.CheckOutbounds(g.ctx, false)
+		if g.backgroundRoundAllowed() {
+			g.CheckOutbounds(g.ctx, false)
+		}
 	}
 }
 

@@ -482,6 +482,27 @@ func NewContext(ctx context.Context, guard *Guard) context.Context {
 	return service.ContextWith(ctx, guard)
 }
 
+// BackgroundAllowed reports whether low-priority background work may start right now.
+//
+// # Why only Critical
+//
+// Armed is a capacity reduction - the process is preparing to reclaim, but a probe or a speculative
+// cache refresh is still cheap next to a user flow, and keeping them alive is what lets failover and
+// freshness work during the preparation. Critical is the state where the process is already being
+// asked to shed, and background work that only improves freshness must not compete with the flows
+// that are being kept. The mapping is deliberately one-sided: an unknown level is not Critical, so a
+// wiring mistake cannot silently stop recovery work.
+//
+// A process without a guard (desktop, Android, any build without a Network Extension budget) always
+// allows background work, which is the historical behaviour.
+func BackgroundAllowed(ctx context.Context) bool {
+	guard := FromContext(ctx)
+	if guard == nil {
+		return true
+	}
+	return guard.Level() != LevelCritical
+}
+
 // clockNow reads the guard's clock, defaulting to the wall clock when the field is unset.
 //
 // It exists so the dwell and the aging rule can be driven by a simulated clock in tests without
