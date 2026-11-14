@@ -223,7 +223,7 @@ func (n *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			n.logger.Warn("naive http3 disabled: HTTP/3 is not available in this build")
 			return nil
 		}
-		http3Server, err := ConfigureHTTP3ListenerFunc(n.ctx, n.logger, n.listener, n, n.tlsConfig, n.options)
+		http3Server, err := ConfigureHTTP3ListenerFunc(n.ctx, n.logger, n.listener, n, n.quicTLSConfig(), n.options)
 		if err == nil {
 			scope.Add(http3Server.Close)
 		} else if len(n.network) > 1 {
@@ -275,6 +275,31 @@ func (n *Inbound) tcpNextProtos() []string {
 // QUIC is the failure mode being fixed.
 func (n *Inbound) quicNextProtos() []string {
 	return []string{http3ALPN}
+}
+
+// quicTLSConfig returns the TLS configuration the HTTP/3 listener must use.
+//
+// The inbound shares one TLS config between its TCP and QUIC listeners, so the
+// QUIC side needs a transport-scoped view for the same reason the TCP side does:
+// Go's ALPN negotiates by the SERVER's list order, and a shared ["h2","h3"] list
+// makes a QUIC client that offers ["h3","h2"] negotiate "h2" on a QUIC
+// connection. The view keeps the certificate provider, ACME service, watcher and
+// Close path shared; it only replaces the list.
+//
+// Why the view is conditional for now: with no operator ALPN the shared list is
+// empty at this point, and qtls.ConfigureHTTP3 turns an empty list into ["h3"],
+// which is already the correct QUIC-only answer. Taking that path over keeps this
+// commit a pure ordering fix: the meaning of "tls.alpn is unset" and of
+// "tls.alpn omits h3" does not change here. Making `network` authoritative for
+// H3 is a separate contract decision.
+func (n *Inbound) quicTLSConfig() tls.ServerConfig {
+	if n.tlsConfig == nil {
+		return nil
+	}
+	if !common.Contains(n.tlsConfig.NextProtos(), http3ALPN) {
+		return n.tlsConfig
+	}
+	return tls.TransportALPNView(n.tlsConfig, n.quicNextProtos())
 }
 
 // negotiatedNextProtos reports every ALPN this inbound offers across all of its

@@ -10,6 +10,8 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json/badoption"
 
 	"github.com/stretchr/testify/require"
 )
@@ -180,4 +182,64 @@ func TestJiejieNaiveTCPConnectStillWorksAlongsideH3(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, waitForDial(&origin.conns, 0),
 		"TCP CONNECT must still reach the origin on a tcp+udp inbound")
+}
+
+// TestJiejieNaiveDualStackQUICALPNNegotiatesH3 is the runtime proof for the QUIC
+// half of the same split.
+//
+// The tests above cover what a TCP client negotiates. The QUIC half was only
+// covered by a resolver test that asserted quicNextProtos() in isolation, while
+// production handed the SHARED config to the HTTP/3 listener - so an operator
+// list of ["h2","http/1.1","h3"] made a QUIC client that offers ["h3","h2"]
+// negotiate "h2" on a QUIC connection. This test performs the real handshake and
+// asserts the negotiated protocol, which is the property a client acts on.
+//
+// Fixed ports are used because Windows reserves whole ephemeral ranges for UDP;
+// a dynamically picked port can land inside one (WSAEACCES), which disables
+// HTTP/3 and turns this test into a false negative. 28480-28481 are outside the
+// excluded ranges on the machine this was written on.
+func TestJiejieNaiveDualStackQUICALPNNegotiatesH3(t *testing.T) {
+	cases := []struct {
+		name       string
+		port       uint16
+		alpn       badoption.Listable[string]
+		wantResult string
+	}{
+		{
+			name:       "operator list with h2 before h3 still negotiates h3",
+			port:       28480,
+			alpn:       badoption.Listable[string]{"h2", "http/1.1", "h3"},
+			wantResult: http3.NextProtoH3,
+		},
+		{
+			name:       "unset alpn still negotiates h3",
+			port:       28481,
+			alpn:       nil,
+			wantResult: http3.NextProtoH3,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			startNaiveInboundTuned(t, "tcp\nudp", false, func(options *option.NaiveInboundOptions) {
+				options.ListenOptions.ListenPort = testCase.port
+				if testCase.alpn != nil {
+					options.TLS.ALPN = testCase.alpn
+				}
+			})
+
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			conn, err := quic.DialAddrEarly(ctx, "127.0.0.1:"+strconv.Itoa(int(testCase.port)), &tls.Config{
+				ServerName:         "naive.test",
+				InsecureSkipVerify: true,
+				NextProtos:         []string{http3.NextProtoH3, "h2"},
+			}, &quic.Config{})
+			require.NoError(t, err)
+			defer conn.CloseWithError(0, "")
+
+			require.Equal(t, testCase.wantResult,
+				conn.ConnectionState().TLS.NegotiatedProtocol,
+				"a QUIC client offering h3 must never be given h2")
+		})
+	}
 }
