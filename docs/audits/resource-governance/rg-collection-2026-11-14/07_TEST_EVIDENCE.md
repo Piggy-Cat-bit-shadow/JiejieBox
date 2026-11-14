@@ -1,7 +1,6 @@
 # 07 测试证据（Test evidence）
 
-> 全部命令在本机 `C:\Deepseek\rg-collection-2026-11-14`（clone 自 branch HEAD）执行。
-> 原始输出在 `raw/test-logs/`。`SKIP` 记为 `NOT_RUN`，不是 PASS。
+> 全部命令在 branch HEAD 的全新 clone 中执行（本机 clone 根目录以 `<clone-root>` 表示）；原始输出在 `raw/test-logs/`。`SKIP` 记为 `NOT_RUN`，不是 PASS。
 
 ## 1. 本轮实际执行的测试
 
