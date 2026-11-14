@@ -4,6 +4,73 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.48](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.48) — 2026-11-14
+
+### 本次更新
+
+v0.1.48 是**跨层资源治理收口 + 依赖分支整合**版本。本版把共享传输里最后几处"物理创建不经过预算"的入口补齐到既有 resourceguard 体系，合入 AnyTLS 会话创建合并与 sing-tun 流观测，修正 HTTP/MASQUE 入站拥塞控制配置不生效的问题；三个依赖仓库的工作分支先合入各自主线，主仓再消费合并后的提交，不再引用临时分支。
+
+#### 一、跨层资源治理收口
+
+本轮不是给每个协议都加一层 gate，而是找出创建与生命周期上的真实断点，在既有 seam 上补齐；没有新增预算类型、第二个压力采样器或新的状态机。
+
+- **HTTP/3 物理创建纳入准入**：共享 HTTP/3 客户端（MASQUE、DoH3、provider 拉取）与 XHTTP 的 H3 池此前直接 `quic.DialEarlyConn`，不受 `AdmitCreation` 约束；现在从构造 context 取 guard，在 UDP dial 与 QUIC 握手外包一次 permit，连接发布后归还，池化复用不重复计费。饱和时构造器不执行、连接不发布，拒绝仍归类为本地背压而不是节点故障。
+- **v2rayquic 共享创建**：`transport.type=quic` 的 VLESS/VMess/Trojan 共享 QUIC 连接创建是共享 QUIC 家族里唯一未计费成员，现按同一 `CreationAdmission` 设计补齐。
+- **非 connected UDP 的 setup gate 与 traffic class**：`route/conn.go` 的 `ListenPacket` 路径此前绕过 dial setup gate 和 traffic class 传播；网络切换无法取消在途 setup，交互流会被当成后台流量。现在该路径与 connected 路径共用同一套 gate/class 语义，已建立的 packet flow 不因网络代次迁移被误关。
+- **OOMKiller 采样诚实性**：`phys_footprint` 读取失败时 `memory.Total()` 返回 0，曾被当成真实测量并发布 `MemoryPressureNone`，让准入回到最宽松档。现在 0 被分类为"不可测量"，状态保持在 ARMED 线并写入报告；轮询顺序与平台作用域同时补了测试。
+- **DNS 并发上界**：`Router.Exchange` / `ExchangeAsync` / `Lookup` 统一经过 256 并发 / 256 队列 / 2 s 等待的 query gate；异步路径的 permit 保持到回调，成功、失败、重复回调都恰好释放一次。gate 不读内存压力——DNS 是恢复路径的控制面工作，不应被额外掐死。
+- **Critical 压力下的后台让路**：URLTest 周期探测与 DNS optimistic refresh 在 Critical 压力下不再发起新的后台创建；Armed 仍放行，避免把正常调度误伤成停摆。
+- **准入观测与拒绝分类**：gate 增加等待者高水位 `Stats.MaxWaiters`；H3 的本地拒绝（队列满、等待超时、rate window、调用方 deadline）不再推进 H3→H2 的 broken ladder，真实握手失败仍然推进。
+- **XHTTP 请求体生命周期**：包装体的 `Close` 现在委托给底层 body，避免提前释放或漏释放。
+- **AnyTLS 创建者语义**：共享创建保留首个调用者的 deadline（无 deadline 时 30 s 上限），等待者的取消不会拆掉创建；混合优先级等待者共享创建者的 admission 类别。
+- **NAT 首包**：本轮给出 `DECISION` 而不是代码改动——首包归两套 stack writer 所有，释放点在 handshake 回调，主仓没有 TUN 环境可验证跨栈桥接；量化上界在观测预算内（200 flow 约 0.3 MiB），保留为后续设备验证项。
+
+#### 二、AnyTLS 会话创建合并（sing-anytls main）
+
+突发首流此前在每个 goroutine 里都看到空池，各自建连、握手、首写；gate 只限速（32 并发），不减少总量（200 flow 约 200 次握手）。sing-anytls 现在：
+
+- 维护单一在途创建，首个调用者创建，其余等待同一结果并在成功后直接开流；
+- 创建使用首个调用者的 deadline 与客户端生命周期，等待者取消不影响共享创建；
+- 失败时同一错误唤醒全部等待者，成功但 session 在 waiter 使用前关闭时允许一次新创建；
+- `Close` 取消创建并唤醒所有等待者；
+- 暴露 `PendingCreationWaiters` 诊断 gauge。
+
+主仓集成测试让 200 个并发首流等到 199 个 waiter 全部附着后放行创建：**1 次创建、1 次 admission、1 个物理 accept、200/200 成功**，`-race` 同样通过。
+
+#### 三、TUN 流观测与 Go stack 首包快照（sing-tun dev）
+
+- 新增只读 `UDPNatStats`（entries、sessions、queued bytes、dropped 等）与 TCP dispatcher 统计（dispatches、active goroutines、per-dispatch 成本），供主仓诊断和预算评估消费。
+- 修复 Go stack 首包快照的生命周期：握手成功、握手失败与 `Close` 三条路径都会释放快照，不再把首包引用留到连接结束；补了"Close 与握手并发"的回归。
+- 增加 2000 / 4096 流的规模测量测试，给出 entries、sessions、queued、goroutines、heap 的实测值与回收后的基线。
+
+#### 四、HTTP / MASQUE 入站的拥塞控制
+
+`quic_congestion_control` 在 HTTP/MASQUE 入站会被解码，但服务端此前只读 `bbr_profile`，显式写 `cubic` / `bbr` / `reno` 是静默 no-op。现在：
+
+- `bbr_profile` 保持原语义（生产拓扑的 `standard` 不变）；
+- `quic_congestion_control` 仅在 `bbr_profile` 未设置时生效，`cubic` / `reno` 安装 `congestion_meta1` sender，`bbr` 选择标准 BBR；
+- 两者同时设置是**构造期错误**，不再让其中一个静默胜出；
+- 未知算法在 `sing-box check` 与 `run` 都拒绝；
+- 两者都不设置时保持 quic-go 自带 sender（本 pin 为 Reno），不改变既有部署；
+- 用真实 QUIC 握手断言安装的 sender 类型，而不是只测解析函数。
+
+#### 五、依赖与分支整合
+
+- `sing-anytls`：`work/creation-coalescing-2026-11-14` 合入 `main`（fast-forward，`8473492`）。
+- `sing-tun`：`work/flow-observation-2026-11-14` 合入 `dev`（fast-forward，`ab63d63`）。
+- `JiejieBox`：`work/resource-governance-closure-2026-11-14` 合入 `testing`，保留已合入的 PR #6（双栈 ALPN / 日志 / CUBIC 默认）与 PR #7（HTTP/MASQUE 拥塞控制），未回退任何一项。
+- 主仓 `go.mod`、`test/go.mod` 与锁文件改为消费合并后的提交：`sing-tun v0.9.7-0.20261114051221-ab63d63ac306`、`sing-anytls v0.0.0-20261114030206-8473492a5afe`。
+- 客户端 gitlink 本轮**保留**在已验证组合：Apple 分支头 `a867f61` 在 iOS/macOS 编译中报 `missing argument label 'report:'`，不能固定一个未编译的客户端；Desktop 与 Apple 作为一组保留，待客户端修复后一起更新。
+
+#### 六、验证与发布
+
+- 本地：`go build ./...` 与全量 Release 标签构建均为 exit 0；`go vet` 两种标签集通过；受影响包单测与 `-race`（`common/resourceguard`、`common/httpclient`、`transport/v2rayxhttp`、`transport/v2rayquic`、`route`、`service/oomkiller`、`protocol/group`、`protocol/anytls`、`dns`、`protocol/naive`、`transport/http`、`option`）全部通过。`route` 的 `TestBackpressure_KernelGiveUpWindow` 在 Windows 仍会挂起，与基线一致，属环境限制，已用 `-skip` 排除并记录。
+- CI：`5017b8864` 上 Verify（含 race checks）与 Release contract 全绿；Android Core ARM64、Mobile contract 成功。
+- [Kernel release 43569490140](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43569490140) 的 freeze、contract、Verify/race、Linux、macOS、Windows core、Desktop 安装器、Android AAR、Apple Libbox 与 iOS/macOS/自签、stage、publish 全部通过。
+- 内核 tag `v0.1.48` 指向 `5017b8864dca20eaa6bec203dd912d9f7cba0e14`；公开附件 8 项：Linux/macOS/Windows 内核、Windows x64 安装器、Android ARM64 AAR、Apple Libbox、未签名 IPA、`SHA256SUMS`。
+- - [Satelite v0.1.48](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.48) 已发布：`versionCode=59`、`coreCommit=5017b8864dca20eaa6bec203dd912d9f7cba0e14`，`arm64-v8a` / `x86_64` 双签名 APK、`build-info.json` 与 `apksigner-verify.txt` 均已回读（run 43571517986）。
+- TestFlight 上传、签名与真机验收尚未执行，按独立指引继续；本版不把未运行的设备项写成 PASS。
+
 ## [v0.1.47](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.47) — 2026-11-14
 
 ### 本次更新
