@@ -87,6 +87,20 @@ type memorySample struct {
 	usage          uint64
 	available      uint64
 	availableKnown bool
+	// footprintUnavailable reports that the PROCESS FOOTPRINT could not be read, so `usage` is not a
+	// measurement.
+	//
+	// # Why this is a flag and not a zero check at each use
+	//
+	// memory.Total() returns phys_footprint through task_info(TASK_VM_INFO), and the platform wrapper
+	// reports 0 when that call fails. A live process cannot occupy zero bytes, so a zero read is a
+	// failed read - but only the code that performed the read can say WHICH of the two it produced, and
+	// everything downstream (the state machine, the reclaim decision, the admission guard reading the
+	// published pressure) would otherwise have to re-derive that judgement from the number alone.
+	//
+	// The zero value means "this sample is a real measurement", which keeps every existing fixture and
+	// the normal path unchanged: only a read that failed sets it.
+	footprintUnavailable bool
 }
 
 type pressureThresholds struct {
@@ -1177,6 +1191,12 @@ func (s pressureState) memoryPressure() tun.MemoryPressure {
 func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 	switch t.policyMode {
 	case policyModeMemoryLimit, policyModeNetworkExtension:
+		// An unmeasurable footprint must not be read as "below every threshold". This is the branch
+		// that used to publish Normal - and therefore reopen admission to its widest shape - exactly
+		// when the process had lost sight of its own memory. See unmeasuredPressureState.
+		if sample.footprintUnavailable {
+			return unmeasuredPressureState(t.state)
+		}
 		return nextPressureState(t.state,
 			sample.usage >= t.limitThresholds.trigger,
 			sample.usage >= t.limitThresholds.armed,
@@ -1356,12 +1376,23 @@ func nextPressureState(current pressureState, shouldTrigger, shouldArm bool) pre
 // healthy process on an unsupported platform as being in permanent critical pressure.
 //
 // memory.AvailableAvailable() is the platform's own answer to whether the figure is
-// meaningful, so it decides. phys_footprint (memory.Total()) remains the primary signal
-// and is always available.
+// meaningful, so it decides.
+//
+// # Why the footprint has no equivalent "TotalAvailable()" call
+//
+// It has one, but it is not trustworthy for this question: memory_darwin.go returns true
+// unconditionally, so on Darwin it says "the API exists" and never "this read succeeded".
+// task_info can still fail, and it returns 0 when it does. A zero footprint is not a
+// measurement - no live process occupies zero bytes - which is the one signal available at
+// this layer and the reason footprintUnavailable exists. See memorySample.
 func readMemorySample(mode policyMode) memorySample {
-	sample := memorySample{
-		usage: memory.Total(),
-	}
+	return readMemorySampleFor(mode, memory.Total())
+}
+
+// readMemorySampleFor is readMemorySample with the platform read injected, so the failed-read
+// classification is testable without a device whose task_info fails on demand.
+func readMemorySampleFor(mode policyMode, total uint64) memorySample {
+	sample := sampleFromTotal(total)
 	if mode == policyModeAvailable || mode == policyModeNetworkExtension {
 		if memory.AvailableAvailable() {
 			sample.available = memory.Available()
@@ -1369,6 +1400,36 @@ func readMemorySample(mode policyMode) memorySample {
 		}
 	}
 	return sample
+}
+
+// sampleFromTotal builds a footprint sample from one platform read.
+//
+// A zero read is classified as unavailable here, once, so the state machine, the reclaim decision and
+// the report all agree about what zero means. A live process cannot occupy zero bytes; the platform
+// wrapper returns 0 when task_info fails.
+func sampleFromTotal(total uint64) memorySample {
+	return memorySample{usage: total, footprintUnavailable: total == 0}
+}
+
+// unmeasuredPressureState maps an unmeasurable footprint onto the one conservative state that needs no
+// evidence.
+//
+// # Why ARMED and why never Normal, and why never Triggered
+//
+// Normal is the claim these tests forbid: it says the process has headroom it was unable to observe.
+// Triggered is a crisis, and a crisis authorises a destructive reset (ReleaseMemory, forced GC) plus
+// the most restrictive admission shape; manufacturing that from an absent measurement would make a
+// broken platform API tear down live paths on its own.
+//
+// Armed is the only level that is both safe and evidence-free: admission tightens (half the creation
+// limit, half the queue, half the wait), the TUN pools shrink, the sampling cadence shortens, and
+// nothing is destroyed. A crisis that was already MEASURED is held rather than cleared, because a lost
+// measurement is not evidence of recovery.
+func unmeasuredPressureState(current pressureState) pressureState {
+	if current == pressureStateTriggered {
+		return pressureStateTriggered
+	}
+	return pressureStateArmed
 }
 
 func (s pressureState) String() string {

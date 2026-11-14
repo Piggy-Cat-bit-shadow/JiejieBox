@@ -177,6 +177,15 @@ type timelineRow struct {
 	// serialise identically. Absent means "not known", and the flag is what says so.
 	AvailableBytes uint64 `json:"availableBytes,omitempty"`
 	AvailableKnown bool   `json:"availableKnown"`
+	// FootprintUnavailable reports that MemoryBytes is NOT a measurement: the platform read failed
+	// and the field holds 0 because of that, not because the process occupies nothing.
+	//
+	// It is omitempty because absence is the unambiguous common case: no key means the footprint was
+	// measured, and the flag's presence says the rest of the row must not be read as evidence of
+	// headroom. (AvailableKnown cannot use omitempty - there, a known zero is a real reading.) A
+	// reader that only understands memoryBytes still sees the row it always saw; one that understands
+	// the flag can tell a failed read from an empty process, which no live process can be.
+	FootprintUnavailable bool `json:"footprintUnavailable,omitempty"`
 	// GoMemoryBytes is /memory/classes/total:bytes - the runtime's total managed memory.
 	// It is NOT the figure GOMEMLIMIT constrains; see GoRuntimeManagedBytes.
 	GoMemoryBytes   uint64 `json:"goMemoryBytes,omitempty"`
@@ -222,6 +231,8 @@ type eventRecord struct {
 	Prefix           string        `json:"prefix,omitempty"`
 	Runtime          *runtimeStats `json:"runtime,omitempty"`
 	HeapDump         bool          `json:"heapDump,omitempty"`
+	// FootprintUnavailable means the event's memoryBytes is not a measurement. See timelineRow.
+	FootprintUnavailable bool `json:"footprintUnavailable,omitempty"`
 }
 
 type runtimeStats struct {
@@ -309,7 +320,7 @@ func (r *Recorder) releaseDraftLocked() {
 }
 
 func (r *Recorder) WriteReport() error {
-	sample := memorySample{usage: memory.Total()}
+	sample := sampleFromTotal(memory.Total())
 	if memory.AvailableAvailable() {
 		sample.availableKnown = true
 		sample.available = memory.Available()
@@ -331,10 +342,11 @@ func (r *Recorder) WriteReport() error {
 		return err
 	}
 	r.appendEventLocked(eventRecord{
-		Type:           eventTypeReport,
-		MemoryBytes:    sample.usage,
-		AvailableBytes: sample.available,
-		AvailableKnown: sample.availableKnown,
+		Type:                 eventTypeReport,
+		MemoryBytes:          sample.usage,
+		AvailableBytes:       sample.available,
+		AvailableKnown:       sample.availableKnown,
+		FootprintUnavailable: sample.footprintUnavailable,
 	})
 	err = copyDirectory(r.draftPath, destPath)
 	if err != nil {
@@ -426,16 +438,17 @@ func (r *Recorder) sample(sample memorySample, state pressureState, connections 
 	runtimeTotal := r.metricsSamples[0].Value.Uint64()
 	heapReleased := r.metricsSamples[5].Value.Uint64()
 	row := timelineRow{
-		At:              now.UTC().Format(time.RFC3339),
-		State:           state.String(),
-		MemoryBytes:     sample.usage,
-		AvailableBytes:  sample.available,
-		AvailableKnown:  sample.availableKnown,
-		GoMemoryBytes:   runtimeTotal,
-		GoHeapLiveBytes: r.metricsSamples[1].Value.Uint64(),
-		GoStackBytes:    r.metricsSamples[2].Value.Uint64(),
-		Goroutines:      r.metricsSamples[3].Value.Uint64(),
-		Connections:     connections,
+		At:                   now.UTC().Format(time.RFC3339),
+		State:                state.String(),
+		MemoryBytes:          sample.usage,
+		AvailableBytes:       sample.available,
+		AvailableKnown:       sample.availableKnown,
+		FootprintUnavailable: sample.footprintUnavailable,
+		GoMemoryBytes:        runtimeTotal,
+		GoHeapLiveBytes:      r.metricsSamples[1].Value.Uint64(),
+		GoStackBytes:         r.metricsSamples[2].Value.Uint64(),
+		Goroutines:           r.metricsSamples[3].Value.Uint64(),
+		Connections:          connections,
 		// GOMEMLIMIT accounting: total minus released. Saturating, because a runtime
 		// could in principle report released > total transiently and an underflow would
 		// wrap to an enormous number that reads as a catastrophic event.
@@ -466,10 +479,11 @@ func (r *Recorder) recordPressure(sample memorySample) {
 	r.observeLocked(sample)
 	r.denseUntil = time.Now().Add(denseSampleWindow)
 	r.appendEventLocked(eventRecord{
-		Type:           eventTypePressure,
-		MemoryBytes:    sample.usage,
-		AvailableBytes: sample.available,
-		AvailableKnown: sample.availableKnown,
+		Type:                 eventTypePressure,
+		MemoryBytes:          sample.usage,
+		AvailableBytes:       sample.available,
+		AvailableKnown:       sample.availableKnown,
+		FootprintUnavailable: sample.footprintUnavailable,
 	})
 }
 
@@ -479,11 +493,12 @@ func (r *Recorder) recordStateChange(state pressureState, sample memorySample) {
 	r.observeLocked(sample)
 	r.denseUntil = time.Now().Add(denseSampleWindow)
 	r.appendEventLocked(eventRecord{
-		Type:           eventTypeState,
-		State:          state.String(),
-		MemoryBytes:    sample.usage,
-		AvailableBytes: sample.available,
-		AvailableKnown: sample.availableKnown,
+		Type:                 eventTypeState,
+		State:                state.String(),
+		MemoryBytes:          sample.usage,
+		AvailableBytes:       sample.available,
+		AvailableKnown:       sample.availableKnown,
+		FootprintUnavailable: sample.footprintUnavailable,
 	})
 }
 
@@ -493,14 +508,15 @@ func (r *Recorder) recordReset(reason string, before memorySample, after memoryS
 	r.observeLocked(before)
 	r.denseUntil = time.Now().Add(denseSampleWindow)
 	r.appendEventLocked(eventRecord{
-		Type:             eventTypeReset,
-		Reason:           reason,
-		MemoryBytes:      before.usage,
-		AvailableBytes:   before.available,
-		AvailableKnown:   before.availableKnown,
-		MemoryAfterBytes: after.usage,
-		Connections:      connections,
-		ReportOnly:       reportOnly,
+		Type:                 eventTypeReset,
+		Reason:               reason,
+		MemoryBytes:          before.usage,
+		AvailableBytes:       before.available,
+		AvailableKnown:       before.availableKnown,
+		FootprintUnavailable: before.footprintUnavailable,
+		MemoryAfterBytes:     after.usage,
+		Connections:          connections,
+		ReportOnly:           reportOnly,
 	})
 }
 
@@ -574,15 +590,16 @@ func (r *Recorder) snapshot(reason string, sample memorySample, heapDump bool, f
 	r.observeLocked(sample)
 	r.writeLogLocked()
 	r.appendEventLocked(eventRecord{
-		Type:           eventTypeSnapshot,
-		Reason:         reason,
-		Sequence:       sequence,
-		Prefix:         prefix,
-		MemoryBytes:    sample.usage,
-		AvailableBytes: sample.available,
-		AvailableKnown: sample.availableKnown,
-		Runtime:        stats,
-		HeapDump:       heapDumped,
+		Type:                 eventTypeSnapshot,
+		Reason:               reason,
+		Sequence:             sequence,
+		Prefix:               prefix,
+		MemoryBytes:          sample.usage,
+		AvailableBytes:       sample.available,
+		AvailableKnown:       sample.availableKnown,
+		FootprintUnavailable: sample.footprintUnavailable,
+		Runtime:              stats,
+		HeapDump:             heapDumped,
 	})
 	return nil
 }
@@ -620,7 +637,11 @@ func (r *Recorder) observeLocked(sample memorySample) {
 
 	// The budget is computed HERE, where usage and available describe the same instant, and
 	// never by combining extrema from different samples. See ObservedBudget.
-	if sample.availableKnown {
+	//
+	// An unavailable footprint contributes no observed budget: its zero is the absence of a
+	// measurement, not a process that uses no memory. Adding that zero to a real available figure
+	// would invent the most optimistic budget in the report out of the least informed sample.
+	if sample.availableKnown && !sample.footprintUnavailable {
 		observed := sample.usage + sample.available
 		if !r.status.BudgetObserved {
 			r.status.BudgetObserved = true
