@@ -4,6 +4,7 @@ package quic
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -140,20 +141,51 @@ func TestNativeNaiveCongestionControlAcceptsDocumentedValues(t *testing.T) {
 				t.Fatalf("the production resolver refused %q, which is documented "+
 					"as accepted: %v", name, err)
 			}
-			// An unset value and the explicit "default" must both mean "keep
-			// quic-go's sender", which the constructor represents as nil. The
-			// named values must produce a sender.
-			if name == "" || name == "default" {
-				if sender != nil {
-					t.Fatalf("%q must select the library default (nil sender), got a "+
-						"sender factory", name)
-				}
-				return
-			}
+			// Every accepted value resolves to a concrete sender. "unset" and
+			// "default" are no longer "keep quic-go's CUBIC": they select the
+			// product default BBR, which the test below pins to the same factory
+			// as the explicit spelling.
 			if sender == nil {
 				t.Fatalf("%q must produce a sender factory, got nil", name)
 			}
 		})
+	}
+}
+
+// TestNativeNaiveCongestionControlUnsetSelectsBBR pins the product default.
+//
+// The field is documented as defaulting to BBR (docs/configuration/inbound/naive.md
+// and naive.zh.md). Before this test existed, an unset value and "default" returned
+// a nil factory, which left quic-go's own sender (CUBIC) in place: on a lossy
+// international path that is a ~36x throughput difference that no log and no error
+// reported. BBR is what "unset" selects now; cubic and reno remain explicit
+// choices.
+//
+// The assertion compares the factory's code pointer with the one "bbr" produces.
+// That is what "selects the BBR sender" means here: the unset value resolves to the
+// same factory the explicit spelling does, not to a second implementation that
+// could drift from it.
+func TestNativeNaiveCongestionControlUnsetSelectsBBR(t *testing.T) {
+	bbrFactory, err := newNaiveCongestionControl("bbr", time.Now)
+	if err != nil {
+		t.Fatalf("explicit bbr must resolve: %v", err)
+	}
+	if bbrFactory == nil {
+		t.Fatal("explicit bbr must produce a sender factory")
+	}
+	for _, name := range []string{"", "default"} {
+		factory, err := newNaiveCongestionControl(name, time.Now)
+		if err != nil {
+			t.Fatalf("%q must resolve: %v", name, err)
+		}
+		if factory == nil {
+			t.Fatalf("%q selected the library default (nil factory) instead of the "+
+				"product default BBR; on a lossy path the library default is CUBIC "+
+				"and costs roughly 36x throughput", name)
+		}
+		if reflect.ValueOf(factory).Pointer() != reflect.ValueOf(bbrFactory).Pointer() {
+			t.Fatalf("%q must select the same sender factory as explicit \"bbr\"", name)
+		}
 	}
 }
 

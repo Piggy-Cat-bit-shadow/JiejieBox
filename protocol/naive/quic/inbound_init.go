@@ -135,20 +135,19 @@ func nativeNaiveQUICConfig(options option.NaiveInboundOptions) *quic.Config {
 // constructor and the test both call this, so there is one validation and no
 // second copy in the test that could drift from it.
 //
-// A nil return with a nil error means "use the library default", which is what an
-// unset value and the explicit "default" both select. The reference sets neither a
-// congestion control nor a path manager, so an unset value staying with quic-go is
-// the reference-like behaviour; BBR is a production choice and must be named.
+// An unset value and the explicit "default" both select BBR, which is this fork's
+// product default: the reference (Caddy) leaves quic-go's CUBIC in place, but that
+// default assumes a low-loss web path, and this product serves 10%+ loss
+// international links where loss-based control collapses. Congestion control does
+// not change wire behaviour, so selecting BBR does not break the reference-like
+// rule; cubic and reno stay available by name.
 //
 // Matching is exact. No whitespace trimming and no case folding: an unrecognised
 // value is a configuration error the operator should see, and silently accepting
 // "BBR" or " bbr" would make a typo look like it worked.
 func newNaiveCongestionControl(name string, timeFunc func() time.Time) (func(conn *quic.Conn) congestion.CongestionControl, error) {
 	switch name {
-	case "", "default":
-		// nil leaves quic-go's own default sender in place.
-		return nil, nil
-	case "bbr":
+	case "", "default", "bbr":
 		return func(conn *quic.Conn) congestion.CongestionControl {
 			return congestion_meta2.NewBbrSenderWithProfile(conn.InitialPacketSize(), congestion_meta2.ProfileStandard)
 		}, nil
@@ -200,20 +199,18 @@ func init() {
 		if timeFunc == nil {
 			timeFunc = time.Now
 		}
-		// Unset means "use the library default", which is CUBIC in quic-go and is
-		// therefore what the reference gets. The fork's BBR preference is a
-		// performance choice, opted into by name rather than being what an unset
-		// field silently selects. The resolution and its validation live in
-		// newNaiveCongestionControl so they can be tested without a socket.
+		// Unset means the product default is BBR, not quic-go's CUBIC: the
+		// resolution lives in newNaiveCongestionControl so that it can be tested
+		// without a socket. The startup line names the resolved sender because
+		// "why is throughput poor on a lossy link?" used to have no answer in the
+		// logs at all.
 		congestionControl, err := newNaiveCongestionControl(options.QUICCongestionControl, timeFunc)
 		if err != nil {
 			return nil, err
 		}
 		if options.QUICCongestionControl == "" {
-			// Unset is the library default, CUBIC; BBR is a deliberate production choice. Say so
-			// at startup instead of leaving "why is throughput poor on a lossy link?" unexplained.
-			logger.Info("naive inbound: quic_congestion_control is unset; using the library default ",
-				"(CUBIC). Set \"bbr\" explicitly on lossy paths")
+			logger.Info("naive inbound: quic_congestion_control is unset; using BBR. ",
+				"Set \"cubic\" or \"reno\" to override")
 		}
 
 		quicListener, err := qtls.ListenEarly(udpConn, tlsConfig, nativeNaiveQUICConfig(options))
@@ -229,12 +226,9 @@ func init() {
 			// without this the exit classification below never sees them. See h3_error_class.go.
 			Logger: newNaiveH3ServerLogger(logger),
 			ConnContext: func(ctx context.Context, conn *quic.Conn) context.Context {
-				// A nil selector means "keep quic-go's default congestion
-				// control". Calling SetCongestionControl with a nil would be a
-				// nil dereference, so it is skipped rather than guarded.
-				if congestionControl != nil {
-					conn.SetCongestionControl(congestionControl(conn))
-				}
+				// The resolver returns a factory for every accepted value, so
+				// there is no "keep the library default" case left to guard.
+				conn.SetCongestionControl(congestionControl(conn))
 				return log.ContextWithNewID(ctx)
 			},
 		}
