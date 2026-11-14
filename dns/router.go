@@ -2213,6 +2213,16 @@ func (r *Router) lookupWithSource(ctx context.Context, domain string, options ad
 	rules := r.rules
 	legacyDNSMode := r.legacyDNSMode
 	r.rulesAccess.RUnlock()
+	// Lookup is the other public entry into the client. It does not pass through Exchange (it has
+	// its own rule walk and may combine two family exchanges), so it needs the same query budget;
+	// otherwise a flow burst that resolves names for dialing would still create unbounded query work
+	// while the Exchange path was correctly bounded. The permit is held across the whole lookup:
+	// the two families of a complete lookup are one caller's work.
+	permit, gateErr := r.admitQuery(ctx)
+	if gateErr != nil {
+		return nil, 0, false, gateErr
+	}
+	defer permit.Release()
 	var (
 		responseAddrs       []netip.Addr
 		sourceGeneration    uint64

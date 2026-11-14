@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,6 +50,7 @@ func (gateStubTransport) ExchangeAsync(_ context.Context, _ *mDNS.Msg, callback 
 type gateStubClient struct {
 	exchanges atomic.Int32
 	asyncs    atomic.Int32
+	lookups   atomic.Int32
 }
 
 func (c *gateStubClient) Start() {}
@@ -68,7 +70,8 @@ func (c *gateStubClient) ExchangeAsync(_ context.Context, _ adapter.DNSTransport
 }
 
 func (c *gateStubClient) Lookup(context.Context, adapter.DNSTransport, string, adapter.DNSQueryOptions, func(*mDNS.Msg) bool) ([]netip.Addr, error) {
-	return nil, nil
+	c.lookups.Add(1)
+	return []netip.Addr{netip.MustParseAddr("192.0.2.1")}, nil
 }
 
 func (c *gateStubClient) ClearCache() {}
@@ -158,4 +161,134 @@ func TestSaturatedDNSGateRefusesTheAsyncExchange(t *testing.T) {
 	}
 	require.EqualValues(t, 1, client.asyncs.Load())
 	require.Zero(t, router.queryGate.Stats().Inflight, "the async exchange leaked its slot")
+}
+
+// Lookup is the public entry used by dialers and rule matching. It does not pass through Exchange,
+// so before this test the query budget covered DNS messages but not the lookups that resolve a
+// destination for a dial.
+func TestSaturatedDNSGateRefusesRouterLookup(t *testing.T) {
+	router := newGateTestRouter(t)
+	router.queryGate = resourceguard.NewBoundedGate(1, 0, 50*time.Millisecond)
+	held, err := router.queryGate.Acquire(context.Background(), resourceguard.ClassNormal)
+	require.NoError(t, err)
+	defer held.Release()
+
+	client := &gateStubClient{}
+	router.client = client
+	options := adapter.DNSQueryOptions{Transport: gateStubTransport{}}
+
+	_, err = router.Lookup(context.Background(), "example.com", options)
+	require.ErrorIs(t, err, resourceguard.ErrQueueFull,
+		"a saturated DNS budget must refuse the lookup, not run it")
+	require.Zero(t, client.lookups.Load(), "the client lookup ran despite the refusal")
+
+	held.Release()
+	addresses, err := router.Lookup(context.Background(), "example.com", options)
+	require.NoError(t, err)
+	require.Len(t, addresses, 1)
+	require.EqualValues(t, 1, client.lookups.Load())
+	require.Zero(t, router.queryGate.Stats().Inflight,
+		"the lookup must return its slot when it finishes")
+}
+
+// pendingDNSClient keeps the async callback until the test fires it, which is what makes the permit
+// lifetime observable: the gate slot must be held while the exchange is in flight and returned exactly
+// once when the client completes it.
+type pendingDNSClient struct {
+	access    sync.Mutex
+	callbacks []func(*mDNS.Msg, error)
+}
+
+func (c *pendingDNSClient) Start() {}
+
+func (c *pendingDNSClient) Exchange(context.Context, adapter.DNSTransport, *mDNS.Msg, adapter.DNSQueryOptions, func(*mDNS.Msg) bool) (*mDNS.Msg, error) {
+	return nil, errors.New("synchronous exchange is not used by this test")
+}
+
+func (c *pendingDNSClient) ExchangeAsync(_ context.Context, _ adapter.DNSTransport, _ *mDNS.Msg, _ adapter.DNSQueryOptions, _ func(*mDNS.Msg) bool, callback func(*mDNS.Msg, error)) {
+	c.access.Lock()
+	c.callbacks = append(c.callbacks, callback)
+	c.access.Unlock()
+}
+
+func (c *pendingDNSClient) Lookup(context.Context, adapter.DNSTransport, string, adapter.DNSQueryOptions, func(*mDNS.Msg) bool) ([]netip.Addr, error) {
+	return nil, nil
+}
+
+func (c *pendingDNSClient) ClearCache() {}
+
+func (c *pendingDNSClient) callbackCount() int {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return len(c.callbacks)
+}
+
+func (c *pendingDNSClient) fire(index int, response *mDNS.Msg, err error) {
+	c.access.Lock()
+	callback := c.callbacks[index]
+	c.access.Unlock()
+	callback(response, err)
+}
+
+// The permit covers the WHOLE async exchange, not just its start: while the client is still working,
+// the slot is held (that is the concurrency bound), and it is returned exactly once when the callback
+// fires. A second callback from a misbehaving transport must not release it twice.
+func TestAsyncExchangeHoldsOnePermitUntilCallback(t *testing.T) {
+	router := newGateTestRouter(t)
+	router.queryGate = resourceguard.NewBoundedGate(1, 0, time.Second)
+	client := &pendingDNSClient{}
+	router.client = client
+	options := adapter.DNSQueryOptions{Transport: gateStubTransport{}}
+	message := gateTestMessage(t)
+
+	first := make(chan error, 1)
+	router.ExchangeAsync(context.Background(), message, options, func(_ *mDNS.Msg, exchangeErr error) {
+		first <- exchangeErr
+	})
+	require.Eventually(t, func() bool { return client.callbackCount() == 1 }, 2*time.Second, time.Millisecond)
+	require.Equal(t, 1, router.queryGate.Stats().Inflight,
+		"the in-flight exchange must hold its slot")
+
+	// The one slot is held, so a second exchange is refused synchronously rather than queued.
+	second := make(chan error, 1)
+	router.ExchangeAsync(context.Background(), message, options, func(_ *mDNS.Msg, exchangeErr error) {
+		second <- exchangeErr
+	})
+	require.ErrorIs(t, <-second, resourceguard.ErrQueueFull)
+	require.Equal(t, 1, client.callbackCount(), "the refused exchange reached the client")
+
+	response := new(mDNS.Msg)
+	response.SetReply(message)
+	client.fire(0, response, nil)
+	require.NoError(t, <-first)
+	require.Zero(t, router.queryGate.Stats().Inflight, "the completed exchange must return its slot")
+
+	before := router.queryGate.Stats().Released
+	client.fire(0, nil, errors.New("duplicate callback"))
+	require.Equal(t, before, router.queryGate.Stats().Released,
+		"a duplicate callback must not release the permit twice")
+	require.Zero(t, router.queryGate.Stats().Inflight)
+}
+
+// The error completion path returns the slot too: an upstream failure is not a reason to keep a
+// concurrency slot until the process exits.
+func TestAsyncExchangeErrorReleasesThePermit(t *testing.T) {
+	router := newGateTestRouter(t)
+	router.queryGate = resourceguard.NewBoundedGate(1, 0, time.Second)
+	client := &pendingDNSClient{}
+	router.client = client
+	options := adapter.DNSQueryOptions{Transport: gateStubTransport{}}
+
+	done := make(chan error, 1)
+	router.ExchangeAsync(context.Background(), gateTestMessage(t), options, func(_ *mDNS.Msg, exchangeErr error) {
+		done <- exchangeErr
+	})
+	require.Eventually(t, func() bool { return client.callbackCount() == 1 }, 2*time.Second, time.Millisecond)
+	require.Equal(t, 1, router.queryGate.Stats().Inflight)
+
+	failure := errors.New("upstream refused")
+	client.fire(0, nil, failure)
+	require.ErrorIs(t, <-done, failure)
+	require.Zero(t, router.queryGate.Stats().Inflight)
+	require.EqualValues(t, 1, router.queryGate.Stats().Released)
 }
