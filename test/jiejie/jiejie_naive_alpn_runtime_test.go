@@ -10,6 +10,8 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json/badoption"
 
 	"github.com/stretchr/testify/require"
 )
@@ -105,23 +107,17 @@ func TestJiejieNaiveTCPALPNMatrix(t *testing.T) {
 // TestJiejieNaiveTCPALPNPrefersH2OverH3AfterH3Starts covers the ORDERING hazard.
 //
 // The contamination worth guarding against is a QUIC-path mutation changing what
-// a TCP client NEGOTIATES. On a tcp+udp inbound h3 is legitimately present in the
-// shared ALPN list - it must be, or the HTTP/3 listener could never handshake -
-// so the property that can actually be asserted for TCP is the PREFERENCE: a
-// client offering a usable protocol alongside h3 must get the usable one.
+// a TCP client NEGOTIATES. The handshakes are deliberately performed AFTER an
+// HTTP/3 connection has been established, because that is when the QUIC
+// initialiser has run. A test that only handshook before H3 started would pass
+// even with a mutation bug.
 //
-// The handshakes are deliberately performed AFTER an HTTP/3 connection has been
-// established, because that is when the QUIC initialiser has run. A test that
-// only handshook before H3 started would pass even with a mutation bug.
-//
-// Scope note, stated so this is not over-read: h3 appearing in a tcp+udp
-// inbound's ALPN list is sing-box's established behaviour, not something specific
-// to this inbound. transport/http/server.go prepends h3 to the same shared config
-// for the shipped MASQUE inbound, whose production configuration is tcp+udp. This
-// test pins the preference and the absence of post-hoc mutation; it does not
-// claim per-listener ALPN, which the shared ServerConfig architecture does not
-// support (and which cannot be obtained by cloning, since STDServerConfig.Clone
-// drops the certificate provider, ACME service and watcher).
+// Scope note, stated so this is not over-read: each transport now reads its own
+// list through tls.TransportALPNView (the TCP side builds one in the inbound,
+// the QUIC side in quicTLSConfig), so the shared config is no longer what either
+// listener negotiates. This test pins the TCP preference; the QUIC list is pinned
+// by TestJiejieNaiveDualStackQUICALPNNegotiatesH3 below, which asserts the
+// negotiated protocol of a real QUIC handshake.
 func TestJiejieNaiveTCPALPNPrefersH2OverH3AfterH3Starts(t *testing.T) {
 	port := startNaiveInboundWithNetwork(t, "tcp\nudp")
 
@@ -180,4 +176,73 @@ func TestJiejieNaiveTCPConnectStillWorksAlongsideH3(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, waitForDial(&origin.conns, 0),
 		"TCP CONNECT must still reach the origin on a tcp+udp inbound")
+}
+
+// TestJiejieNaiveDualStackQUICALPNNegotiatesH3 is the runtime proof for the QUIC
+// half of the same split.
+//
+// The tests above cover what a TCP client negotiates. The QUIC half was only
+// covered by a resolver test that asserted quicNextProtos() in isolation, while
+// production handed the SHARED config to the HTTP/3 listener - so an operator
+// list of ["h2","http/1.1","h3"] made a QUIC client that offers ["h3","h2"]
+// negotiate "h2" on a QUIC connection. This test performs the real handshake and
+// asserts the negotiated protocol, which is the property a client acts on.
+//
+// Fixed ports are used because Windows reserves whole ephemeral ranges for UDP;
+// a dynamically picked port can land inside one (WSAEACCES), which disables
+// HTTP/3 and turns this test into a false negative. 28480-28481 are outside the
+// excluded ranges on the machine this was written on.
+func TestJiejieNaiveDualStackQUICALPNNegotiatesH3(t *testing.T) {
+	cases := []struct {
+		name       string
+		port       uint16
+		alpn       badoption.Listable[string]
+		wantResult string
+	}{
+		{
+			name:       "operator list with h2 before h3 still negotiates h3",
+			port:       28480,
+			alpn:       badoption.Listable[string]{"h2", "http/1.1", "h3"},
+			wantResult: http3.NextProtoH3,
+		},
+		{
+			name:       "unset alpn still negotiates h3",
+			port:       28481,
+			alpn:       nil,
+			wantResult: http3.NextProtoH3,
+		},
+		{
+			// The contract: `network` decides whether H3 is served. An operator
+			// list without h3 stays a TCP-side list; it used to disable the QUIC
+			// listener with only a warning, after `sing-box check` had passed.
+			name:       "tls.alpn without h3 still negotiates h3",
+			port:       28482,
+			alpn:       badoption.Listable[string]{"h2", "http/1.1"},
+			wantResult: http3.NextProtoH3,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			startNaiveInboundTuned(t, "tcp\nudp", false, func(options *option.NaiveInboundOptions) {
+				options.ListenOptions.ListenPort = testCase.port
+				if testCase.alpn != nil {
+					options.TLS.ALPN = testCase.alpn
+				}
+			})
+
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			conn, err := quic.DialAddrEarly(ctx, "127.0.0.1:"+strconv.Itoa(int(testCase.port)), &tls.Config{
+				ServerName:         "naive.test",
+				InsecureSkipVerify: true,
+				NextProtos:         []string{http3.NextProtoH3, "h2"},
+			}, &quic.Config{})
+			require.NoError(t, err)
+			defer conn.CloseWithError(0, "")
+
+			require.Equal(t, testCase.wantResult,
+				conn.ConnectionState().TLS.NegotiatedProtocol,
+				"a QUIC client offering h3 must never be given h2")
+		})
+	}
 }

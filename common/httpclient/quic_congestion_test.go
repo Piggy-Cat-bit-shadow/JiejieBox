@@ -3,6 +3,7 @@
 package httpclient
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/sagernet/quic-go"
@@ -15,37 +16,48 @@ import (
 //
 // # The property that matters most
 //
-// An UNSET value must leave quic-go's own sender in place. Every other outcome
-// would mean this fork silently changed wire behaviour relative to upstream
-// sing-box, quic-go/masque-go and quic-go/connect-ip-go, none of which select a
-// client congestion control. A congestion control is a performance preference, so
-// it must be named in configuration to take effect.
+// An UNSET value must select CUBIC, and it must select it EXPLICITLY. The
+// resolver returns the same factory for "" / "default" as for "cubic", so the
+// default cannot drift when a dependency changes its own sender: this fork's
+// quic-go builds its default with `use Reno = true`
+// (internal/ackhandler/sent_packet_handler.go), which is why leaving the sender
+// in place would not be CUBIC.
 //
-// The resolver returns a nil factory for that case rather than a CUBIC factory,
-// because "explicitly CUBIC" and "left to the library" are different statements
-// even when the library default happens to be CUBIC today: if a dependency bump
-// changed the default, only the unset case should follow it.
+// BBR and Reno stay available by name. The matching is exact and case-sensitive:
+// silently accepting "BBR" or " bbr" would make a typo look like it worked.
 
-func TestClientCongestionControlUnsetKeepsLibraryDefault(t *testing.T) {
+func TestClientCongestionControlUnsetIsCubic(t *testing.T) {
 	t.Parallel()
+
+	cubicFactory, err := NewClientCongestionControl("cubic")
+	require.NoError(t, err)
+	require.NotNil(t, cubicFactory)
+	cubicPointer := reflect.ValueOf(cubicFactory).Pointer()
 
 	for _, name := range []string{"", "default"} {
 		factory, err := NewClientCongestionControl(name)
 		require.NoError(t, err, "value %q must be accepted", name)
-		require.Nil(t, factory,
-			"value %q must resolve to nil, meaning 'keep quic-go's sender'; a "+
-				"non-nil factory here would override the library default silently", name)
+		require.NotNil(t, factory,
+			"value %q must select an explicit sender; nil would leave the library's Reno in place", name)
+		require.Equal(t, cubicPointer, reflect.ValueOf(factory).Pointer(),
+			"value %q must select the same sender as explicit \"cubic\"", name)
 	}
 }
 
-func TestClientCongestionControlAcceptsSupportedNames(t *testing.T) {
+func TestClientCongestionControlExplicitNamesStayDistinct(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"cubic", "bbr", "reno"} {
+	cubicFactory, err := NewClientCongestionControl("cubic")
+	require.NoError(t, err)
+	cubicPointer := reflect.ValueOf(cubicFactory).Pointer()
+
+	for _, name := range []string{"bbr", "reno"} {
 		factory, err := NewClientCongestionControl(name)
 		require.NoError(t, err, "value %q must be accepted", name)
 		require.NotNil(t, factory,
 			"value %q must produce a sender factory, or the option would be a no-op", name)
+		require.NotEqual(t, cubicPointer, reflect.ValueOf(factory).Pointer(),
+			"value %q must not resolve to the CUBIC factory", name)
 	}
 }
 
@@ -79,11 +91,12 @@ func TestClientCongestionControlErrorNamesTheValue(t *testing.T) {
 		"the error must quote the rejected value")
 }
 
-// TestApplyClientCongestionControlNilIsANoOp asserts the unset path is safe.
+// TestApplyClientCongestionControlNilIsANoOp keeps the per-dial guard safe.
 //
-// ApplyClientCongestionControl is called on every dial, including the default
-// configuration, so a nil factory must not panic or touch the connection. A nil
-// conn is passed deliberately: if the function dereferenced it before checking the
+// The resolver returns a factory for every accepted value, so nil no longer
+// occurs in production; the guard remains because this runs on every dial and a
+// future caller passing nil must be a no-op rather than a panic. A nil conn is
+// passed deliberately: if the function dereferenced it before checking the
 // factory, this would panic rather than return.
 func TestApplyClientCongestionControlNilIsANoOp(t *testing.T) {
 	t.Parallel()
@@ -109,8 +122,8 @@ func TestNewQUICConfigLeavesCongestionControlToTheLibrary(t *testing.T) {
 		"an unset max_concurrent_streams must stay unset")
 }
 
-// TestClientCongestionControlFactoryBuildsASender exercises each factory against a
-// real *quic.Conn.
+// TestClientCongestionControlFactoryIsNotEvaluatedEarly exercises each factory
+// against a real *quic.Conn shape.
 //
 // The factories close over conn.InitialPacketSize(), so a factory that was
 // constructed correctly but called against a nil conn would panic at dial time
@@ -120,7 +133,7 @@ func TestNewQUICConfigLeavesCongestionControlToTheLibrary(t *testing.T) {
 func TestClientCongestionControlFactoryIsNotEvaluatedEarly(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"cubic", "bbr", "reno"} {
+	for _, name := range []string{"", "default", "cubic", "bbr", "reno"} {
 		factory, err := NewClientCongestionControl(name)
 		require.NoError(t, err)
 		require.NotNil(t, factory)

@@ -48,17 +48,17 @@ type QUICOptions struct {
 	// CongestionControl selects the QUIC congestion control algorithm for a
 	// CLIENT HTTP/3 connection, e.g. the macOS MASQUE client endpoint.
 	//
-	// Accepted values, and only these: "" / "default" (leave quic-go's own
-	// sender, which is CUBIC), "cubic", "bbr", "reno".
+	// Accepted values, and only these: "" / "default" (CUBIC), "cubic", "bbr",
+	// "reno".
 	//
-	// # Why unset must stay the library default
+	// # Why unset selects CUBIC explicitly
 	//
-	// BBR is a performance preference, not a protocol requirement. Upstream
-	// sing-box, quic-go/masque-go and quic-go/connect-ip-go all leave the client
-	// congestion control alone, so silently selecting BBR here would make this
-	// fork's wire behaviour differ from every reference with nothing in the
-	// configuration to show it. An unset value therefore keeps quic-go's CUBIC,
-	// and a deployment that wants BBR names it.
+	// "Unset" must mean the same algorithm on every path that offers this option:
+	// CUBIC. It must NOT mean "whatever the library does", because this fork's
+	// quic-go builds its default sender with `use Reno = true`
+	// (internal/ackhandler/sent_packet_handler.go), so leaving the sender alone
+	// would be Reno. BBR remains a performance choice that a deployment names
+	// explicitly; it is not the default anywhere.
 	//
 	// This complements BBRProfile rather than replacing it: BBRProfile is the
 	// SERVER knob (resolved from the http inbound `bbr_profile` option and using

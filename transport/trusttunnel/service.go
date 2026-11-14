@@ -62,7 +62,7 @@ type ServiceOptions struct {
 	Logger  logger.ContextLogger
 	Handler Handler
 	Users   []auth.User
-	// QUIC configures the HTTP/3 transport; nil means BBR.
+	// QUIC configures the HTTP/3 transport; nil means CUBIC.
 	QUIC *QUICOptions
 	// UDPLimits bounds the _udp2 associations of the service; zero takes the
 	// defaults in UDPLimits. Tests lower the limits to reach the refusal paths
@@ -195,7 +195,11 @@ func (s *Service) serveHTTP2(conn net.Conn, tlsConfig aTLS.ServerConfig) {
 		return
 	}
 	if negotiated := tlsConn.ConnectionState().NegotiatedProtocol; negotiated != http2.NextProtoTLS {
-		s.logger.DebugContext(s.ctx, "trusttunnel: closing connection from ", conn.RemoteAddr(), ": ALPN ", negotiated, " is not h2")
+		// A permanent configuration failure, not a transient blip: a client that offered something this
+		// listener can speak but is not h2 gets its connection closed here, every time. Debug made the
+		// TCP half of the ALPN incident invisible while the QUIC half already warns.
+		s.logger.WarnContext(s.ctx, "trusttunnel: closing connection from ", conn.RemoteAddr(),
+			": ALPN ", negotiated, " is not h2; check tls.alpn or the client's protocol selection")
 		return
 	}
 	s.h2Server.ServeConn(tlsConn, &http2.ServeConnOpts{

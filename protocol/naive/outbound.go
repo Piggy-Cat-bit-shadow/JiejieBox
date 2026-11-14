@@ -213,28 +213,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			echConfigList = block.Bytes
 		}
 	}
-	var quicCongestionControl cronet.QUICCongestionControl
-	switch options.QUICCongestionControl {
-	case "":
-		quicCongestionControl = cronet.QUICCongestionControlDefault
-	case "bbr":
-		quicCongestionControl = cronet.QUICCongestionControlBBR
-	case "bbr2":
-		quicCongestionControl = cronet.QUICCongestionControlBBRv2
-	case "cubic":
-		quicCongestionControl = cronet.QUICCongestionControlCubic
-	case "reno":
-		quicCongestionControl = cronet.QUICCongestionControlReno
-	default:
-		return nil, E.New("unknown quic congestion control: ", options.QUICCongestionControl)
+	quicCongestionControl, err := resolveCronetCongestionControl(options.QUICCongestionControl)
+	if err != nil {
+		return nil, err
 	}
 	if options.QUICCongestionControl == "" {
-		// The library default is Chromium's CUBIC, not BBR. This was the expensive ambiguity in
-		// the field: an operator who expected BBR from a stale note silently measured CUBIC.
-		logger.Info("naive: quic_congestion_control is unset; using the library default (CUBIC). ",
+		logger.Info("naive: quic_congestion_control is unset; using CUBIC. ",
 			"Set \"bbr\" explicitly on lossy paths")
-	}
-	// InsecureConcurrencySingleEngine is passed through only when the operator asked
+	} // InsecureConcurrencySingleEngine is passed through only when the operator asked
 	// for it. cronet-go ORs this with `runtime.GOOS == "ios"`, so leaving it false
 	// keeps the platform behaviour exactly as upstream: N engines on macOS, one
 	// engine on iOS. Setting it true is what makes the single-engine + isolation-key
@@ -301,6 +287,29 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	naiveOutbound.Adapter = outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, networks, options.DialerOptions)
 	return naiveOutbound, nil
+}
+
+// resolveCronetCongestionControl maps quic_congestion_control onto Cronet tags.
+//
+// An unset value and "cubic" both select CQBC, the tag QuicSentPacketManager
+// honours unconditionally. They do NOT select Cronet's build default: "unset"
+// must mean the same algorithm as on the naive inbound, both trusttunnel halves
+// and the HTTP/3 client, and a build default can move with a dependency bump
+// without the configuration changing. "bbr" and "bbr2" select the two BBR tags
+// explicitly; "reno" selects RENO.
+func resolveCronetCongestionControl(name string) (cronet.QUICCongestionControl, error) {
+	switch name {
+	case "", "cubic":
+		return cronet.QUICCongestionControlCubic, nil
+	case "bbr":
+		return cronet.QUICCongestionControlBBR, nil
+	case "bbr2":
+		return cronet.QUICCongestionControlBBRv2, nil
+	case "reno":
+		return cronet.QUICCongestionControlReno, nil
+	default:
+		return "", E.New("unknown quic congestion control: ", name)
+	}
 }
 
 func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {

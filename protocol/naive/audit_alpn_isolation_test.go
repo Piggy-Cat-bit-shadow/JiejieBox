@@ -15,7 +15,8 @@ import (
 // resolver RETURNS for a given network and configured list. They do NOT prove
 // that a real handshake negotiates what the resolver returned: that requires a
 // running listener and a real TLS or QUIC handshake, and it is covered in
-// test/jiejie/jiejie_naive_alpn_isolation_test.go.
+// test/jiejie/jiejie_naive_alpn_runtime_test.go (TCP) and by
+// TestJiejieNaiveDualStackQUICALPNNegotiatesH3 in the same file (QUIC).
 //
 // The distinction is not academic. A previous version of this file asserted "a
 // TCP listener never offers h3" using only a tcp-ONLY inbound, where h3 is absent
@@ -51,8 +52,8 @@ func alpnFor(network option.NetworkList, configured []string) []string {
 // specifically that a tcp+udp inbound offered h3 on its TCP listener, so a test
 // limited to tcp-only could not fail for the right reason.
 //
-// This asserts the resolver, not a handshake. The handshake is asserted in
-// test/jiejie/jiejie_naive_alpn_isolation_test.go.
+// This asserts the resolver, not a handshake. The handshakes are asserted in
+// test/jiejie/jiejie_naive_alpn_runtime_test.go.
 func TestAuditTCPALPNNeverAdvertisesH3(t *testing.T) {
 	for _, network := range []option.NetworkList{
 		option.NetworkList("tcp"),

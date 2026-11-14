@@ -88,8 +88,8 @@ func newHTTP3Client(options ClientOptions, authorization string) (http3Client, e
 	quicConfig.EnableDatagrams = true
 	// Resolve the client congestion control ONCE, at construction, so an
 	// unrecognised value is a configuration error reported at load rather than a
-	// failure on the first packet. A nil result is the "leave quic-go's default"
-	// case and is not an error: that is what an unset option means.
+	// failure on the first packet. An unset option resolves to CUBIC explicitly
+	// (see NewClientCongestionControl), so check and run agree on the algorithm.
 	congestionControl, err := httpclient.NewClientCongestionControl(options.HTTP3Options.CongestionControl)
 	if err != nil {
 		return nil, err

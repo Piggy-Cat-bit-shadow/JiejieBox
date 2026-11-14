@@ -64,8 +64,9 @@ var ErrQUICNotIncluded = E.New("trusttunnel: HTTP/3 requires the with_quic build
 
 // QUICOptions configures the HTTP/3 transport.
 type QUICOptions struct {
-	// CongestionControl is "bbr" (default), "cubic" or "new_reno" ("reno" is
-	// accepted as an alias).
+	// CongestionControl is "cubic" (default), "bbr" or "new_reno" ("reno" is
+	// accepted as an alias). An unset value selects CUBIC explicitly; the
+	// algorithm does not follow a library default.
 	CongestionControl string
 }
 
@@ -387,8 +388,15 @@ func (c *Client) connectSession(ctx context.Context) (sessionConn, error) {
 	if !fallbackEligible(err) {
 		return nil, err
 	}
-	c.cordonForGeneration(generation)
-	c.logger.DebugContext(c.ctx, "trusttunnel: HTTP/3 attempt to ", c.server, " failed (", err, "), opening HTTP/2 for this session")
+	if c.cordonForGeneration(generation) {
+		// The first failure inside a cooldown window is a statement about the node and the network, not
+		// a transient blip: it is worth a warn so a deterministic ALPN or UDP-path failure is visible at
+		// the default log level. Repeats stay at debug so a flapping path cannot flood the log.
+		c.logger.WarnContext(c.ctx, "trusttunnel: HTTP/3 attempt to ", c.server, " failed (", err,
+			"); using HTTP/2 for the next ", c.h3Cooldown, " (further failures are logged at debug)")
+	} else {
+		c.logger.DebugContext(c.ctx, "trusttunnel: HTTP/3 attempt to ", c.server, " failed (", err, "), opening HTTP/2 for this session")
+	}
 	fallbackConn, fallbackErr := c.connectFallbackHTTP2(ctx)
 	if fallbackErr != nil {
 		// Keep both causes: the HTTP/3 failure explains why HTTP/2 was tried, and the HTTP/2 error is
@@ -509,6 +517,11 @@ func (c *Client) currentGeneration() uint64 {
 // cordonForGeneration arms the provisional verdict for h3Cooldown, but only while the creating
 // request still belongs to the current network generation.
 //
+// It reports whether this call armed a NEW window. A failure that repeats while the window is already
+// open is not new evidence about the node, so the caller logs the first one at warn and the repeats at
+// debug. The window is still extended on every failure, exactly as before; only the return value is
+// new.
+//
 // # Why the clock is read outside the lock and the check inside it
 //
 // The verdict is a statement about the network, and Reset replaces the network. Checking
@@ -517,17 +530,22 @@ func (c *Client) currentGeneration() uint64 {
 // check and the store therefore happen under `serviceAccess`, the same lock Reset holds when it bumps
 // the generation, so the two operations cannot interleave. The clock read stays outside the lock
 // because it is the caller's seam, not state this client owns.
-func (c *Client) cordonForGeneration(generation uint64) {
+func (c *Client) cordonForGeneration(generation uint64) (armed bool) {
 	if c.cordonHook != nil {
 		c.cordonHook()
 	}
-	until := c.clock().Add(c.h3Cooldown).UnixNano()
+	now := c.clock()
+	until := now.Add(c.h3Cooldown).UnixNano()
 	c.access.Lock()
 	defer c.access.Unlock()
 	if c.generation != generation {
-		return
+		return false
+	}
+	if existing := c.h3CordonUntil.Load(); existing == 0 || !now.Before(time.Unix(0, existing)) {
+		armed = true
 	}
 	c.h3CordonUntil.Store(until)
+	return armed
 }
 
 // clearCordonForGeneration drops the verdict, but only for the generation that proved HTTP/3 works:
@@ -1001,7 +1019,15 @@ func (c *Client) publishOffer(pending *clientOffer, conn sessionConn, err error)
 	if session == nil {
 		return
 	}
-	c.logger.DebugContext(pending.traceCtx, "trusttunnel: ", c.protocol, " session to ", c.server, " opened")
+	if session.fallbackH2 {
+		// The session is HTTP/2 even though the configured protocol is HTTP/3. Naming the configured
+		// protocol here is what made the original incident look like "H3 works": the operator saw
+		// "h3 session opened" while every byte was on TCP. Log what was actually opened.
+		c.logger.DebugContext(pending.traceCtx, "trusttunnel: ", ProtocolHTTP2, " session to ", c.server,
+			" opened (fallback after the ", c.protocol, " attempt failed)")
+	} else {
+		c.logger.DebugContext(pending.traceCtx, "trusttunnel: ", c.protocol, " session to ", c.server, " opened")
+	}
 	if c.idleTimeout > 0 {
 		go c.idleWatcher(session)
 	}

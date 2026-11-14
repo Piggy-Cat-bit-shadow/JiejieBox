@@ -20,7 +20,7 @@
 }
 ```
 
-`username`、`password` 与 TLS 为必需的连接条件；服务器写为字面 IP 时应设置对应的 `tls.server_name`。`quic_congestion_control` 可选 `bbr`、`cubic`、`reno`；`health_check` 开启健康检查，`idle_timeout` 控制闲置会话保留时间。共享 session 可供多个 stream 使用，网络变化和关闭按会话归属处理。H3 不支持同时开启 uTLS；TLS ALPN 应与所选传输一致。
+`username`、`password` 与 TLS 为必需的连接条件；服务器写为字面 IP 时应设置对应的 `tls.server_name`。`quic_congestion_control` 可选 `bbr`、`cubic`、`reno`，未设置时默认使用 `cubic`；`health_check` 开启健康检查，`idle_timeout` 控制闲置会话保留时间。共享 session 可供多个 stream 使用，网络变化和关闭按会话归属处理。H3 不支持同时开启 uTLS；TLS ALPN 应与所选传输一致。
 
 ## H3 → H2 回退
 

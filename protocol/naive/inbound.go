@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -69,6 +70,12 @@ type Inbound struct {
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveInboundOptions) (adapter.Inbound, error) {
+	// Validated here rather than only by the HTTP/3 initialiser: `sing-box check`
+	// constructs inbounds and never starts them, so a typo used to pass the check
+	// and then fail (udp) or be ignored (tcp) at run time.
+	if err := ValidateCongestionControl(options.QUICCongestionControl); err != nil {
+		return nil, err
+	}
 	inbound := &Inbound{
 		Adapter: inbound.NewAdapter(C.TypeNaive, tag),
 		ctx:     ctx,
@@ -133,6 +140,15 @@ func (n *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			return E.Cause(err, "create TLS config")
 		}
 		scope.Add(n.tlsConfig.Close)
+		// Make the derived ALPN visible at startup. Both lists are computed, not
+		// configured: h2/http/1.1 on TCP, h3 on QUIC. A mismatch here used to be
+		// observable only at handshake time (or not at all), which is what made
+		// the dual-transport incident expensive to diagnose.
+		alpnMessage := []any{"naive inbound: ALPN tcp=", strings.Join(n.tcpNextProtos(), ",")}
+		if common.Contains(n.network, N.NetworkUDP) {
+			alpnMessage = append(alpnMessage, " quic=", strings.Join(n.quicNextProtos(), ","))
+		}
+		n.logger.Info(alpnMessage...)
 	}
 	scope.Add(n.listener.Close)
 	if common.Contains(n.network, N.NetworkTCP) {
@@ -223,7 +239,7 @@ func (n *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			n.logger.Warn("naive http3 disabled: HTTP/3 is not available in this build")
 			return nil
 		}
-		http3Server, err := ConfigureHTTP3ListenerFunc(n.ctx, n.logger, n.listener, n, n.tlsConfig, n.options)
+		http3Server, err := ConfigureHTTP3ListenerFunc(n.ctx, n.logger, n.listener, n, n.quicTLSConfig(), n.options)
 		if err == nil {
 			scope.Add(http3Server.Close)
 		} else if len(n.network) > 1 {
@@ -275,6 +291,26 @@ func (n *Inbound) tcpNextProtos() []string {
 // QUIC is the failure mode being fixed.
 func (n *Inbound) quicNextProtos() []string {
 	return []string{http3ALPN}
+}
+
+// quicTLSConfig returns the TLS configuration the HTTP/3 listener must use.
+//
+// The inbound shares one TLS config between its TCP and QUIC listeners, so each
+// transport gets a view with the list it can actually speak. For QUIC that list
+// is exactly ["h3"]: Go's ALPN negotiates by the SERVER's list order, and a
+// shared ["h2","h3"] list makes a QUIC client that offers ["h3","h2"] negotiate
+// "h2" on a QUIC connection. The view keeps the certificate provider, ACME
+// service, watcher and Close path shared; it only replaces the list.
+//
+// `network` is the switch that decides whether H3 is served, not `tls.alpn`: a
+// udp listener always offers h3, while non-h3 operator values stay on the TCP
+// side (tcpNextProtos). An operator list without h3 therefore no longer turns
+// the QUIC listener off; that is the contract this view settles.
+func (n *Inbound) quicTLSConfig() tls.ServerConfig {
+	if n.tlsConfig == nil {
+		return nil
+	}
+	return tls.TransportALPNView(n.tlsConfig, n.quicNextProtos())
 }
 
 // negotiatedNextProtos reports every ALPN this inbound offers across all of its

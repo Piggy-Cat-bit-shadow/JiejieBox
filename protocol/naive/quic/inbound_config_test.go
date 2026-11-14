@@ -4,12 +4,14 @@ package quic
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/naive"
 	"github.com/sagernet/sing/common/json"
 )
 
@@ -140,20 +142,52 @@ func TestNativeNaiveCongestionControlAcceptsDocumentedValues(t *testing.T) {
 				t.Fatalf("the production resolver refused %q, which is documented "+
 					"as accepted: %v", name, err)
 			}
-			// An unset value and the explicit "default" must both mean "keep
-			// quic-go's sender", which the constructor represents as nil. The
-			// named values must produce a sender.
-			if name == "" || name == "default" {
-				if sender != nil {
-					t.Fatalf("%q must select the library default (nil sender), got a "+
-						"sender factory", name)
-				}
-				return
-			}
+			// Every accepted value resolves to a concrete sender. Unset and
+			// "default" select CUBIC explicitly; they are not "leave it to the
+			// library", because this fork's quic-go defaults to Reno.
 			if sender == nil {
 				t.Fatalf("%q must produce a sender factory, got nil", name)
 			}
 		})
+	}
+}
+
+// TestNativeNaiveCongestionControlUnsetIsCubic pins the product default.
+//
+// The default is CUBIC, and it is selected explicitly: the factory for "", for
+// "default" and for "cubic" must be the SAME factory, so "unset" cannot drift
+// from "cubic" when a dependency changes its own default. This fork's quic-go
+// builds its default sender with `use Reno = true`, so a nil factory here would
+// have meant Reno.
+func TestNativeNaiveCongestionControlUnsetIsCubic(t *testing.T) {
+	cubicFactory, err := newNaiveCongestionControl("cubic", time.Now)
+	if err != nil {
+		t.Fatalf("explicit cubic must resolve: %v", err)
+	}
+	if cubicFactory == nil {
+		t.Fatal("explicit cubic must produce a sender factory")
+	}
+	cubicPointer := reflect.ValueOf(cubicFactory).Pointer()
+	for _, name := range []string{"", "default"} {
+		factory, err := newNaiveCongestionControl(name, time.Now)
+		if err != nil {
+			t.Fatalf("%q must resolve: %v", name, err)
+		}
+		if factory == nil {
+			t.Fatalf("%q produced no factory; the default must be an explicit sender", name)
+		}
+		if reflect.ValueOf(factory).Pointer() != cubicPointer {
+			t.Fatalf("%q must select the same sender factory as explicit \"cubic\"", name)
+		}
+	}
+	for _, name := range []string{"bbr", "reno"} {
+		factory, err := newNaiveCongestionControl(name, time.Now)
+		if err != nil {
+			t.Fatalf("%q must resolve: %v", name, err)
+		}
+		if reflect.ValueOf(factory).Pointer() == cubicPointer {
+			t.Fatalf("%q must not resolve to the CUBIC factory", name)
+		}
 	}
 }
 
@@ -249,5 +283,37 @@ func TestNativeNaiveQUICConfigPinsReferenceVersions(t *testing.T) {
 	if config.Versions[0] != quic.Version1 || config.Versions[1] != quic.Version2 {
 		t.Fatalf("QUIC versions must be [v1 v2] to match the reference, got %v",
 			config.Versions)
+	}
+}
+
+// TestCongestionControlValidationMatchesResolver drives the construction-time
+// validator and the HTTP/3 resolver with the same corpus.
+//
+// The accepted set is duplicated because the validator must compile without the
+// QUIC build tag while the resolver lives behind it. This test is what keeps the
+// two copies from drifting: a value added to one side without the other fails
+// here, before `sing-box check` and `sing-box run` can disagree again.
+func TestCongestionControlValidationMatchesResolver(t *testing.T) {
+	for _, name := range []string{"", "default", "bbr", "cubic", "reno"} {
+		if err := naive.ValidateCongestionControl(name); err != nil {
+			t.Fatalf("construction-time validation refused accepted value %q: %v", name, err)
+		}
+		if _, err := newNaiveCongestionControl(name, time.Now); err != nil {
+			t.Fatalf("the HTTP/3 resolver refused accepted value %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{
+		"bogus", "BBR", "CUBIC", "Reno", " bbr", "bbr ", "none", "auto", "0",
+		"bbr2", "BBRv2",
+	} {
+		validatorErr := naive.ValidateCongestionControl(name)
+		resolverErr := func() error {
+			_, err := newNaiveCongestionControl(name, time.Now)
+			return err
+		}()
+		if validatorErr == nil || resolverErr == nil {
+			t.Fatalf("%q must be refused by both layers (validator=%v resolver=%v)",
+				name, validatorErr, resolverErr)
+		}
 	}
 }

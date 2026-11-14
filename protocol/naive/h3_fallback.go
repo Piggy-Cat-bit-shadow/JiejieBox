@@ -89,21 +89,24 @@ func (f *h3Fallback) claim(attempt uint64) bool {
 	return true
 }
 
-// markBroken arms the window for a failed attempt.
+// markBroken arms the window for a failed attempt and reports whether it opened
+// a NEW window.
 //
 // A failure that arrives while the window is already open does NOT extend it:
 // one event is one decision, and extending on every parallel dial would turn a
-// single blip into a long outage.
-func (f *h3Fallback) markBroken(attempt uint64, now time.Time) {
+// single blip into a long outage. The return value is what lets the caller log
+// the first failure of a window at warn and the repeats at debug.
+func (f *h3Fallback) markBroken(attempt uint64, now time.Time) (armed bool) {
 	f.access.Lock()
 	defer f.access.Unlock()
 	if !f.claim(attempt) {
-		return
+		return false
 	}
 	if !f.brokenUntil.IsZero() && now.Before(f.brokenUntil) {
-		return
+		return false
 	}
 	f.brokenUntil = now.Add(h3FallbackWindow)
+	return true
 }
 
 // clear records a successful H3 attempt.
@@ -281,8 +284,15 @@ func dialNaiveWithH3Fallback(ctx context.Context, client naiveDialerClient, fall
 			if !h3TransportFailure(err) {
 				return nil, err
 			}
-			fallback.markBroken(attempt, time.Now())
-			l.DebugContext(ctx, "naive H3 attempt failed at the transport, retrying over HTTP/2: ", err)
+			if fallback.markBroken(attempt, time.Now()) {
+				// First failure of a window: this is a statement about the path, and it is exactly the
+				// kind of deterministic failure (ALPN mismatch included) that used to be invisible at
+				// the default log level.
+				l.WarnContext(ctx, "naive H3 attempt failed at the transport; using HTTP/2 for ",
+					h3FallbackWindow, ": ", err)
+			} else {
+				l.DebugContext(ctx, "naive H3 attempt failed at the transport, retrying over HTTP/2: ", err)
+			}
 		}
 	}
 	return dialNaiveH2(ctx, client, h2, l, destination)

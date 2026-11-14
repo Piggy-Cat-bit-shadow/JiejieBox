@@ -74,13 +74,13 @@ func congestionControlFunc(ctx context.Context, name string) (func(conn *quic.Co
 		timeFunc = time.Now
 	}
 	switch name {
-	case "", "bbr":
-		return func(conn *quic.Conn) congestion.CongestionControl {
-			return congestion_meta2.NewBbrSenderWithProfile(conn.InitialPacketSize(), congestion_meta2.ProfileStandard)
-		}, nil
-	case "cubic":
+	case "", "cubic":
 		return func(conn *quic.Conn) congestion.CongestionControl {
 			return congestion_meta1.NewCubicSender(congestion_meta1.DefaultClock{TimeFunc: timeFunc}, conn.InitialPacketSize(), false)
+		}, nil
+	case "bbr":
+		return func(conn *quic.Conn) congestion.CongestionControl {
+			return congestion_meta2.NewBbrSenderWithProfile(conn.InitialPacketSize(), congestion_meta2.ProfileStandard)
 		}, nil
 	case "new_reno", "reno":
 		return func(conn *quic.Conn) congestion.CongestionControl {
