@@ -120,8 +120,8 @@
       "path": "clients/apple",
       "slug": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "policy": "report",
-      "note": "One source for iOS and macOS. A formal release must build this exact SHA; release/apple-client-refs.env still allows a manual build to resolve main as a moving target. HELD at the verified aa8e16a on 2026-11-14: main head a867f61 does not compile - both the iOS and macOS jobs of run 43565916842 fail at ProfileCard.swift:627 and ProfilePickerSheet.swift:418 with 'missing argument label report:' in RemoteProfileUpdateAlertError(report). The head is reported, not consumed, until the client is fixed and compiled."
+      "policy": "update",
+      "note": "Apple main repaired at 749509f; iOS and macOS compiled successfully in run 43584135709 on 2026-11-14."
     },
     {
       "path": "clients/android",

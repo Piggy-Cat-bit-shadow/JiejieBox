@@ -355,7 +355,7 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 # from this kernel tree, then compiled all three products from this exact source - iOS, macOS and the
 # unsigned self-sign IPA all succeeded. That run is the evidence for this pin; it is not a device or
 # TestFlight result.
-VERIFIED_APPLE_SHA="aa8e16aa21a7f28aefc944fac76086c144195e3b"
+VERIFIED_APPLE_SHA="749509f214d97f43cbc66f903fd17b0b50eb6399"
 
 client_root=""
 skip_client=0
