@@ -443,10 +443,28 @@ func (g *Guard) Stats() GuardStats {
 	}
 	level, version := g.observe()
 	g.apply(level, version)
+	// The snapshot is read under the policy lock, and the level is the one the gate is actually
+	// publishing - not the level THIS observation saw.
+	//
+	// # Why the observation is not the answer
+	//
+	// observe and apply are two steps, and apply is deliberately not atomic with the shed hooks.
+	// A caller can therefore be inside its own transition's apply while a newer transition lands:
+	// it resumes with a stale observation, its apply correctly refuses to overwrite the newer plan,
+	// and a snapshot built from the observation would then report "level critical, limit 32" - this
+	// observation's level next to the newer transition's plan. That is precisely the self-
+	// contradicting snapshot the shared report exists to avoid.
+	//
+	// apply publishes `applied` and the gate's plan under ONE lock, so reading both under that same
+	// lock makes the pair describe one transition by construction. The counters of a transition that
+	// has been observed but not yet applied are allowed to lag: a report may be one transition
+	// behind, but it can never mix two.
 	g.access.Lock()
+	level = Level(g.applied.Load())
 	transitions := g.transitions
+	gateStats := g.gate.Stats()
 	g.access.Unlock()
-	return GuardStats{Level: level, Transitions: transitions, Gate: g.gate.Stats(), Rate: g.rateStats(g.clockNow())}
+	return GuardStats{Level: level, Transitions: transitions, Gate: gateStats, Rate: g.rateStats(g.clockNow())}
 }
 
 // FromContext returns the guard registered for this process, or nil.
