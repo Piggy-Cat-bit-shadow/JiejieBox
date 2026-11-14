@@ -1,0 +1,8 @@
+﻿=== RUN   TestDNSQueryGateIsCreatedWithTheDocumentedPlan
+--- PASS: TestDNSQueryGateIsCreatedWithTheDocumentedPlan (0.00s)
+=== RUN   TestSaturatedDNSGateRefusesBeforeTheClientExchange
+--- PASS: TestSaturatedDNSGateRefusesBeforeTheClientExchange (0.00s)
+=== RUN   TestSaturatedDNSGateRefusesTheAsyncExchange
+--- PASS: TestSaturatedDNSGateRefusesTheAsyncExchange (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/dns	0.106s

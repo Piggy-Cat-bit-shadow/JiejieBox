@@ -19,6 +19,8 @@ NEXT_ROUND_TOP_ISSUES    = 上游 per-flow 预算(F1/Q1) > 同键创建 coalesci
 NEEDS_DEVICE             = iOS phys_footprint 时间序列 / Jetsam / 200-1000 STUN UDP 乘数 / 设备 sleep
 ```
 
+> 遗留方向（session coalescing / H3 准入 / NAT 首包 / DNS 并发）的闭环记录在 [`../rg-deferred-closure-2026-11-14/`](../rg-deferred-closure-2026-11-14/README.md)。
+
 ## 交付物索引
 
 | 文件 | 内容 |

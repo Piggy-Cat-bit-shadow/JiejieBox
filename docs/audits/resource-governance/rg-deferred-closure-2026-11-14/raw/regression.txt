@@ -1,0 +1,23 @@
+﻿# Closure round - final regression (code tree after accept-counter fix)
+
+## go test ./protocol/anytls ./dns/... -count=1
+ok  	github.com/sagernet/sing-box/protocol/anytls	6.891s
+ok  	github.com/sagernet/sing-box/dns	8.668s
+ok  	github.com/sagernet/sing-box/dns/transport	6.115s
+ok  	github.com/sagernet/sing-box/dns/transport/dhcp	0.133s
+ok  	github.com/sagernet/sing-box/dns/transport/fakeip	0.232s
+ok  	github.com/sagernet/sing-box/dns/transport/group	0.960s
+ok  	github.com/sagernet/sing-box/dns/transport/hosts	0.127s
+?   	github.com/sagernet/sing-box/dns/transport/local	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/local/systemconfig	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/mdns	[no test files]
+ok  	github.com/sagernet/sing-box/dns/transport/quic	0.231s
+
+## go test -tags with_quic ./common/httpclient -count=1
+ok  	github.com/sagernet/sing-box/common/httpclient	0.801s
+
+## go test -tags with_xhttp,with_quic ./transport/v2rayxhttp -count=1
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	20.491s
+
+## go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...
+build exit=0

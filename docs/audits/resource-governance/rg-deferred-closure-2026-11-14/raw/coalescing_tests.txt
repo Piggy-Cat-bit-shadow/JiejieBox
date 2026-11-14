@@ -1,0 +1,14 @@
+﻿=== RUN   TestConcurrentFirstStreamsShareOnePhysicalSession
+--- PASS: TestConcurrentFirstStreamsShareOnePhysicalSession (0.03s)
+=== RUN   TestSessionBurstSharesOneSessionWithoutGuard
+--- PASS: TestSessionBurstSharesOneSessionWithoutGuard (0.04s)
+=== RUN   TestSessionBurstWithGuardChargesOneCreation
+--- PASS: TestSessionBurstWithGuardChargesOneCreation (0.01s)
+=== RUN   TestSessionBurstGuardDoesNotChangeObservableBehaviour
+--- PASS: TestSessionBurstGuardDoesNotChangeObservableBehaviour (0.01s)
+=== RUN   TestTLSHandshakeBurstIsBoundedBySessionCoalescing
+    tls_amplification_test.go:183: unguarded: peak heap 136176 B, peak concurrent handshakes 1, server connections 1
+    tls_amplification_test.go:185: guarded:   peak heap 168248 B, peak concurrent handshakes 1, server connections 1
+--- PASS: TestTLSHandshakeBurstIsBoundedBySessionCoalescing (0.81s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/anytls	1.107s
