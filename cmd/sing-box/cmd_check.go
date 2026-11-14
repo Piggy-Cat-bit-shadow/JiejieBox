@@ -6,6 +6,7 @@ import (
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
 
 	"github.com/spf13/cobra"
@@ -60,6 +61,15 @@ func checkOptions(options option.Options) error {
 		options.Log.DisableColor = true
 	}
 	if !options.Log.Disabled {
+		// The level override below must not hide the validation log.New performs:
+		// without this, an unknown log level would pass check and then stop the
+		// service at startup. The wrapping matches the error box.New would have
+		// returned for the same configuration.
+		if options.Log.Level != "" {
+			if _, parseErr := log.ParseLevel(options.Log.Level); parseErr != nil {
+				return E.Cause(parseErr, "create log factory")
+			}
+		}
 		options.Log.Level = "warn"
 		options.Log.Output = "stderr"
 	}

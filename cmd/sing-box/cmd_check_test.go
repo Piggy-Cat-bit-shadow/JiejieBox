@@ -13,6 +13,21 @@ import (
 	"github.com/sagernet/sing/common/json"
 )
 
+// TestCheckStillRejectsInvalidLogLevel guards the cost of overriding the level for the
+// warning flush. The override happens before box.New, so without an explicit parse an
+// unknown level would pass check and then stop the service at startup - the exact
+// check-versus-run disagreement this work is about.
+func TestCheckStillRejectsInvalidLogLevel(t *testing.T) {
+	preRun(mainCommand, nil)
+	err := checkOptions(option.Options{Log: &option.LogOptions{Level: "bogus"}})
+	if err == nil {
+		t.Fatal("check accepted an unknown log level because the warning override replaced it")
+	}
+	if !strings.Contains(err.Error(), "unknown log level: bogus") {
+		t.Fatalf("the error must name the level; got: %v", err)
+	}
+}
+
 // TestCheckPrintsConstructionWarnings is the check-side half of the visibility fix.
 //
 // The configuration below is valid, so check must exit successfully. It also carries a
