@@ -102,6 +102,10 @@ type Gate struct {
 	now func() time.Time
 
 	maxInflight int
+	// maxWaiters is the highest number of callers that ever waited at once. It is the queue-side
+	// counterpart of maxInflight: sampling Waiters can miss the peak between two reads, and the audit
+	// had to estimate it. It is updated under access where pending changes.
+	maxWaiters int
 
 	// Counters are cumulative since construction. They are read by Stats and are the evidence
 	// that a state change actually changed behaviour rather than only changing a field.
@@ -234,6 +238,9 @@ func (g *Gate) Acquire(ctx context.Context, class Class) (*Permit, error) {
 	created := &waiter{channel: make(chan struct{}, 1), class: class, enqueued: g.now()}
 	created.element = g.waiters.PushBack(created)
 	g.pending++
+	if g.pending > g.maxWaiters {
+		g.maxWaiters = g.pending
+	}
 	g.queued++
 	waitBudget := g.plan.wait
 	g.access.Unlock()
@@ -430,6 +437,7 @@ type Stats struct {
 	Inflight    int
 	Waiters     int
 	MaxInflight int
+	MaxWaiters  int
 
 	Requested uint64
 	Admitted  uint64
@@ -452,6 +460,7 @@ func (g *Gate) Stats() Stats {
 		Inflight:    g.inflight,
 		Waiters:     g.pending,
 		MaxInflight: g.maxInflight,
+		MaxWaiters:  g.maxWaiters,
 		Requested:   g.requested,
 		Admitted:    g.admitted,
 		Queued:      g.queued,
