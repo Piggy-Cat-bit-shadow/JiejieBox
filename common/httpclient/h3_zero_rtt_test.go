@@ -30,22 +30,24 @@ func (d *udpSilentDialer) ListenPacket(context.Context, M.Socksaddr) (net.Packet
 	return nil, net.ErrClosed
 }
 
-// The admission permit covers the QUIC handshake, not only the socket allocation.
+// The admission permit covers the COLD-START QUIC handshake, not only the socket allocation.
 //
-// # What the API actually does
+// # What the API actually does on a cold start
 //
 // The name `DialEarlyConn` invites the assumption that it returns a connection immediately and
 // completes the handshake in the background, which would mean the permit is released while the
-// handshake still runs. This test measured the opposite on the pinned quic-go fork: with a UDP
-// listener that never answers and a 2 s handshake timeout, the call does NOT return at the timeout's
-// start - it blocks until the handshake fails. The permit is therefore held for the whole handshake
-// and released when the connection object is finally returned (success or failure).
+// handshake still runs. On the pinned quic-go fork, a connection with NO resumable session behaves
+// differently: with a UDP listener that never answers and a 2 s handshake timeout, the call does NOT
+// return at the timeout's start - it blocks until the handshake fails. The permit is therefore held
+// for the whole cold-start handshake and released when the connection object is finally returned.
 //
-// That is the stronger of the two possible lifetimes and the one the gate should have: a stalled
-// handshake is exactly the expensive transient (TLS state, key share, retransmission state) that the
-// slot exists to bound. The test pins it so a future quic-go upgrade that starts returning early is
-// caught here rather than silently narrowing what the gate covers.
-func TestH3PermitIsHeldAcrossTheHandshake(t *testing.T) {
+// # What this test does NOT verify: 0-RTT resume
+//
+// No session ticket is installed, no early data is sent and Allow0RTT is not exercised. A RESUMED
+// connection takes a different path in quic-go and may return before the handshake completes; the
+// permit lifetime on that path is NOT_VERIFIED. The test name says cold start so this distinction
+// cannot be lost again.
+func TestH3PermitIsHeldAcrossTheColdStartHandshake(t *testing.T) {
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()

@@ -126,10 +126,10 @@ func newHTTP3DialFunc(rawDialer N.Dialer, baseTLSConfig tls.Config, handshakeTim
 			quicConn = created
 			return nil
 		}
-		// DialEarlyConn blocks until the QUIC handshake completes or times out on the pinned
-		// quic-go fork (measured in h3_zero_rtt_test.go), so this admission covers the handshake,
-		// not only the socket. A stalled handshake is the expensive transient the slot exists to
-		// bound; a future quic-go that returns early would narrow this without the test noticing.
+		// On a COLD-START connection DialEarlyConn blocks until the QUIC handshake completes or
+		// times out on the pinned quic-go fork (measured in h3_zero_rtt_test.go), so this admission
+		// covers that handshake, not only the socket. The 0-RTT resume path is NOT_VERIFIED: no
+		// session ticket is installed there, and a resumed DialEarlyConn may return earlier.
 		if admission != nil {
 			err = admission(ctx, create)
 		} else {
