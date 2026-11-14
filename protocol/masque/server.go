@@ -97,6 +97,17 @@ func NewServerEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if serveHTTP3 && (options.TLS == nil || !options.TLS.Enabled) {
 		return nil, E.New("TLS is required for HTTP/3")
 	}
+	// quic_congestion_control is decoded for version 3 but the HTTP/3 listener
+	// used to ignore it. Validate it here so an unknown value is a construction
+	// error that `sing-box check` reports, not a silent no-op at serve time.
+	// This endpoint has no bbr_profile knob; the empty profile keeps the
+	// validation shared with the http inbound.
+	if err := option.ValidateHTTP3ServerCongestionControl(
+		options.HTTP3Options.BBRProfile.BBRProfileValue(),
+		options.HTTP3Options.CongestionControl,
+	); err != nil {
+		return nil, err
+	}
 	if options.HTTP3Options.InitialPacketSize == 0 {
 		options.HTTP3Options.InitialPacketSize = min(int(options.MTU)+masque.QUICPacketOverhead, math.MaxUint16)
 	}

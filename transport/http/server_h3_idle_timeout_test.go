@@ -304,6 +304,15 @@ func defaultH3Handler(writer http.ResponseWriter, request *http.Request) {
 // regression in server_h3.go's IdleTimeout wiring fails these tests.
 func startRealH3Listener(t *testing.T, handler http.Handler, idleTimeout time.Duration) (io.Closer, string) {
 	t.Helper()
+	return startRealH3ListenerWithOptions(t, handler, option.QUICOptions{
+		HTTP2Options: option.HTTP2Options{IdleTimeout: badoption.Duration(idleTimeout)},
+	})
+}
+
+// startRealH3ListenerWithOptions is the same production path with a caller-chosen
+// QUIC option set, so congestion-control cases exercise what server_h3.go reads.
+func startRealH3ListenerWithOptions(t *testing.T, handler http.Handler, quicOptions option.QUICOptions) (io.Closer, string) {
+	t.Helper()
 	require.NotNil(t, ConfigureHTTP3ListenerFunc, "the HTTP/3 listener factory must be registered")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -333,7 +342,7 @@ func startRealH3Listener(t *testing.T, handler http.Handler, idleTimeout time.Du
 		bindListener,
 		handler,
 		tlsConfig,
-		option.QUICOptions{HTTP2Options: option.HTTP2Options{IdleTimeout: badoption.Duration(idleTimeout)}},
+		quicOptions,
 		1<<20,
 	)
 	require.NoError(t, err)
