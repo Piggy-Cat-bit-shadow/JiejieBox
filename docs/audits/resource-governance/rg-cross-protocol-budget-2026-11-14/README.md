@@ -94,9 +94,24 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 - `TestGoPacketConnSnapshotReleasedOnEveryEnding`：success / failure（含 `BuildICMPError` 拒绝路径）/ Close 三条路径后 `len(snapshot)==0`，重复调用安全；
 - `TestGoPacketConnSnapshotCloseRacesHandshake`：Close 与 HandshakeSuccess 并发 100 次，`-race` 通过；
 - 仅 Go Stack；gVisor 未触碰。
+### 1.5 2000 / 4096 流的突发、稳定持有与集中释放
+
+`go test . -run 'TestUDPNatFlowCostAtScale' -v`（`raw/scale_cost.txt`，branch tip `ab63d63`）：
+
+| 流数 | BURST heap / objects / stack | STABLE（GC 后）heap / stack | 集中释放后（3×GC）entries / queued / goroutines / heap / objects / StackInuse |
+|---|---|---|---|
+| 2000 | 10.10 MB / 26688 / 16.68 MB | 8.80 MB / 16.68 MB | 0 / 0 / 2（baseline 3）/ 1.40 MB / 3889 / 5.70 MB |
+| 4096 | 18.54 MB / 51525 / 36.14 MB | 17.80 MB / 36.14 MB | 0 / 0 / 2（baseline 3）/ 2.56 MB / 6812 / 9.44 MB |
+
+解读：
+
+- 2000/4096 规模下每流 ≈ **12.7–13.2 KiB**（heap ≈4.4 KiB + 栈 ≈8.3–8.8 KiB）；比 1000 流的 ~10.7 KiB 高，原因是 goroutine 栈在高并发下增长到 8 KiB 档位，而不是线性泄漏。
+- 4096 流时 host Go 侧 ≈ **54 MB**（heap 17.8 + stack 36.1），已超过 50 MiB 观测预算；这仍然**不是** iOS `phys_footprint`，但说明"逻辑流规模"本身在该数量级已不可忽略。
+- 集中释放后：NAT entries、queued bytes、dispatcher goroutine 全部回到 baseline；live objects 从 50k 降到 ~6k；`HeapReleased` 显示页归还。**一次 GC 后 HeapAlloc 仍高是 runtime 缓存/未归还页，不是对象泄漏**；三次 GC 后回落，测试按这个口径记录。
+- 没有发现跨 Generation 或释放后残留的 NAT entry / queued buffer。
 ## 2. 入口准入决策：本轮不做，但触发线已被越过
 
-**修正后的证据**：1000 条 UDP 逻辑流 ≈ **10.7 MiB** Go 侧（heap 3.53 + 栈 7.19，随 GC/栈增长有 run 间波动），约为 50 MiB 观测预算的 21%；per-flow ≈ 9.4–11.0 KiB，**已经越过首版设定的 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
+**修正后的证据**：1000 流 ≈10.7 MiB；**2000/4096 流 ≈25.5/54 MB**（host Go），4096 流已超过 50 MiB 预算，per-flow ≈12.7–13.2 KiB，**早已越过 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
 
 **决策**：本轮仍不在 TUN→Route 增加逻辑流 gate，但理由变为"边界与验证条件"而不是"证据不足"：
 
@@ -158,6 +173,7 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 | sing-tun 观测提交 | `6e7483019752f4fc3d37fafc97af80bcb3eedc6d`（API + 计数） |
 | sing-tun 口径修正提交 | `b253963c99275edb29639472065e777f44a3b2a0`（heap/stack/TCP 语义） |
 | sing-tun 首包修复提交 | `938b89dcb159ff8bf55b2c24e832f02374241e33`（Close 清 snapshot） |
+| sing-tun 规模测试提交（仅测试） | `ab63d63ac306ec315d5a89e8057d5f6ea0157fa2`（2000/4096 流） |
 | 主仓 pin | `v0.9.7-0.20261114050708-938b89dcb159` |
 | pseudo-version 时间戳 | 2026-11-14T05:07:08Z = 提交时间 13:07:08+08:00 |
 | flow cost 原始日志 | `raw/flow_cost.txt`（在 938b89d 树上执行） |
@@ -165,7 +181,7 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 
 ## 8. 验证
 
-- sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`）。
+- sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试 + 1 个 2000/4096 规模测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`、`raw/scale_cost.txt`）。
 - sing-tun 全包：**BLOCKED_BY_ENVIRONMENT**——Windows 上 `stack_go_integration_test.go` 的 raw socket/TUN 用例 `Access is denied`（需要管理员/Npcap），不是代码失败；原始输出在 `raw/full_package_env.txt`，未记为 PASS。
 - 主仓：pin 到 `v0.9.7-0.20261114050708-938b89dcb159`；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` exit 0。
 - 本轮无 CI 触发（路径过滤不含 `go.mod`/docs；最近代码 CI 仍是 `43555135120` @ `324a3b011`，success）。
