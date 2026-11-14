@@ -69,6 +69,12 @@ type Inbound struct {
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveInboundOptions) (adapter.Inbound, error) {
+	// Validated here rather than only by the HTTP/3 initialiser: `sing-box check`
+	// constructs inbounds and never starts them, so a typo used to pass the check
+	// and then fail (udp) or be ignored (tcp) at run time.
+	if err := ValidateCongestionControl(options.QUICCongestionControl); err != nil {
+		return nil, err
+	}
 	inbound := &Inbound{
 		Adapter: inbound.NewAdapter(C.TypeNaive, tag),
 		ctx:     ctx,
@@ -279,25 +285,20 @@ func (n *Inbound) quicNextProtos() []string {
 
 // quicTLSConfig returns the TLS configuration the HTTP/3 listener must use.
 //
-// The inbound shares one TLS config between its TCP and QUIC listeners, so the
-// QUIC side needs a transport-scoped view for the same reason the TCP side does:
-// Go's ALPN negotiates by the SERVER's list order, and a shared ["h2","h3"] list
-// makes a QUIC client that offers ["h3","h2"] negotiate "h2" on a QUIC
-// connection. The view keeps the certificate provider, ACME service, watcher and
-// Close path shared; it only replaces the list.
+// The inbound shares one TLS config between its TCP and QUIC listeners, so each
+// transport gets a view with the list it can actually speak. For QUIC that list
+// is exactly ["h3"]: Go's ALPN negotiates by the SERVER's list order, and a
+// shared ["h2","h3"] list makes a QUIC client that offers ["h3","h2"] negotiate
+// "h2" on a QUIC connection. The view keeps the certificate provider, ACME
+// service, watcher and Close path shared; it only replaces the list.
 //
-// Why the view is conditional for now: with no operator ALPN the shared list is
-// empty at this point, and qtls.ConfigureHTTP3 turns an empty list into ["h3"],
-// which is already the correct QUIC-only answer. Taking that path over keeps this
-// commit a pure ordering fix: the meaning of "tls.alpn is unset" and of
-// "tls.alpn omits h3" does not change here. Making `network` authoritative for
-// H3 is a separate contract decision.
+// `network` is the switch that decides whether H3 is served, not `tls.alpn`: a
+// udp listener always offers h3, while non-h3 operator values stay on the TCP
+// side (tcpNextProtos). An operator list without h3 therefore no longer turns
+// the QUIC listener off; that is the contract this view settles.
 func (n *Inbound) quicTLSConfig() tls.ServerConfig {
 	if n.tlsConfig == nil {
 		return nil
-	}
-	if !common.Contains(n.tlsConfig.NextProtos(), http3ALPN) {
-		return n.tlsConfig
 	}
 	return tls.TransportALPNView(n.tlsConfig, n.quicNextProtos())
 }

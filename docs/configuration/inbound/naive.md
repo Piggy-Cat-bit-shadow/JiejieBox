@@ -57,6 +57,8 @@ Listen network, one of `tcp` `udp`.
 
 Both if empty.
 
+`network` decides whether HTTP/3 is served: with `udp`, the QUIC listener always offers `h3`, regardless of `tls.alpn`. `tls.alpn` only scopes each transport's own list: non-`h3` values stay on the TCP side, and QUIC is fixed to `h3`.
+
 #### users
 
 ==Required==

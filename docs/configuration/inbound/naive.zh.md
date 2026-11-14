@@ -35,6 +35,8 @@
 
 默认所有。
 
+`network` 决定是否提供 HTTP/3：包含 `udp` 时，QUIC 监听器总是提供 `h3`，与 `tls.alpn` 无关。`tls.alpn` 只影响各传输自己的列表：TCP 侧保留其中的非 `h3` 值，QUIC 侧固定为 `h3`。
+
 #### users
 
 ==必填==

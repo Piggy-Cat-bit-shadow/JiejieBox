@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/naive"
 	"github.com/sagernet/sing/common/json"
 )
 
@@ -249,5 +250,37 @@ func TestNativeNaiveQUICConfigPinsReferenceVersions(t *testing.T) {
 	if config.Versions[0] != quic.Version1 || config.Versions[1] != quic.Version2 {
 		t.Fatalf("QUIC versions must be [v1 v2] to match the reference, got %v",
 			config.Versions)
+	}
+}
+
+// TestCongestionControlValidationMatchesResolver drives the construction-time
+// validator and the HTTP/3 resolver with the same corpus.
+//
+// The accepted set is duplicated because the validator must compile without the
+// QUIC build tag while the resolver lives behind it. This test is what keeps the
+// two copies from drifting: a value added to one side without the other fails
+// here, before `sing-box check` and `sing-box run` can disagree again.
+func TestCongestionControlValidationMatchesResolver(t *testing.T) {
+	for _, name := range []string{"", "default", "bbr", "cubic", "reno"} {
+		if err := naive.ValidateCongestionControl(name); err != nil {
+			t.Fatalf("construction-time validation refused accepted value %q: %v", name, err)
+		}
+		if _, err := newNaiveCongestionControl(name, time.Now); err != nil {
+			t.Fatalf("the HTTP/3 resolver refused accepted value %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{
+		"bogus", "BBR", "CUBIC", "Reno", " bbr", "bbr ", "none", "auto", "0",
+		"bbr2", "BBRv2",
+	} {
+		validatorErr := naive.ValidateCongestionControl(name)
+		resolverErr := func() error {
+			_, err := newNaiveCongestionControl(name, time.Now)
+			return err
+		}()
+		if validatorErr == nil || resolverErr == nil {
+			t.Fatalf("%q must be refused by both layers (validator=%v resolver=%v)",
+				name, validatorErr, resolverErr)
+		}
 	}
 }

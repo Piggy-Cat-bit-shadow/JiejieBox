@@ -217,6 +217,15 @@ func TestJiejieNaiveDualStackQUICALPNNegotiatesH3(t *testing.T) {
 			alpn:       nil,
 			wantResult: http3.NextProtoH3,
 		},
+		{
+			// The contract: `network` decides whether H3 is served. An operator
+			// list without h3 stays a TCP-side list; it used to disable the QUIC
+			// listener with only a warning, after `sing-box check` had passed.
+			name:       "tls.alpn without h3 still negotiates h3",
+			port:       28482,
+			alpn:       badoption.Listable[string]{"h2", "http/1.1"},
+			wantResult: http3.NextProtoH3,
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
