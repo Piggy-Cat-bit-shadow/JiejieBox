@@ -176,7 +176,7 @@ Only these, and only because they need the phone:
    `released < observed` is correct when a peer is still alive. `skipped (unobservable read side)`
    should be non-zero exactly when a mixed/redirect inbound was in use - the boundary, stated up
    front rather than discovered later. No log-level change is needed: an unset `log.level` resolves
-   to the most verbose level (`log/log.go`), so the line is emitted by default; a profile that sets
+   to `info` (`log/log.go`), and this summary is written at info, so it is emitted by default; a profile that sets
    `warn` or higher suppresses it.
 2. If a row still lingers while the application is running in the background, that is the suspended
    case: the OS still owns the socket, and the observation is designed not to touch it. A screenshot

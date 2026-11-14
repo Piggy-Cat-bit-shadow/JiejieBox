@@ -6,7 +6,7 @@ package libbox
 // it cannot see. These cases pin the boundary:
 //
 //   - a value the document leaves unset is reported with the value the core will use and the source
-//     "default" (an unset log.level is TRACE in this core, and an unset log.output discards);
+//     "default" (an unset log.level is INFO in this core, and an unset log.output discards);
 //   - a value the document sets is reported with source "declared";
 //   - a condition whose fact belongs to the PLATFORM (process attribution, Wi-Fi state, network
 //     classification) is reported as a requirement, with the handshake that supplies it;
@@ -41,7 +41,7 @@ func requiredNeeds(analysis ConfigAnalysis) []string {
 func TestAnalysisReportsTheLogDefaultsItWillUse(t *testing.T) {
 	analysis := analyse(t, `{"log": {}}`)
 	level := defaultValue(t, analysis, "log.level")
-	require.Equal(t, "trace", level.Effective, "this core configures trace when the level is unset")
+	require.Equal(t, "info", level.Effective, "this core configures info when the level is unset")
 	require.Equal(t, configValueDefault, level.Source)
 	require.NotEmpty(t, level.Reason)
 

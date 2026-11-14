@@ -65,7 +65,12 @@ func New(options Options) (Factory, error) {
 		}
 		factory.SetLevel(logLevel)
 	} else {
-		factory.SetLevel(LevelTrace)
+		// The default is info: a normal run should not pay for debug/trace
+		// formatting, and an operator who wants them declares log.level
+		// explicitly. The platform log stream is not gated by this level -
+		// clients keep their own filter so they can still select debug/trace -
+		// but the console/file writer and the level-gated diagnostics use it.
+		factory.SetLevel(LevelInfo)
 	}
 	return factory, nil
 }
