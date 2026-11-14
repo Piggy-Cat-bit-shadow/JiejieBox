@@ -400,6 +400,6 @@ replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun
 
 replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80
 
-replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261112100203-f4acc22de770
+replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe
 
 replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261112135526-b5934f7136b4

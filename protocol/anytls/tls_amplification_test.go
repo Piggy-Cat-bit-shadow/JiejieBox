@@ -54,7 +54,8 @@ func newSilentServer(t *testing.T) *silentServer {
 }
 
 // tlsDialOut dials and starts a real TLS handshake, which is what the production DialOut does
-// behind a NetworkExtension. The handshake is expected to block; the caller cancels it.
+// behind a NetworkExtension. The handshake is expected to block; the creation's deadline (kept from
+// the first caller) cancels it.
 func tlsDialOut(address string, inFlight *atomic.Int64, peak *atomic.Int64) singanytls.DialOutFunc {
 	return func(ctx context.Context) (net.Conn, error) {
 		current := inFlight.Add(1)
@@ -113,15 +114,20 @@ func (s *peakHeapSampler) stop() uint64 {
 }
 
 // burstWithTLSHandshakes starts `burst` concurrent AnyTLS dials whose DialOut performs a real,
-// never-completing TLS handshake, and reports the peak heap and the peak concurrent handshakes.
+// never-completing TLS handshake, and reports the peak heap, the peak concurrent handshakes and the
+// number of physical connections the silent server accepted.
 func burstWithTLSHandshakes(t *testing.T, guard *resourceguard.Guard, burst int, wait time.Duration) (uint64, int64, int) {
 	t.Helper()
 	server := newSilentServer(t)
 	var inFlight, peak atomic.Int64
-	client, err := singanytls.NewClient(singanytls.ClientOptions{
+	options := singanytls.ClientOptions{
 		Password: "test-password",
 		DialOut:  tlsDialOut(server.listener.Addr().String(), &inFlight, &peak),
-	})
+	}
+	if guard != nil {
+		options.AdmitCreation = admitSessionCreation(guard, "tls-burst")
+	}
+	client, err := singanytls.NewClient(options)
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 
@@ -137,8 +143,8 @@ func burstWithTLSHandshakes(t *testing.T, guard *resourceguard.Guard, burst int,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// The handshake never completes, so this returns only when the burst context expires.
-			_, _ = dialWithAdmission(ctx, guard, client.DialContext, M.Socksaddr{Fqdn: "example.com", Port: 443})
+			// The handshake never completes, so this returns when the creation deadline expires.
+			_, _ = client.DialContext(ctx, M.Socksaddr{Fqdn: "example.com", Port: 443})
 		}()
 	}
 	wg.Wait()
@@ -153,14 +159,17 @@ func burstWithTLSHandshakes(t *testing.T, guard *resourceguard.Guard, burst int,
 	return marginal, peak.Load(), int(server.accepted.Load())
 }
 
-// TestTLSHandshakeBurSTAmplificationIsBounded is the local reproduction of the measured device
-// event, with the real TLS stack: 200 flows whose handshakes are blocked on a silent server.
+// TestTLSHandshakeBurstIsBoundedBySessionCoalescing replaces the pre-coalescing amplification test.
 //
-// Without admission every flow allocates a TLS client, a post-quantum key share and its record
-// buffers at the same time. With admission the peak concurrent handshakes fall to the limit, and
-// the peak heap falls with them. The numbers are logged as well as asserted: they are the local
-// evidence for the claim that the admission bound is what caps the transient.
-func TestTLSHandshakeBurstAmplificationIsBounded(t *testing.T) {
+// # Why the assertion changed
+//
+// The old test measured 200 concurrent TLS handshakes against an 8-slot admission limit, and proved
+// that the limit lowered the peak handshake count and the peak heap. With session coalescing, that
+// burst performs ONE handshake whether or not a guard exists: the expensive transient is removed
+// rather than paced. Keeping the old assertion would fail on a better system, so the test now pins
+// the new bound - one creation, one physical connection - for both shapes, and keeps logging the
+// marginal heap so the numbers remain on record.
+func TestTLSHandshakeBurstIsBoundedBySessionCoalescing(t *testing.T) {
 	const burst = 200
 	const handshakeWindow = 400 * time.Millisecond
 
@@ -176,8 +185,12 @@ func TestTLSHandshakeBurstAmplificationIsBounded(t *testing.T) {
 	t.Logf("guarded:   peak heap %d B, peak concurrent handshakes %d, server connections %d",
 		guardedHeap, guardedPeak, guardedConns)
 
-	require.Greater(t, unguardedPeak, int64(32), "the unguarded burst must actually be concurrent")
-	require.LessOrEqual(t, guardedPeak, int64(8), "the guarded burst must respect the limit")
-	require.Less(t, guardedHeap, unguardedHeap,
-		"bounding concurrent handshakes must lower the peak heap of the burst")
+	require.LessOrEqual(t, unguardedPeak, int64(1),
+		"the unguarded burst performed %d concurrent handshakes; coalescing must keep it at one", unguardedPeak)
+	require.Equal(t, 1, unguardedConns,
+		"the unguarded burst opened %d physical connections", unguardedConns)
+	require.LessOrEqual(t, guardedPeak, int64(1))
+	require.LessOrEqual(t, guardedConns, 1)
+	require.EqualValues(t, 1, guard.Stats().Gate.Admitted,
+		"the guarded burst was charged %d creations", guard.Stats().Gate.Admitted)
 }
