@@ -13,6 +13,8 @@
 | H3 物理创建准入 | `CLOSED_FIXED` | `common/httpclient`（共享 H3 客户端，覆盖 MASQUE/DoH3/provider）+ `transport/v2rayxhttp` H3 | 饱和时构造器不执行（两个包各一组测试）；官方 HTTP/3 包全绿 |
 | DNS 并发 | `CLOSED_FIXED` | `dns.Router` 查询 gate（256 并发 / 256 队列 / 2 s） | 同步与异步 Exchange 在饱和时快速拒绝、客户端不执行；`dns` 全包回归通过 |
 | NAT 首包账本 | `CLOSED_REJECT`（带边界与设计） | 不修改生产代码 | 首包归 gvisor `UDPBackWriter.packet` / go stack snapshot 所有，释放点是 `HandshakeSuccess/Failure`；跨两套 stack 与 route handshake 桥接，无 TUN 环境验证；量化上界见 `04_NAT_FIRST_PACKET_DECISION.md` |
+| 后台工作在 Critical 让路 | `CLOSED_FIXED` | `resourceguard.BackgroundAllowed` + URLTest 周期轮询 + DNS optimistic refresh | Critical 抑制、Armed 放行；三包测试与 `-race` 通过；CI 43550248961 |
+| 准入队列高水位 | `CLOSED_FIXED` | `Gate.maxWaiters` → `Stats.MaxWaiters` | 1 槽 + 3 排队 → 3，排空后保持 |
 
 ## 1. 会话创建 coalescing（`CLOSED_FIXED`）
 
@@ -29,7 +31,7 @@
 50 并发 → 1 次 dial；waiter 取消不影响创建；失败唤醒全部且下一次重新创建；Close 释放全部等待者；admission 只调用一次；`-race` 通过。**回归修正**：初版共享创建用 `context.WithoutCancel` 连 deadline 一起丢掉，静默服务端可让创建无限挂起（主仓 TLS burst 测试由此超时）；`d3e6d49` 保留首个调用者 deadline，无 deadline 时 30 s 上限，取消仍然分离。
 **主仓集成**：`protocol/anytls/coalescing_integration_test.go`：200 并发生产 outbound 流 → gate `Admitted=1/Released=1`、200/200 成功、物理 accept **恰好 1**。测试通过 `PendingCreationWaiters` 等到 199 个等待者全部附着后才放行创建，因此断言不受调度影响（`-race` 同样通过）。
 
-**pin**：`github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114025827-d3e6d499914b`（`go.sum` 已更新）。
+**pin**：`github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe`（`go.sum` 已更新）。
 
 ## 2. H3 物理创建准入（`CLOSED_FIXED`）
 
