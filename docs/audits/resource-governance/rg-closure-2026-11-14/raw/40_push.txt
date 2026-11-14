@@ -4,24 +4,41 @@
 #              Piggy-Cat-bit-shadow/sing-box URL redirects to this repository id 1383685561)
 # branch     : work/resource-governance-closure-2026-11-14 (new, no prior remote ref)
 # base       : testing @ fa61500731b1237e9ef44029b7469ee5373af4ba
-# command    : git push -u origin work/resource-governance-closure-2026-11-14
+#
+# A docs-only commit can advance the tip after this file is written, so the authoritative check is
+# the `git ls-remote` command below, not a SHA copied into prose. The history is recorded in order.
 
-remote: Create a pull request for 'work/resource-governance-closure-2026-11-14' on GitHub by visiting:
-remote:      https://github.com/Piggy-Cat-bit-shadow/JiejieBox/pull/new/work/resource-governance-closure-2026-11-14
-To https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git
+## push #1 - the three fixes and the audit bundle
+
+command:
+    git push -u origin work/resource-governance-closure-2026-11-14
+
+remote:
  * [new branch]          work/resource-governance-closure-2026-11-14 -> work/resource-governance-closure-2026-11-14
 
-## verification (git ls-remote --heads origin)
+verification:
+    $ git ls-remote --heads origin work/resource-governance-closure-2026-11-14
+    a81a2db01cc0be04a436bf0c12108f2de2058ab4  refs/heads/work/resource-governance-closure-2026-11-14
+    $ git ls-remote --heads origin testing
+    fa61500731b1237e9ef44029b7469ee5373af4ba  refs/heads/testing
 
-a81a2db01cc0be04a436bf0c12108f2de2058ab4  refs/heads/work/resource-governance-closure-2026-11-14
-fa61500731b1237e9ef44029b7469ee5373af4ba  refs/heads/testing
+## push #2 - this verification record
 
-## local HEAD
+command:
+    git push origin work/resource-governance-closure-2026-11-14
 
-a81a2db01cc0be04a436bf0c12108f2de2058ab4
+remote:
+   a81a2db01..c685a5a7a  work/resource-governance-closure-2026-11-14 -> work/resource-governance-closure-2026-11-14
 
-## divergence vs origin (left=remote right=local)
+verification after push #2:
+    local  HEAD                                 : c685a5a7a3647fab534321e9f9136996fc08de48
+    remote refs/heads/work/...-2026-11-14       : c685a5a7a3647fab534321e9f9136996fc08de48
+    divergence (left=remote right=local)        : 0  0
 
-0  0
+## invariants held
 
-# No force-push, no tag, no Release, no merge into testing. The base branch was not modified.
+    git ls-remote --heads origin testing
+    fa61500731b1237e9ef44029b7469ee5373af4ba  refs/heads/testing    (unchanged)
+
+No force-push. No rebase of pushed history. No tag. No Release. No merge into testing.
+The work branch is the only ref this round created.
