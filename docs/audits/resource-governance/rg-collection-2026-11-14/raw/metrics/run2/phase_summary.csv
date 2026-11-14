@@ -1,0 +1,12 @@
+phase,level,dials,ok,refused_queue_full,wait_timeout,rate_limited,ctx_deadline_or_cancel,other_error,p50_ms_all,p95_ms_all,p99_ms_all,max_ms_all,p50_ms_admitted,p95_ms_admitted,p99_ms_admitted,admitted_delta,refused_delta,timed_out_delta,canceled_delta,cumulative_peak_inflight,phase_peak_waiters,phase_peak_goroutines,phase_peak_working_set
+idle_after_start,normal,0,0,0,0,0,0,0,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0,0,0,0,0,0,3,8900608
+low_concurrency,normal,80,80,0,0,0,0,0,2.667,4.274,4.274,4.416,2.667,4.274,4.274,80,0,0,0,8,0,27,16662528
+high_concurrency,normal,480,480,0,0,0,0,0,3.573,9.175,12.193,13.204,3.573,9.175,12.193,480,0,0,0,32,0,86,21401600
+udp_burst_200,normal,200,200,0,0,0,0,0,25.001,47.001,47.999,49.000,25.001,47.001,47.999,200,0,0,0,32,149,203,27422720
+udp_burst_1000,normal,1000,306,694,0,0,0,0,5.016,57.485,62.484,63.481,35.760,61.483,62.486,306,694,0,0,32,255,333,35962880
+mixed_classes_200,normal,200,200,0,0,0,0,0,22.005,39.495,39.572,40.596,22.005,39.495,39.572,200,0,0,0,36,164,248,35811328
+slow_handshake_blackhole,normal,64,0,0,0,0,58,6,501.047,501.593,501.593,501.593,0.000,0.000,0.000,61,0,0,3,36,32,99,34512896
+pressure_critical_burst,critical,200,40,160,0,0,0,0,110.517,123.239,126.524,127.315,118.685,126.524,126.741,40,160,0,0,36,14,203,34533376
+recovery_burst,normal,200,200,0,0,0,0,0,31.429,54.224,55.477,56.167,31.429,54.224,55.477,200,0,0,0,36,141,215,26992640
+idle_after_recovery,normal,0,0,0,0,0,0,0,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0,0,0,0,36,0,3,27123712
+final_stop,normal,0,0,0,0,0,0,0,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0,0,0,0,36,0,0,0

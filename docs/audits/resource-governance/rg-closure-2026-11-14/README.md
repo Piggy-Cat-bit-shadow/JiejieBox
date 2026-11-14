@@ -19,6 +19,8 @@
 | `10_BUG_LEDGER.md` | Debug 缺陷台账（D1–D14）：级别、证据、修复提交、DEFERRED/ENVIRONMENT 分类 |
 | `raw/` | 基线测试、RED、GREEN、构建/vet、全量 route 运行摘要、变异日志、A/B 基准、Debug 回归与 push 记录 |
 
+> 第三阶段的证据收集包（资源所有权、协议矩阵、时间序列、压力真值表、生命周期矩阵、性能对照、真机计划）在 [`../rg-collection-2026-11-14/`](../rg-collection-2026-11-14/README.md)。
+
 快速验证：
 
 ```sh

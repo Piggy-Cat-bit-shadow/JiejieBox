@@ -1,0 +1,861 @@
+// Command rgcollection measures the repository's real TLS creation admission seam and the Go/process
+// memory around it, on a local loopback server, and writes CSV evidence.
+//
+// It lives OUTSIDE the repository on purpose: this collection round must not add production code, and
+// a Go file under docs/ would become a package of the module. The harness imports the repository
+// through a replace directive, so the code under test is exactly the branch HEAD.
+package main
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/csv"
+	"errors"
+	"flag"
+	"fmt"
+	"math/big"
+	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"runtime/metrics"
+	"sort"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/sagernet/sing-box/common/resourceguard"
+	boxtls "github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/trafficclass"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/memory"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
+)
+
+const (
+	sampleInterval = 20 * time.Millisecond
+	dialTimeout    = 8 * time.Second
+)
+
+type phaseState struct {
+	name    atomic.Value // string
+	started time.Time
+}
+
+type serverMetrics struct {
+	accepted atomic.Int64
+	open     atomic.Int64
+}
+
+type localTLSServer struct {
+	listener  net.Listener
+	config    *tls.Config
+	metrics   serverMetrics
+	blackhole atomic.Bool
+	closing   atomic.Bool
+
+	connAccess sync.Mutex
+	conns      []net.Conn
+}
+
+func newLocalTLSServer() (*localTLSServer, error) {
+	certificate, err := selfSignedCertificate()
+	if err != nil {
+		return nil, err
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	server := &localTLSServer{
+		listener: listener,
+		config:   &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
+	}
+	go server.acceptLoop()
+	return server, nil
+}
+
+func (s *localTLSServer) address() string { return s.listener.Addr().String() }
+
+func (s *localTLSServer) acceptLoop() {
+	for {
+		raw, err := s.listener.Accept()
+		if err != nil {
+			return
+		}
+		s.metrics.accepted.Add(1)
+		s.metrics.open.Add(1)
+		s.track(raw)
+		if s.blackhole.Load() {
+			// Accepted and deliberately silent: the client handshake never completes, which is the
+			// blackholed-dial shape the admission wait exists for.
+			continue
+		}
+		go func() {
+			defer s.metrics.open.Add(-1)
+			defer raw.Close()
+			tlsConn := tls.Server(raw, s.config)
+			_ = tlsConn.SetDeadline(time.Now().Add(5 * time.Second))
+			if err := tlsConn.Handshake(); err != nil {
+				return
+			}
+			_, _ = tlsConn.Write([]byte("ok"))
+			// Keep the connection briefly so the client's close is orderly and the open gauge is real.
+			_ = tlsConn.CloseWrite()
+		}()
+	}
+}
+
+func (s *localTLSServer) track(conn net.Conn) {
+	s.connAccess.Lock()
+	s.conns = append(s.conns, conn)
+	s.connAccess.Unlock()
+}
+
+func (s *localTLSServer) closeHeld() {
+	s.connAccess.Lock()
+	held := s.conns
+	s.conns = nil
+	s.connAccess.Unlock()
+	open := 0
+	for _, conn := range held {
+		if err := conn.Close(); err == nil {
+			open++
+		}
+	}
+	_ = open
+}
+
+func (s *localTLSServer) close() {
+	s.closing.Store(true)
+	_ = s.listener.Close()
+	s.closeHeld()
+}
+
+func selfSignedCertificate() (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+}
+
+// collection holds the outputs and the shared measurement state.
+type collection struct {
+	outDir   string
+	guard    *resourceguard.Guard
+	pressure atomic.Uint32
+	dialer   boxtls.Dialer
+	server   *localTLSServer
+	phase    phaseState
+	stop     chan struct{}
+	done     chan struct{}
+
+	timeline    *csv.Writer
+	timelineOut *os.File
+	summary     *csv.Writer
+	summaryOut  *os.File
+
+	peakWaiters    atomic.Int64
+	goroutinesPeak atomic.Int64
+	workingSetPeak atomic.Uint64
+
+	phasePeakWaiters    atomic.Int64
+	phasePeakGoroutines atomic.Int64
+	phasePeakWorkingSet atomic.Uint64
+
+	prevAdmitted uint64
+	prevRefused  uint64
+	prevTimedOut uint64
+	prevCanceled uint64
+	errorClasses map[string]int
+
+	phaseRows []phaseRow
+}
+
+type phaseRow struct {
+	name        string
+	level       string
+	dials       int
+	ok          int
+	queueFull   int
+	waitTimeout int
+	rateLimited int
+	canceled    int
+	other       int
+	p50          float64
+	p95          float64
+	p99          float64
+	max          float64
+	admittedP50  float64
+	admittedP95  float64
+	admittedP99  float64
+	dialAdmitted int
+	dialRefused  int
+	admitted     uint64
+	refused      uint64
+	timedOut     uint64
+	canceledCnt  uint64
+	deltaAdmit   uint64
+	deltaRefuse  uint64
+	deltaTimeout uint64
+	deltaCancel  uint64
+	prevAdmitted uint64
+	prevRefused  uint64
+	prevTimedOut uint64
+	prevCanceled uint64
+	errorClasses map[string]int
+	peakInflight int
+	peakWaiters  int64
+	goroutines   int64
+	workingSet   uint64
+}
+
+func main() {
+	outDir := flag.String("out", "out", "output directory for CSV evidence")
+	flag.Parse()
+	if err := run(*outDir); err != nil {
+		fmt.Fprintln(os.Stderr, "harness:", err)
+		os.Exit(1)
+	}
+}
+
+func run(outDir string) error {
+	if err := os.MkdirAll(outDir, 0o777); err != nil {
+		return err
+	}
+	server, err := newLocalTLSServer()
+	if err != nil {
+		return err
+	}
+	defer server.close()
+
+	logger := log.NewNOPFactory().NewLogger("collection")
+	clientConfig, err := boxtls.NewClient(context.Background(), logger, server.address(), option.OutboundTLSOptions{
+		Enabled:    true,
+		ServerName: "localhost",
+		Insecure:   true,
+	})
+	if err != nil {
+		return err
+	}
+	c := &collection{
+		outDir: outDir,
+		server: server,
+		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
+	}
+	c.guard = resourceguard.NewGuard(resourceguard.DefaultNetworkExtensionConfig(), func() resourceguard.Level {
+		return resourceguard.Level(uint8(c.pressure.Load()))
+	})
+	c.dialer = boxtls.NewDialer(&N.DefaultDialer{}, clientConfig)
+	c.phase.name.Store("init")
+
+	if err := c.openCSV(); err != nil {
+		return err
+	}
+	defer c.closeCSV()
+
+	writeEnvironment(filepath.Join(outDir, "environment.txt"))
+
+	go c.sampleLoop()
+
+	// Phase plan. Each phase leaves the process quiet for a moment so the sampler captures the floor.
+	phases := []struct {
+		name string
+		run  func() error
+	}{
+		{"idle_after_start", func() error { return c.idlePhase("idle_after_start", 2*time.Second) }},
+		{"low_concurrency", func() error { return c.runWorkers("low_concurrency", 8, 10, 30*time.Millisecond, false) }},
+		{"high_concurrency", func() error { return c.runWorkers("high_concurrency", 32, 15, 10*time.Millisecond, false) }},
+		{"udp_burst_200", func() error { return c.runBurst("udp_burst_200", 200, false) }},
+		{"udp_burst_1000", func() error { return c.runBurst("udp_burst_1000", 1000, false) }},
+		{"mixed_classes_200", func() error { return c.runBurst("mixed_classes_200", 200, true) }},
+		{"slow_handshake_blackhole", func() error { return c.runBlackhole() }},
+		{"pressure_critical_burst", func() error { return c.runPressureCritical() }},
+		{"recovery_burst", func() error { return c.runRecovery() }},
+		{"idle_after_recovery", func() error { return c.idlePhase("idle_after_recovery", 2*time.Second) }},
+		{"final_stop", func() error { return c.finalState() }},
+	}
+	for _, phase := range phases {
+		if err := phase.run(); err != nil {
+			return fmt.Errorf("%s: %w", phase.name, err)
+		}
+	}
+	close(c.stop)
+	<-c.done
+
+	c.writeLevelPlan()
+	if err := c.writePhaseErrors(); err != nil {
+		return err
+	}
+	if err := c.writeLedgerCheck(); err != nil {
+		return err
+	}
+	return c.writePhaseSummary()
+}
+
+func (c *collection) pressureForGuard() resourceguard.Level {
+	return resourceguard.Level(uint8(c.pressure.Load()))
+}
+
+func (c *collection) openCSV() error {
+	timelinePath := filepath.Join(c.outDir, "timeline.csv")
+	timelineOut, err := os.Create(timelinePath)
+	if err != nil {
+		return err
+	}
+	c.timelineOut = timelineOut
+	c.timeline = csv.NewWriter(timelineOut)
+	if err := c.timeline.Write([]string{
+		"row", "ts_ms", "phase", "level", "plan_limit", "plan_queue_limit", "plan_wait_ms",
+		"requested", "admitted", "queued", "refused", "timed_out", "canceled", "released",
+		"inflight", "peak_inflight", "waiters", "peak_waiters_sampled",
+		"queue_bytes", "nat_entries", "active_sessions", "idle_sessions",
+		"tcp_open_server", "tcp_accepted_total", "quic_open", "http_transports", "mieru_underlays",
+		"goroutines", "go_heap_alloc", "go_heap_inuse", "go_stack_inuse", "go_sys", "go_next_gc",
+		"go_num_gc", "go_gc_pause_total_ms",
+		"working_set", "available_mem", "available_known", "handles_external",
+	}); err != nil {
+		return err
+	}
+
+	summaryPath := filepath.Join(c.outDir, "phase_summary.csv")
+	summaryOut, err := os.Create(summaryPath)
+	if err != nil {
+		return err
+	}
+	c.summaryOut = summaryOut
+	c.summary = csv.NewWriter(summaryOut)
+	return c.summary.Write([]string{
+		"phase", "level", "dials", "ok", "refused_queue_full", "wait_timeout", "rate_limited",
+		"ctx_deadline_or_cancel", "other_error",
+		"p50_ms_all", "p95_ms_all", "p99_ms_all", "max_ms_all",
+		"p50_ms_admitted", "p95_ms_admitted", "p99_ms_admitted",
+		"admitted_delta", "refused_delta", "timed_out_delta", "canceled_delta",
+		"cumulative_peak_inflight", "phase_peak_waiters", "phase_peak_goroutines", "phase_peak_working_set",
+	})
+}
+
+func (c *collection) closeCSV() {
+	c.timeline.Flush()
+	_ = c.timelineOut.Close()
+	c.summary.Flush()
+	_ = c.summaryOut.Close()
+}
+
+func (c *collection) sampleLoop() {
+	ticker := time.NewTicker(sampleInterval)
+	defer ticker.Stop()
+	defer close(c.done)
+	for {
+		select {
+		case <-c.stop:
+			c.writeSample()
+			return
+		case <-ticker.C:
+			c.writeSample()
+		}
+	}
+}
+
+func (c *collection) writeSample() {
+	stats := c.guard.Stats()
+	gate := stats.Gate
+	phase, _ := c.phase.name.Load().(string)
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	samples := []metrics.Sample{
+		{Name: "/gc/cycles/total:gc-cycles"},
+		{Name: "/gc/pauses:seconds"},
+	}
+	metrics.Read(samples)
+	gcCycles := samples[0].Value.Uint64()
+	var gcPauseSeconds float64
+	pauses := samples[1].Value.Float64Histogram()
+	if pauses != nil {
+		for index, count := range pauses.Counts {
+			if count == 0 {
+				continue
+			}
+			// Midpoint of the bucket is the standard approximation for a histogram with no
+			// per-event identity; it is labelled as such in the report.
+			mid := 0.0
+			if index < len(pauses.Buckets)-1 {
+				mid = (pauses.Buckets[index] + pauses.Buckets[index+1]) / 2
+			}
+			gcPauseSeconds += float64(count) * mid
+		}
+	}
+
+	waiters := int64(gate.Waiters)
+	raiseInt64Peak(&c.peakWaiters, waiters)
+	raiseInt64Peak(&c.phasePeakWaiters, waiters)
+	goroutines := int64(runtime.NumGoroutine())
+	raiseInt64Peak(&c.goroutinesPeak, goroutines)
+	raiseInt64Peak(&c.phasePeakGoroutines, goroutines)
+	workingSet := memory.Total()
+	raiseUint64Peak(&c.workingSetPeak, workingSet)
+	raiseUint64Peak(&c.phasePeakWorkingSet, workingSet)
+	available := uint64(0)
+	availableKnown := "false"
+	if memory.AvailableAvailable() {
+		available = memory.Available()
+		availableKnown = "true"
+	}
+
+	_ = c.timeline.Write([]string{
+		"sample",
+		strconv.FormatInt(time.Now().UnixMilli(), 10),
+		phase,
+		stats.Level.String(),
+		strconv.Itoa(gate.Limit),
+		strconv.Itoa(gate.QueueLimit),
+		strconv.FormatInt(gate.WaitBudget.Milliseconds(), 10),
+		strconv.FormatUint(gate.Requested, 10),
+		strconv.FormatUint(gate.Admitted, 10),
+		strconv.FormatUint(gate.Queued, 10),
+		strconv.FormatUint(gate.Refused, 10),
+		strconv.FormatUint(gate.TimedOut, 10),
+		strconv.FormatUint(gate.Canceled, 10),
+		strconv.FormatUint(gate.Released, 10),
+		strconv.Itoa(gate.Inflight),
+		strconv.Itoa(gate.MaxInflight),
+		strconv.Itoa(gate.Waiters),
+		strconv.FormatInt(c.peakWaiters.Load(), 10),
+		"UNAVAILABLE",
+		"UNAVAILABLE",
+		"UNAVAILABLE",
+		"UNAVAILABLE",
+		strconv.FormatInt(c.server.metrics.open.Load(), 10),
+		strconv.FormatInt(c.server.metrics.accepted.Load(), 10),
+		"UNAVAILABLE",
+		"UNAVAILABLE",
+		"UNAVAILABLE",
+		strconv.FormatInt(goroutines, 10),
+		strconv.FormatUint(memStats.HeapAlloc, 10),
+		strconv.FormatUint(memStats.HeapInuse, 10),
+		strconv.FormatUint(memStats.StackInuse, 10),
+		strconv.FormatUint(memStats.Sys, 10),
+		strconv.FormatUint(memStats.NextGC, 10),
+		strconv.FormatUint(gcCycles, 10),
+		strconv.FormatFloat(gcPauseSeconds*1000, 'f', 3, 64),
+		strconv.FormatUint(workingSet, 10),
+		strconv.FormatUint(available, 10),
+		availableKnown,
+		"UNAVAILABLE",
+	})
+	c.timeline.Flush()
+}
+
+func (c *collection) beginPhase(name string) {
+	c.phase.name.Store(name)
+	c.phase.started = time.Now()
+	c.phasePeakWaiters.Store(0)
+	c.phasePeakGoroutines.Store(0)
+	c.phasePeakWorkingSet.Store(0)
+	c.phaseRows = append(c.phaseRows, phaseRow{
+		name:         name,
+		prevAdmitted: c.prevAdmitted,
+		prevRefused:  c.prevRefused,
+		prevTimedOut: c.prevTimedOut,
+		prevCanceled: c.prevCanceled,
+	})
+}
+
+func (c *collection) idlePhase(name string, duration time.Duration) error {
+	c.beginPhase(name)
+	c.sleep(duration)
+	c.finishPhase(nil)
+	return nil
+}
+
+func percentileOf(sorted []float64, fraction float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	index := int(fraction * float64(len(sorted)-1))
+	return sorted[index]
+}
+
+func (c *collection) finishPhase(rows []dialResult) {
+	row := &c.phaseRows[len(c.phaseRows)-1]
+	stats := c.guard.Stats()
+	row.level = stats.Level.String()
+	row.dials = len(rows)
+	allDurations := make([]float64, 0, len(rows))
+	admittedDurations := make([]float64, 0, len(rows))
+	for _, result := range rows {
+		milliseconds := result.elapsed.Seconds() * 1000
+		allDurations = append(allDurations, milliseconds)
+		switch {
+		case result.err == nil:
+			row.ok++
+			admittedDurations = append(admittedDurations, milliseconds)
+		case errors.Is(result.err, resourceguard.ErrQueueFull):
+			row.queueFull++
+		case errors.Is(result.err, resourceguard.ErrWaitTimeout):
+			row.waitTimeout++
+		case errors.Is(result.err, resourceguard.ErrRateLimited):
+			row.rateLimited++
+		case errors.Is(result.err, context.Canceled), errors.Is(result.err, context.DeadlineExceeded):
+			row.canceled++
+		default:
+			row.other++
+			if row.errorClasses == nil {
+				row.errorClasses = make(map[string]int)
+			}
+			message := result.err.Error()
+			if len(message) > 120 {
+				message = message[:120]
+			}
+			row.errorClasses[message]++
+		}
+	}
+	row.dialAdmitted = len(admittedDurations)
+	row.dialRefused = row.queueFull + row.waitTimeout + row.rateLimited
+	sort.Float64s(allDurations)
+	sort.Float64s(admittedDurations)
+	row.p50 = percentileOf(allDurations, 0.50)
+	row.p95 = percentileOf(allDurations, 0.95)
+	row.p99 = percentileOf(allDurations, 0.99)
+	if len(allDurations) > 0 {
+		row.max = allDurations[len(allDurations)-1]
+	}
+	row.admittedP50 = percentileOf(admittedDurations, 0.50)
+	row.admittedP95 = percentileOf(admittedDurations, 0.95)
+	row.admittedP99 = percentileOf(admittedDurations, 0.99)
+
+	gate := stats.Gate
+	row.admitted = gate.Admitted
+	row.refused = gate.Refused
+	row.timedOut = gate.TimedOut
+	row.canceledCnt = gate.Canceled
+	row.deltaAdmit = gate.Admitted - row.prevAdmitted
+	row.deltaRefuse = gate.Refused - row.prevRefused
+	row.deltaTimeout = gate.TimedOut - row.prevTimedOut
+	row.deltaCancel = gate.Canceled - row.prevCanceled
+	c.prevAdmitted = gate.Admitted
+	c.prevRefused = gate.Refused
+	c.prevTimedOut = gate.TimedOut
+	c.prevCanceled = gate.Canceled
+	row.peakInflight = gate.MaxInflight
+	row.peakWaiters = c.phasePeakWaiters.Load()
+	row.goroutines = c.phasePeakGoroutines.Load()
+	row.workingSet = c.phasePeakWorkingSet.Load()
+
+	_ = c.summary.Write([]string{
+		row.name, row.level,
+		strconv.Itoa(row.dials), strconv.Itoa(row.ok), strconv.Itoa(row.queueFull),
+		strconv.Itoa(row.waitTimeout), strconv.Itoa(row.rateLimited), strconv.Itoa(row.canceled),
+		strconv.Itoa(row.other),
+		strconv.FormatFloat(row.p50, 'f', 3, 64), strconv.FormatFloat(row.p95, 'f', 3, 64),
+		strconv.FormatFloat(row.p99, 'f', 3, 64), strconv.FormatFloat(row.max, 'f', 3, 64),
+		strconv.FormatFloat(row.admittedP50, 'f', 3, 64),
+		strconv.FormatFloat(row.admittedP95, 'f', 3, 64),
+		strconv.FormatFloat(row.admittedP99, 'f', 3, 64),
+		strconv.FormatUint(row.deltaAdmit, 10), strconv.FormatUint(row.deltaRefuse, 10),
+		strconv.FormatUint(row.deltaTimeout, 10), strconv.FormatUint(row.deltaCancel, 10),
+		strconv.Itoa(row.peakInflight), strconv.FormatInt(row.peakWaiters, 10),
+		strconv.FormatInt(row.goroutines, 10), strconv.FormatUint(row.workingSet, 10),
+	})
+	c.summary.Flush()
+}
+
+// writePhaseErrors records the unclassified error strings per phase, so "other" is not a dead end.
+func (c *collection) writePhaseErrors() error {
+	path := filepath.Join(c.outDir, "phase_errors.csv")
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+	if err := writer.Write([]string{"phase", "count", "error"}); err != nil {
+		return err
+	}
+	for _, row := range c.phaseRows {
+		for message, count := range row.errorClasses {
+			_ = writer.Write([]string{row.name, strconv.Itoa(count), message})
+		}
+	}
+	return nil
+}
+
+// writeLedgerCheck records the two invariants the admission ledger documents, evaluated on the final
+// state, so the time series does not have to be trusted for arithmetic.
+func (c *collection) writeLedgerCheck() error {
+	stats := c.guard.Stats()
+	gate := stats.Gate
+	path := filepath.Join(c.outDir, "ledger_check.csv")
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+	if err := writer.Write([]string{"check", "left", "right", "ok", "note"}); err != nil {
+		return err
+	}
+	partitionLeft := int64(gate.Requested)
+	partitionRight := int64(gate.Admitted + gate.Refused + gate.TimedOut + gate.Canceled)
+	_ = writer.Write([]string{
+		"requested == admitted+refused+timed_out+canceled",
+		strconv.FormatInt(partitionLeft, 10), strconv.FormatInt(partitionRight, 10),
+		strconv.FormatBool(partitionLeft == partitionRight),
+		"queue depth is not part of the partition; queued is a cumulative enqueue counter",
+	})
+	balanceLeft := int64(gate.Admitted) - int64(gate.Released)
+	balanceRight := int64(gate.Inflight)
+	_ = writer.Write([]string{
+		"admitted-released == inflight",
+		strconv.FormatInt(balanceLeft, 10), strconv.FormatInt(balanceRight, 10),
+		strconv.FormatBool(balanceLeft == balanceRight),
+		"a granted-then-abandoned waiter is counted in neither admitted nor released",
+	})
+	_ = writer.Write([]string{
+		"final waiters",
+		strconv.Itoa(gate.Waiters), "0", strconv.FormatBool(gate.Waiters == 0),
+		"every waiter must leave the queue at the end",
+	})
+	return nil
+}
+
+type dialResult struct {
+	elapsed time.Duration
+	err     error
+}
+
+func raiseInt64Peak(counter *atomic.Int64, value int64) {
+	for {
+		peak := counter.Load()
+		if value <= peak || counter.CompareAndSwap(peak, value) {
+			return
+		}
+	}
+}
+
+func raiseUint64Peak(counter *atomic.Uint64, value uint64) {
+	for {
+		peak := counter.Load()
+		if value <= peak || counter.CompareAndSwap(peak, value) {
+			return
+		}
+	}
+}
+
+func (c *collection) dial(ctx context.Context, interactive bool) dialResult {
+	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	if interactive {
+		dialCtx = trafficclass.WithClass(dialCtx, trafficclass.ClassInteractive)
+	}
+	started := time.Now()
+	conn, err := c.dialer.DialTLSContext(dialCtx, M.ParseSocksaddr(c.server.address()))
+	elapsed := time.Since(started)
+	if err == nil {
+		_ = conn.Close()
+	}
+	return dialResult{elapsed: elapsed, err: err}
+}
+
+func (c *collection) guardContext() context.Context {
+	return resourceguard.NewContext(context.Background(), c.guard)
+}
+
+func (c *collection) runWorkers(name string, workers int, perWorker int, spacing time.Duration, interactive bool) error {
+	c.beginPhase(name)
+	results := make(chan dialResult, workers*perWorker)
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for round := 0; round < perWorker; round++ {
+				results <- c.dial(c.guardContext(), interactive)
+				if spacing > 0 {
+					time.Sleep(spacing)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	rows := make([]dialResult, 0, workers*perWorker)
+	for result := range results {
+		rows = append(rows, result)
+	}
+	c.finishPhase(rows)
+	return nil
+}
+
+func (c *collection) runBurst(name string, dials int, mixed bool) error {
+	c.beginPhase(name)
+	start := make(chan struct{})
+	results := make(chan dialResult, dials)
+	var wg sync.WaitGroup
+	for index := 0; index < dials; index++ {
+		index := index
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			interactive := mixed && index%2 == 0
+			results <- c.dial(c.guardContext(), interactive)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	rows := make([]dialResult, 0, dials)
+	for result := range results {
+		rows = append(rows, result)
+	}
+	c.finishPhase(rows)
+	return nil
+}
+
+func (c *collection) sleep(duration time.Duration) {
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		time.Sleep(sampleInterval)
+	}
+}
+
+func (c *collection) runBlackhole() error {
+	c.beginPhase("slow_handshake_blackhole")
+	c.server.blackhole.Store(true)
+	defer func() {
+		c.server.blackhole.Store(false)
+		c.server.closeHeld()
+	}()
+
+	const dials = 64
+	results := make(chan dialResult, dials)
+	var wg sync.WaitGroup
+	for index := 0; index < dials; index++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dialCtx, cancel := context.WithTimeout(c.guardContext(), 500*time.Millisecond)
+			defer cancel()
+			started := time.Now()
+			conn, err := c.dialer.DialTLSContext(dialCtx, M.ParseSocksaddr(c.server.address()))
+			if err == nil {
+				_ = conn.Close()
+			}
+			results <- dialResult{elapsed: time.Since(started), err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	rows := make([]dialResult, 0, dials)
+	for result := range results {
+		rows = append(rows, result)
+	}
+	c.finishPhase(rows)
+	return nil
+}
+
+func (c *collection) runPressureCritical() error {
+	c.pressure.Store(uint32(resourceguard.LevelCritical))
+	// Reading applies the transition before the burst starts; the burst would apply it anyway, but
+	// this makes the phase boundary the transition boundary.
+	_ = c.guard.Stats()
+	if err := c.runBurst("pressure_critical_burst", 200, false); err != nil {
+		return err
+	}
+	c.pressure.Store(uint32(resourceguard.LevelNormal))
+	return nil
+}
+
+func (c *collection) runRecovery() error {
+	// The demote dwell is 2 s of CONTINUOUS low pressure; the sampler keeps the process quiet while
+	// the clock passes, which is the real recovery path.
+	deadline := time.Now().Add(2500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		_ = c.guard.Stats()
+		time.Sleep(sampleInterval)
+	}
+	return c.runBurst("recovery_burst", 200, false)
+}
+
+func (c *collection) finalState() error {
+	c.beginPhase("final_stop")
+	stats := c.guard.Stats()
+	rows := []dialResult{}
+	c.finishPhase(rows)
+	if stats.Gate.Inflight != 0 || stats.Gate.Waiters != 0 {
+		return fmt.Errorf("final state not drained: inflight=%d waiters=%d", stats.Gate.Inflight, stats.Gate.Waiters)
+	}
+	return nil
+}
+
+func (c *collection) writeLevelPlan() {
+	path := filepath.Join(c.outDir, "level_plan.csv")
+	file, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+	_ = writer.Write([]string{"level", "plan_limit", "plan_queue_limit", "plan_wait_ms", "note"})
+	original := c.pressure.Load()
+	defer c.pressure.Store(original)
+	for _, level := range []resourceguard.Level{resourceguard.LevelNormal, resourceguard.LevelArmed, resourceguard.LevelCritical} {
+		c.pressure.Store(uint32(level))
+		stats := c.guard.Stats()
+		_ = writer.Write([]string{
+			stats.Level.String(),
+			strconv.Itoa(stats.Gate.Limit),
+			strconv.Itoa(stats.Gate.QueueLimit),
+			strconv.FormatInt(stats.Gate.WaitBudget.Milliseconds(), 10),
+			"observed through Guard.Stats() at this level",
+		})
+	}
+	c.pressure.Store(original)
+}
+
+func (c *collection) writePhaseSummary() error {
+	c.summary.Flush()
+	return nil
+}
+
+func writeEnvironment(path string) {
+	file, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	fmt.Fprintf(file, "go_version=%s\n", runtime.Version())
+	fmt.Fprintf(file, "goos=%s\ngoarch=%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Fprintf(file, "num_cpu=%d\ngomaxprocs=%d\n", runtime.NumCPU(), runtime.GOMAXPROCS(0))
+	fmt.Fprintf(file, "guard_config=limit:32 queue:256 wait:5s reserve:4 demote:2s starvation:1s\n")
+	fmt.Fprintf(file, "sample_interval=%s\ndial_timeout=%s\n", sampleInterval, dialTimeout)
+}

@@ -1,0 +1,12 @@
+﻿stage,phase,level,dials_run1,ok_run1,refused_run1,canceled_run1,admitted_p50_ms_run1,admitted_p95_ms_run1,admitted_p99_ms_run1,phase_peak_waiters_run1,phase_peak_goroutines_run1,phase_peak_working_set_run1,dials_run2,ok_run2,refused_run2,canceled_run2,admitted_p50_ms_run2,admitted_p95_ms_run2,admitted_p99_ms_run2,phase_peak_waiters_run2,phase_peak_goroutines_run2,phase_peak_working_set_run2,note
+1 idle startup baseline,"idle_after_start",normal,0,0,0,0,0.000,0.000,0.000,0,3,8912896,0,0,0,0,0.000,0.000,0.000,0,3,8900608,""
+2 normal low concurrency,"low_concurrency",normal,80,80,0,0,2.671,4.487,4.595,0,13,17223680,80,80,0,0,2.667,4.274,4.274,0,27,16662528,""
+3 normal high concurrency,"high_concurrency",normal,480,480,0,0,3.998,9.139,13.608,0,76,21016576,480,480,0,0,3.573,9.175,12.193,0,86,21401600,""
+4 UDP burst 200,"udp_burst_200",normal,200,200,0,0,29.175,50.938,51.471,127,203,27062272,200,200,0,0,25.001,47.001,47.999,149,203,27422720,""
+4b UDP burst 1000 (queue-bound),"udp_burst_1000",normal,1000,288,712,0,31.009,56.880,58.879,189,257,35643392,1000,306,694,0,35.760,61.483,62.486,255,333,35962880,"queue 256; refusals are instant ErrQueueFull"
+5 mixed classes 200 (interactive reserve),"mixed_classes_200",normal,200,200,0,0,18.996,32.997,34.995,87,169,37076992,200,200,0,0,22.005,39.495,39.572,164,248,35811328,"peak inflight 36 = limit 32 + interactive reserve 4"
+6 slow/blackholed handshake,"slow_handshake_blackhole",normal,64,0,0,64,0.000,0.000,0.000,32,99,36114432,64,0,0,58,0.000,0.000,0.000,32,99,34512896,"64 dials, 500 ms ctx deadline; server accepts but never handshakes"
+7 pressure critical burst,"pressure_critical_burst",critical,200,40,160,0,9.551,15.960,15.960,1,20,32260096,200,40,160,0,118.685,126.524,126.741,14,203,34533376,"plan 8/32/100ms; refusals dominate"
+8 pressure released + recovery burst,"recovery_burst",normal,200,200,0,0,46.320,69.556,70.326,128,206,27643904,200,200,0,0,31.429,54.224,55.477,141,215,26992640,"after 2.5 s of low pressure (DemoteAfter 2 s); plan back to 32/256/5s"
+9 idle after recovery,"idle_after_recovery",normal,0,0,0,0,0.000,0.000,0.000,0,3,26726400,0,0,0,0,0.000,0.000,0.000,0,3,27123712,""
+11 final stop,"final_stop",normal,0,0,0,0,0.000,0.000,0.000,0,0,0,0,0,0,0,0.000,0.000,0.000,0,0,0,"inflight=0 waiters=0 verified in ledger_check.csv"

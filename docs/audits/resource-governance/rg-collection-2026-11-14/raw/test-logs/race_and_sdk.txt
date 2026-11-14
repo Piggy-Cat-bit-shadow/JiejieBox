@@ -1,0 +1,36 @@
+﻿# Race detector and dependency contract tests at collection HEAD
+# CGO_ENABLED=1 (mingw64 gcc)
+
+## go test -race ./common/resourceguard ./service/oomkiller
+ok  	github.com/sagernet/sing-box/common/resourceguard	2.052s
+ok  	github.com/sagernet/sing-box/service/oomkiller	1.892s
+
+## go test -race ./route (admission and setup subset)
+ok  	github.com/sagernet/sing-box/route	1.687s
+
+## go test -race -tags with_quic ./transport/v2rayquic (admission subset)
+ok  	github.com/sagernet/sing-box/transport/v2rayquic	1.194s
+
+## dependency contract: sing-anytls (pinned fork)
+=== RUN   TestAdmitCreationIsAskedOnlyForANewSession
+--- PASS: TestAdmitCreationIsAskedOnlyForANewSession (0.00s)
+=== RUN   TestAdmitCreationCanRefuseWithoutDialing
+--- PASS: TestAdmitCreationCanRefuseWithoutDialing (0.00s)
+=== RUN   TestAdmitCreationSeesTheCreationError
+--- PASS: TestAdmitCreationSeesTheCreationError (0.00s)
+PASS
+ok  	github.com/sagernet/sing-anytls	0.066s
+
+## dependency contract: sing-quic hysteria2 and tuic CreationAdmission (pinned fork)
+=== RUN   TestOneSharedCreationChargesOneAdmission
+--- PASS: TestOneSharedCreationChargesOneAdmission (0.03s)
+=== RUN   TestAdmissionRefusalDoesNotDial
+--- PASS: TestAdmissionRefusalDoesNotDial (0.00s)
+PASS
+ok  	github.com/sagernet/sing-quic/hysteria2	0.113s
+=== RUN   TestOneSharedCreationChargesOneAdmission
+--- PASS: TestOneSharedCreationChargesOneAdmission (0.03s)
+=== RUN   TestAdmissionRefusalDoesNotDial
+--- PASS: TestAdmissionRefusalDoesNotDial (0.00s)
+PASS
+ok  	github.com/sagernet/sing-quic/tuic	0.108s

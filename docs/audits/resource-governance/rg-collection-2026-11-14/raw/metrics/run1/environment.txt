@@ -1,0 +1,8 @@
+go_version=go1.25.5
+goos=windows
+goarch=amd64
+num_cpu=16
+gomaxprocs=16
+guard_config=limit:32 queue:256 wait:5s reserve:4 demote:2s starvation:1s
+sample_interval=20ms
+dial_timeout=8s
