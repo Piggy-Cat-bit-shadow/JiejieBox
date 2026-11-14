@@ -41,6 +41,38 @@ import (
 
 func TestAServerEndpointAnswersAnUnauthenticatedHTTP3RequestWithAChallenge(t *testing.T) {
 	requireHTTP3Client(t)
+	runUnauthenticatedH3Request(t, option.QUICOptions{})
+}
+
+// TestAServerEndpointServesHTTP3WithCongestionControl pins the runtime path of
+// quic_congestion_control on this endpoint: the field used to be decoded and
+// ignored. The request proves the listener still starts and serves with the
+// option set; the sender itself is asserted in
+// transport/http.TestServerCongestionControlIsAppliedOnHandshake.
+func TestAServerEndpointServesHTTP3WithCongestionControl(t *testing.T) {
+	requireHTTP3Client(t)
+	runUnauthenticatedH3Request(t, option.QUICOptions{CongestionControl: "cubic"})
+}
+
+// TestServerEndpointRejectsUnknownCongestionControl proves the construction-time
+// validation `sing-box check` relies on. It runs before any listener exists, so
+// no network context is needed beyond the TLS options that HTTP/3 requires.
+func TestServerEndpointRejectsUnknownCongestionControl(t *testing.T) {
+	_, err := NewServerEndpoint(context.Background(), nil, log.NewNOPFactory().Logger(), "masque-server",
+		option.MASQUEServerEndpointOptions{
+			MASQUEEndpointOptions: option.MASQUEEndpointOptions{MTU: 1500},
+			Version:               badoption.Listable[int]{3},
+			HTTP3Options:          option.QUICOptions{CongestionControl: "BROKEN"},
+			InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
+				TLS: &option.InboundTLSOptions{Enabled: true},
+			},
+		})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown quic_congestion_control")
+}
+
+func runUnauthenticatedH3Request(t *testing.T, quicOptions option.QUICOptions) {
+	t.Helper()
 	logger := log.NewNOPFactory().Logger()
 	certPEM, keyPEM := newLoopbackCertificate(t)
 
@@ -53,10 +85,11 @@ func TestAServerEndpointAnswersAnUnauthenticatedHTTP3RequestWithAChallenge(t *te
 				Listen:     common.Ptr(badoption.Addr(netip.AddrFrom4([4]byte{127, 0, 0, 1}))),
 				ListenPort: 0,
 			},
-			Version: badoption.Listable[int]{3},
-			Address: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.42.0.0/24")},
-			Path:    "/",
-			Users:   []auth.User{{Username: "carrier", Password: "carrier-password"}},
+			Version:      badoption.Listable[int]{3},
+			Address:      badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.42.0.0/24")},
+			Path:         "/",
+			HTTP3Options: quicOptions,
+			Users:        []auth.User{{Username: "carrier", Password: "carrier-password"}},
 			InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 				TLS: &option.InboundTLSOptions{
 					Enabled:     true,

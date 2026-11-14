@@ -94,6 +94,13 @@ func (o HTTPInboundOptions) ResolveServerResources() (ServerResourceOptions, err
 	// keep using unresolved options.
 	http2Options := o.HTTP2Options
 	http3Options := o.HTTP3Options
+	// bbr_profile and quic_congestion_control are both server-side congestion
+	// knobs and they are mutually exclusive. Reject the pair here, at
+	// configuration load, rather than letting one silently beat the other at
+	// listener creation.
+	if err = ValidateHTTP3ServerCongestionControl(o.BBRProfile, http3Options.CongestionControl); err != nil {
+		return ServerResourceOptions{}, err
+	}
 	// An unset bbr_profile stays EMPTY, which the HTTP/3 listener reads as "leave
 	// quic-go's congestion control in place". It must not resolve to a concrete
 	// profile here: that would make BBR a protocol default rather than an explicit

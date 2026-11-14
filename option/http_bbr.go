@@ -32,8 +32,9 @@ func BBRProfileNames() []string {
 // congestion_meta2.Profile: there is no zero value in that enum that stands for
 // "unset", so resolving "" to ProfileStandard here would make BBR the protocol
 // default rather than an explicit operator choice. Neither quic-go/masque-go nor
-// quic-go/connect-ip-go sets a congestion control, so the library default (CUBIC)
-// is what the references get.
+// quic-go/connect-ip-go sets a congestion control, so the library default is
+// what the references get - Reno on the pinned fork, whose NewSentPacketHandler
+// builds the default sender with `use Reno = true`.
 func ValidateBBRProfile(name string) error {
 	switch name {
 	case "", BBRProfileConservative, BBRProfileStandard, BBRProfileAggressive:

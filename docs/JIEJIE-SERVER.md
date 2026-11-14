@@ -156,12 +156,13 @@ follows `option/simple.go`, `option/http.go` and [`schema.json`](schema.json).
 | `idle_timeout`, `keep_alive_period` | Per-version connection lifetime. H3 `idle_timeout` also reaches the HTTP/3 application server. |
 | `stream_receive_window`, `connection_receive_window` | Per-version receive windows; invalid numeric bounds are rejected. |
 | `initial_packet_size`, `disable_path_mtu_discovery` | QUIC options for H3. |
-| `quic_congestion_control` | H3 sender choice. Unset leaves quic-go's default unchanged. |
+| `bbr_profile`, `quic_congestion_control` | H3 sender. `bbr_profile` selects a BBR profile (`standard`/`conservative`/`aggressive`) and keeps its exact meaning. `quic_congestion_control` accepts `cubic`/`bbr`/`reno` and applies only when `bbr_profile` is unset. Naming both is a configuration error, not a silent precedence. With neither, quic-go's own sender is kept (Reno on the pinned quic-go). |
 | `unauthenticated_limits` | Optional pre-authentication limits; authenticated proxy traffic is unaffected. |
 
 The production topology explicitly selects a congestion-control profile on H3; that is a deployment
-choice, not the unset behaviour. The H3 proxy listener disables 0-RTT because CONNECT is not
-replay-safe.
+choice, not the unset behaviour. `bbr_profile` and `quic_congestion_control` are mutually exclusive:
+a configuration that names both is rejected at load instead of letting one silently win. The H3 proxy
+listener disables 0-RTT because CONNECT is not replay-safe.
 
 `unauthenticated_limits` bounds per-source-IP concurrency, request rate, burst, idle expiry and the
 number of tracked IPs. Its source address is what the inbound sees: a loopback H2 listener behind

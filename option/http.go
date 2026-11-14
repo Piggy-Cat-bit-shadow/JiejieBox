@@ -45,25 +45,52 @@ type QUICOptions struct {
 	// the references and the library default, so it is opted into rather than
 	// compiled in.
 	DisablePathManager bool `json:"-"`
-	// CongestionControl selects the QUIC congestion control algorithm for a
-	// CLIENT HTTP/3 connection, e.g. the macOS MASQUE client endpoint.
+	// CongestionControl selects the QUIC congestion control algorithm.
 	//
-	// Accepted values, and only these: "" / "default" (CUBIC), "cubic", "bbr",
-	// "reno".
+	// CLIENT HTTP/3: unset, "default" and "cubic" all select CUBIC explicitly
+	// (NewClientCongestionControl). Leaving the sender to the library would be
+	// Reno: this fork's quic-go builds its default with `use Reno = true`.
 	//
-	// # Why unset selects CUBIC explicitly
+	// SERVER HTTP/3 (the http and masque inbounds): the same field is honored
+	// when bbr_profile is unset. "cubic" / "bbr" / "reno" select that sender;
+	// "" / "default" keep quic-go's own sender (this inbound's documented
+	// contract is that unset leaves the library default, which is Reno on the
+	// pinned fork); an unknown value is refused at construction.
 	//
-	// "Unset" must mean the same algorithm on every path that offers this option:
-	// CUBIC. It must NOT mean "whatever the library does", because this fork's
-	// quic-go builds its default sender with `use Reno = true`
-	// (internal/ackhandler/sent_packet_handler.go), so leaving the sender alone
-	// would be Reno. BBR remains a performance choice that a deployment names
-	// explicitly; it is not the default anywhere.
-	//
-	// This complements BBRProfile rather than replacing it: BBRProfile is the
-	// SERVER knob (resolved from the http inbound `bbr_profile` option and using
-	// the congestion_meta2 profiles), while this is the CLIENT knob.
+	// bbr_profile and this field are MUTUALLY EXCLUSIVE: a configuration that
+	// names both is refused instead of silently letting one win. That is what
+	// keeps the production `"bbr_profile": "standard"` meaning exactly what it
+	// meant before this field was honored. See
+	// ValidateHTTP3ServerCongestionControl and resolveServerCongestionControl.
 	CongestionControl string `json:"quic_congestion_control,omitempty" enum:"default,cubic,bbr,reno"`
+}
+
+// ValidateHTTP3ServerCongestionControl validates the two server-side congestion
+// knobs of an HTTP/3 inbound (http, masque).
+//
+// bbr_profile is the pre-existing knob: it selects a BBR profile and must keep
+// its exact meaning. quic_congestion_control is the shared algorithm selector;
+// on a server it is honored only when bbr_profile is unset. Naming both is a
+// configuration error rather than a silent precedence, because "BBR standard"
+// and "cubic" are contradictory requests and whichever lost would be invisible.
+//
+// Accepted quic_congestion_control values on a server: "" / "default" (keep
+// quic-go's own sender), "cubic", "bbr", "reno". Note that the CLIENT meaning of
+// "default" is CUBIC; on a server it means the inbound's existing default,
+// because this inbound's contract is "unset leaves the library default". The
+// asymmetry is deliberate: changing the server default would alter every
+// existing MASQUE/HTTP deployment that sets neither knob.
+func ValidateHTTP3ServerCongestionControl(bbrProfile, congestionControl string) error {
+	if bbrProfile != "" && congestionControl != "" {
+		return E.New("bbr_profile and quic_congestion_control are mutually exclusive; set exactly one")
+	}
+	switch congestionControl {
+	case "", "default", "cubic", "bbr", "reno":
+		return nil
+	default:
+		return E.New("unknown quic_congestion_control: ", congestionControl,
+			" (expected cubic, bbr, reno or empty)")
+	}
 }
 
 type _HTTPClientOptions struct {

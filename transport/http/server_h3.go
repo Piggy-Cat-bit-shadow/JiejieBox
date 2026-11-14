@@ -18,6 +18,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-quic"
+	congestion_meta1 "github.com/sagernet/sing-quic/congestion_meta1"
 	congestion_meta2 "github.com/sagernet/sing-quic/congestion_meta2"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -80,23 +81,17 @@ func init() {
 			udpConn.Close()
 			return nil, err
 		}
-		// bbr_profile is validated at configuration load. An UNSET value now means
-		// "leave quic-go's own congestion control", not "BBR standard".
-		//
-		// The reason is reference parity: quic-go/masque-go and
-		// quic-go/connect-ip-go both construct their server without setting a
-		// congestion control, so they get the library default (CUBIC). Forcing
-		// BBR here made the protocol default a production tuning choice, which is
-		// the same class of silent divergence the HTTP/3 audit removed from the
-		// Native Naive listener.
-		//
-		// A deployment that wants BBR names it via bbr_profile, which the
-		// production topology does explicitly.
-		congestionProfile, profileErr := parseBBRProfile(options.BBRProfile.BBRProfileValue())
-		if profileErr != nil {
+		// Both server-side congestion knobs are resolved before the server
+		// starts: bbr_profile (the pre-existing knob, whose "standard" the
+		// production topology uses) and quic_congestion_control (previously
+		// decoded and then ignored). They are mutually exclusive; the option
+		// layer already refused a config that names both, so an error here means
+		// a caller built option.QUICOptions directly.
+		congestionControl, congestionErr := resolveServerCongestionControl(options)
+		if congestionErr != nil {
 			quicListener.Close()
 			udpConn.Close()
-			return nil, profileErr
+			return nil, congestionErr
 		}
 		http3Server := &http3.Server{
 			Handler:         handler,
@@ -146,11 +141,12 @@ func init() {
 			// preserved when no profile is configured.
 			IdleTimeout: time.Duration(options.IdleTimeout),
 			ConnContext: func(ctx context.Context, conn *quic.Conn) context.Context {
-				// A nil profile means "keep quic-go's default sender". Calling
+				// A nil factory means "keep quic-go's default sender" (this
+				// inbound's documented unset behaviour). Calling
 				// SetCongestionControl with a nil cannot be expressed, so the
 				// call is skipped rather than guarded.
-				if congestionProfile != nil {
-					conn.SetCongestionControl(congestionProfile(conn))
+				if congestionControl != nil {
+					applyServerCongestionControl(conn, congestionControl(conn))
 				}
 				return log.ContextWithNewID(ctx)
 			},
@@ -249,4 +245,52 @@ func parseBBRProfile(name string) (func(conn *quic.Conn) congestion.CongestionCo
 	return func(conn *quic.Conn) congestion.CongestionControl {
 		return congestion_meta2.NewBbrSenderWithProfile(conn.InitialPacketSize(), profile)
 	}, nil
+}
+
+// resolveServerCongestionControl maps the two server-side congestion knobs of an
+// HTTP/3 inbound onto one sender factory.
+//
+// Rules (the option layer enforces the same set at configuration load):
+//   - bbr_profile and quic_congestion_control are mutually exclusive;
+//   - bbr_profile keeps its exact meaning and is applied first;
+//   - otherwise "" / "default" keeps quic-go's own sender (Reno on this pin),
+//     and cubic / bbr / reno select that algorithm explicitly.
+//
+// A nil factory with a nil error is the "leave the library default" case.
+func resolveServerCongestionControl(options option.QUICOptions) (func(conn *quic.Conn) congestion.CongestionControl, error) {
+	profile := options.BBRProfile.BBRProfileValue()
+	if err := option.ValidateHTTP3ServerCongestionControl(profile, options.CongestionControl); err != nil {
+		return nil, err
+	}
+	if profile != "" {
+		return parseBBRProfile(profile)
+	}
+	switch options.CongestionControl {
+	case "", "default":
+		return nil, nil
+	case "cubic":
+		return func(conn *quic.Conn) congestion.CongestionControl {
+			return congestion_meta1.NewCubicSender(congestion_meta1.DefaultClock{}, conn.InitialPacketSize(), false)
+		}, nil
+	case "bbr":
+		// "bbr" without a profile means the standard profile: the same sender
+		// quic_congestion_control: "bbr" selects on the client, and the same one
+		// bbr_profile: "standard" selects on this server.
+		return parseBBRProfile(option.BBRProfileStandard)
+	case "reno":
+		return func(conn *quic.Conn) congestion.CongestionControl {
+			return congestion_meta1.NewCubicSender(congestion_meta1.DefaultClock{}, conn.InitialPacketSize(), true)
+		}, nil
+	}
+	return nil, E.New("unknown quic_congestion_control: ", options.CongestionControl)
+}
+
+// applyServerCongestionControl is the last step before a sender is installed.
+//
+// Production assigns conn.SetCongestionControl. A *quic.Conn exposes no getter
+// for its sender, so tests replace this function to observe which congestion
+// control the configured option actually produced; leaving it a variable is what
+// makes the runtime path assertable instead of only the resolver being tested.
+var applyServerCongestionControl = func(conn *quic.Conn, sender congestion.CongestionControl) {
+	conn.SetCongestionControl(sender)
 }
