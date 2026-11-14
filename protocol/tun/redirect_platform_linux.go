@@ -92,5 +92,11 @@ func (r *platformAutoRedirect) Close() error {
 	r.sessionAccess.Lock()
 	session := r.session
 	r.sessionAccess.Unlock()
-	return common.Close(session, common.PtrOrNil(r.redirectServer))
+	// The redirect server goes first so its listener stops accepting before the rules that feed
+	// it are removed: a connection accepted after the session closed has no rules left to explain
+	// it and hangs in the handler. The session then drops the rules, the routes and the queue.
+	// Both are still closed when the server reports an error, because common.Close closes every
+	// closer it is given; a second Close is reached by an inbound torn down twice and is covered
+	// by the redirect server's repeatable-close test in sing-tun.
+	return common.Close(common.PtrOrNil(r.redirectServer), session)
 }

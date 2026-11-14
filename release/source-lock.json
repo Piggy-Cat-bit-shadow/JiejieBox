@@ -29,21 +29,21 @@
     },
     {
       "module": "github.com/sagernet/sing-tun",
-      "pinned": "53aeb6bfa60b",
+      "pinned": "59d246f24e24",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-tun",
-      "version": "v0.9.7-0.20261114075304-53aeb6bfa60b"
+      "version": "v0.9.7-0.20261114151127-59d246f24e24"
     },
     {
       "module": "github.com/sagernet/sing-quic",
-      "pinned": "c1b074f1f868",
+      "pinned": "08c6abd9b3fc",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-quic",
-      "version": "v0.7.2-0.20261112101651-c1b074f1f868"
+      "version": "v0.7.2-0.20261114143018-08c6abd9b3fc"
     },
     {
       "module": "github.com/sagernet/quic-go",
-      "pinned": "158445cdda77",
+      "pinned": "a99a3c489772",
       "target": "github.com/Piggy-Cat-bit-shadow/quic-go",
-      "version": "v0.61.1-0.20261110231807-158445cdda77"
+      "version": "v0.61.1-0.20261114142722-a99a3c489772"
     },
     {
       "module": "github.com/metacubex/utls",
@@ -53,9 +53,9 @@
     },
     {
       "module": "github.com/sagernet/wireguard-go",
-      "pinned": "7ece3d66d79d",
+      "pinned": "957715cc5f12",
       "target": "github.com/Piggy-Cat-bit-shadow/wireguard-go",
-      "version": "v0.0.0-20261111081811-7ece3d66d79d"
+      "version": "v0.0.0-20261114150039-957715cc5f12"
     },
     {
       "module": "github.com/sagernet/sing-anytls",
