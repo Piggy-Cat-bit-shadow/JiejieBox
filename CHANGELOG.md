@@ -68,7 +68,7 @@ v0.1.48 是**跨层资源治理收口 + 依赖分支整合**版本。本版把�
 - CI：`5017b8864` 上 Verify（含 race checks）与 Release contract 全绿；Android Core ARM64、Mobile contract 成功。
 - [Kernel release 43569490140](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43569490140) 的 freeze、contract、Verify/race、Linux、macOS、Windows core、Desktop 安装器、Android AAR、Apple Libbox 与 iOS/macOS/自签、stage、publish 全部通过。
 - 内核 tag `v0.1.48` 指向 `5017b8864dca20eaa6bec203dd912d9f7cba0e14`；公开附件 8 项：Linux/macOS/Windows 内核、Windows x64 安装器、Android ARM64 AAR、Apple Libbox、未签名 IPA、`SHA256SUMS`。
-- - [Satelite v0.1.48](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.48) 已发布：`versionCode=59`、`coreCommit=5017b8864dca20eaa6bec203dd912d9f7cba0e14`，`arm64-v8a` / `x86_64` 双签名 APK、`build-info.json` 与 `apksigner-verify.txt` 均已回读（run 43571517986）。
+- [Satelite v0.1.48](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.48) 已发布：`versionCode=59`、`coreCommit=5017b8864dca20eaa6bec203dd912d9f7cba0e14`，`arm64-v8a` / `x86_64` 双签名 APK、`build-info.json` 与 `apksigner-verify.txt` 均已回读（run 43571517986）。
 - TestFlight 上传、签名与真机验收尚未执行，按独立指引继续；本版不把未运行的设备项写成 PASS。
 
 ## [v0.1.47](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.47) — 2026-11-14
