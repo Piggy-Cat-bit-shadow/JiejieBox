@@ -17,6 +17,7 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/congestion"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 	congestion_meta1 "github.com/sagernet/sing-quic/congestion_meta1"
@@ -125,6 +126,10 @@ func newHTTP3DialFunc(rawDialer N.Dialer, baseTLSConfig tls.Config, handshakeTim
 			quicConn = created
 			return nil
 		}
+		// DialEarlyConn blocks until the QUIC handshake completes or times out on the pinned
+		// quic-go fork (measured in h3_zero_rtt_test.go), so this admission covers the handshake,
+		// not only the socket. A stalled handshake is the expensive transient the slot exists to
+		// bound; a future quic-go that returns early would narrow this without the test noticing.
 		if admission != nil {
 			err = admission(ctx, create)
 		} else {
@@ -850,6 +855,14 @@ func (t *http3FallbackTransport) recordH3AttemptFailure(request *http.Request, a
 	if isH3RequestRejected(err) {
 		// The peer explicitly did not process the request: a retry may be safe, but the
 		// transport itself is not known to be broken.
+		return
+	}
+	if resourceguard.IsLocalRejection(err) {
+		// THIS PROCESS refused (or ran out of budget for) the creation: the gate's queue was full,
+		// the wait expired, the rate window was armed, or the caller's context ended. The peer was
+		// never involved, so the authority learned nothing and must not advance the HTTP/3 broken
+		// ladder - otherwise one memory-pressure episode would demote a healthy authority to HTTP/2
+		// for five minutes and count as an H3 failure in the next diagnosis.
 		return
 	}
 	t.markH3Broken(authority, attempt)
