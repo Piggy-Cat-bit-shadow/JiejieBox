@@ -292,3 +292,42 @@ func TestAsyncExchangeErrorReleasesThePermit(t *testing.T) {
 	require.Zero(t, router.queryGate.Stats().Inflight)
 	require.EqualValues(t, 1, router.queryGate.Stats().Released)
 }
+
+// ExchangeAsync's admission is synchronous. A refusal must be visible to the caller as a callback
+// that has ALREADY run when the function returns, not as a callback scheduled for later; otherwise a
+// caller that starts a timer or releases state on return would race the refusal.
+func TestExchangeAsyncRefusalCallsBackBeforeReturning(t *testing.T) {
+	router := newGateTestRouter(t)
+	router.queryGate = resourceguard.NewBoundedGate(1, 0, 50*time.Millisecond)
+	held, err := router.queryGate.Acquire(context.Background(), resourceguard.ClassNormal)
+	require.NoError(t, err)
+	defer held.Release()
+
+	client := &gateStubClient{}
+	router.client = client
+	var calls atomic.Int32
+	router.ExchangeAsync(context.Background(), gateTestMessage(t), adapter.DNSQueryOptions{Transport: gateStubTransport{}}, func(_ *mDNS.Msg, exchangeErr error) {
+		require.ErrorIs(t, exchangeErr, resourceguard.ErrQueueFull)
+		calls.Add(1)
+	})
+	require.EqualValues(t, 1, calls.Load(),
+		"the refusal callback was not invoked before ExchangeAsync returned")
+	require.Zero(t, client.asyncs.Load(), "the refused exchange reached the client")
+}
+
+// The same contract applies to a client that completes synchronously: the callback may run before the
+// call returns, so callers must not hold a lock across ExchangeAsync that the callback needs.
+func TestExchangeAsyncMayCallBackBeforeReturning(t *testing.T) {
+	router := newGateTestRouter(t)
+	client := &gateStubClient{}
+	router.client = client
+	var called atomic.Bool
+	router.ExchangeAsync(context.Background(), gateTestMessage(t), adapter.DNSQueryOptions{Transport: gateStubTransport{}}, func(_ *mDNS.Msg, exchangeErr error) {
+		require.NoError(t, exchangeErr)
+		called.Store(true)
+	})
+	require.True(t, called.Load(),
+		"the synchronous client completion was not visible before ExchangeAsync returned")
+	require.EqualValues(t, 1, client.asyncs.Load())
+	require.Zero(t, router.queryGate.Stats().Inflight)
+}

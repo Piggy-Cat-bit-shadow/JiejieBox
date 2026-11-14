@@ -2131,6 +2131,22 @@ func (r *Router) Exchange(ctx context.Context, message *mDNS.Msg, options adapte
 	return response, nil
 }
 
+// ExchangeAsync starts a DNS exchange asynchronously AFTER it has been admitted.
+//
+// # It is not non-blocking at the call boundary
+//
+// Admission is synchronous: this call may wait in the query gate's queue for up to the gate's wait
+// budget before it returns, and a refusal invokes the callback before returning. Once admitted, the
+// exchange itself runs asynchronously and the permit stays held until the callback fires (success,
+// error or a callback short-circuit). Callers must therefore:
+//
+//   - not treat a return from ExchangeAsync as "the query was started";
+//   - not assume the callback runs on another goroutine or after the return - a refusal and a
+//     client that completes synchronously both invoke it before ExchangeAsync returns;
+//   - not hold a lock across the call that the callback needs.
+//
+// The callback is expected exactly once by the client contract. This router releases the permit
+// through sync.Once, so a misbehaving transport that calls back twice cannot release it twice.
 func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options adapter.DNSQueryOptions, callback func(response *mDNS.Msg, err error)) {
 	started := time.Now()
 	exchangeCtx, earlyResponse, err := r.prepareExchange(ctx, message)
