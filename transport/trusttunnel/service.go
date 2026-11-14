@@ -195,7 +195,11 @@ func (s *Service) serveHTTP2(conn net.Conn, tlsConfig aTLS.ServerConfig) {
 		return
 	}
 	if negotiated := tlsConn.ConnectionState().NegotiatedProtocol; negotiated != http2.NextProtoTLS {
-		s.logger.DebugContext(s.ctx, "trusttunnel: closing connection from ", conn.RemoteAddr(), ": ALPN ", negotiated, " is not h2")
+		// A permanent configuration failure, not a transient blip: a client that offered something this
+		// listener can speak but is not h2 gets its connection closed here, every time. Debug made the
+		// TCP half of the ALPN incident invisible while the QUIC half already warns.
+		s.logger.WarnContext(s.ctx, "trusttunnel: closing connection from ", conn.RemoteAddr(),
+			": ALPN ", negotiated, " is not h2; check tls.alpn or the client's protocol selection")
 		return
 	}
 	s.h2Server.ServeConn(tlsConn, &http2.ServeConnOpts{

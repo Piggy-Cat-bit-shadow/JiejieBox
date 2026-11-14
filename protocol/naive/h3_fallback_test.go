@@ -563,3 +563,23 @@ func TestH3FallbackConcurrentMixedAccess(t *testing.T) {
 	// No assertion beyond "it survives": a lost clear/mark is allowed, a data
 	// race is not, and the race detector fails the test for us.
 }
+
+// TestH3FallbackMarkBrokenArmsOncePerWindow pins the return value the caller uses
+// to log the first failure of a window at warn and repeats at debug.
+func TestH3FallbackMarkBrokenArmsOncePerWindow(t *testing.T) {
+	var fallback h3Fallback
+	now := time.Unix(1_700_000_000, 0)
+
+	if !fallback.markBroken(fallback.begin(), now) {
+		t.Fatal("the first failure must open a window")
+	}
+	if fallback.markBroken(fallback.begin(), now.Add(time.Second)) {
+		t.Fatal("a failure inside the open window must not report a new window")
+	}
+	if !fallback.available(now.Add(h3FallbackWindow + time.Second)) {
+		t.Fatal("the window must expire")
+	}
+	if !fallback.markBroken(fallback.begin(), now.Add(h3FallbackWindow+time.Second)) {
+		t.Fatal("a failure after the window expired must open a new window")
+	}
+}
