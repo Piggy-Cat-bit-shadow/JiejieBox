@@ -8,38 +8,69 @@
 
 ### 本次更新
 
-v0.1.50 是**上游整合与发布基线收口**版本：把已验证的 TUN / QUIC / WireGuard 上游修复并入内核，把两处长期含糊的内核行为（日志默认等级、naive CUBIC 默认值的可见性）收敛为明确语义，把 Apple / Desktop 客户端源码前移到本轮验证过的提交，并首次为「上游 68 个独有提交」建立逐条审阅台账，使 `behind = 0` 成为可复核的审阅结论，而不是一句口号。
+v0.1.50 是**上游整合、客户端修复落地、发布基线收口**三合一的版本。
 
-### 依赖整合（TUN / QUIC / WireGuard）
+内核侧并入已验证的 TUN / QUIC / WireGuard 上游修复，把两处长期含糊的语义（日志默认等级、naive CUBIC 默认值的可见性）收敛为明确行为，并按上游修正 platform auto-redirect 的关闭顺序。
 
-- **sing-tun `53aeb6b` → `24e6bfd`**：修掉 auto-redirect 的四条真实缺陷 —— nftables / nfqueue verdict 不再覆盖其他程序已有的 packet mark；Android 厂商 QoS 改写整包 mark 后 bypass NAT 不再被跳过（POSTROUTING connmark 匹配）；nftables 缺 `nft_fib_inet` / `nft_queue` / `inet nat` 时按能力探测回退到有界 iptables；strict route 不再把已禁用的地址族一并 reject 成黑洞。同时 UIDRange 回读改为 **fail closed**（读不到就拒绝启动），aborted flow 增加过期与回归测试，nftables 大规则集 flush 的 ENOBUFS 也被处理。
-- **quic-go `158445c` → `a99a3c4` + sing-quic `c1b074f` → `08c6abd`**：藏在包装层后面的 UDP socket，现在由 quic-go 自己按 `SO_TYPE` 判定后再设置缓冲区，sing-quic 只在四个把 conn 交给 quic-go 的入口调用一次；UDP-over-TCP 的 TCP 底座不再被按 datagram 尺寸设置；port hopping 原有的逐跳设置行为保留。obfuscated Hysteria/Hysteria2 与 Realm punch conn 三条路径都覆盖。
-- **wireguard-go `7ece3d6` → `c308e20`**：Noise 响应双重消费保护、IPv6 payload 长度扩为 uint32（避免长度溢出）、GRO 删除路径清理 virtio header，并新增两个 Linux 定向测试。删除路径用例在旧代码下必失败；passthrough 用例守的是不变量（旧实现靠编码零值达到等效清零），两者证据性质不同。
-- **主内核 `protocol/tun/redirect_platform_linux.go`**：按上游 `fb54d9e` 改为**先关闭 platform redirect server、再关闭 session**，让监听先停止接受，再去移除喂给它的规则；同时补了「关闭可重复」的生命周期回归测试。
+客户端侧把积压的一批 iOS 掉帧、Debug 诊断成本、息屏解锁恢复与 UI 稳定性修复真正送进发布组合 —— Apple 源码从 `749509f2` 前移到 `0947393`，跨 25 个提交；Desktop 与内嵌 dashboard 也同步前移。
 
-### 日志与配置语义
+同时首次为上游 `SagerNet/sing-box:testing` 的 68 个独有提交建立逐条审阅台账，使 `behind = 0` 成为可复核的审阅结论，而不是一句口号。
+
+### 一、内核与依赖
+
+- **TUN / auto-redirect（sing-tun `53aeb6b` → `24e6bfd`）**：修掉四条真实缺陷 —— nftables 与 nfqueue verdict 不再覆盖其他程序已有的 packet mark（掩码比较/写回）；Android 厂商 QoS 在 mangle POSTROUTING 改写整包 mark 后 bypass NAT 不再被跳过（改为匹配 connmark）；nftables 缺 `nft_fib_inet` / `nft_queue` / `inet nat` 时按能力探测回退到有界 iptables，不再直接起不来或半安装；strict route 不再把已禁用的地址族一并 reject 成黑洞。同时 UIDRange 回读改为 **fail closed**（规则读不回来就拒绝启动，不再"带着未验证的保证"启动），aborted flow 增加过期与「关闭后同四元组重新判定」的回归测试，nftables 大规则集 flush 的 ENOBUFS 也被处理。
+- **QUIC 双仓（quic-go `158445c` → `a99a3c4`，sing-quic `c1b074f` → `08c6abd`）**：藏在包装层后面的 UDP socket，现在由 quic-go 自己按 `SO_TYPE` 判定后再设置 `SO_RCVBUF/SO_SNDBUF`，sing-quic 只在四个把 conn 交给 quic-go 的入口调用一次；obfuscated Hysteria / Hysteria2 与 Realm punch conn 三条路径都覆盖；UDP-over-TCP 的 TCP 底座不再被按 datagram 尺寸设置；port hopping 原有的逐跳设置行为保留。
+- **WireGuard（wireguard-go `7ece3d6` → `c308e20`）**：Noise 响应双重消费保护、IPv6 payload 长度扩为 uint32（避免长度溢出）、GRO 删除路径清理 virtio header 以免旧数据残留，并新增两个 Linux 定向测试。删除路径用例在旧代码下必失败；passthrough 用例守的是不变量（旧实现靠编码零值达到等效清零），两者证据性质不同。
+- **主内核 `protocol/tun/redirect_platform_linux.go`**：按上游 `fb54d9e` 改为**先关闭 platform redirect server、再关闭 session**，让监听先停止接受，再去移除喂给它的规则；并补了「关闭可重复」的生命周期回归测试。
+
+### 二、日志与配置语义
 
 - 未声明 `log.level` 时的默认等级由 `trace` 改为 **`info`**：正式运行不再默认承担最冗长的格式化与所有 `Level()` 门控诊断。显式声明的等级仍然优先，非法等级仍然拒绝，平台日志流（`PlatformWriter` / observable）不受该等级门控，客户端仍可选 debug/trace 过滤。新增 3 个回归测试（默认必须是 info、每个显式等级都必须胜过默认、非法等级仍必须报错）。
 - `sing-box check` 保留配置等级校验；naive 出站的 CUBIC 默认值现在会在 `check` 与 `warn` 中显形，不再需要读源码猜默认。
 
-### 客户端源码前移
+### 三、Apple 客户端（`749509f2` → `0947393`）
 
-- **Apple：`749509f2` → `0947393`**，纳入息屏解锁恢复（`lockstate 1 → 0` 的补发边界）与 iOS Debug 诊断成本优化（卡顿采集预算、日志发布按页面身份、报告刷新合并）等客户端侧修复。层 4 ABI 调用方扫描：483 个文件、0 违规、3 个 interface 方法；Apple client run `43627843866` 用该提交构建 Libbox 并编译 iOS、macOS、自签 IPA 全部成功。
-- **Desktop：`a658231` → `1bd68313`**，其树内嵌的 dashboard 也随之从 `d9fca1b1` 变为 `b6e3193`。
-- **Android：保持 `9816e006`**（已是分支 tip，本轮不动）。
+这一版首次把下面的客户端修复送进发布组合（此前它们停在 pin 之外）。
 
-### 上游审阅基线（不改变代码）
+**掉帧与 Debug 诊断成本（PR #4）**
+
+- `HangWatchdog` / `HangCapturePolicy`：Debug 卡顿采集改为有预算、有上限，不再使用 `Int.max` 作为上限、也不再把常量复制两份；限流与成本由策略类型统一决定。
+- `LogStore` / `LogPublication`：日志窗口从 `CommandClient` 的 `@Published` 迁出，改为 `revision` 计数 + 按页面 **UUID 身份**登记可见性。页面隐藏时不再跑过滤与发布管道；同一页面重复 visible/hidden 幂等；非成员页面上报隐藏不会误删别人的可见状态；Dashboard 不再被日志批次唤醒。
+- `ReportRefreshGate`：前台报告刷新合并，两个触发同时到达只扫描一次。
+- `CommandClient`：日志缓存与发布职责拆出，只有等级类属性保留 `@Published`；首页镜像、启停时钟、运行时定时器都改为只在真实变化时更新。
+- 配套 `Tests/HakoDiagnosticsCost`（43 项）与 `check_hako_diagnostics_boundaries.py` 结构边界门禁（日志窗口归属、无无界采集档、首页镜像/时钟/刷新门控）。
+
+**息屏解锁恢复（PR #3）**
+
+- Darwin 通知不会投递给挂起的进程：真实的 `1 → 0` 若发生在 NetworkExtension 挂起期间，扩展恢复时重新读取 `lockstate` 只会看到"现在是 0"，而唤醒边沿从未到达。
+- 新规则：只有当本观察者**先确认过 `1`**、随后读到 `0` 时，才补发一次 `.unlocked`，并且以 **EDGE** 交付 —— `lifecycle.woke()` 只能由边沿释放，LEVEL 无法解除设备暂停。
+- 边界严格：初始/未知状态的 `0` 一律不发布（"从未设置"的 `0` 与"刚解锁"的 `0` 不可区分）；迟到的通知不会造成重复唤醒；这不是放宽所有 snapshot 的拦截规则，只对"两次读取共同见证的那次跃迁"开口。
+
+**UI 稳定性与扩展生命周期**
+
+- 不再展示系统从未采用过的设置、测试与探针结果（避免"看起来生效"的假阳性）。
+- 系统停止请求不再依赖可能卡死的内核 RPC。
+- 扩展停止/重载改为**有界等待**：service generation 锁拆分（teardown 可以作废在途 start 而不必等它返回）、bounded teardown、invalidate-before-wait，并撤销了对"界限"的过度声明。
+- 接口监控的首包更新有界，并用 generation 校验回调是否仍拥有该 monitor。
+- 发布前修复（本轮真实 Xcode 构建暴露后修掉）：恢复日志可见性与 `Logger` 编译，修正日志里可选 profile id 的格式化。
+
+### 四、Desktop 与内嵌 dashboard
+
+- Desktop：`a658231` → `1bd68313`；其树内嵌的 dashboard 随之由 `d9fca1b1` 变为 `b6e3193`。Windows 安装器与 runtime audit 在发布流程中按 tag 构建与验收。
+- Android：保持 `9816e006`（已是分支 tip，本轮不动）。
+
+### 五、上游审阅基线（不改变代码）
 
 - 新增 `docs/fork/UPSTREAM-BASELINE-2026-11-15.md`（机器可读版同名 `.json`）：对上游 `SagerNet/sing-box:testing` 的 **68 个独有提交**逐条记录处置 —— 45 个已吸收（pre-rewrite SHA，对应 2026-11-11 那次吸收）、2 个 fork 等价实现、5 个仅文档、**16 个待评审**。
 - 基线以 `git merge -s ours` 记录，因此 `behind = 0` 是**审阅结论**，并不代表 68 个提交的代码被整体采纳。16 个待评审项（uTLS/reality 8、DNS/sniffer 4、netlink/OpenVZ 2、SSH 握手超时 1、老内核 auto-redirect 1）仍需显式 cherry-pick；其中 uTLS/reality 一组会先动 uTLS 版本，属 pin 与发布锁的变更。
 - 审计报告新增 §8，刷新全部依赖 / 客户端仓库的 `ahead / behind` 实测：9 个仓 `behind = 0`；仍有上游独有提交的是 `sing-tun` 50（多数为同一改动的上游 SHA，未采纳的是 3 个 Go 栈并发/内存重写）、`sing-quic` 1、`quic-go` 1（同一改动的不同 SHA）、`sing-box-for-android` 10（客户端次级范围，本轮未升级）。
 
-### 验证与发布
+### 六、验证与发布
 
-- 候选提交 `934a290d4`；同一 SHA 上 `Verify` 与 `Release contract verification` 通过，`release/pin-runs.json` 绑定本轮真实运行（`43631412925`、`43631416287`）。
+- 候选提交 `934a290d4`；同一 SHA 上 `Verify`（含 race checks）与 `Release contract verification` 通过，`release/pin-runs.json` 绑定本轮真实运行（`43631412925`、`43631416287`）。
+- Apple 层 4 ABI 调用方扫描：483 个文件、0 违规、3 个 interface 方法；`resolve` 解析到 `0947393` 后，`libbox` 构建一次、`ios` / `macos` / `ios-selfsign` 三个产物都用这一份 Libbox 编译成功。
 - 正式构建：`Kernel release` run `43633810003`（attempt 1）在一次编排内完成构建、验收与发布；Release 于 2026-11-14T20:08:33Z 公开，tag `v0.1.50` 指向 `934a290d4`。
 - 公开附件（均附 `SHA256SUMS`）：`jiejie-sing-box-linux-amd64-v0.1.50.tar.gz`、`jiejie-sing-box-macos-arm64-v0.1.50.tar.gz`、`jiejie-sing-box-windows-amd64-v0.1.50.tar.gz`、`Jiejiebox-v0.1.50-windows-x64.exe`（Windows 安装器）、`jiejie-sing-box-android-arm64-v0.1.50.tar.gz`、`jiejie-libbox-apple-0.1.50.tar.gz`（Apple core，TestFlight 的输入）、`jiejie-ios-selfsign-unsigned-0.1.50.ipa`。
-- Apple 侧全部证据来自同一次运行：`resolve` 解析到 `0947393`，`libbox` 构建并做 ABI 扫描，`ios` / `macos` / `ios-selfsign` 三个产物都用这一份 Libbox 编译成功。
 
 ## [v0.1.49](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.49) — 2026-11-14
 
