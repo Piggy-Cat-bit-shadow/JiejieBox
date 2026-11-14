@@ -22,7 +22,7 @@
 
 ## 1. 第一层观测：实现与证据
 
-### 1.1 UDP NAT（sing-tun 分支 `work/flow-observation-2026-11-14` @ `6e7483019752`）
+### 1.1 UDP NAT（sing-tun 分支 `work/flow-observation-2026-11-14`，tip `938b89dcb159`；观测 API 提交 `6e7483019752`）
 
 ```go
 type UDPNatStats struct {
