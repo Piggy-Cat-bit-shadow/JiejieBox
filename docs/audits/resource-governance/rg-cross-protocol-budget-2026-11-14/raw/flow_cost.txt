@@ -1,13 +1,11 @@
-﻿# sing-tun logical-flow observation and cost (host Go runtime)
-
-=== RUN   TestUDPNatStatsReportLogicalFlows
+﻿=== RUN   TestUDPNatStatsReportLogicalFlows
 --- PASS: TestUDPNatStatsReportLogicalFlows (0.00s)
 === RUN   TestUDPNatPerFlowCost
-    dispatcher_observation_test.go:109: udp flows=200 entries=200 sessions=200 queued=240000 goroutines+200 heap=663824 B/flows=3319 B/flow
-    dispatcher_observation_test.go:109: udp flows=1000 entries=1000 sessions=1000 queued=1200000 goroutines+1000 heap=3707312 B/flows=3707 B/flow
+    dispatcher_observation_test.go:120: udp flows=200 entries=200 sessions=200 queued=240000 goroutines+200 heap=670224 B (3351 B/flow, includes queued) structural=430224 B/structure=2151 B/flow stack=1605632 B (8028 B/flow) queued=1200 B/flow
+    dispatcher_observation_test.go:120: udp flows=1000 entries=1000 sessions=1000 queued=1200000 goroutines+1000 heap=3668480 B (3668 B/flow, includes queued) structural=2468480 B/structure=2468 B/flow stack=7143424 B (7143 B/flow) queued=1200 B/flow
 --- PASS: TestUDPNatPerFlowCost (0.01s)
 === RUN   TestTCPDispatcherPerDispatchCost
-    dispatcher_observation_test.go:165: tcp dispatches=1000 active=1000 goroutines+1000 heapDelta=-2054848 B/0 B/dispatch
+    dispatcher_observation_test.go:175: tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no per-dispatch heap claim)
 --- PASS: TestTCPDispatcherPerDispatchCost (0.00s)
 PASS
-ok  	github.com/sagernet/sing-tun	0.099s
+ok  	github.com/sagernet/sing-tun	0.096s

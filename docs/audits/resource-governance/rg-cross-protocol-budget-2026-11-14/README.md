@@ -8,12 +8,14 @@
 
 | 项 | 结果 |
 |---|---|
-| sing-tun UDP NAT 观测 | **DONE**：`UDPNat.Stats()`：entries / max / sessionsCreated / queuedBytes / caps / drops |
-| sing-tun TCP Dispatcher 观测 | **DONE**：`TCPDispatcherStats()`：accepted / active；四个 dispatch 点统一走 `goDispatch` |
-| 每条逻辑流消耗 | **MEASURED（host Go runtime）**：1 entry + 1 dispatcher goroutine + 首包（约 1.2 KiB 队列）+ 约 3.3–3.8 KiB heap；1000 流约 3.7 MiB heap + 1.2 MiB 队列 + 1000 goroutine 栈 |
-| 是否做 TUN→Route 逻辑流准入 | **NO（本轮）**：证据表明放大存在但未超预算阈值；施工边界明确排除长期入口架构；给出触发条件 |
-| XMUX 物理连接 | **INVENTORY EXISTS**：`xmuxPoolStats` 已统计 Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released；**Creating 不是可持久状态**（创建在 pool 锁内串行）；本轮不新增预算 |
-| HTTP/2 请求体 | **NOT_REPRODUCED / OPEN**：现有请求体由 `net/http` 客户端拥有并在 RoundTrip 结束时关闭；没有复现泄漏，不做无证据修改 |
+> 状态口径（两份报告统一）：`FIXED` 代码已改且有测试；`VERIFIED` 行为已确认（无代码改动）；`MEASURED` 有原始测量；`DECISION` 明确决定（含不做）；`PARTIAL` 部分覆盖；`NOT_VERIFIED` 未验证；`NOT_RUN` 未执行；`BLOCKED_BY_ENVIRONMENT` 环境阻止；`UNAVAILABLE` 本环境不可观测。
+
+| sing-tun UDP NAT 观测 | **FIXED**：`UDPNat.Stats()`：entries / max / sessionsCreated / queuedBytes / caps / drops |
+| sing-tun TCP Dispatcher 观测 | **FIXED**：`TCPDispatcherStats()`：accepted / active handler 调用；四个 dispatch 点统一走 `goDispatch` |
+| 每条逻辑流消耗 | **MEASURED（host Go runtime）**：每条 UDP 流 ≈ 3.4–3.7 KiB HeapAlloc（**已包含** 1.2 KiB 首包）+ 约 7.1–8.0 KiB goroutine 栈；结构成本 heap−queued ≈ 2.2–2.5 KiB/flow。1000 流 ≈ 3.7 MiB heap + 7.1 MiB 栈 ≈ **11 MiB**（不是首版写的 7 MiB） |
+| 是否做 TUN→Route 逻辑流准入 | **DECISION（本轮不做）**：修正前的 7 MiB 低估了栈；实测 11.4 MiB/1000 流已越过 8 KiB/flow 触发线，因此该问题升级为**下一轮第一优先决策**；本轮施工边界仍排除长期入口架构 |
+| XMUX 物理连接 | **PARTIAL**：`xmuxPoolStats` 统计的是 **Pool Entry（transport wrapper）**，不是物理 socket；已统计 Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released；**Creating 不是可持久状态**；本轮不新增预算 |
+| HTTP/2 请求体 | **OPEN**：现有请求体由 `net/http` 客户端拥有并在 RoundTrip 结束时关闭；没有复现泄漏，不做无证据修改 |
 | 其它 Owner 报告 | NAT/Dispatcher/XMUX 有；AnyTLS Session、QUIC 物理连接/流、Mieru Underlay、MASQUE Tunnel、PacketFlow、Native Engine 见 §5 |
 | Critical + Network Change 组合测试 | **NOT_RUN**（计划见 §6；原因：需要可控的网络切换与压力注入，超出本轮可安全验证范围） |
 | 两个已知小缺口 | 上一轮已修复（H3 本地拒绝不污染故障状态、DNS Lookup 走 gate），本轮复核测试仍在 |
@@ -54,38 +56,51 @@ func TCPDispatcherStats() DispatcherStats
 `go test . -run 'TestUDPNatStatsReportLogicalFlows|TestUDPNatPerFlowCost|TestTCPDispatcherPerDispatchCost' -v`：
 
 ```text
-udp flows=200  entries=200  sessions=200  queued=240000  goroutines+200  heap=663824 B  3319 B/flow
-udp flows=1000 entries=1000 sessions=1000 queued=1200000 goroutines+1000 heap=3707312 B 3707 B/flow
-tcp dispatches=1000 active=1000 goroutines+1000 heapDelta=-2054848 B (GC 归还，按 0 记)
+udp flows=200  entries=200  sessions=200  queued=240000  goroutines+200
+  heap=814576 B (4072 B/flow, includes queued) structural=574576 B (2872 B/flow)
+  stack=1605632 B (8028 B/flow) queued=1200 B/flow
+udp flows=1000 entries=1000 sessions=1000 queued=1200000 goroutines+1000
+  heap=3668480 B (3668 B/flow, includes queued) structural=2468480 B (2468 B/flow)
+  stack=7143424 B (7143 B/flow) queued=1200 B/flow
+tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no per-dispatch heap claim)
 ```
 
-解读：
+口径（修正了首版的重复计算）：
 
-- 每条 UDP 逻辑流 = 1 个 NAT entry + 1 个 dispatcher goroutine + 首包（示例 1200 B，仍在 NAT 队列账本内）+ 约 3.3–3.8 KiB Go heap。
-- 1000 条流 ≈ 3.7 MiB heap + 1.2 MiB 队列 + 1000 个 goroutine（栈按 2 KiB 起算约 2 MiB）。合计约 7 MiB，仍明显低于 50 MiB 观测预算，但它与物理连接数无关——这正是"三层分开"的理由。
-- TCP 侧每个 dispatch 固定 1 个 goroutine；TCP 状态机的内存不在这个计数器里，属于协议/栈的稳态资源。
-- 这些是 **host Go runtime** 数字；iOS 上 NAT 是 sing-tun 的 Go 栈，goroutine 与 heap 的形态相同，但 `phys_footprint` 还包含 PacketFlow、native 和 runtime 预留，未测。
+- `heap` 是 `HeapAlloc` 增量，**已经包含**队列里的首包（1200 B/flow）；首包是 heap 的子集，**不能**再加到 heap 上。
+- `structural = heap − queued`，是本层 entry/表结构/map 等剩余结构成本（≈2.5–2.9 KiB/flow）。
+- `stack` 是 `StackInuse` 增量，**不在 HeapAlloc 里**，必须单独计；每条被 park 的 dispatcher goroutine 实际约 7.7–8 KiB 栈。
+- 因此每条 UDP 逻辑流 ≈ **3.4–3.7 KiB heap + 7.1–8.0 KiB stack ≈ 10.8–11.4 KiB**；1000 流 ≈ **11 MiB**（heap 3.7 MiB，栈 7.1 MiB），不是首版写的 7 MiB。
+- TCP 计数器含义：`TCPAccepted` 是累计的 **handler 调用次数（逻辑 dispatch）**；`TCPActive` 是当前 in-flight 的 handler 调用数（≈ 正在处理的 TCP 逻辑流）。它**不是** TCP 栈 flow-table entry，也**不是** socket 数；四个 dispatch 点包含 system/redirect，所以是进程级而非仅 TUN。该测试只测 dispatcher 的 goroutine 开销，不把空闭包 handler 的 heap 当作 per-dispatch 成本。
+- 全部是 **host Go runtime**；iOS `phys_footprint` 还含 PacketFlow、native、runtime 预留，未测。
+## 2. 入口准入决策：本轮不做，但触发线已被越过
 
-## 2. 入口准入决策：本轮不做
+**修正后的证据**：1000 条 UDP 逻辑流 ≈ **11 MiB** Go 侧（heap 3.7 + 栈 7.7），约为 50 MiB 观测预算的 23%；per-flow ≈ 11.4 KiB，**已经越过首版设定的 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
 
-**证据**：1000 条逻辑流约 7 MiB（Go 侧），低于 50 MiB 预算；真正放大来自"逻辑流数 ≫ 物理连接数"的协议（AnyTLS/HY2/TUIC/v2rayquic 已复用），而不是入口本身无界。当前入口已有 `MaxSize`（iOS 4096）与 NAT 字节上限（8 MiB）作为硬边界。
-
-**决策**：不在 TUN→Route 增加逻辑流 gate。理由：
+**决策**：本轮仍不在 TUN→Route 增加逻辑流 gate，但理由变为"边界与验证条件"而不是"证据不足"：
 
 1. 施工边界明确排除"sing-tun 长期入口准入架构"；
-2. 没有 iOS 真机数据证明入口是主导项；
-3. 增加第二道 gate 会改变 UDP 首包语义和失败路径，收益未被证据支持。
+2. 没有 iOS 真机数据证明这 23% 在设备上就是主导项（Go 栈在 iOS 的 phys_footprint 中如何计入未测）；
+3. 第二道 gate 会改变 UDP 首包语义与失败路径，必须有设备证据才值得承担。
 
-**触发条件（任一）**：单次 burst > 2000 新 UDP 流；实测 per-flow（含栈/缓冲）> 8 KiB；iOS 诊断显示 dial 等待期有无法解释的 MiB 级增长；`udp_nat_max` 被提高。
+**下一轮第一优先决策**（不再是模糊的触发条件）：
 
-## 3. XMUX：已有 inventory，Creating 不是持久状态
+- 先做 2000/4096 流的同口径测量（heap + StackInuse + queued），确认总量与 GC 行为；
+- 在 iOS 真机上测同一 burst 的 `phys_footprint`，确认真实占比；
+- 若设备上仍 >20%，再设计 TUN→Route 入口预算（只限制"未准入的逻辑流"，不合并三层）。
 
-`transport/v2rayxhttp/xmux.go` 的 `xmuxPoolStats` 已经精确统计：`Generation / Pooled / Active / Idle / Draining / DrainingOldGeneration / Opened / Released`，并且 `stats()` 在 pool 锁内执行、先 prune 再快照。
+**保留的硬边界**：`MaxSize`（iOS 4096）与 NAT 8 MiB 字节上限仍有效；本轮不新增 gate。
+## 3. XMUX：统计口径是 Pool Entry / Transport Wrapper，不是物理 Socket
 
-**关键发现**：`get()` 在 `m.access` 锁内调用 `newClientLocked()`，创建是**串行**的；因此在 XMUX 里不存在"Creating 但未发布"的可观测状态——创建要么在锁内完成并立即进入 `clients`，要么返回错误。把 Creating 单独计入预算会是在统计一个不可能持续存在的状态。
+`transport/v2rayxhttp/xmux.go` 的 `xmuxPoolStats` 统计 Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released。**单位已修正并在代码注释中写明**：
 
-**本轮不做**：没有新增 XMUX 预算/重构（施工边界：XMUX 全面资源预算重构不做）。现有 inventory 已能回答 Active/Idle/Draining/跨 Generation 的问题；若后续要做预算，入口应在此 inventory 之上，而不是再造一套计数。
+- 一个 **Pool Entry** = 一个 `xmuxClient` = 一个 HTTP transport wrapper；
+- H3 wrapper 自带一条 QUIC 连接；**H2 wrapper 持有 `http2.Transport`，其内部 pool 可能有多条 TCP/TLS socket**；net/http/http2/http3 才是 socket 的 owner，这里不统计、也不能把 entry 数当 socket 数；
+- `Pooled = Active + Idle` 是 entry 数；`Draining` 是 detached entry；`Opened/Released` 是 wrapper 的创建/实际 Close 数，不是 socket 数。
 
+**关键发现**：`get()` 在 `m.access` 锁内调用 `newClientLocked()`，创建串行；不存在"Creating 但未发布"的可持久状态。因此 P1 要求把 Creating 计入预算，在 XMUX 里没有对应状态——除非重做创建模型，那属于被排除的全面预算重构。
+
+**本轮不做**：没有新增 XMUX 预算。现有 inventory 足以报告 entry 的 Active/Idle/Draining/跨代；物理 socket 需要 HTTP transport 层自己报告，当前 `NOT_RUN`。
 ## 4. HTTP/2 请求体
 
 `newRequest` 把 body 包成 `readCloser` 并交给 `http.Request`；请求由标准 `http.Client`/RoundTripper 执行，按 net/http 契约在 RoundTrip 返回时关闭 `Request.Body`，取消/超时通过 request context 传播，远端关闭由 transport 结束响应体。仓库内没有发现"请求体在取消/超时后仍被持有"的直接证据，本轮**不修改**（无证据的改动会风险大于收益）。

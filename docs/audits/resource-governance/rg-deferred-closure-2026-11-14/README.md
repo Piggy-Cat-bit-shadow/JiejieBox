@@ -3,21 +3,23 @@
 > 对象：第一阶段台账 D11–D13 中标记 `DEFERRED` 的四条研究方向
 > 分支：`work/resource-governance-closure-2026-11-14`（同一 feature branch）
 > 依赖分支：`Piggy-Cat-bit-shadow/sing-anytls` → `work/creation-coalescing-2026-11-14`
-> 判定：**5 项 `CLOSED_FIXED`，1 项 `CLOSED_REJECT`（带量化边界与明确设计）**。没有留下第五个 DEFER。
+> 状态口径与 `rg-cross-protocol-budget-2026-11-14` 一致：`FIXED` / `VERIFIED` / `MEASURED` / `DECISION` / `PARTIAL` / `NOT_VERIFIED` / `NOT_RUN` / `BLOCKED_BY_ENVIRONMENT` / `UNAVAILABLE`。
+>
+> 判定：**5 项 `FIXED`，1 项 `DECISION`（带量化边界与明确设计）**。没有留下第五个 DEFER。
 > 定向修复轮（H3 本地拒绝、Lookup 并发、异步 permit、AnyTLS 优先级、0-RTT 生命周期、Release 构建、统计修正）见 [`07_TARGETED_FIXES.md`](07_TARGETED_FIXES.md)。
 
 ## 闭环台账
 
 | 方向 | 判定 | 落点 | 证据 |
 |---|---|---|---|
-| 会话创建 coalescing | `CLOSED_FIXED` | `sing-anytls` 8473492（8df0170 共享创建 → d3e6d49 期限修正 → 8473492 waiter gauge；分支已 push）+ 主仓 pin + `protocol/anytls/coalescing_integration_test.go` | 200 并发首流 → **1** 次创建、**1** 次 admission、**1** 个物理 accept、0 失败（`PendingCreationWaiters` 等到全部附着后放行；`-race` 同样通过） |
-| H3 物理创建准入 | `CLOSED_FIXED` | `common/httpclient`（共享 H3 客户端，覆盖 MASQUE/DoH3/provider）+ `transport/v2rayxhttp` H3 | 饱和时构造器不执行（两个包各一组测试）；官方 HTTP/3 包全绿 |
-| DNS 并发 | `CLOSED_FIXED` | `dns.Router` 查询 gate（256 并发 / 256 队列 / 2 s） | 同步与异步 Exchange 在饱和时快速拒绝、客户端不执行；`dns` 全包回归通过 |
-| NAT 首包账本 | `CLOSED_REJECT`（带边界与设计） | 不修改生产代码 | 首包归 gvisor `UDPBackWriter.packet` / go stack snapshot 所有，释放点是 `HandshakeSuccess/Failure`；跨两套 stack 与 route handshake 桥接，无 TUN 环境验证；量化上界见 `04_NAT_FIRST_PACKET_DECISION.md` |
-| 后台工作在 Critical 让路 | `CLOSED_FIXED` | `resourceguard.BackgroundAllowed` + URLTest 周期轮询 + DNS optimistic refresh | Critical 抑制、Armed 放行；三包测试与 `-race` 通过；CI 43550248961 |
-| 准入队列高水位 | `CLOSED_FIXED` | `Gate.maxWaiters` → `Stats.MaxWaiters` | 1 槽 + 3 排队 → 3，排空后保持 |
+| 会话创建 coalescing | `FIXED` | `sing-anytls` 8473492（8df0170 共享创建 → d3e6d49 期限修正 → 8473492 waiter gauge；分支已 push）+ 主仓 pin + `protocol/anytls/coalescing_integration_test.go` | 200 并发首流 → **1** 次创建、**1** 次 admission、**1** 个物理 accept、0 失败（`PendingCreationWaiters` 等到全部附着后放行；`-race` 同样通过） |
+| H3 物理创建准入 | `FIXED` | `common/httpclient`（共享 H3 客户端，覆盖 MASQUE/DoH3/provider）+ `transport/v2rayxhttp` H3 | 饱和时构造器不执行（两个包各一组测试）；官方 HTTP/3 包全绿 |
+| DNS 并发 | `FIXED` | `dns.Router` 查询 gate（256 并发 / 256 队列 / 2 s） | 同步与异步 Exchange 在饱和时快速拒绝、客户端不执行；`dns` 全包回归通过 |
+| NAT 首包账本 | `DECISION`（带边界与设计） | 不修改生产代码 | 首包归 gvisor `UDPBackWriter.packet` / go stack snapshot 所有，释放点是 `HandshakeSuccess/Failure`；跨两套 stack 与 route handshake 桥接，无 TUN 环境验证；量化上界见 `04_NAT_FIRST_PACKET_DECISION.md` |
+| 后台工作在 Critical 让路 | `FIXED` | `resourceguard.BackgroundAllowed` + URLTest 周期轮询 + DNS optimistic refresh | Critical 抑制、Armed 放行；三包测试与 `-race` 通过；CI 43550248961 |
+| 准入队列高水位 | `FIXED` | `Gate.maxWaiters` → `Stats.MaxWaiters` | 1 槽 + 3 排队 → 3，排空后保持 |
 
-## 1. 会话创建 coalescing（`CLOSED_FIXED`）
+## 1. 会话创建 coalescing（`FIXED`）
 
 **问题**：`takeIdleSession` 只返回已完成过 stream 的 session；突发首流在每个 goroutine 里都看到空池，各自建连、握手、首写。gate 只限速（32 并发），不减少总量（200 flow ≈ 200 次握手）。
 
@@ -34,7 +36,7 @@
 
 **pin**：`github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe`（`go.sum` 已更新）。
 
-## 2. H3 物理创建准入（`CLOSED_FIXED`）
+## 2. H3 物理创建准入（`FIXED`）
 
 **问题**：H1/H2 经 `common/tls` 计费，H3 直接 `quic.DialEarlyConn`，完全绕过 gate。XHTTP H3 与 MASQUE H3 都受影响（MASQUE 的 tunnel 客户端由 `common/httpclient` 构建）。
 
@@ -49,7 +51,7 @@
 - nil guard 保持旧行为；
 - 拒绝仍被 `IsLocalRejection` 分类为本地背压（不会计入节点健康）。
 
-## 3. DNS 并发（`CLOSED_FIXED`）
+## 3. DNS 并发（`FIXED`）
 
 **问题**：hijack 入口有 256 上限，但 rule 解析、sniff、provider、双栈 A/AAAA 探针都无统一上限；client 每次 exchange 新建 goroutine，双栈查询再乘 2。
 
@@ -58,7 +60,7 @@
 
 **证据**（`dns/router_query_gate_test.go`）：gate 按文档 plan 创建；同步饱和 → `ErrQueueFull` 且 client 未执行；异步饱和 → 回调收到 `ErrQueueFull` 且 client 未执行；完成后 inflight 归零。`go test ./dns/...` 全绿。
 
-## 4. NAT 首包（`CLOSED_REJECT`，带边界）
+## 4. NAT 首包（`DECISION`，带边界）
 
 见 `04_NAT_FIRST_PACKET_DECISION.md`。结论：**本轮不做账本**，原因是所有权在两套 stack writer、释放点是 handshake 回调、主仓无 TUN 可验证；量化上界在观测预算内（200 flow ≈ 0.3 MiB，1000 flow ≈ 1.4 MiB，硬上界 `MaxSize × 最大 UDP 报文`）。这是决定，不是延期。
 

@@ -3,7 +3,7 @@
 > 范围：上一轮列出的 7 项定向工作。**没有新增资源管理抽象**，没有改 Mieru、没有重写 XHTTP、没有动 UI，也没有提前处理 XMUX 与 sing-tun 的长期决策。
 > 所有改动都是"在既有 seam 上补一个判断/一个 gate/一组测试"，不引入新的预算层或状态机。
 
-## 1. H3 本地拒绝不再污染故障状态（`CLOSED_FIXED`）
+## 1. H3 本地拒绝不再污染故障状态（`FIXED`）
 
 **问题**：`http3FallbackTransport.recordH3AttemptFailure` 会把任何非取消/非 UNPROCESSED 的错误记为 authority 故障，进入 5 分钟起、48 小时封顶的 H3→H2 降级阶梯。准入拒绝（队列满、等待超时、rate window）与调用方 deadline 都属于"本进程没开始"，peer 从未参与，却会因此让健康 authority 被降级 5 分钟。
 
@@ -11,7 +11,7 @@
 
 **证据**：`common/httpclient/h3_broken_state_test.go`；覆盖 queue full / wait timeout / rate limited / caller deadline / caller cancel 五种，且真实失败仍标记。
 
-## 2. DNS `Router.Lookup` 并发治理（`CLOSED_FIXED`）
+## 2. DNS `Router.Lookup` 并发治理（`FIXED`）
 
 **问题**：上一轮的 query gate 只加在 `Exchange`/`ExchangeAsync`。`Lookup` 走自己的 rule walk 与 client lookup，不经过 Exchange——拨号解析仍然可以无界并发。
 
@@ -36,15 +36,14 @@
 
 **混合优先级**：`TestMixedPriorityWaitersShareTheCreatorsAdmission`——创建者 `ClassInteractive`、等待者 `ClassDefault`，两者共享一次创建；admission hook 只调用一次，且看到的 class 是创建者的 interactive；gate `Admitted=1/Released=1`。即"等待者的优先级不会改写正在创建的工作的 admission 类别"。
 
-## 5. H3 0-RTT 准入许可的实际生命周期（`VERIFIED`，结论修正了一个假设）
+## 5. H3 0-RTT：冷启动握手已验证，恢复路径未验证
 
-**原假设**（写代码时的注释）：`quic.DialEarlyConn` 立即返回连接对象、握手在后台完成，因此 permit 只覆盖 socket/连接对象。
+**原结论**（已降级）：曾把"`DialEarlyConn` 在静默 peer 上阻塞到握手超时"当成 0-RTT 的完整生命周期。
 
-**实测**（`TestH3PermitIsHeldAcrossTheHandshake`，静默 UDP listener + 2 s handshake timeout）：`DialEarlyConn` **阻塞到握手成功或超时**；500 ms 时 permit 仍被持有（`Inflight=1`、`Released=0`），约 2 s 后握手失败才释放（`Released=1`）。
+**实际验证范围**：`TestH3PermitIsHeldAcrossTheColdStartHandshake` 用的是**冷启动**连接——没有 session ticket、没有 early data、没有 `Allow0RTT`。在这个路径上，`DialEarlyConn` 阻塞到握手成功/超时：500 ms 时 permit 仍持有（`Inflight=1`、`Released=0`），约 2 s 握手失败后释放一次（`Released=1`）。这是**冷启动握手已验证**。
 
-**结论**：实际生命周期比原假设更强——**permit 覆盖整个 QUIC 握手**，这正是 gate 想限制的昂贵瞬态（TLS 状态、key share、重传状态）。已在 `newHTTP3DialFunc` 注释中写明并加测试钉住；若未来 quic-go 改成早返回，测试会失败而不是静默缩小覆盖范围。
-
-## 6. 真正的 Release 标签构建 + Race（`DONE`）
+**未验证**：真实 0-RTT 恢复路径（session ticket 命中、early data、`Allow0RTT`）。quic-go 在 resumed 连接上可能提前返回，permit 生命周期不同；本仓库没有对应的 TLS session cache 测试。状态：**NOT_VERIFIED**，测试名与代码注释已改为 cold-start，避免再次把两者混为一谈。
+## 6. 真正的 Release 标签构建 + Race（`FIXED`）
 
 - **Darwin arm64（Release profile）**：`release/DEFAULT_BUILD_TAGS` + `with_purego`，`GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build ./...` → **exit 0**。
   - `with_purego` 是必须的：Release 默认含 `with_naive_outbound` → cronet-go 的 `darwin_arm64` 只有 `cgo` 或 `purego` 两个实现；从 Windows 交叉编译没有 Apple 工具链，只能选 purego。这是"同一套 Release feature 标签、纯 Go 传输实现"的完整构建，不是另一套功能集。
