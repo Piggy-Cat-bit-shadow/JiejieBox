@@ -168,6 +168,7 @@
 | 模块完整性 | 4 个 Go module 的 `go mod tidy -diff` + `go list -mod=readonly -m all` | 全部 clean / resolves |
 | 版本锁 | `release-freeze.py resolve/check/snapshot/verify` | `check`：8 个 Go 模块 pin 与分支 tip identical，cronet ahead（受控），客户端 behind（未动）；`verify`：**PASS**（每个 pin 与锁一致） |
 | 真实 replace 解析 | `go list -m` 四个模块 | `github.com/sagernet/quic-go => .../quic-go v0.61.1-0.20261114142722-a99a3c489772`、`sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc`、`sing-tun v0.9.7-0.20261114151127-59d246f24e24`、`wireguard-go v0.0.0-20261114150039-957715cc5f12` |
+| PR #8 CI 门禁 | `verify` / `race checks` / `linux-kernel-verify`（awg、linux-process、trusttunnel）/ `Release contract verification` / `Maintenance ledger` | 首轮：除 `verify` 的 pin-runs 步骤外全部通过；该步骤的修复见 §4.4，修复后本地 `check-pin-runs.py` 与 20 项自测均 PASS |
 
 ### 4.3 未执行及原因
 
@@ -176,10 +177,27 @@
 | macOS / iOS / Android 原生构建与设备回归 | 当前环境为 Windows + WSL，无 Xcode / Android SDK / 真机 → `BLOCKED_BY_ENVIRONMENT` |
 | Android/Qualcomm 实机 connmark 验证 | 无设备/root 环境；只做规则生成与源码级验证 |
 | iptables 回退路径的实际安装 | WSL 未安装 iptables；只验证了“不满足条件时 fail closed”的判定与源码路径 |
-| 新 pin 的 CI 运行记录 | 无法触发远端 CI；`release/pin-runs.json` 未写入任何新记录（不倒填、不伪造） |
+| 新 pin 的 push 事件 CI 运行记录 | PR 分支上的 `linux-kernel-verify`（43610259083）与 `Release contract verification`（43610259097）已在同一 pin 集上真实成功，并记入 `release/pin-runs.json`；`testing` 合并后的首个 push run 仍应补记——合并前无法触发该事件 |
 | `verify-upstream-assumptions.sh` | 需要 bash + go + gh + jq 的完整环境；未执行，标注为未覆盖门禁 |
 | `gvisor` 相关 tag 构建 | 该线已退役（`with_gvisor` 不再进入产物），按仓库既定策略不构建 |
 | 性能/吞吐对照 | 本任务不伪造 benchmark；无同平台同负载对照数据 |
+
+### 4.4 `verify` 的 pin-runs 步骤（PR #8 首轮唯一失败）
+
+首轮失败信息是 `no recorded run carries the current pin set` 与四条
+`the observation is about pin <old> but the lock now pins <new>`。根因是 `release/pin-runs.json`
+仍然描述旧 pin：pin 移动后，`check-pin-runs.py` 要求至少一条**已完成且成功**的运行，其提交上的
+`release/source-lock.json` 与当前锁具有相同 pin 投影；同时 `observed_tips` 的 `pin` 必须与锁一致。
+修复内容：
+
+- 记入同一分支、同一提交（`99bdccbe`）上真实成功的两个 PR 运行：`linux-kernel-verify`
+  43610259083（真正构建并运行了内核）与 `Release contract verification` 43610259097；
+- 把 `observed_tips` 更新为 2026-11-14 的实测值：quic-go / sing-quic / sing-tun / wireguard-go
+  的 pin 与 tip 一致；apple 记为 `behind`（tip `ef37275`）、android 为 `identical`、cronet-go 为
+  `ahead`（发布提交是 main tip 的后代）。
+- 本地复核：`python scripts/ci/check-pin-runs.py --json build/pin-runs.json` → **PASS**
+  （`every pin in the lock is carried by an executed run at the same pin set (43610259083, 43610259097)`），
+  且 `python scripts/ci/test-check-pin-runs.py` → **20 passed / 0 failed**。
 
 ## 5. 剩余问题与风险
 
@@ -194,8 +212,10 @@
    以 `stack_go_integration_*` 全量套件 + 2000/4096 流量测量作为门槛。
 4. **客户端落后**（P3）：`clients/apple` 落后 1 个提交、`clients/desktop` 落后（含嵌套 dashboard）。
    本轮不动，避免与其他窗口的 UI 施工冲突；按 `Dashboard → Desktop → kernel` 顺序单独收尾。
-5. **新 pin 无 CI 覆盖记录**（P2）：`release/pin-runs.json` 仍是旧 pin 的真实记录，新 pin 需要一轮
-   真实 CI 补齐；本轮只在本地完成了可执行的构建/测试门禁。
+5. **新 pin 的 CI 证据来自 PR 运行**（P3）：`release/pin-runs.json` 现在记录 PR #8 的
+   `linux-kernel-verify` 与 `Release contract verification`（head `99bdccbe`，两者都在该 pin 集上真实成功）。
+   合并后建议用 `testing` 的首个 push run 追加覆盖；若采用 squash merge，被引用的 PR 提交将不再可达，
+   `check-pin-runs.py` 会因读不到该提交而失败，需要把记录改指向合并提交。
 6. **Darwin 完整档位未编译**（P3）：需要 macOS + cgo；建议在 Apple 构建机上跑
    `build-apple-libbox.sh` 的 tag 档位确认 cronet/naive 分支。
 
