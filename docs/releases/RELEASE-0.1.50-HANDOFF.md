@@ -13,5 +13,7 @@
 - 上游审阅基线：`git merge -s ours` 记录上游 `3dd8aa48`，68 个上游独有提交逐条台账见 `docs/fork/UPSTREAM-BASELINE-2026-11-15.{md,json}`（45 已吸收 / 2 fork 等价 / 5 文档 / 16 待评审）。`behind = 0` 是审阅结论，不代表 68 个提交的代码已整体采纳。
 - 根 `CHANGELOG.md` 与内核 Release 正文已补齐并回读，正文非空（3403 字符）；文档提交不移动已公开 tag。
 - 已发布的 `v0.1.49`（tag `4e2b5d9f`）与更早版本未被改动；本轮未创建、未移动、未删除其他 tag。
-- Satelite APK 发布（指引第 4 节）本次未执行：内核 Release 已完成，Satelite 需在其自己仓库按 `versionName=0.1.50`、`coreCommit=934a290d4…` 单独打 tag 并发布。
+- [Satelite Release v0.1.50](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.50)：2026-11-14T20:38:46Z 公开，非 draft、非 prerelease；客户端提交 `0d27aea20badc6ae147a79c7dd31d6252ff68a19`，`versionName=0.1.50`、`versionCode=61`、`coreCommit=934a290d4477b7dd7fe630dc5021a0e2d7bc2601`（即内核 tag 剥离提交）。
+- [Satelite run 43637023938](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/43637023938)：tag push 触发，attempt 1、`head_sha` = 该客户端提交，构建与 publish 两个作业成功；附件 `satelite-one-0.1.50-arm64-v8a-signed-v0.1.50.apk`、`satelite-one-0.1.50-x86_64-signed-v0.1.50.apk`、`SHA256SUMS.txt`、`build-info.json`、`apksigner-verify.txt` 已回读。
+- `build-info.json` 自证：`app_version=0.1.50`、`app_version_code=61`、`core_commit=934a290d4…`、`core_ref=pinned`、`signature_state=signed-by-user`（由 `apksigner verify --verbose --print-certs` 实测），两个 APK 与 AAR 的 SHA-256 均在文件内。
 - TestFlight（`docs/TESTFLIGHT-MAC.md`）本次未执行；其输入是已公开的 `jiejie-libbox-apple-0.1.50.tar.gz`。
