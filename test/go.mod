@@ -245,7 +245,7 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // changed only the root, so as it stood the root built d092c64 while this module still pinned
 // 6937951ec9b6 - the same root-vs-nested drift, and check-go-module-integrity.sh would have failed
 // it. The require line still names the same base (9ffa5391a2ad) because the pin's base did not move.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114151127-59d246f24e24
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8
 
 // Same fork revision as the root module, for the same reason as every other pin here: a nested
 // module does not inherit the root's replaces, so a test binary built from this module would
@@ -325,7 +325,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 
 replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80
 
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114150039-957715cc5f12
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114161408-c308e20419f5
 
 replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe
 

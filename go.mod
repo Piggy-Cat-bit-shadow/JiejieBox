@@ -392,9 +392,9 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // The 2026-11-14 pin (957715c) adds upstream's double-response guard in ConsumeMessageResponse and
 // the IPv6 payload-length widening in the receive path, plus the virtio header clear in the GRO
 // table; the AWG classification, padding and rebind paths are untouched.
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114150039-957715cc5f12
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114161408-c308e20419f5
 
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114151127-59d246f24e24
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //

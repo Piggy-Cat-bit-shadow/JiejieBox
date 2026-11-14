@@ -314,12 +314,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
-      "tip": "59d246f24e241c17fad32397364875117a4177a0",
-      "pin": "59d246f24e24",
+      "tip": "24e6bfd21ba8993e3f29376128f8a4027ab641fd",
+      "pin": "24e6bfd21ba8",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-14",
-      "note": "dev carries the auto-redirect fusion: masked nftables mark ownership, the connmark POSTROUTING match on Android, the nftables capability probe with a bounded iptables fallback, strict route skipping the disabled family, the pre-4.10 uid-range check and aborted-flow expiry. See docs/audits/upstream-smart-integration-20261114.md."
+      "observed_at": "2026-11-15",
+      "note": "dev carries the auto-redirect fusion (masked nftables mark ownership, the connmark POSTROUTING match on Android, the nftables capability probe with a bounded iptables fallback, strict route skipping the disabled family, the aborted-flow expiry) plus the review round: an aborted-flow regression test and a uid-range read-back that fails closed when it cannot verify. See docs/audits/upstream-smart-integration-20261114.md."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
@@ -353,12 +353,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/wireguard-go",
       "branch": "awg3-inject",
-      "tip": "957715cc5f1237f2254ea54dab90d1fb65a409e0",
-      "pin": "957715cc5f12",
+      "tip": "c308e20419f54aa0b24df9cbce5dd21ef74758b7",
+      "pin": "c308e20419f5",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-14",
-      "note": "awg3-inject carries upstream's noise double-response guard, the IPv6 payload-length widening and the GRO virtio-header clear; the AWG classification, padding and rebind paths are untouched."
+      "observed_at": "2026-11-15",
+      "note": "awg3-inject carries upstream's noise double-response guard, the IPv6 payload-length widening and the GRO virtio-header clear, plus the review round's targeted GRO test; the AWG classification, padding and rebind paths are untouched."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-anytls",

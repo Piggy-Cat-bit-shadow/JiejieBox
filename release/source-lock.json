@@ -29,9 +29,9 @@
     },
     {
       "module": "github.com/sagernet/sing-tun",
-      "pinned": "59d246f24e24",
+      "pinned": "24e6bfd21ba8",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-tun",
-      "version": "v0.9.7-0.20261114151127-59d246f24e24"
+      "version": "v0.9.7-0.20261114160640-24e6bfd21ba8"
     },
     {
       "module": "github.com/sagernet/sing-quic",
@@ -53,9 +53,9 @@
     },
     {
       "module": "github.com/sagernet/wireguard-go",
-      "pinned": "957715cc5f12",
+      "pinned": "c308e20419f5",
       "target": "github.com/Piggy-Cat-bit-shadow/wireguard-go",
-      "version": "v0.0.0-20261114150039-957715cc5f12"
+      "version": "v0.0.0-20261114161408-c308e20419f5"
     },
     {
       "module": "github.com/sagernet/sing-anytls",

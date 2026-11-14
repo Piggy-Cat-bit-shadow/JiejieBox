@@ -82,12 +82,12 @@ github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe h
 github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe/go.mod h1:ZjH8X9awKp6xdfgbJJZXH76Q0RNbDxxV/fgkXvt083o=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc h1:4C8q1WKjoWSNiyw3ckjjhzJbesmd+uw2aMQqjX1veyY=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc/go.mod h1:k0AwTGbqNlUFROFbUDIu02AnjSpwSkTi4EDXj+2PlpM=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114151127-59d246f24e24 h1:9EP/TS44aT3/PRoEIpMvMf9gbJNwWx59lOosQC/WZBw=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114151127-59d246f24e24/go.mod h1:JxmxIS7tDJmjfsPe+RynTBiNn0pPiEEKuXuH2r7aESw=
+github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8 h1:P0b6tJR3icB9YF46UZH+cVsiMM4SB9CG8MOu8euufCQ=
+github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8/go.mod h1:JxmxIS7tDJmjfsPe+RynTBiNn0pPiEEKuXuH2r7aESw=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80 h1:oiJWYot1KZOqcUt0dnPwDuMdgOZhMZHoqf2fjXtQ9K4=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
-github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114150039-957715cc5f12 h1:k2tQamGjzHA/vHL38WMkCBaQG3nKUu1bzHcxOUNxtA8=
-github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114150039-957715cc5f12/go.mod h1:er10sELpmzLXq7S7Pbc1Zsbyapcr+/gxNAHKTo6fzVA=
+github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114161408-c308e20419f5 h1:3r9Zs9FG/w2Wwyv/8dM3+b5lNRSyzHjBYOsFLvXbZPU=
+github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114161408-c308e20419f5/go.mod h1:er10sELpmzLXq7S7Pbc1Zsbyapcr+/gxNAHKTo6fzVA=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=

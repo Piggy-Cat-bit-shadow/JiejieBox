@@ -5,8 +5,8 @@
 > `未执行` 或 `BLOCKED_BY_ENVIRONMENT` 标注，不以“编译通过”代替运行证据。
 > 主内核改动只存在于 `work/upstream-smart-integration-20261114` 分支；`testing` 未被本任务修改。
 > 交付入口：Draft PR <https://github.com/Piggy-Cat-bit-shadow/JiejieBox/pull/8>（base `testing`，由施工方
-> 创建且不合并）。集成交付提交为 `b5590ae008b8fe314f1f8217edb7d3933261e983`；分支 head 为其后的报告提交，
-> 以 PR 页面为准。远端复现: `git fetch origin work/upstream-smart-integration-20261114`。
+> 创建且不合并）。集成交付提交为 `b5590ae008b8fe314f1f8217edb7d3933261e983`，评审补充与 CI 证据随后
+> 追加（见 §7）；分支 head 以 PR 页面为准。
 
 ## A. 高层结论
 
@@ -59,8 +59,8 @@
 |---|---|---|---|---|---|---|
 | quic-go | SagerNet/quic-go `dev` `60006ecc` | `158445cdda77` | `a99a3c489772d58b6cdd82ea70c9e194c9046563` | 修改（导出 `SetDesiredBufferSizes` + 单测） | `sagernet` | `go test -run TestSetDesiredBufferSizes` PASS（Windows）；windows/linux/darwin 交叉编译 + linux `go vet` 通过 |
 | sing-quic | SagerNet/sing-quic `main` `0979e001` | `c1b074f1f868` | `08c6abd9b3fc6b2429a06337b7b49b2190aed095` | 修改（入口调用 + 去重复调用 + pin 升级 + 单测） | `main` | `go test ./...` 全包 PASS；新增 `TestSetDesiredBufferSizes*` 6 个子用例 PASS；linux/darwin 编译通过 |
-| sing-tun | SagerNet/sing-tun `dev` `40bd6cff` | `53aeb6bfa60b` | `59d246f24e241c17fad32397364875117a4177a0` | 修改（mark/nfqueue/nftables 探测/Android connmark/strict route/内核兼容/flow 过期 + 4 个新测试） | `dev` | 完整 linux 测试二进制在隔离 netns（root, kernel 6.18）PASS；windows/darwin/linux 编译 + linux `go vet` 通过 |
-| wireguard-go | WireGuard/wireguard-go `master` `b3bc704e` | `7ece3d66d79d` | `957715cc5f1237f2254ea54dab90d1fb65a409e0` | 修改（device 两处 + GRO virtio header） | `awg3-inject` | `go test ./device/` PASS（Windows 与 WSL linux）；linux/darwin/windows 编译 + linux `go vet` 通过 |
+| sing-tun | SagerNet/sing-tun `dev` `40bd6cff` | `53aeb6bfa60b` | `24e6bfd21ba8993e3f29376128f8a4027ab641fd` | 修改（mark/nfqueue/nftables 探测/Android connmark/strict route/内核兼容/flow 过期 + 5 个新测试，含评审补充） | `dev` | 完整 linux 测试二进制在隔离 netns（root, kernel 6.18）PASS；windows/darwin/linux 编译 + linux `go vet` 通过 |
+| wireguard-go | WireGuard/wireguard-go `master` `b3bc704e` | `7ece3d66d79d` | `c308e20419f54aa0b24df9cbce5dd21ef74758b7` | 修改（device 两处 + GRO virtio header + GRO 定向测试） | `awg3-inject` | `go test ./device/` PASS（Windows 与 WSL linux）；`go test ./tun/`（linux）PASS；linux/darwin/windows 编译 + `go vet` 通过 |
 | sing | SagerNet/sing `dev` `27b73774` | `4abfaed41727` | 未改动 | NO-OP（0 落后） | — | 无 |
 | utls | MetaCubeX/utls `v1.9.0-mod-meta` `89a07ad3` | `e14b88879d80` | 未改动 | NO-OP（0 落后） | — | 无 |
 | sing-anytls | SagerNet/sing-anytls `main` `580984e4` | `8473492a5afe` | 未改动 | NO-OP（0 落后） | — | 无 |
@@ -92,9 +92,9 @@
 | `8855883` 缺 `inet nat` 时回退 iptables | 5.2 之前内核没有 inet nat，直接初始化失败 | 直接失败 | `NEEDS_PORT` | 仅当 `NetNs==""`、`!ExcludeMPTCP`、`iptables` 存在时回退；否则维持硬失败（不引入泄漏式降级） |
 | `bcbc8d2` / `1c2bf98` 5.9 前 prerouting reject | 旧内核不支持 prerouting reject，规则安装失败 | 无 | `NEEDS_PORT` | 探测失败则改为在 input/forward 链 reject，并用 reset mark + prereouting reset-return 保持语义 |
 | `5d1132d` / `7ae968b` strict route 误拒自身 ICMPv6 | 单地址族 strict route 在 route 链 reject 整个禁用族，连邻居发现和自身 ICMP 错误都被黑洞 | 无条件 reject | `NEEDS_PORT` | `nftablesUnreachableFamily()`：route 链改为 skip，仅 NAT/forward 拒绝新建连接；测试固定四种族组合 |
-| `40bd6cf` / `78e734e` 4.10 前 uid 规则被忽略 | 内核接受带 uid range 的规则但静默丢弃 range，被排除用户的流量反而进隧道 | 无检查 | `NEEDS_PORT` | 安装后回读规则，无 UIDRange 则启动失败（fail closed） |
+| `40bd6cf` / `78e734e` 4.10 前 uid 规则被忽略 | 内核接受带 uid range 的规则但静默丢弃 range，被排除用户的流量反而进隧道 | 无检查 | `NEEDS_PORT`（评审后收紧） | 安装后回读规则；无 UIDRange 或回读本身失败都启动失败（fail closed） |
 | `65f9c2a` nftables 大规则集 flush ENOBUFS | nftables 库批量 flush 在 ENOBUFS 下失败 | 旧库 | `NEEDS_PORT`（依赖升级） | 升级到 `nftables v0.3.0-mod.4.0.20261114074246-0b310c3e010b`（`go.mod`/`go.sum`/`source-lock` 同步） |
-| `488b53a` 关闭 flow 后丢包 | `CloseFlow` 后表项保留为 drop tombstone，同四元组新连接被丢 | 无 `aborted` 标记 | `NEEDS_PORT` | `aborted` 立即过期 + sweeper 先处理过期再 tombstone |
+| `488b53a` 关闭 flow 后丢包 | `CloseFlow` 后表项保留为 drop tombstone，同四元组新连接被丢 | 无 `aborted` 标记 | `NEEDS_PORT` | `aborted` 立即过期 + sweeper 先处理过期再 tombstone；`flow_dispatch_aborted_test.go` 固定“同四元组会重新 JudgeFlow” |
 | `38f31a2` Go 栈 ENOBUFS | tun 写 ENOBUFS 被当致命错误 | 已实现 | `EXACT_BLOB` | `stack_go_io_linux.go` blob 与上游一致 |
 | `49ccf0b` darwin splice | 读取语义错误 | 已实现 | `EXACT_BLOB` | `stack_go_splice.go` 一致 |
 | `ec94453` tun flow 回程 | 回程未回 tun | 已实现 | `EXACT_BLOB` | 两个文件 blob 一致 |
@@ -136,7 +136,7 @@
 |---|---|---|---|
 | `2631ce9` noise 双重消费 response | 两份相同 response + 期间新 initiation 会二次安装 session | `NEEDS_PORT` | `ConsumeMessageResponse` 增加 state + ephemeral 双重校验，命名返回 peer |
 | `b3bc704` IPv6 载荷长度 uint16 溢出 | 64695 以上声明长度可绕过长度检查 | `NEEDS_PORT` | `length := uint32(...)` |
-| `ecfc5a8` GRO 删除项 virtio header 未清零 | 被删包带着脏 virtio header 写回 TUN | `NEEDS_PORT` | 4 处 `hdr.encode`/删除路径改 `clear(...)`；fork 无 `tun` 测试文件，仅构建验证 |
+| `ecfc5a8` GRO 删除项 virtio header 未清零 | 被删包带着脏 virtio header 写回 TUN | `NEEDS_PORT` | 删除路径新增 `clear(...)`，其余 `hdr.encode` 改为 `clear(...)`；`tun/offload_linux_test.go` 覆盖删除路径与 passthrough，删除路径用例已用旧代码验证会失败 |
 
 ## 4. 验证结果
 
@@ -167,7 +167,7 @@
 | 端到端起停 | 隔离 netns：`sing-box run` → 6s → SIGTERM | 双栈/v4-only/v6-only 三个用例：`tun0` 建立，策略路由 9000/9001/32768 与 table 2022 默认路由存在，SIGTERM 后退出码 0、无悬挂；auto-redirect 初始化无回退告警（WSL 无 iptables，必然走 nftables） |
 | 模块完整性 | 4 个 Go module 的 `go mod tidy -diff` + `go list -mod=readonly -m all` | 全部 clean / resolves |
 | 版本锁 | `release-freeze.py resolve/check/snapshot/verify` | `check`：8 个 Go 模块 pin 与分支 tip identical，cronet ahead（受控），客户端 behind（未动）；`verify`：**PASS**（每个 pin 与锁一致） |
-| 真实 replace 解析 | `go list -m` 四个模块 | `github.com/sagernet/quic-go => .../quic-go v0.61.1-0.20261114142722-a99a3c489772`、`sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc`、`sing-tun v0.9.7-0.20261114151127-59d246f24e24`、`wireguard-go v0.0.0-20261114150039-957715cc5f12` |
+| 真实 replace 解析 | `go list -m` 四个模块 | `github.com/sagernet/quic-go => .../quic-go v0.61.1-0.20261114142722-a99a3c489772`、`sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc`、`sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8`、`wireguard-go v0.0.0-20261114161408-c308e20419f5` |
 | PR #8 CI 门禁 | `verify` / `race checks` / `linux-kernel-verify`（awg、linux-process、trusttunnel）/ `Release contract verification` / `Maintenance ledger` | 首轮：除 `verify` 的 pin-runs 步骤外全部通过；该步骤的修复见 §4.4，修复后本地 `check-pin-runs.py` 与 20 项自测均 PASS |
 
 ### 4.3 未执行及原因
@@ -241,9 +241,29 @@ cd sing-tun && GOOS=linux go test -c -o /tmp/singtun.test . \
 cd quic-go && go test -run TestSetDesiredBufferSizes -v .
 cd sing-quic && go test ./...
 cd wireguard-go && go test ./device/
+cd wireguard-go && GOOS=linux go test -c -o /tmp/wg-tun.test ./tun/ \
+  && /tmp/wg-tun.test -test.run TestHandleGROClears -v   # Linux
 
 # 主内核（新分支）
 go build ./... && go build -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ./...
 go test ./protocol/tun/
 python scripts/ci/release-freeze.py verify --lock release/source-lock.json
 ```
+
+## 7. 评审反馈与处置（2026-11-15）
+
+外部评审提出 3 项，全部在本轮落实；三项都先复现“没有修复时的失败”，再验证修复后通过。
+
+| 级别 | 评审意见 | 处置 | 证据 |
+|---|---|---|---|
+| P2 | `flow_dispatch` 的 aborted 修复缺少专门回归测试 | **已补** `flow_dispatch_aborted_test.go`：建立 flow → `CloseFlow()` → 同四元组再发包 → 断言 `JudgeFlow` 第二次执行且安装了新 flow；同时断言 abort 后表项仍在（正是旧代码回包的状态） | 旧代码下失败：`the aborted flow swallowed the new connection: JudgeFlow ran 1 times`；修复后 PASS（Windows + linux 全量套件） |
+| P2 | `UIDRange` 回读失败（`listErr != nil`）时仍继续启动 | **已收紧为 fail closed**：回读失败返回错误，隧道不启动；只有带 UIDRange 的规则才会触发回读，未配置 UID 规则的场景不受影响 | `tun_linux.go` 改动 + 注释说明；行为无法在无 root 的 Windows 上单测，已在报告标注为源码级验证 |
+| P3 | WireGuard GRO 清理缺少针对性测试 | **已补** `tun/offload_linux_test.go`（linux）：构造带 virtio headroom 的合法 IPv4/TCP 段，一个用例覆盖“校验和无效被踢出合并表”的删除路径，另一个覆盖非 GRO 候选的 passthrough 路径 | 删除路径用例在无 `clear()` 的旧代码下失败：`the virtio header still carries abababababababababab after GRO`；修复后两个用例 PASS |
+
+由此产生的 pin 变化：`sing-tun dev` → `24e6bfd`（新增测试 + UIDRange 收紧），`wireguard-go awg3-inject`
+→ `c308e20`（GRO 测试）。两者的 `go.mod` / `test/go.mod` / `go.sum` / `release/source-lock.json`
+已同步，`release-freeze.py verify` 仍为 PASS。
+
+> 注：`tun/offload_linux_test.go` 里 passthrough 用例在旧代码下也能通过——旧实现用“编码一个零值
+> virtioNetHdr”达到同样效果，该用例守的是不变量而不是本次改动，保留它是为了防止以后把 `clear()`
+> 改回去时静默退化；真正修复的是删除路径，其用例已用旧代码验证会失败。
