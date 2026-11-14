@@ -1,0 +1,986 @@
+﻿=== RUN   TestBreakerTripsAndEvicts
+--- PASS: TestBreakerTripsAndEvicts (0.00s)
+=== RUN   TestBreakerSuccessResetsStreak
+--- PASS: TestBreakerSuccessResetsStreak (0.00s)
+=== RUN   TestBackoffDoublesAndCaps
+--- PASS: TestBackoffDoublesAndCaps (0.00s)
+=== RUN   TestBackoffGatesOnlyEmptyPool
+--- PASS: TestBackoffGatesOnlyEmptyPool (0.00s)
+=== RUN   TestGetContextWaitsOutWindow
+--- PASS: TestGetContextWaitsOutWindow (0.01s)
+=== RUN   TestRoundTripFeedsBreaker
+--- PASS: TestRoundTripFeedsBreaker (0.00s)
+=== RUN   TestNoteReadClassification
+--- PASS: TestNoteReadClassification (0.00s)
+=== RUN   TestUplinkBodyGetBody
+--- PASS: TestUplinkBodyGetBody (0.00s)
+=== RUN   TestRoundTripLocalCancelIsNeutral
+=== RUN   TestRoundTripLocalCancelIsNeutral/canceled
+=== RUN   TestRoundTripLocalCancelIsNeutral/wrapped_canceled
+=== RUN   TestRoundTripLocalCancelIsNeutral/deadline
+=== RUN   TestRoundTripLocalCancelIsNeutral/connection_reset
+=== RUN   TestRoundTripLocalCancelIsNeutral/stream_error
+--- PASS: TestRoundTripLocalCancelIsNeutral (0.00s)
+    --- PASS: TestRoundTripLocalCancelIsNeutral/canceled (0.00s)
+    --- PASS: TestRoundTripLocalCancelIsNeutral/wrapped_canceled (0.00s)
+    --- PASS: TestRoundTripLocalCancelIsNeutral/deadline (0.00s)
+    --- PASS: TestRoundTripLocalCancelIsNeutral/connection_reset (0.00s)
+    --- PASS: TestRoundTripLocalCancelIsNeutral/stream_error (0.00s)
+=== RUN   TestReadAfterLocalCloseIsErrClosed
+=== RUN   TestReadAfterLocalCloseIsErrClosed/stream
+=== RUN   TestReadAfterLocalCloseIsErrClosed/split
+=== RUN   TestReadAfterLocalCloseIsErrClosed/packet
+--- PASS: TestReadAfterLocalCloseIsErrClosed (0.00s)
+    --- PASS: TestReadAfterLocalCloseIsErrClosed/stream (0.00s)
+    --- PASS: TestReadAfterLocalCloseIsErrClosed/split (0.00s)
+    --- PASS: TestReadAfterLocalCloseIsErrClosed/packet (0.00s)
+=== RUN   TestClientResetIsTheNetworkChangeAction
+=== PAUSE TestClientResetIsTheNetworkChangeAction
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI/the_worker/relay_shape
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI/a_path_with_a_query
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI/several_parameters_keep_their_order_and_encoding
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI/a_bare_query_with_no_path
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI/no_query_at_all:_the_previous_behaviour,_unchanged
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI/a_percent_escape_in_the_PATH_is_not_double-encoded
+=== RUN   TestConfiguredQuerySurvivesToTheRequestURI/a_question_mark_inside_a_query_value_is_data,_not_a_separator
+--- PASS: TestConfiguredQuerySurvivesToTheRequestURI (0.00s)
+    --- PASS: TestConfiguredQuerySurvivesToTheRequestURI/the_worker/relay_shape (0.00s)
+    --- PASS: TestConfiguredQuerySurvivesToTheRequestURI/a_path_with_a_query (0.00s)
+    --- PASS: TestConfiguredQuerySurvivesToTheRequestURI/several_parameters_keep_their_order_and_encoding (0.00s)
+    --- PASS: TestConfiguredQuerySurvivesToTheRequestURI/a_bare_query_with_no_path (0.00s)
+    --- PASS: TestConfiguredQuerySurvivesToTheRequestURI/no_query_at_all:_the_previous_behaviour,_unchanged (0.00s)
+    --- PASS: TestConfiguredQuerySurvivesToTheRequestURI/a_percent_escape_in_the_PATH_is_not_double-encoded (0.00s)
+    --- PASS: TestConfiguredQuerySurvivesToTheRequestURI/a_question_mark_inside_a_query_value_is_data,_not_a_separator (0.00s)
+=== RUN   TestConfiguredQueryWithPathPlacementKeepsBoth
+=== RUN   TestConfiguredQueryWithPathPlacementKeepsBoth/session_segment_is_inserted_before_the_query
+=== RUN   TestConfiguredQueryWithPathPlacementKeepsBoth/session_and_seq_segments,_in_that_order,_before_the_query
+=== RUN   TestConfiguredQueryWithPathPlacementKeepsBoth/stream-one's_bare_path_keeps_the_query
+--- PASS: TestConfiguredQueryWithPathPlacementKeepsBoth (0.00s)
+    --- PASS: TestConfiguredQueryWithPathPlacementKeepsBoth/session_segment_is_inserted_before_the_query (0.00s)
+    --- PASS: TestConfiguredQueryWithPathPlacementKeepsBoth/session_and_seq_segments,_in_that_order,_before_the_query (0.00s)
+    --- PASS: TestConfiguredQueryWithPathPlacementKeepsBoth/stream-one's_bare_path_keeps_the_query (0.00s)
+=== RUN   TestConfiguredQueryCoexistsWithPlacementQuery
+--- PASS: TestConfiguredQueryCoexistsWithPlacementQuery (0.00s)
+=== RUN   TestConfiguredQuerySurvivesPadding
+--- PASS: TestConfiguredQuerySurvivesPadding (0.00s)
+=== RUN   TestStreamOneWriteDeadlineUnblocksWrite
+--- PASS: TestStreamOneWriteDeadlineUnblocksWrite (0.05s)
+=== RUN   TestStreamOneDialCancelBeforeRaiseFailsDial
+--- PASS: TestStreamOneDialCancelBeforeRaiseFailsDial (0.05s)
+=== RUN   TestStreamOneCancelAfterStreamUpKeepsConnAlive
+--- PASS: TestStreamOneCancelAfterStreamUpKeepsConnAlive (0.00s)
+=== RUN   TestStreamOneDeadlineDoesNotBreakLiveConn
+--- PASS: TestStreamOneDeadlineDoesNotBreakLiveConn (0.00s)
+=== RUN   TestStreamDialCancelAfterReturnKeepsConnAlive
+=== RUN   TestStreamDialCancelAfterReturnKeepsConnAlive/stream-one
+=== PAUSE TestStreamDialCancelAfterReturnKeepsConnAlive/stream-one
+=== RUN   TestStreamDialCancelAfterReturnKeepsConnAlive/stream-up
+=== PAUSE TestStreamDialCancelAfterReturnKeepsConnAlive/stream-up
+=== CONT  TestStreamDialCancelAfterReturnKeepsConnAlive/stream-up
+=== CONT  TestStreamDialCancelAfterReturnKeepsConnAlive/stream-one
+--- PASS: TestStreamDialCancelAfterReturnKeepsConnAlive (0.00s)
+    --- PASS: TestStreamDialCancelAfterReturnKeepsConnAlive/stream-one (0.00s)
+    --- PASS: TestStreamDialCancelAfterReturnKeepsConnAlive/stream-up (0.00s)
+=== RUN   TestStreamDialWaitsForAdoption
+=== RUN   TestStreamDialWaitsForAdoption/stream-one
+=== PAUSE TestStreamDialWaitsForAdoption/stream-one
+=== RUN   TestStreamDialWaitsForAdoption/stream-up
+=== PAUSE TestStreamDialWaitsForAdoption/stream-up
+=== CONT  TestStreamDialWaitsForAdoption/stream-one
+=== CONT  TestStreamDialWaitsForAdoption/stream-up
+--- PASS: TestStreamDialWaitsForAdoption (0.00s)
+    --- PASS: TestStreamDialWaitsForAdoption/stream-one (0.10s)
+    --- PASS: TestStreamDialWaitsForAdoption/stream-up (0.10s)
+=== RUN   TestStreamDialHalfAliveNodeFailsWithinDeadline
+=== RUN   TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-one
+=== PAUSE TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-one
+=== RUN   TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-up
+=== PAUSE TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-up
+=== CONT  TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-one
+=== CONT  TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-up
+--- PASS: TestStreamDialHalfAliveNodeFailsWithinDeadline (0.00s)
+    --- PASS: TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-up (0.31s)
+    --- PASS: TestStreamDialHalfAliveNodeFailsWithinDeadline/stream-one (0.31s)
+=== RUN   TestStreamDialSlotReleasedOnceOnRaiseFailure
+=== PAUSE TestStreamDialSlotReleasedOnceOnRaiseFailure
+=== RUN   TestDialDoesNotBlockOnDownloadResponse
+=== RUN   TestDialDoesNotBlockOnDownloadResponse/packet-up
+=== RUN   TestDialDoesNotBlockOnDownloadResponse/stream-up
+--- PASS: TestDialDoesNotBlockOnDownloadResponse (0.00s)
+    --- PASS: TestDialDoesNotBlockOnDownloadResponse/packet-up (0.00s)
+    --- PASS: TestDialDoesNotBlockOnDownloadResponse/stream-up (0.00s)
+=== RUN   TestAnXHTTPLoopbackDialDoesNotLendThePreviousGeneration
+--- PASS: TestAnXHTTPLoopbackDialDoesNotLendThePreviousGeneration (0.00s)
+=== RUN   TestAnXHTTPLoopbackDialDiscardsALateResult
+--- PASS: TestAnXHTTPLoopbackDialDiscardsALateResult (0.00s)
+=== RUN   TestTheHandoutRunsThePoolsOwnBoundaryOnANetworkChange
+=== PAUSE TestTheHandoutRunsThePoolsOwnBoundaryOnANetworkChange
+=== RUN   TestALateDialIsDiscardedAndItsConnectionClosed
+=== PAUSE TestALateDialIsDiscardedAndItsConnectionClosed
+=== RUN   TestTheSettleStepKeepsCurrentWork
+=== PAUSE TestTheSettleStepKeepsCurrentWork
+=== RUN   TestNoCoordinatorMeansNoGenerationCheck
+=== PAUSE TestNoCoordinatorMeansNoGenerationCheck
+=== RUN   TestTheH3PoolDrainsAHealthyFlowAndOpensANewGeneration
+    h3_pool_drain_test.go:178: MEASURED old H3 connection released: {Generation:1 Pooled:1 Active:1 Idle:0 Draining:0 DrainingOldGeneration:0 Opened:2 Released:1}
+    h3_pool_drain_test.go:208: MEASURED both H3 connections released: {Generation:1 Pooled:0 Active:0 Idle:0 Draining:0 DrainingOldGeneration:0 Opened:2 Released:2}
+--- PASS: TestTheH3PoolDrainsAHealthyFlowAndOpensANewGeneration (0.11s)
+=== RUN   TestHTTP1PacketUp
+--- PASS: TestHTTP1PacketUp (0.06s)
+=== RUN   TestHTTP1StreamModes
+=== RUN   TestHTTP1StreamModes/stream-up
+=== RUN   TestHTTP1StreamModes/stream-one
+--- PASS: TestHTTP1StreamModes (0.02s)
+    --- PASS: TestHTTP1StreamModes/stream-up (0.01s)
+    --- PASS: TestHTTP1StreamModes/stream-one (0.01s)
+=== RUN   TestHTTP2KeepAlivePeriodFollowsTheReference
+=== PAUSE TestHTTP2KeepAlivePeriodFollowsTheReference
+=== RUN   TestHTTP2TransportCarriesTheNormalizedPeriod
+=== PAUSE TestHTTP2TransportCarriesTheNormalizedPeriod
+=== RUN   TestClientDefaultKeepAliveReachesThePooledTransport
+=== PAUSE TestClientDefaultKeepAliveReachesThePooledTransport
+=== RUN   TestIdlePooledConnectionIsReusedWithoutANewDial
+--- PASS: TestIdlePooledConnectionIsReusedWithoutANewDial (1.21s)
+=== RUN   TestH3CreationIsRefusedBeforeTheUDPDial
+--- PASS: TestH3CreationIsRefusedBeforeTheUDPDial (0.00s)
+=== RUN   TestH3RefusalIsClassifiedAsLocalRejection
+--- PASS: TestH3RefusalIsClassifiedAsLocalRejection (0.00s)
+=== RUN   TestHTTP3KeepAlivePeriod
+--- PASS: TestHTTP3KeepAlivePeriod (0.00s)
+=== RUN   TestHTTP3XmuxConnIsClosed
+--- PASS: TestHTTP3XmuxConnIsClosed (0.13s)
+=== RUN   TestHideQUICError
+--- PASS: TestHideQUICError (0.00s)
+=== RUN   TestHTTP3BreakerClassification
+--- PASS: TestHTTP3BreakerClassification (0.00s)
+=== RUN   TestHTTP3StreamOneRoundTrip
+--- PASS: TestHTTP3StreamOneRoundTrip (0.08s)
+=== RUN   TestDecideHTTPVersion
+=== RUN   TestDecideHTTPVersion/no_TLS
+=== RUN   TestDecideHTTPVersion/REALITY,_empty_alpn
+=== RUN   TestDecideHTTPVersion/REALITY,_h3
+=== RUN   TestDecideHTTPVersion/REALITY,_http/1.1
+=== RUN   TestDecideHTTPVersion/TLS,_empty_alpn
+=== RUN   TestDecideHTTPVersion/TLS,_two_entries
+=== RUN   TestDecideHTTPVersion/TLS,_h2_+_http/1.1
+=== RUN   TestDecideHTTPVersion/TLS,_http/1.1
+=== RUN   TestDecideHTTPVersion/TLS,_h3
+=== RUN   TestDecideHTTPVersion/TLS,_h2
+=== RUN   TestDecideHTTPVersion/TLS,_unknown_single_entry
+=== RUN   TestDecideHTTPVersion/TLS,_case_differs
+--- PASS: TestDecideHTTPVersion (0.00s)
+    --- PASS: TestDecideHTTPVersion/no_TLS (0.00s)
+    --- PASS: TestDecideHTTPVersion/REALITY,_empty_alpn (0.00s)
+    --- PASS: TestDecideHTTPVersion/REALITY,_h3 (0.00s)
+    --- PASS: TestDecideHTTPVersion/REALITY,_http/1.1 (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_empty_alpn (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_two_entries (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_h2_+_http/1.1 (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_http/1.1 (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_h3 (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_h2 (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_unknown_single_entry (0.00s)
+    --- PASS: TestDecideHTTPVersion/TLS,_case_differs (0.00s)
+=== RUN   TestRealityALPNNeedsH2
+--- PASS: TestRealityALPNNeedsH2 (0.00s)
+=== RUN   TestNewClientPoolFollowsVersion
+=== RUN   TestNewClientPoolFollowsVersion/no_TLS
+=== RUN   TestNewClientPoolFollowsVersion/TLS_http/1.1
+=== RUN   TestNewClientPoolFollowsVersion/TLS_default
+--- PASS: TestNewClientPoolFollowsVersion (0.00s)
+    --- PASS: TestNewClientPoolFollowsVersion/no_TLS (0.00s)
+    --- PASS: TestNewClientPoolFollowsVersion/TLS_http/1.1 (0.00s)
+    --- PASS: TestNewClientPoolFollowsVersion/TLS_default (0.00s)
+=== RUN   TestPacketUpAllocationLedgerCountsASharedArrayOnce
+=== PAUSE TestPacketUpAllocationLedgerCountsASharedArrayOnce
+=== RUN   TestPacketUpAllocationLedgerChargesBothArraysDuringAGrowth
+=== PAUSE TestPacketUpAllocationLedgerChargesBothArraysDuringAGrowth
+=== RUN   TestPacketUpAllocationLedgerSettlesOnAFailedPost
+=== PAUSE TestPacketUpAllocationLedgerSettlesOnAFailedPost
+=== RUN   TestPacketUpAllocationLedgerOutlivesClose
+=== PAUSE TestPacketUpAllocationLedgerOutlivesClose
+=== RUN   TestPacketUpAllocationLedgerBoundsAnOversizedWrite
+=== PAUSE TestPacketUpAllocationLedgerBoundsAnOversizedWrite
+=== RUN   TestPacketUpAllocationLedgerUnderConcurrency
+=== PAUSE TestPacketUpAllocationLedgerUnderConcurrency
+=== RUN   TestPacketUpQueueCapacityPolicy
+=== PAUSE TestPacketUpQueueCapacityPolicy
+=== RUN   TestPacketUpOpeningGetsItsArrayWhenTheDataLedgerIsFull
+=== PAUSE TestPacketUpOpeningGetsItsArrayWhenTheDataLedgerIsFull
+=== RUN   TestPacketUpDataWriteStopsWhenTheDataLedgerIsFull
+=== PAUSE TestPacketUpDataWriteStopsWhenTheDataLedgerIsFull
+=== RUN   TestPacketUpOpeningWaitsBoundedlyWhenAllAllocationIsFull
+=== PAUSE TestPacketUpOpeningWaitsBoundedlyWhenAllAllocationIsFull
+=== RUN   TestPacketUpWriteBuffersInsteadOfWaitingForThePost
+=== PAUSE TestPacketUpWriteBuffersInsteadOfWaitingForThePost
+=== RUN   TestPacketUpCoalescesWritesQueuedBehindAPost
+=== PAUSE TestPacketUpCoalescesWritesQueuedBehindAPost
+=== RUN   TestPacketUpBatchRespectsMaxEachPostBytes
+=== PAUSE TestPacketUpBatchRespectsMaxEachPostBytes
+=== RUN   TestPacketUpHandshakeIsNotThrottled
+=== PAUSE TestPacketUpHandshakeIsNotThrottled
+=== RUN   TestGatherDecision
+=== PAUSE TestGatherDecision
+=== RUN   TestPacketUpCloseDeliversTheBufferedTail
+=== PAUSE TestPacketUpCloseDeliversTheBufferedTail
+=== RUN   TestPacketUpQueueAppliesBackpressure
+=== PAUSE TestPacketUpQueueAppliesBackpressure
+=== RUN   TestPacketUpSharedBudgetExperiment
+    packetup_budget_experiment_test.go:505: set XHTTP_BUDGET_EXPERIMENT=1 to run the item-01 A/B
+--- SKIP: TestPacketUpSharedBudgetExperiment (0.00s)
+=== RUN   TestPacketUpOversizedWriteIsBounded
+=== PAUSE TestPacketUpOversizedWriteIsBounded
+=== RUN   TestPacketUpAccountsInFlightSeparately
+=== PAUSE TestPacketUpAccountsInFlightSeparately
+=== RUN   TestPacketUpCombinedBoxBudgetOpensUnderBulkPressure
+=== PAUSE TestPacketUpCombinedBoxBudgetOpensUnderBulkPressure
+=== RUN   TestPacketUpCombinedBoxBudgetIsolatesTwoBoxes
+=== PAUSE TestPacketUpCombinedBoxBudgetIsolatesTwoBoxes
+=== RUN   TestPacketUpConcurrentWritersAndClose
+=== PAUSE TestPacketUpConcurrentWritersAndClose
+=== RUN   TestPacketUpOpeningSurvivesAColdStartLongFlow
+=== PAUSE TestPacketUpOpeningSurvivesAColdStartLongFlow
+=== RUN   TestPacketUpOversizedOpeningWriteCannotSpendTheControlHeadroom
+=== PAUSE TestPacketUpOversizedOpeningWriteCannotSpendTheControlHeadroom
+=== RUN   TestPacketUpControlHeadroomFullWaitsAndCancels
+=== PAUSE TestPacketUpControlHeadroomFullWaitsAndCancels
+=== RUN   TestPacketUpControlHeadroomIsPartOfTheAggregate
+=== PAUSE TestPacketUpControlHeadroomIsPartOfTheAggregate
+=== RUN   TestPacketUpControlHeadroomDefaultsAreThePolicy
+=== PAUSE TestPacketUpControlHeadroomDefaultsAreThePolicy
+=== RUN   TestPacketUpShortFlowStillUsesTheReserve
+=== PAUSE TestPacketUpShortFlowStillUsesTheReserve
+=== RUN   TestPacketUpControlHeadroomIsSafeUnderConcurrency
+=== PAUSE TestPacketUpControlHeadroomIsSafeUnderConcurrency
+=== RUN   TestPacketUpDialPreCancelledContextFailsDial
+=== PAUSE TestPacketUpDialPreCancelledContextFailsDial
+=== RUN   TestPacketUpDialCancelDuringConstructionFailsDial
+=== PAUSE TestPacketUpDialCancelDuringConstructionFailsDial
+=== RUN   TestPacketUpCancelAfterReturnKeepsConnAlive
+=== PAUSE TestPacketUpCancelAfterReturnKeepsConnAlive
+=== RUN   TestUplinkStalledResponseBodyIsNotGenuineDataFlow
+=== PAUSE TestUplinkStalledResponseBodyIsNotGenuineDataFlow
+=== RUN   TestUplinkCompletedResponseBodyIsGenuineDataFlow
+=== PAUSE TestUplinkCompletedResponseBodyIsGenuineDataFlow
+=== RUN   TestAllocationReserveKeepsTheOpeningShare
+=== PAUSE TestAllocationReserveKeepsTheOpeningShare
+=== RUN   TestPacketUpGrantRollsBackWhenTheArrayCannotBeReserved
+=== PAUSE TestPacketUpGrantRollsBackWhenTheArrayCannotBeReserved
+=== RUN   TestPacketUpReplacementOverlapIsBounded
+=== PAUSE TestPacketUpReplacementOverlapIsBounded
+=== RUN   TestPacketUpTightAllocationLedgerKeepsProgress
+=== PAUSE TestPacketUpTightAllocationLedgerKeepsProgress
+=== RUN   TestPacketUpOpeningSurvivesAnAllocationSaturatedLedger
+=== PAUSE TestPacketUpOpeningSurvivesAnAllocationSaturatedLedger
+=== RUN   TestPacketUpBulkWaitersHoldNoArray
+=== PAUSE TestPacketUpBulkWaitersHoldNoArray
+=== RUN   TestPacketUpDoubleBudgetCloseReturnsEverything
+=== PAUSE TestPacketUpDoubleBudgetCloseReturnsEverything
+=== RUN   TestPacketUpLedgerClosesAcrossAPostFailure
+=== PAUSE TestPacketUpLedgerClosesAcrossAPostFailure
+=== RUN   TestPacketUpLedgerClosesWhenCloseInterruptsABlockedWrite
+=== PAUSE TestPacketUpLedgerClosesWhenCloseInterruptsABlockedWrite
+=== RUN   TestPacketUpNilWriteAndWritesAfterClose
+=== PAUSE TestPacketUpNilWriteAndWritesAfterClose
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger
+=== PAUSE TestPacketUpLedgerCheckRejectsABrokenLedger
+=== RUN   TestPacketUpPostCadenceTracksTheRoundTrip
+=== RUN   TestPacketUpPostCadenceTracksTheRoundTrip/0s
+    packetup_pipeline_probe_test.go:83: round trip 0s       posts= 51 ( 34.0/s) bytes/post=1000000 maxInflight=1 written=  53.5 MB
+=== RUN   TestPacketUpPostCadenceTracksTheRoundTrip/30ms
+    packetup_pipeline_probe_test.go:83: round trip 30ms     posts= 40 ( 26.7/s) bytes/post=1000000 maxInflight=1 written=  42.2 MB
+=== RUN   TestPacketUpPostCadenceTracksTheRoundTrip/50ms
+    packetup_pipeline_probe_test.go:83: round trip 50ms     posts= 26 ( 17.3/s) bytes/post=1000000 maxInflight=1 written=  28.3 MB
+=== RUN   TestPacketUpPostCadenceTracksTheRoundTrip/100ms
+    packetup_pipeline_probe_test.go:83: round trip 100ms    posts= 14 (  9.3/s) bytes/post=786432 maxInflight=1 written=  16.0 MB
+=== RUN   TestPacketUpPostCadenceTracksTheRoundTrip/200ms
+    packetup_pipeline_probe_test.go:83: round trip 200ms    posts=  8 (  5.3/s) bytes/post=786432 maxInflight=1 written=  10.0 MB
+--- PASS: TestPacketUpPostCadenceTracksTheRoundTrip (8.96s)
+    --- PASS: TestPacketUpPostCadenceTracksTheRoundTrip/0s (1.59s)
+    --- PASS: TestPacketUpPostCadenceTracksTheRoundTrip/30ms (1.62s)
+    --- PASS: TestPacketUpPostCadenceTracksTheRoundTrip/50ms (1.66s)
+    --- PASS: TestPacketUpPostCadenceTracksTheRoundTrip/100ms (1.81s)
+    --- PASS: TestPacketUpPostCadenceTracksTheRoundTrip/200ms (2.28s)
+=== RUN   TestRealPacketUpServerBudgetAB
+    packetup_real_server_ab_test.go:224: set XHTTP_REAL_AB=1 (in-process), =server or =client
+--- SKIP: TestRealPacketUpServerBudgetAB (0.00s)
+=== RUN   TestPacketUpSharedBudgetKeepsThePerStreamBound
+=== PAUSE TestPacketUpSharedBudgetKeepsThePerStreamBound
+=== RUN   TestPacketUpSharedBudgetSettlesAPartialWriteOnClose
+=== PAUSE TestPacketUpSharedBudgetSettlesAPartialWriteOnClose
+=== RUN   TestPacketUpSharedBudgetReturnsAChargeThatOutlivesClose
+=== PAUSE TestPacketUpSharedBudgetReturnsAChargeThatOutlivesClose
+=== RUN   TestPacketUpSharedBudgetBoundsTheStreamSum
+=== PAUSE TestPacketUpSharedBudgetBoundsTheStreamSum
+=== RUN   TestPacketUpSharedBudgetKeepsTheControlWriteMoving
+=== PAUSE TestPacketUpSharedBudgetKeepsTheControlWriteMoving
+=== RUN   TestPacketUpSharedBudgetSettlesAFailedPostAgainstThePool
+=== PAUSE TestPacketUpSharedBudgetSettlesAFailedPostAgainstThePool
+=== RUN   TestPacketUpSharedBudgetConservesChargesUnderConcurrency
+=== PAUSE TestPacketUpSharedBudgetConservesChargesUnderConcurrency
+=== RUN   TestNewClientWiresTheSharedUploadBudget
+=== PAUSE TestNewClientWiresTheSharedUploadBudget
+=== RUN   TestPacketUpReserveIsForTheOpeningNotForBulkChunkedWrites
+=== PAUSE TestPacketUpReserveIsForTheOpeningNotForBulkChunkedWrites
+=== RUN   TestUplinkOrderingAndSeqContinuity
+=== PAUSE TestUplinkOrderingAndSeqContinuity
+=== RUN   TestUplinkConcurrentWritersLoseNothing
+=== PAUSE TestUplinkConcurrentWritersLoseNothing
+=== RUN   TestUplinkCloseAtEveryStage
+=== RUN   TestUplinkCloseAtEveryStage/empty_queue
+=== RUN   TestUplinkCloseAtEveryStage/queued,_not_yet_posted
+=== RUN   TestUplinkCloseAtEveryStage/post_in_flight,_response_never_comes
+=== RUN   TestUplinkCloseAtEveryStage/transport_still_reading_the_body
+--- PASS: TestUplinkCloseAtEveryStage (3.75s)
+    --- PASS: TestUplinkCloseAtEveryStage/empty_queue (0.00s)
+    --- PASS: TestUplinkCloseAtEveryStage/queued,_not_yet_posted (0.00s)
+    --- PASS: TestUplinkCloseAtEveryStage/post_in_flight,_response_never_comes (3.02s)
+    --- PASS: TestUplinkCloseAtEveryStage/transport_still_reading_the_body (0.73s)
+=== RUN   TestUplinkPostFailureSurfacesAndStopsAtTheFailure
+=== PAUSE TestUplinkPostFailureSurfacesAndStopsAtTheFailure
+=== RUN   TestUplinkNon200StopsTheStream
+=== PAUSE TestUplinkNon200StopsTheStream
+=== RUN   TestUplinkBackpressureIsBoundedAndEndsInAnError
+--- PASS: TestUplinkBackpressureIsBoundedAndEndsInAnError (0.30s)
+=== RUN   TestUplinkLoneWriteIsFlushedWithoutAFollowingWrite
+=== PAUSE TestUplinkLoneWriteIsFlushedWithoutAFollowingWrite
+=== RUN   TestUplinkPayloadIsNotAliasedByLaterWrites
+=== PAUSE TestUplinkPayloadIsNotAliasedByLaterWrites
+=== RUN   TestUplinkTinyWritesArriveExactlyOnce
+=== PAUSE TestUplinkTinyWritesArriveExactlyOnce
+=== RUN   TestUplinkNoGoroutineLeakAcrossManySessions
+--- PASS: TestUplinkNoGoroutineLeakAcrossManySessions (0.02s)
+=== RUN   TestTransportRedialIsInvisibleToXMUX
+    packetup_uplink_debug_test.go:950: after the pooled connection died: server TCP accepts=2, XMUX pooled connections=1
+--- PASS: TestTransportRedialIsInvisibleToXMUX (0.01s)
+=== RUN   TestUplinkHandlesAGoawayWithoutConflictingReplay
+--- PASS: TestUplinkHandlesAGoawayWithoutConflictingReplay (0.00s)
+=== RUN   TestUplinkFirstWriteAfterIdleIsPostedPromptly
+=== PAUSE TestUplinkFirstWriteAfterIdleIsPostedPromptly
+=== RUN   TestUplinkAmortizesSmallWrites
+=== PAUSE TestUplinkAmortizesSmallWrites
+=== RUN   TestUplinkHidesAnRSTStreamError
+--- PASS: TestUplinkHidesAnRSTStreamError (0.01s)
+=== RUN   TestUplinkReleasesItsQueueOnClose
+=== PAUSE TestUplinkReleasesItsQueueOnClose
+=== RUN   TestUploadBudgetSharesOneBoundAcrossClients
+=== PAUSE TestUploadBudgetSharesOneBoundAcrossClients
+=== RUN   TestUploadBudgetKeepsTwoBoxesIsolated
+=== PAUSE TestUploadBudgetKeepsTwoBoxesIsolated
+=== RUN   TestUploadBudgetRefusesRebindingALiveClient
+=== PAUSE TestUploadBudgetRefusesRebindingALiveClient
+=== RUN   TestUploadBudgetSizesLikeTheClientPool
+=== PAUSE TestUploadBudgetSizesLikeTheClientPool
+=== RUN   TestUploadBudgetZeroValueIsRejected
+=== PAUSE TestUploadBudgetZeroValueIsRejected
+=== RUN   TestNewClientBindsTheBoxUploadBudget
+=== PAUSE TestNewClientBindsTheBoxUploadBudget
+=== RUN   TestStreamOneDialFailsOnRoundTripError
+=== PAUSE TestStreamOneDialFailsOnRoundTripError
+=== RUN   TestStreamOneDialFailsOnBadStatus
+=== PAUSE TestStreamOneDialFailsOnBadStatus
+=== RUN   TestStreamUpDialFailsOnDownloadError
+=== PAUSE TestStreamUpDialFailsOnDownloadError
+=== RUN   TestStreamUpDialFailsOnUploadError
+=== PAUSE TestStreamUpDialFailsOnUploadError
+=== RUN   TestStreamOneConnSurvivesDialContextExpiry
+=== PAUSE TestStreamOneConnSurvivesDialContextExpiry
+=== RUN   TestPacketUpPostsSurviveDialContextExpiry
+=== PAUSE TestPacketUpPostsSurviveDialContextExpiry
+=== RUN   TestPacketUpPostBounded
+2026/11/14 13:28:46 http2: panic serving 127.0.0.1:61119: injected stream reset
+goroutine 1031 [running]:
+golang.org/x/net/http2.(*serverConn).runHandler.func1()
+	D:/Go/mod-cache/golang.org/x/net@v0.57.0/http2/server.go:2314 +0x3d4
+panic({0x140cf2ce0?, 0x140f964a0?})
+	C:/Deepseek/.tools/go1.25.5/src/runtime/panic.go:783 +0x132
+github.com/sagernet/sing-box/transport/v2rayxhttp.newReplayWatchingServer.func1({0x140fa3110, 0xc000306080}, 0xc0000f6dc0)
+	C:/Deepseek/rg-collection-2026-11-14/transport/v2rayxhttp/packetup_uplink_debug_test.go:996 +0x3b8
+net/http.HandlerFunc.ServeHTTP(0xc000606310, {0x140fa3110, 0xc000306080}, 0xc0000f6dc0)
+	C:/Deepseek/.tools/go1.25.5/src/net/http/server.go:2322 +0x48
+golang.org/x/net/http2.(*serverConn).runHandler(0xc0005d03c0, 0xc000306080, 0xc0000f6dc0, 0xc0000084b0)
+	D:/Go/mod-cache/golang.org/x/net@v0.57.0/http2/server.go:2321 +0x1ea
+created by golang.org/x/net/http2.(*serverConn).scheduleHandler in goroutine 1029
+	D:/Go/mod-cache/golang.org/x/net@v0.57.0/http2/server.go:2256 +0x23d
+--- PASS: TestPacketUpPostBounded (0.41s)
+=== RUN   TestPacketUpCloseAbortsPendingDownload
+=== PAUSE TestPacketUpCloseAbortsPendingDownload
+=== RUN   TestTypeIsReality
+=== RUN   TestTypeIsReality/nil
+=== RUN   TestTypeIsReality/reality
+=== RUN   TestTypeIsReality/utls
+=== RUN   TestTypeIsReality/ktls-wrapping-reality
+=== RUN   TestTypeIsReality/ktls-wrapping-utls
+=== RUN   TestTypeIsReality/ktls-wrapping-nil
+--- PASS: TestTypeIsReality (0.00s)
+    --- PASS: TestTypeIsReality/nil (0.00s)
+    --- PASS: TestTypeIsReality/reality (0.00s)
+    --- PASS: TestTypeIsReality/utls (0.00s)
+    --- PASS: TestTypeIsReality/ktls-wrapping-reality (0.00s)
+    --- PASS: TestTypeIsReality/ktls-wrapping-utls (0.00s)
+    --- PASS: TestTypeIsReality/ktls-wrapping-nil (0.00s)
+=== RUN   TestRequestBodyWrapperClosesTheUnderlyingBody
+--- PASS: TestRequestBodyWrapperClosesTheUnderlyingBody (0.00s)
+=== RUN   TestClosingTheRequestBodyUnblocksTheUploadPipe
+--- PASS: TestClosingTheRequestBodyUnblocksTheUploadPipe (0.00s)
+=== RUN   TestRequestBodyWrapperAcceptsANonClosableBody
+--- PASS: TestRequestBodyWrapperAcceptsANonClosableBody (0.00s)
+=== RUN   TestResidencyLedgerMapsTheXMUXInventory
+--- PASS: TestResidencyLedgerMapsTheXMUXInventory (0.00s)
+=== RUN   TestStreamOneShortExchangesAfterDialCancel
+=== RUN   TestStreamOneShortExchangesAfterDialCancel/dial-per-query
+=== PAUSE TestStreamOneShortExchangesAfterDialCancel/dial-per-query
+=== RUN   TestStreamOneShortExchangesAfterDialCancel/pooled-conn
+=== PAUSE TestStreamOneShortExchangesAfterDialCancel/pooled-conn
+=== CONT  TestStreamOneShortExchangesAfterDialCancel/pooled-conn
+=== CONT  TestStreamOneShortExchangesAfterDialCancel/dial-per-query
+--- PASS: TestStreamOneShortExchangesAfterDialCancel (0.00s)
+    --- PASS: TestStreamOneShortExchangesAfterDialCancel/pooled-conn (0.25s)
+    --- PASS: TestStreamOneShortExchangesAfterDialCancel/dial-per-query (0.28s)
+=== RUN   TestStreamErrorDoesNotSpinConsumerReadLoop
+--- PASS: TestStreamErrorDoesNotSpinConsumerReadLoop (0.00s)
+=== RUN   TestStreamUpDialFailsOnUploadBadStatus
+=== PAUSE TestStreamUpDialFailsOnUploadBadStatus
+=== RUN   TestSplitConnWriteCarriesTheUploadRefusal
+--- PASS: TestSplitConnWriteCarriesTheUploadRefusal (0.00s)
+=== RUN   TestStreamUpRaisedConnFailsOnLateUploadRefusal
+=== PAUSE TestStreamUpRaisedConnFailsOnLateUploadRefusal
+=== RUN   TestCloseIdleConnectionsLeavesLiveStreamsPooled
+=== PAUSE TestCloseIdleConnectionsLeavesLiveStreamsPooled
+=== RUN   TestCloseIdleConnectionsEmptyPoolIsSafe
+=== PAUSE TestCloseIdleConnectionsEmptyPoolIsSafe
+=== RUN   TestCloseRetiresEverythingIncludingBusyConnections
+=== PAUSE TestCloseRetiresEverythingIncludingBusyConnections
+=== RUN   TestSetKeepIdleConnectionsFalseTrims
+=== PAUSE TestSetKeepIdleConnectionsFalseTrims
+=== RUN   TestClientImplementsIdleConnectionKeeper
+=== PAUSE TestClientImplementsIdleConnectionKeeper
+=== RUN   TestRequestURLPaths
+=== RUN   TestRequestURLPaths/stream-one_bare_path_(no_sessionId)
+=== RUN   TestRequestURLPaths/stream-up/packet-up_download_(sessionId)
+=== RUN   TestRequestURLPaths/packet-up_upload_(sessionId_+_seq)
+--- PASS: TestRequestURLPaths (0.00s)
+    --- PASS: TestRequestURLPaths/stream-one_bare_path_(no_sessionId) (0.00s)
+    --- PASS: TestRequestURLPaths/stream-up/packet-up_download_(sessionId) (0.00s)
+    --- PASS: TestRequestURLPaths/packet-up_upload_(sessionId_+_seq) (0.00s)
+=== RUN   TestTrailingSlashPreservedOffPath
+=== RUN   TestTrailingSlashPreservedOffPath/download_keeps_trailing_slash_(session_in_header)
+=== RUN   TestTrailingSlashPreservedOffPath/upload_keeps_trailing_slash_(session_in_header,_seq_in_query)
+=== RUN   TestTrailingSlashPreservedOffPath/stream-one_keeps_configured_path_verbatim_(session_off_path)
+--- PASS: TestTrailingSlashPreservedOffPath (0.00s)
+    --- PASS: TestTrailingSlashPreservedOffPath/download_keeps_trailing_slash_(session_in_header) (0.00s)
+    --- PASS: TestTrailingSlashPreservedOffPath/upload_keeps_trailing_slash_(session_in_header,_seq_in_query) (0.00s)
+    --- PASS: TestTrailingSlashPreservedOffPath/stream-one_keeps_configured_path_verbatim_(session_off_path) (0.00s)
+=== RUN   TestStreamOnePathPrefixMatchesServer
+=== RUN   TestStreamOnePathPrefixMatchesServer//api/v1/feed
+=== RUN   TestStreamOnePathPrefixMatchesServer//api/v1/feed/
+=== RUN   TestStreamOnePathPrefixMatchesServer//
+--- PASS: TestStreamOnePathPrefixMatchesServer (0.00s)
+    --- PASS: TestStreamOnePathPrefixMatchesServer//api/v1/feed (0.00s)
+    --- PASS: TestStreamOnePathPrefixMatchesServer//api/v1/feed/ (0.00s)
+    --- PASS: TestStreamOnePathPrefixMatchesServer// (0.00s)
+=== RUN   TestRetireSuspectDrainsABusyConnectionAndKeepsItsStream
+=== PAUSE TestRetireSuspectDrainsABusyConnectionAndKeepsItsStream
+=== RUN   TestRetireSuspectClosesIdleConnectionsImmediately
+=== PAUSE TestRetireSuspectClosesIdleConnectionsImmediately
+=== RUN   TestRetireSuspectWithNoDemandOpensNothing
+=== PAUSE TestRetireSuspectWithNoDemandOpensNothing
+=== RUN   TestRetireSuspectIsIdempotentAndCheapForRepeatedBoundaries
+=== PAUSE TestRetireSuspectIsIdempotentAndCheapForRepeatedBoundaries
+=== RUN   TestRetireSuspectNodesNotPoisonThePostBoundaryPool
+=== PAUSE TestRetireSuspectNodesNotPoisonThePostBoundaryPool
+=== RUN   TestRetireSuspectDoesNotPoisonTheBreaker
+=== PAUSE TestRetireSuspectDoesNotPoisonTheBreaker
+=== RUN   TestATrimStillLeavesABusyConnectionPooled
+=== PAUSE TestATrimStillLeavesABusyConnectionPooled
+=== RUN   TestTheAdapterCapabilitiesReachThePool
+=== PAUSE TestTheAdapterCapabilitiesReachThePool
+=== RUN   TestWakeRetireHandsTheNextStreamAFreshConnection
+=== PAUSE TestWakeRetireHandsTheNextStreamAFreshConnection
+=== RUN   TestWakeRetireWithNoDemandOpensNothing
+=== PAUSE TestWakeRetireWithNoDemandOpensNothing
+=== RUN   TestWakeRetireKeepsALiveStreamAndItsConnection
+=== PAUSE TestWakeRetireKeepsALiveStreamAndItsConnection
+=== RUN   TestASessionWithALiveStreamStillAcceptsNewStreams_KnownLimitation
+=== PAUSE TestASessionWithALiveStreamStillAcceptsNewStreams_KnownLimitation
+=== RUN   TestWakeRetireIsIdempotentAndCheapForRepeatedBoundaries
+=== PAUSE TestWakeRetireIsIdempotentAndCheapForRepeatedBoundaries
+=== RUN   TestDefaultLegacyPadding
+--- PASS: TestDefaultLegacyPadding (0.00s)
+=== RUN   TestSessionPlacement
+=== RUN   TestSessionPlacement/query
+=== RUN   TestSessionPlacement/header_custom_key
+=== RUN   TestSessionPlacement/cookie_default_key
+--- PASS: TestSessionPlacement (0.00s)
+    --- PASS: TestSessionPlacement/query (0.00s)
+    --- PASS: TestSessionPlacement/header_custom_key (0.00s)
+    --- PASS: TestSessionPlacement/cookie_default_key (0.00s)
+=== RUN   TestSeqPlacement
+=== RUN   TestSeqPlacement/header_default_key_X-Seq
+=== RUN   TestSeqPlacement/query_default_key_x_seq
+--- PASS: TestSeqPlacement (0.00s)
+    --- PASS: TestSeqPlacement/header_default_key_X-Seq (0.00s)
+    --- PASS: TestSeqPlacement/query_default_key_x_seq (0.00s)
+=== RUN   TestUplinkDataBody
+--- PASS: TestUplinkDataBody (0.00s)
+=== RUN   TestUplinkDataHeaderChunks
+--- PASS: TestUplinkDataHeaderChunks (0.00s)
+=== RUN   TestUplinkDataCookieChunks
+--- PASS: TestUplinkDataCookieChunks (0.00s)
+=== RUN   TestXPaddingObfsPlacements
+=== RUN   TestXPaddingObfsPlacements/header
+=== RUN   TestXPaddingObfsPlacements/cookie
+=== RUN   TestXPaddingObfsPlacements/query
+=== RUN   TestXPaddingObfsPlacements/queryInHeader
+--- PASS: TestXPaddingObfsPlacements (0.00s)
+    --- PASS: TestXPaddingObfsPlacements/header (0.00s)
+    --- PASS: TestXPaddingObfsPlacements/cookie (0.00s)
+    --- PASS: TestXPaddingObfsPlacements/query (0.00s)
+    --- PASS: TestXPaddingObfsPlacements/queryInHeader (0.00s)
+=== RUN   TestXPaddingCustomKeyHeader
+--- PASS: TestXPaddingCustomKeyHeader (0.00s)
+=== RUN   TestTokenishPaddingHuffmanLength
+--- PASS: TestTokenishPaddingHuffmanLength (0.00s)
+=== RUN   TestTokenishUsedWhenConfigured
+--- PASS: TestTokenishUsedWhenConfigured (0.00s)
+=== RUN   TestValidationRejections
+=== RUN   TestValidationRejections/bad_session_placement
+=== RUN   TestValidationRejections/bad_seq_placement
+=== RUN   TestValidationRejections/bad_uplink_data_placement
+=== RUN   TestValidationRejections/uplink_header_outside_packet-up
+=== RUN   TestValidationRejections/bad_padding_placement
+=== RUN   TestValidationRejections/bad_padding_method
+=== RUN   TestValidationRejections/session_table_without_length
+=== RUN   TestValidationRejections/session_length_without_table
+=== RUN   TestValidationRejections/session_length_zero_floor
+=== RUN   TestValidationRejections/session_id_space_too_small
+=== RUN   TestValidationRejections/session_table_not_ascii
+--- PASS: TestValidationRejections (0.00s)
+    --- PASS: TestValidationRejections/bad_session_placement (0.00s)
+    --- PASS: TestValidationRejections/bad_seq_placement (0.00s)
+    --- PASS: TestValidationRejections/bad_uplink_data_placement (0.00s)
+    --- PASS: TestValidationRejections/uplink_header_outside_packet-up (0.00s)
+    --- PASS: TestValidationRejections/bad_padding_placement (0.00s)
+    --- PASS: TestValidationRejections/bad_padding_method (0.00s)
+    --- PASS: TestValidationRejections/session_table_without_length (0.00s)
+    --- PASS: TestValidationRejections/session_length_without_table (0.00s)
+    --- PASS: TestValidationRejections/session_length_zero_floor (0.00s)
+    --- PASS: TestValidationRejections/session_id_space_too_small (0.00s)
+    --- PASS: TestValidationRejections/session_table_not_ascii (0.00s)
+=== RUN   TestValidationAccepts
+--- PASS: TestValidationAccepts (0.00s)
+=== RUN   TestUplinkGetFallsBackToPostOutsidePacketUp
+[33mWARN[0m[0015] v2ray-xhttp: uplink_http_method=GET is only valid in packet-up mode (mode=auto); falling back to POST
+[33mWARN[0m[0015] v2ray-xhttp: uplink_http_method=GET is only valid in packet-up mode (mode=stream-up); falling back to POST
+[33mWARN[0m[0015] v2ray-xhttp: uplink_http_method=GET is only valid in packet-up mode (mode=stream-one); falling back to POST
+--- PASS: TestUplinkGetFallsBackToPostOutsidePacketUp (0.00s)
+=== RUN   TestUplinkMethodUpperCased
+--- PASS: TestUplinkMethodUpperCased (0.00s)
+=== RUN   TestUplinkChunkSizeDefaults
+--- PASS: TestUplinkChunkSizeDefaults (0.00s)
+=== RUN   TestGRPCHeaderOnStreamedBody
+--- PASS: TestGRPCHeaderOnStreamedBody (0.00s)
+=== RUN   TestSessionIDDefaultIsUUID
+--- PASS: TestSessionIDDefaultIsUUID (0.00s)
+=== RUN   TestSessionIDTableAndLength
+=== RUN   TestSessionIDTableAndLength/predefined_table,_fixed_length
+=== RUN   TestSessionIDTableAndLength/literal_table,_ranged_length
+=== RUN   TestSessionIDTableAndLength/table_name_resolves_case-sensitively
+--- PASS: TestSessionIDTableAndLength (0.00s)
+    --- PASS: TestSessionIDTableAndLength/predefined_table,_fixed_length (0.00s)
+    --- PASS: TestSessionIDTableAndLength/literal_table,_ranged_length (0.00s)
+    --- PASS: TestSessionIDTableAndLength/table_name_resolves_case-sensitively (0.00s)
+=== RUN   TestSessionIDTableOnPath
+--- PASS: TestSessionIDTableOnPath (0.00s)
+=== RUN   TestXmuxDoesNotOpenAConnectionAfterClose
+--- PASS: TestXmuxDoesNotOpenAConnectionAfterClose (0.00s)
+=== RUN   TestXmuxCloseRacingDialsLeavesNoConnectionUnclosed
+--- PASS: TestXmuxCloseRacingDialsLeavesNoConnectionUnclosed (0.00s)
+=== RUN   TestXMUXInventorySeparatesPooledDrainingAndReleased
+--- PASS: TestXMUXInventorySeparatesPooledDrainingAndReleased (0.00s)
+=== RUN   TestXMUXTrimConfirmsOnlyTheRealRelease
+--- PASS: TestXMUXTrimConfirmsOnlyTheRealRelease (0.00s)
+=== RUN   TestXMUXBusyEvictionDrainsUntilItsStreamEnds
+--- PASS: TestXMUXBusyEvictionDrainsUntilItsStreamEnds (0.00s)
+=== RUN   TestXMUXCloseWaitsForEveryBusyStream
+--- PASS: TestXMUXCloseWaitsForEveryBusyStream (0.00s)
+=== RUN   TestPacketUpUploadsCountAgainstRequestLimit
+--- PASS: TestPacketUpUploadsCountAgainstRequestLimit (0.02s)
+=== RUN   TestRedialTriggersAndXmuxBlindness
+=== RUN   TestRedialTriggersAndXmuxBlindness/normal_reuse
+=== RUN   TestRedialTriggersAndXmuxBlindness/short_idle
+=== RUN   TestRedialTriggersAndXmuxBlindness/server_closes_the_connection
+--- PASS: TestRedialTriggersAndXmuxBlindness (1.26s)
+    --- PASS: TestRedialTriggersAndXmuxBlindness/normal_reuse (0.00s)
+    --- PASS: TestRedialTriggersAndXmuxBlindness/short_idle (1.20s)
+    --- PASS: TestRedialTriggersAndXmuxBlindness/server_closes_the_connection (0.05s)
+=== RUN   TestRequestBudgetSurvivesARedial
+--- PASS: TestRequestBudgetSurvivesARedial (0.11s)
+=== RUN   TestRetireSuspectAfterARedialDoesNotResurrectTheOldPath
+--- PASS: TestRetireSuspectAfterARedialDoesNotResurrectTheOldPath (0.12s)
+=== RUN   TestRedialCostsOneHandshake
+    xmux_redial_test.go:286: request on a warm connection 0s; first request on a freshly dialed connection 1.075ms (one handshake)
+--- PASS: TestRedialCostsOneHandshake (0.00s)
+=== RUN   TestXmuxRetiredConnectionCannotBeRevived
+--- PASS: TestXmuxRetiredConnectionCannotBeRevived (0.00s)
+=== RUN   TestXmuxReusesConnection
+--- PASS: TestXmuxReusesConnection (0.00s)
+=== RUN   TestXmuxConcurrencyLimit
+--- PASS: TestXmuxConcurrencyLimit (0.00s)
+=== RUN   TestXmuxMaxConnections
+--- PASS: TestXmuxMaxConnections (0.00s)
+=== RUN   TestXmuxEviction
+=== RUN   TestXmuxEviction/closed
+=== RUN   TestXmuxEviction/reuse
+=== RUN   TestXmuxEviction/requests
+=== RUN   TestXmuxEviction/expired
+--- PASS: TestXmuxEviction (0.00s)
+    --- PASS: TestXmuxEviction/closed (0.00s)
+    --- PASS: TestXmuxEviction/reuse (0.00s)
+    --- PASS: TestXmuxEviction/requests (0.00s)
+    --- PASS: TestXmuxEviction/expired (0.00s)
+=== RUN   TestXmuxDeferredClose
+--- PASS: TestXmuxDeferredClose (0.00s)
+=== RUN   TestXmuxReleaseIsIdempotent
+--- PASS: TestXmuxReleaseIsIdempotent (0.00s)
+=== RUN   TestXmuxReleaseNilIsSafe
+--- PASS: TestXmuxReleaseNilIsSafe (0.00s)
+=== RUN   TestXmuxManagerCloseKeepsLiveStreams
+--- PASS: TestXmuxManagerCloseKeepsLiveStreams (0.00s)
+=== RUN   TestXmuxEventLog
+--- PASS: TestXmuxEventLog (0.00s)
+=== RUN   TestNormalizeXmuxDefaults
+--- PASS: TestNormalizeXmuxDefaults (0.00s)
+=== RUN   TestNormalizeXmuxMutuallyExclusive
+--- PASS: TestNormalizeXmuxMutuallyExclusive (0.00s)
+=== RUN   TestNormalizeXmuxExplicit
+--- PASS: TestNormalizeXmuxExplicit (0.00s)
+=== RUN   TestNormalizeXmuxEmptySectionEqualsAbsent
+--- PASS: TestNormalizeXmuxEmptySectionEqualsAbsent (0.00s)
+=== RUN   TestNormalizeXmuxPartialSectionGetsNoDefaults
+--- PASS: TestNormalizeXmuxPartialSectionGetsNoDefaults (0.00s)
+=== RUN   TestLegacyPaddingRefererIsByteIdentical
+=== PAUSE TestLegacyPaddingRefererIsByteIdentical
+=== RUN   TestObfsQueryInHeaderRefererIsByteIdentical
+=== PAUSE TestObfsQueryInHeaderRefererIsByteIdentical
+=== CONT  TestClientResetIsTheNetworkChangeAction
+=== CONT  TestWakeRetireIsIdempotentAndCheapForRepeatedBoundaries
+=== CONT  TestStreamUpRaisedConnFailsOnLateUploadRefusal
+=== CONT  TestStreamOneDialFailsOnBadStatus
+=== CONT  TestClientImplementsIdleConnectionKeeper
+=== CONT  TestStreamOneConnSurvivesDialContextExpiry
+=== CONT  TestCloseRetiresEverythingIncludingBusyConnections
+=== CONT  TestSetKeepIdleConnectionsFalseTrims
+=== CONT  TestRetireSuspectClosesIdleConnectionsImmediately
+=== CONT  TestUploadBudgetZeroValueIsRejected
+=== CONT  TestCloseIdleConnectionsEmptyPoolIsSafe
+=== CONT  TestLegacyPaddingRefererIsByteIdentical
+=== CONT  TestCloseIdleConnectionsLeavesLiveStreamsPooled
+=== CONT  TestUploadBudgetKeepsTwoBoxesIsolated
+=== CONT  TestASessionWithALiveStreamStillAcceptsNewStreams_KnownLimitation
+=== CONT  TestObfsQueryInHeaderRefererIsByteIdentical
+=== CONT  TestStreamUpDialFailsOnUploadBadStatus
+=== RUN   TestStreamUpDialFailsOnUploadBadStatus/400
+=== CONT  TestPacketUpCloseAbortsPendingDownload
+=== CONT  TestRetireSuspectDrainsABusyConnectionAndKeepsItsStream
+--- PASS: TestWakeRetireIsIdempotentAndCheapForRepeatedBoundaries (0.00s)
+=== CONT  TestPacketUpPostsSurviveDialContextExpiry
+=== CONT  TestStreamUpDialFailsOnUploadError
+=== CONT  TestUplinkStalledResponseBodyIsNotGenuineDataFlow
+=== CONT  TestStreamOneDialFailsOnRoundTripError
+=== CONT  TestNewClientBindsTheBoxUploadBudget
+=== CONT  TestUploadBudgetSizesLikeTheClientPool
+=== CONT  TestUploadBudgetSharesOneBoundAcrossClients
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/plain
+=== CONT  TestUploadBudgetRefusesRebindingALiveClient
+=== RUN   TestObfsQueryInHeaderRefererIsByteIdentical/plain
+=== CONT  TestUplinkAmortizesSmallWrites
+=== PAUSE TestStreamUpDialFailsOnUploadBadStatus/400
+--- PASS: TestClientImplementsIdleConnectionKeeper (0.00s)
+=== CONT  TestUplinkFirstWriteAfterIdleIsPostedPromptly
+=== CONT  TestUplinkReleasesItsQueueOnClose
+=== CONT  TestUplinkPayloadIsNotAliasedByLaterWrites
+=== CONT  TestUplinkLoneWriteIsFlushedWithoutAFollowingWrite
+=== CONT  TestStreamUpDialFailsOnDownloadError
+=== RUN   TestStreamUpDialFailsOnUploadBadStatus/404
+=== PAUSE TestStreamUpDialFailsOnUploadBadStatus/404
+--- PASS: TestClientResetIsTheNetworkChangeAction (0.00s)
+=== RUN   TestStreamUpDialFailsOnUploadBadStatus/413
+--- PASS: TestStreamOneDialFailsOnBadStatus (0.00s)
+=== PAUSE TestStreamUpDialFailsOnUploadBadStatus/413
+--- PASS: TestSetKeepIdleConnectionsFalseTrims (0.00s)
+=== RUN   TestStreamUpDialFailsOnUploadBadStatus/500
+--- PASS: TestCloseRetiresEverythingIncludingBusyConnections (0.00s)
+=== PAUSE TestStreamUpDialFailsOnUploadBadStatus/500
+=== CONT  TestUplinkConcurrentWritersLoseNothing
+--- PASS: TestUploadBudgetRefusesRebindingALiveClient (0.00s)
+=== CONT  TestPacketUpReserveIsForTheOpeningNotForBulkChunkedWrites
+--- PASS: TestStreamUpRaisedConnFailsOnLateUploadRefusal (0.00s)
+--- PASS: TestUploadBudgetZeroValueIsRejected (0.00s)
+--- PASS: TestRetireSuspectClosesIdleConnectionsImmediately (0.00s)
+--- PASS: TestCloseIdleConnectionsEmptyPoolIsSafe (0.00s)
+--- PASS: TestCloseIdleConnectionsLeavesLiveStreamsPooled (0.00s)
+--- PASS: TestASessionWithALiveStreamStillAcceptsNewStreams_KnownLimitation (0.00s)
+--- PASS: TestRetireSuspectDrainsABusyConnectionAndKeepsItsStream (0.00s)
+--- PASS: TestStreamUpDialFailsOnUploadError (0.00s)
+--- PASS: TestNewClientBindsTheBoxUploadBudget (0.00s)
+--- PASS: TestStreamOneDialFailsOnRoundTripError (0.00s)
+=== NAME  TestUplinkLoneWriteIsFlushedWithoutAFollowingWrite
+    packetup_uplink_debug_test.go:642: a lone write reached a post in 2.4979ms
+=== RUN   TestObfsQueryInHeaderRefererIsByteIdentical/trailing_slash
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/trailing_slash
+--- PASS: TestUploadBudgetSizesLikeTheClientPool (0.00s)
+=== CONT  TestUplinkOrderingAndSeqContinuity
+=== RUN   TestObfsQueryInHeaderRefererIsByteIdentical/space
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/space
+--- PASS: TestUplinkLoneWriteIsFlushedWithoutAFollowingWrite (0.00s)
+--- PASS: TestUploadBudgetSharesOneBoundAcrossClients (0.01s)
+=== CONT  TestRetireSuspectDoesNotPoisonTheBreaker
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/encoded_query_in_path
+=== RUN   TestObfsQueryInHeaderRefererIsByteIdentical/encoded
+--- PASS: TestRetireSuspectDoesNotPoisonTheBreaker (0.00s)
+=== CONT  TestPacketUpWriteBuffersInsteadOfWaitingForThePost
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/percent
+=== RUN   TestObfsQueryInHeaderRefererIsByteIdentical/non-ascii
+=== CONT  TestWakeRetireKeepsALiveStreamAndItsConnection
+--- PASS: TestObfsQueryInHeaderRefererIsByteIdentical (0.01s)
+    --- PASS: TestObfsQueryInHeaderRefererIsByteIdentical/plain (0.00s)
+    --- PASS: TestObfsQueryInHeaderRefererIsByteIdentical/trailing_slash (0.00s)
+    --- PASS: TestObfsQueryInHeaderRefererIsByteIdentical/space (0.00s)
+    --- PASS: TestObfsQueryInHeaderRefererIsByteIdentical/encoded (0.00s)
+    --- PASS: TestObfsQueryInHeaderRefererIsByteIdentical/non-ascii (0.00s)
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/non-ascii
+=== CONT  TestPacketUpDialCancelDuringConstructionFailsDial
+=== CONT  TestPacketUpControlHeadroomIsSafeUnderConcurrency
+--- PASS: TestPacketUpWriteBuffersInsteadOfWaitingForThePost (0.00s)
+=== CONT  TestWakeRetireWithNoDemandOpensNothing
+--- PASS: TestUplinkStalledResponseBodyIsNotGenuineDataFlow (0.01s)
+--- PASS: TestWakeRetireKeepsALiveStreamAndItsConnection (0.00s)
+=== CONT  TestWakeRetireHandsTheNextStreamAFreshConnection
+--- PASS: TestPacketUpDialCancelDuringConstructionFailsDial (0.00s)
+=== CONT  TestPacketUpDialPreCancelledContextFailsDial
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/root
+=== CONT  TestATrimStillLeavesABusyConnectionPooled
+--- PASS: TestWakeRetireWithNoDemandOpensNothing (0.00s)
+=== CONT  TestPacketUpControlHeadroomDefaultsAreThePolicy
+=== CONT  TestNewClientWiresTheSharedUploadBudget
+=== CONT  TestPacketUpAllocationLedgerCountsASharedArrayOnce
+--- PASS: TestATrimStillLeavesABusyConnectionPooled (0.00s)
+=== CONT  TestPacketUpSharedBudgetConservesChargesUnderConcurrency
+--- PASS: TestPacketUpControlHeadroomDefaultsAreThePolicy (0.00s)
+--- PASS: TestWakeRetireHandsTheNextStreamAFreshConnection (0.00s)
+--- PASS: TestNewClientWiresTheSharedUploadBudget (0.00s)
+--- PASS: TestPacketUpDialPreCancelledContextFailsDial (0.00s)
+=== CONT  TestPacketUpControlHeadroomIsPartOfTheAggregate
+--- PASS: TestPacketUpCloseAbortsPendingDownload (0.01s)
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/empty
+--- PASS: TestStreamUpDialFailsOnDownloadError (0.01s)
+=== CONT  TestPacketUpOpeningWaitsBoundedlyWhenAllAllocationIsFull
+=== CONT  TestPacketUpOversizedOpeningWriteCannotSpendTheControlHeadroom
+=== CONT  TestPacketUpDataWriteStopsWhenTheDataLedgerIsFull
+=== CONT  TestPacketUpControlHeadroomFullWaitsAndCancels
+--- PASS: TestPacketUpReserveIsForTheOpeningNotForBulkChunkedWrites (0.01s)
+--- PASS: TestPacketUpControlHeadroomIsPartOfTheAggregate (0.00s)
+--- PASS: TestPacketUpControlHeadroomIsSafeUnderConcurrency (0.01s)
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/raw_path_honoured
+=== RUN   TestLegacyPaddingRefererIsByteIdentical/raw_path_with_plus
+--- PASS: TestPacketUpAllocationLedgerCountsASharedArrayOnce (0.01s)
+=== CONT  TestPacketUpSharedBudgetReturnsAChargeThatOutlivesClose
+--- PASS: TestLegacyPaddingRefererIsByteIdentical (0.02s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/plain (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/trailing_slash (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/space (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/encoded_query_in_path (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/percent (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/non-ascii (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/root (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/empty (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/raw_path_honoured (0.00s)
+    --- PASS: TestLegacyPaddingRefererIsByteIdentical/raw_path_with_plus (0.00s)
+=== CONT  TestHTTP2TransportCarriesTheNormalizedPeriod
+--- PASS: TestHTTP2TransportCarriesTheNormalizedPeriod (0.00s)
+=== CONT  TestPacketUpCombinedBoxBudgetIsolatesTwoBoxes
+--- PASS: TestPacketUpControlHeadroomFullWaitsAndCancels (0.01s)
+=== CONT  TestPacketUpCoalescesWritesQueuedBehindAPost
+--- PASS: TestPacketUpCoalescesWritesQueuedBehindAPost (0.01s)
+=== CONT  TestPacketUpCombinedBoxBudgetOpensUnderBulkPressure
+=== CONT  TestRetireSuspectNodesNotPoisonThePostBoundaryPool
+--- PASS: TestUplinkConcurrentWritersLoseNothing (0.03s)
+=== CONT  TestPacketUpAllocationLedgerOutlivesClose
+--- PASS: TestRetireSuspectNodesNotPoisonThePostBoundaryPool (0.00s)
+=== CONT  TestPacketUpAllocationLedgerSettlesOnAFailedPost
+--- PASS: TestPacketUpOversizedOpeningWriteCannotSpendTheControlHeadroom (0.03s)
+--- PASS: TestPacketUpAllocationLedgerSettlesOnAFailedPost (0.00s)
+=== CONT  TestPacketUpConcurrentWritersAndClose
+--- PASS: TestPacketUpCombinedBoxBudgetIsolatesTwoBoxes (0.03s)
+=== CONT  TestPacketUpLedgerClosesWhenCloseInterruptsABlockedWrite
+--- PASS: TestPacketUpConcurrentWritersAndClose (0.01s)
+=== CONT  TestNoCoordinatorMeansNoGenerationCheck
+--- PASS: TestNoCoordinatorMeansNoGenerationCheck (0.00s)
+=== CONT  TestGatherDecision
+=== RUN   TestGatherDecision/opening_header_never_waits
+=== RUN   TestGatherDecision/opening_payload_never_waits
+=== RUN   TestGatherDecision/third_post_gathers_a_mid-size_queue
+=== RUN   TestGatherDecision/third_post_gathers_a_small_leftover
+=== RUN   TestGatherDecision/deep_queue_never_waits
+=== RUN   TestGatherDecision/just_under_the_bypass_gathers
+=== CONT  TestUplinkCompletedResponseBodyIsGenuineDataFlow
+--- PASS: TestGatherDecision (0.00s)
+    --- PASS: TestGatherDecision/opening_header_never_waits (0.00s)
+    --- PASS: TestGatherDecision/opening_payload_never_waits (0.00s)
+    --- PASS: TestGatherDecision/third_post_gathers_a_mid-size_queue (0.00s)
+    --- PASS: TestGatherDecision/third_post_gathers_a_small_leftover (0.00s)
+    --- PASS: TestGatherDecision/deep_queue_never_waits (0.00s)
+    --- PASS: TestGatherDecision/just_under_the_bypass_gathers (0.00s)
+--- PASS: TestUplinkCompletedResponseBodyIsGenuineDataFlow (0.00s)
+=== CONT  TestPacketUpHandshakeIsNotThrottled
+=== CONT  TestPacketUpTightAllocationLedgerKeepsProgress
+--- PASS: TestPacketUpCombinedBoxBudgetOpensUnderBulkPressure (0.05s)
+--- PASS: TestUplinkOrderingAndSeqContinuity (0.10s)
+=== CONT  TestAllocationReserveKeepsTheOpeningShare
+--- PASS: TestAllocationReserveKeepsTheOpeningShare (0.00s)
+=== CONT  TestTheHandoutRunsThePoolsOwnBoundaryOnANetworkChange
+=== CONT  TestPacketUpShortFlowStillUsesTheReserve
+--- PASS: TestTheHandoutRunsThePoolsOwnBoundaryOnANetworkChange (0.00s)
+=== CONT  TestPacketUpOpeningSurvivesAColdStartLongFlow
+--- PASS: TestPacketUpShortFlowStillUsesTheReserve (0.01s)
+--- PASS: TestPacketUpOpeningSurvivesAColdStartLongFlow (0.01s)
+=== CONT  TestPacketUpAllocationLedgerBoundsAnOversizedWrite
+=== CONT  TestPacketUpSharedBudgetKeepsTheControlWriteMoving
+--- PASS: TestUplinkReleasesItsQueueOnClose (0.13s)
+=== CONT  TestPacketUpSharedBudgetSettlesAFailedPostAgainstThePool
+--- PASS: TestPacketUpSharedBudgetKeepsTheControlWriteMoving (0.01s)
+=== CONT  TestTheSettleStepKeepsCurrentWork
+--- PASS: TestPacketUpAllocationLedgerBoundsAnOversizedWrite (0.01s)
+=== CONT  TestPacketUpSharedBudgetBoundsTheStreamSum
+--- PASS: TestTheSettleStepKeepsCurrentWork (0.00s)
+=== CONT  TestClientDefaultKeepAliveReachesThePooledTransport
+--- PASS: TestUplinkPayloadIsNotAliasedByLaterWrites (0.15s)
+=== RUN   TestClientDefaultKeepAliveReachesThePooledTransport/unset_xmux
+=== RUN   TestClientDefaultKeepAliveReachesThePooledTransport/zero
+=== RUN   TestClientDefaultKeepAliveReachesThePooledTransport/negative
+=== RUN   TestClientDefaultKeepAliveReachesThePooledTransport/configured
+--- PASS: TestClientDefaultKeepAliveReachesThePooledTransport (0.01s)
+    --- PASS: TestClientDefaultKeepAliveReachesThePooledTransport/unset_xmux (0.00s)
+    --- PASS: TestClientDefaultKeepAliveReachesThePooledTransport/zero (0.00s)
+    --- PASS: TestClientDefaultKeepAliveReachesThePooledTransport/negative (0.00s)
+    --- PASS: TestClientDefaultKeepAliveReachesThePooledTransport/configured (0.00s)
+=== CONT  TestPacketUpOpeningGetsItsArrayWhenTheDataLedgerIsFull
+--- PASS: TestPacketUpLedgerClosesWhenCloseInterruptsABlockedWrite (0.11s)
+=== CONT  TestPacketUpQueueCapacityPolicy
+--- PASS: TestPacketUpQueueCapacityPolicy (0.00s)
+=== CONT  TestPacketUpAllocationLedgerUnderConcurrency
+--- PASS: TestPacketUpTightAllocationLedgerKeepsProgress (0.09s)
+=== CONT  TestPacketUpSharedBudgetKeepsThePerStreamBound
+=== NAME  TestUplinkAmortizesSmallWrites
+    packetup_uplink_debug_test.go:1146: 512 8192-byte writes left in 7 posts: min=90112 median=466944 max=1000000 bytes
+--- PASS: TestUplinkAmortizesSmallWrites (0.18s)
+=== CONT  TestPacketUpSharedBudgetSettlesAPartialWriteOnClose
+=== CONT  TestTheAdapterCapabilitiesReachThePool
+--- PASS: TestPacketUpAllocationLedgerUnderConcurrency (0.03s)
+--- PASS: TestTheAdapterCapabilitiesReachThePool (0.00s)
+=== CONT  TestPacketUpLedgerCheckRejectsABrokenLedger
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger/the_failed_post_lost_its_own_slice
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger/the_whole_loss_is_unaccounted_for
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger/abandoned_is_double_counted
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger/pending_exceeds_the_bound
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger/pending_high_water_exceeds_the_bound
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger/in_flight_exceeds_the_whole_budget
+=== RUN   TestPacketUpLedgerCheckRejectsABrokenLedger/negative_pending
+--- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger (0.00s)
+    --- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger/the_failed_post_lost_its_own_slice (0.00s)
+    --- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger/the_whole_loss_is_unaccounted_for (0.00s)
+    --- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger/abandoned_is_double_counted (0.00s)
+    --- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger/pending_exceeds_the_bound (0.00s)
+    --- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger/pending_high_water_exceeds_the_bound (0.00s)
+    --- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger/in_flight_exceeds_the_whole_budget (0.00s)
+    --- PASS: TestPacketUpLedgerCheckRejectsABrokenLedger/negative_pending (0.00s)
+=== CONT  TestPacketUpNilWriteAndWritesAfterClose
+--- PASS: TestPacketUpNilWriteAndWritesAfterClose (0.00s)
+=== CONT  TestHTTP2KeepAlivePeriodFollowsTheReference
+=== RUN   TestHTTP2KeepAlivePeriodFollowsTheReference/zero_selects_the_reference_default
+=== RUN   TestHTTP2KeepAlivePeriodFollowsTheReference/negative_disables_pings
+=== RUN   TestHTTP2KeepAlivePeriodFollowsTheReference/negative_zero-ish_disables_pings
+=== RUN   TestHTTP2KeepAlivePeriodFollowsTheReference/positive_is_used_as_configured
+=== RUN   TestHTTP2KeepAlivePeriodFollowsTheReference/one_second_is_used_as_configured
+--- PASS: TestHTTP2KeepAlivePeriodFollowsTheReference (0.00s)
+    --- PASS: TestHTTP2KeepAlivePeriodFollowsTheReference/zero_selects_the_reference_default (0.00s)
+    --- PASS: TestHTTP2KeepAlivePeriodFollowsTheReference/negative_disables_pings (0.00s)
+    --- PASS: TestHTTP2KeepAlivePeriodFollowsTheReference/negative_zero-ish_disables_pings (0.00s)
+    --- PASS: TestHTTP2KeepAlivePeriodFollowsTheReference/positive_is_used_as_configured (0.00s)
+    --- PASS: TestHTTP2KeepAlivePeriodFollowsTheReference/one_second_is_used_as_configured (0.00s)
+=== CONT  TestPacketUpAccountsInFlightSeparately
+=== CONT  TestPacketUpLedgerClosesAcrossAPostFailure
+--- PASS: TestPacketUpAccountsInFlightSeparately (0.01s)
+=== CONT  TestPacketUpOversizedWriteIsBounded
+--- PASS: TestPacketUpSharedBudgetSettlesAFailedPostAgainstThePool (0.08s)
+--- PASS: TestPacketUpLedgerClosesAcrossAPostFailure (0.01s)
+=== CONT  TestPacketUpAllocationLedgerChargesBothArraysDuringAGrowth
+--- PASS: TestPacketUpAllocationLedgerChargesBothArraysDuringAGrowth (0.00s)
+=== CONT  TestUplinkPostFailureSurfacesAndStopsAtTheFailure
+=== RUN   TestUplinkPostFailureSurfacesAndStopsAtTheFailure/immediate_refusal
+=== PAUSE TestUplinkPostFailureSurfacesAndStopsAtTheFailure/immediate_refusal
+=== RUN   TestUplinkPostFailureSurfacesAndStopsAtTheFailure/refusal_after_the_next_write
+=== PAUSE TestUplinkPostFailureSurfacesAndStopsAtTheFailure/refusal_after_the_next_write
+=== CONT  TestALateDialIsDiscardedAndItsConnectionClosed
+=== CONT  TestRetireSuspectIsIdempotentAndCheapForRepeatedBoundaries
+--- PASS: TestALateDialIsDiscardedAndItsConnectionClosed (0.00s)
+=== CONT  TestPacketUpQueueAppliesBackpressure
+--- PASS: TestRetireSuspectIsIdempotentAndCheapForRepeatedBoundaries (0.00s)
+=== CONT  TestPacketUpBatchRespectsMaxEachPostBytes
+--- PASS: TestPacketUpSharedBudgetKeepsThePerStreamBound (0.06s)
+--- PASS: TestPacketUpBatchRespectsMaxEachPostBytes (0.00s)
+=== CONT  TestPacketUpBulkWaitersHoldNoArray
+=== CONT  TestRetireSuspectWithNoDemandOpensNothing
+--- PASS: TestPacketUpSharedBudgetBoundsTheStreamSum (0.14s)
+=== CONT  TestPacketUpGrantRollsBackWhenTheArrayCannotBeReserved
+--- PASS: TestRetireSuspectWithNoDemandOpensNothing (0.00s)
+=== CONT  TestPacketUpCloseDeliversTheBufferedTail
+--- PASS: TestPacketUpDataWriteStopsWhenTheDataLedgerIsFull (0.26s)
+--- PASS: TestPacketUpCloseDeliversTheBufferedTail (0.00s)
+=== CONT  TestStreamDialSlotReleasedOnceOnRaiseFailure
+--- PASS: TestStreamDialSlotReleasedOnceOnRaiseFailure (0.00s)
+=== CONT  TestUplinkNon200StopsTheStream
+=== CONT  TestPacketUpOpeningSurvivesAnAllocationSaturatedLedger
+--- PASS: TestPacketUpOpeningWaitsBoundedlyWhenAllAllocationIsFull (0.27s)
+=== CONT  TestUplinkTinyWritesArriveExactlyOnce
+--- PASS: TestPacketUpOpeningGetsItsArrayWhenTheDataLedgerIsFull (0.12s)
+=== CONT  TestPacketUpReplacementOverlapIsBounded
+--- PASS: TestUplinkTinyWritesArriveExactlyOnce (0.00s)
+--- PASS: TestUplinkNon200StopsTheStream (0.01s)
+=== CONT  TestPacketUpDoubleBudgetCloseReturnsEverything
+--- PASS: TestPacketUpReplacementOverlapIsBounded (0.03s)
+=== CONT  TestPacketUpCancelAfterReturnKeepsConnAlive
+=== CONT  TestStreamUpDialFailsOnUploadBadStatus/404
+--- PASS: TestPacketUpOversizedWriteIsBounded (0.11s)
+=== CONT  TestStreamUpDialFailsOnUploadBadStatus/500
+=== CONT  TestStreamUpDialFailsOnUploadBadStatus/413
+=== CONT  TestStreamUpDialFailsOnUploadBadStatus/400
+=== CONT  TestUplinkPostFailureSurfacesAndStopsAtTheFailure/refusal_after_the_next_write
+--- PASS: TestStreamUpDialFailsOnUploadBadStatus (0.01s)
+    --- PASS: TestStreamUpDialFailsOnUploadBadStatus/404 (0.00s)
+    --- PASS: TestStreamUpDialFailsOnUploadBadStatus/500 (0.00s)
+    --- PASS: TestStreamUpDialFailsOnUploadBadStatus/413 (0.00s)
+    --- PASS: TestStreamUpDialFailsOnUploadBadStatus/400 (0.00s)
+=== CONT  TestUplinkPostFailureSurfacesAndStopsAtTheFailure/immediate_refusal
+--- PASS: TestPacketUpCancelAfterReturnKeepsConnAlive (0.01s)
+--- PASS: TestPacketUpOpeningSurvivesAnAllocationSaturatedLedger (0.05s)
+--- PASS: TestPacketUpSharedBudgetConservesChargesUnderConcurrency (0.32s)
+--- PASS: TestPacketUpBulkWaitersHoldNoArray (0.14s)
+--- PASS: TestPacketUpGrantRollsBackWhenTheArrayCannotBeReserved (0.10s)
+--- PASS: TestUplinkPostFailureSurfacesAndStopsAtTheFailure (0.00s)
+    --- PASS: TestUplinkPostFailureSurfacesAndStopsAtTheFailure/immediate_refusal (0.00s)
+    --- PASS: TestUplinkPostFailureSurfacesAndStopsAtTheFailure/refusal_after_the_next_write (0.06s)
+--- PASS: TestPacketUpHandshakeIsNotThrottled (0.32s)
+--- PASS: TestPacketUpQueueAppliesBackpressure (0.20s)
+--- PASS: TestStreamOneConnSurvivesDialContextExpiry (0.50s)
+--- PASS: TestPacketUpPostsSurviveDialContextExpiry (0.50s)
+--- PASS: TestUplinkFirstWriteAfterIdleIsPostedPromptly (0.75s)
+--- PASS: TestUploadBudgetKeepsTwoBoxesIsolated (3.01s)
+--- PASS: TestPacketUpSharedBudgetReturnsAChargeThatOutlivesClose (3.01s)
+--- PASS: TestPacketUpAllocationLedgerOutlivesClose (3.01s)
+--- PASS: TestPacketUpSharedBudgetSettlesAPartialWriteOnClose (3.01s)
+--- PASS: TestPacketUpDoubleBudgetCloseReturnsEverything (3.00s)
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	21.956s

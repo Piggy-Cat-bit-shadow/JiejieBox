@@ -12,10 +12,10 @@
 
 | sing-tun UDP NAT 观测 | **FIXED**：`UDPNat.Stats()`：entries / max / sessionsCreated / queuedBytes / caps / drops |
 | sing-tun TCP Dispatcher 观测 | **FIXED**：`TCPDispatcherStats()`：accepted / active handler 调用；四个 dispatch 点统一走 `goDispatch` |
-| 每条逻辑流消耗 | **MEASURED（host Go runtime）**：每条 UDP 流 ≈ 3.2–3.7 KiB HeapAlloc（**已包含** 1.2 KiB 首包）+ 约 6.4–7.5 KiB goroutine 栈（run 间有 GC/栈增长波动）；结构成本 heap−queued ≈ 2.0–2.5 KiB/flow。1000 流实测 heap 3.53 MiB + 栈 7.19 MiB ≈ **10.7 MiB**（不是首版写的 7 MiB） |
-| 是否做 TUN→Route 逻辑流准入 | **DECISION（本轮不做）**：修正前的 7 MiB 低估了栈；实测约 11 MiB/1000 流、9.4–11.0 KiB/flow 已越过 8 KiB/flow 触发线，因此该问题升级为**下一轮第一优先决策**；本轮施工边界仍排除长期入口架构 |
+| 每条逻辑流消耗 | **MEASURED（host Go runtime）**：每条 UDP 流 ≈ 3.2–3.7 KiB HeapAlloc（**已包含** 1.2 KiB 首包）+ 约 6.4–7.5 KiB goroutine 栈（run 间有 GC/栈增长波动）；结构成本 heap−queued ≈ 2.0–2.5 KiB/flow。1000 流实测 heap 3.53 MiB + 栈 7.19 MiB ≈ **10.72 MiB**（不是首版写的 7 MiB） |
+| 是否做 TUN→Route 逻辑流准入 | **DECISION（本轮不做）**：修正前的 7 MiB 低估了栈；实测约 10.72 MiB/1000 流、9.4–11.0 KiB/flow 已越过 8 KiB/flow 触发线，因此该问题升级为**下一轮第一优先决策**；本轮施工边界仍排除长期入口架构 |
 | XMUX 物理连接 | **PARTIAL**：`xmuxPoolStats` 统计的是 **Pool Entry（transport wrapper）**，不是物理 socket；已统计 Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released；**Creating 不是可持久状态**；本轮不新增预算 |
-| HTTP/2 请求体 | **OPEN**：现有请求体由 `net/http` 客户端拥有并在 RoundTrip 结束时关闭；没有复现泄漏，不做无证据修改 |
+| HTTP/2 请求体 | **PARTIAL**：先写测试发现 `readCloser.Close` 是 no-op，已委托 `io.Closer` 并加 3 条测试；H2 取消/RST 端到端 `NOT_RUN` |
 | 其它 Owner 报告 | NAT/Dispatcher/XMUX 有；AnyTLS Session、QUIC 物理连接/流、Mieru Underlay、MASQUE Tunnel、PacketFlow、Native Engine 见 §5 |
 | Critical + Network Change 组合测试 | **NOT_RUN**（计划见 §6；原因：需要可控的网络切换与压力注入，超出本轮可安全验证范围） |
 | 两个已知小缺口 | 上一轮已修复（H3 本地拒绝不污染故障状态、DNS Lookup 走 gate），本轮复核测试仍在 |
@@ -98,20 +98,20 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 
 `go test . -run 'TestUDPNatFlowCostAtScale' -v`（`raw/scale_cost.txt`，branch tip `ab63d63`）：
 
-| 流数 | BURST heap / objects / stack | STABLE（GC 后）heap / stack | 集中释放后（3×GC）entries / queued / goroutines / heap / objects / StackInuse |
+| 流数 | BURST HeapAlloc / HeapObjects / StackInuse | STABLE（GC 后）HeapAlloc / StackInuse | 集中释放后（3×GC）entries / queued / goroutines / HeapAlloc / HeapObjects / StackInuse |
 |---|---|---|---|
-| 2000 | 10.10 MB / 26688 / 16.68 MB | 8.80 MB / 16.68 MB | 0 / 0 / 2（baseline 3）/ 1.40 MB / 3889 / 5.70 MB |
-| 4096 | 18.54 MB / 51525 / 36.14 MB | 17.80 MB / 36.14 MB | 0 / 0 / 2（baseline 3）/ 2.56 MB / 6812 / 9.44 MB |
+| 2000 | 9.63 MiB / 26688 / 15.91 MiB | 8.39 MiB / 15.91 MiB | 0 / 0 / 2（baseline 3）/ 1.33 MiB / 3889 / 5.44 MiB |
+| 4096 | 17.68 MiB / 51525 / 34.47 MiB | 16.97 MiB / 34.47 MiB | 0 / 0 / 2（baseline 3）/ 2.44 MiB / 6812 / 9.00 MiB |
 
 解读：
 
-- 2000/4096 规模下每流 ≈ **12.7–13.2 KiB**（heap ≈4.4 KiB + 栈 ≈8.3–8.8 KiB）；比 1000 流的 ~10.7 KiB 高，原因是 goroutine 栈在高并发下增长到 8 KiB 档位，而不是线性泄漏。
-- 4096 流时 host Go 侧 ≈ **54 MB**（heap 17.8 + stack 36.1），已超过 50 MiB 观测预算；这仍然**不是** iOS `phys_footprint`，但说明"逻辑流规模"本身在该数量级已不可忽略。
+- 2000/4096 规模下每流 ≈ **12.44–13.04 KiB**（heap ≈4.3–4.4 KiB + 栈 ≈8.1–8.8 KiB；按 burst/stable 实测字节换算）；比 1000 流的 ~10.7 KiB 高，原因是 goroutine 栈在高并发下增长到 8 KiB 档位，而不是线性泄漏。
+- 4096 流时 host Go 侧 ≈ **52.1 MiB**（burst；stable 51.4 MiB = heap 16.97 + stack 34.47 MiB），已超过 50 MiB 观测预算；这仍然**不是** iOS `phys_footprint`，但说明"逻辑流规模"本身在该数量级已不可忽略。
 - 集中释放后：NAT entries、queued bytes、dispatcher goroutine 全部回到 baseline；live objects 从 50k 降到 ~6k；`HeapReleased` 显示页归还。**一次 GC 后 HeapAlloc 仍高是 runtime 缓存/未归还页，不是对象泄漏**；三次 GC 后回落，测试按这个口径记录。
 - 没有发现跨 Generation 或释放后残留的 NAT entry / queued buffer。
 ## 2. 入口准入决策：本轮不做，但触发线已被越过
 
-**修正后的证据**：1000 流 ≈10.7 MiB；**2000/4096 流 ≈25.5/54 MB**（host Go），4096 流已超过 50 MiB 预算，per-flow ≈12.7–13.2 KiB，**早已越过 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
+**修正后的证据**：1000 流 ≈10.7 MiB；**2000/4096 流 ≈24.3/51.4 MiB（stable）**（host Go），4096 流已超过 50 MiB 预算，per-flow ≈12.44–13.04 KiB，**早已越过 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
 
 **决策**：本轮仍不在 TUN→Route 增加逻辑流 gate，但理由变为"边界与验证条件"而不是"证据不足"：
 
@@ -190,11 +190,11 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 
 ## 8. 验证
 
-- sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试 + 1 个 2000/4096 规模测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`、`raw/scale_cost.txt`）。
+- sing-tun 定向测试：3 个流成本测试 + 2 个 Go Stack 首包快照测试 + 1 个 2000/4096 规模测试全部 PASS（`raw/flow_cost.txt`、`raw/go_snapshot.txt`、`raw/scale_cost.txt`）。\n- `-race` 原始输出：Go Stack snapshot `raw/go_snapshot_race.txt`（全量 verbose）；XHTTP 全包 `raw/xhttp_race.txt`（986 行，`ok ... 21.956s`）。报告里的 PASS 均可在这些日志中复核。
 - sing-tun 全包：**BLOCKED_BY_ENVIRONMENT**——Windows 上 `stack_go_integration_test.go` 的 raw socket/TUN 用例 `Access is denied`（需要管理员/Npcap），不是代码失败；原始输出在 `raw/full_package_env.txt`，未记为 PASS。
 - 主仓：pin 到 `v0.9.7-0.20261114050708-938b89dcb159`；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` exit 0。
 - 本轮无 CI 触发（路径过滤不含 `go.mod`/docs；最近代码 CI 仍是 `43555135120` @ `324a3b011`，success）。
-- 未运行：iOS 真机、Apple 构建、XMUX 预算、HTTP/2 body 实验、组合测试——全部明确 `NOT_RUN`/`UNAVAILABLE`，没有用 host 数据替代。
+- 未运行：iOS 真机、Apple 构建、XMUX 预算、H2 端到端 body 实验、组合测试——全部明确 `NOT_RUN`/`UNAVAILABLE`，没有用 host 数据替代。
 
 ## 9. ExchangeAsync 的补充说明（非重写）
 
@@ -203,5 +203,5 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 ## 10. 交付边界
 
 - 改了什么：sing-tun 两个只读观测 API + 四个 dispatch 点计数 + 三个测量测试 + 主仓 pin + 本文档。
-- 没改什么：没有 TUN→Route gate、没有 XMUX 预算、没有改 Mieru/HTTP2/XHTTP/UI、没有 ResourceGuard/OOMKiller 重构。
+- 没改什么：没有 TUN→Route gate、没有 XMUX 预算、没有改 Mieru、没有改 HTTP/2 协议或 XHTTP 结构（只修了请求体包装的 Close 委托）、没有 UI、没有 ResourceGuard/OOMKiller 重构。
 - 三个预算层的下一层入口：本层证据已足以说明"逻辑流 ≠ 物理连接"，下一轮若做准入，应在此观测之上，而不是再造一套全局连接数。

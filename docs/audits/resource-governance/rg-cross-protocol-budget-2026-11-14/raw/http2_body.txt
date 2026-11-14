@@ -1,0 +1,8 @@
+﻿=== RUN   TestRequestBodyWrapperClosesTheUnderlyingBody
+--- PASS: TestRequestBodyWrapperClosesTheUnderlyingBody (0.00s)
+=== RUN   TestClosingTheRequestBodyUnblocksTheUploadPipe
+--- PASS: TestClosingTheRequestBodyUnblocksTheUploadPipe (0.00s)
+=== RUN   TestRequestBodyWrapperAcceptsANonClosableBody
+--- PASS: TestRequestBodyWrapperAcceptsANonClosableBody (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	0.100s
