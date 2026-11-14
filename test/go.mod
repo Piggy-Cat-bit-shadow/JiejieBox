@@ -157,7 +157,7 @@ require (
 	github.com/sagernet/gliderssh v0.3.4-0.20261023092853-e0cad6d28647 // indirect
 	github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1 // indirect
 	github.com/sagernet/netlink v0.0.0-20260814022025-64455d367bbf // indirect
-	github.com/sagernet/nftables v0.3.0-mod.4 // indirect
+	github.com/sagernet/nftables v0.3.0-mod.4.0.20261114074246-0b310c3e010b // indirect
 	github.com/sagernet/sing-cloudflared v0.1.4-0.20261108120326-83391fb7b139 // indirect
 	github.com/sagernet/sing-mux v0.3.10-0.20261110064256-375087483ea2 // indirect
 	github.com/sagernet/sing-openconnect v0.1.1-0.20261110063215-cd35f41e8f69 // indirect
@@ -245,19 +245,19 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // changed only the root, so as it stood the root built d092c64 while this module still pinned
 // 6937951ec9b6 - the same root-vs-nested drift, and check-go-module-integrity.sh would have failed
 // it. The require line still names the same base (9ffa5391a2ad) because the pin's base did not move.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114075304-53aeb6bfa60b
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8
 
 // Same fork revision as the root module, for the same reason as every other pin here: a nested
 // module does not inherit the root's replaces, so a test binary built from this module would
 // otherwise exercise a different QUIC stack than the one that ships. The revision adds
 // InitialPacketSizeCeiling, the hard packet-size ceiling applied after the ChromeParrot override.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261114142722-a99a3c489772
 
 // sing-quic carries that ceiling through qtls.QUICOptions. This module does not import it today,
 // so the replace is here to keep the two modules pinned to the same revision: the guard in
 // scripts/ci/check-go-module-integrity.sh fails when a fork the root builds drifts here, which is
 // how the test module was once found resolving a different sing-tun than the product ships.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261112101651-c1b074f1f868
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc
 
 // The cronet-go pin is a tree of modules, not one: see the root module for why every path the
 // repository publishes is pinned. A nested module does not inherit the root's replaces.
@@ -325,7 +325,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 
 replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80
 
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114161408-c308e20419f5
 
 replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe
 

@@ -42,7 +42,7 @@ require (
 	github.com/sagernet/gliderssh v0.3.4-0.20261023092853-e0cad6d28647
 	github.com/sagernet/gomobile v0.1.12
 	github.com/sagernet/netlink v0.0.0-20260814022025-64455d367bbf
-	github.com/sagernet/nftables v0.3.0-mod.4
+	github.com/sagernet/nftables v0.3.0-mod.4.0.20261114074246-0b310c3e010b
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.13
 	github.com/sagernet/sing v0.9.7-0.20261110095940-27b73774b240
 	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
@@ -308,7 +308,12 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // projects (connect-ip-go, jiejie-masque-unified). The two lines have different module paths
 // and a second, incompatible owned-DATAGRAM API; they must not be merged. The release line is
 // the only one that can satisfy this `github.com/sagernet/quic-go` require.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261110231807-158445cdda77
+//
+// The 2026-11-14 pin (a99a3c4) adds the exported SetDesiredBufferSizes(syscall.RawConn) that
+// sing-quic calls for a socket hidden behind an obfuscation wrapper. It checks SO_TYPE first, so
+// the TCP socket under a UDP-over-TCP detour is never sized as a datagram socket, and it keeps
+// the library's SO_RCVBUFFORCE/SO_SNDBUFFORCE fallback instead of a hardcoded size.
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261114142722-a99a3c489772
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
 // owned-DATAGRAM send path for Hysteria2 and TUIC.
@@ -317,13 +322,26 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // hopping receive loop) plus the three packet-ceiling/owned-datagram commits that sing-box
 // already pinned. The default branch also resolves quic-go to the fork release line, so it
 // builds and tests on its own; sing-box keeps its own replace, which wins for this build.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261112101651-c1b074f1f868
+//
+// The 2026-11-14 pin (08c6abd) sizes the socket at the entry points that hand a conn to quic-go
+// (withSyscallConn, CreatePacketTransport, ListenWithOptions, ListenEarlyWithOptions) through
+// that helper, which covers the obfuscated hysteria/hysteria2 clients and the realm punch conn;
+// the per-hop calls of the port-hopping conn stay because a HopConn exposes no Upstream().
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
 // onto, so once the loop exited the stack kept rewriting connections onto a dead port, the OS
 // answered RST, and all new TCP failed until the tunnel was rebuilt while UDP/QUIC kept working.
 // Upstream dev still returns bare on that error (checked 2026-10-08), so the fix is carried here.
+//
+// Current pin (2026-11-14): dev @ 59d246f. It carries the auto-redirect fusion - mark ownership
+// through a masked nftables compare/store and the nfqueue verdict, the Android POSTROUTING
+// connmark, the nftables capability probe with a bounded iptables fallback, strict route skipping
+// the disabled family instead of rejecting it, the pre-4.10 uid-range check, the aborted-flow
+// expiry and the nftables flush retry - described in docs/audits/upstream-smart-integration-
+// 20261114.md. The branch narrative below records the earlier fix/listenconfig-ipv6-only-selfheal
+// pin; those fixes are part of dev now and the narrative is kept as history.
 //
 // Fork: github.com/Piggy-Cat-bit-shadow/sing-tun (a fork of SagerNet/sing-tun)
 //   base:   9ffa5391a2adc292182ffbeac089e795b1a3190d  (= the version this replaces, i.e. the
@@ -370,9 +388,13 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // was verified. v0.8.0-awg.3/.4 also carry device.NewPeerConfig.PresharedKey and
 // device.Peer.SetPresharedKey, which the pinned sagernet/tailscale wgengine/wgcfg requires; without
 // them the Android/Mobile libbox build does not compile.
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261111081811-7ece3d66d79d
+//
+// The 2026-11-14 pin (957715c) adds upstream's double-response guard in ConsumeMessageResponse and
+// the IPv6 payload-length widening in the receive path, plus the virtio header clear in the GRO
+// table; the AWG classification, padding and rebind paths are untouched.
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114161408-c308e20419f5
 
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114075304-53aeb6bfa60b
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //

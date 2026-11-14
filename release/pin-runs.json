@@ -16,7 +16,10 @@
     "  set. `Verify` is the build/vet/test gate, `Mobile contract verification` the Apple-tag and",
     "  libbox half, `Android Core ARM64` the cross-compile. A cancelled run is not listed: the",
     "  parent repository cancels superseded runs on the same ref, so a cancelled run is not",
-    "  evidence about the pins either way.",
+    "  evidence about the pins either way. A pull_request run is listed on the same terms: the",
+    "  gate re-reads the lock at every recorded commit, so a recorded run is evidence of the pin",
+    "  projection it built, not of the ref it was triggered from. The 2026-11-14 integration",
+    "  window is recorded that way: its runs ran on the work branch whose lock is the one merged.",
     "child_runs: runs in a child repository that built that client at its pinned revision. Empty",
     "  today, and that is a MEASURED emptiness: on 2026-11-13 `gh run list -R <slug>",
     "  --commit <pin>` was run against all four client repositories and none has a run at the",
@@ -277,6 +280,42 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43090341603"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "linux-kernel-verify",
+      "run_id": 43610259083,
+      "head_sha": "99bdccbe4a0e511b7a66e16008e114750488b223",
+      "event": "pull_request",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43610259083"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 43610259097,
+      "head_sha": "99bdccbe4a0e511b7a66e16008e114750488b223",
+      "event": "pull_request",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43610259097"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "linux-kernel-verify",
+      "run_id": 43614907446,
+      "head_sha": "afaf778745cd9e96cb17946a7518c988c09e76b0",
+      "event": "pull_request",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43614907446"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 43614907448,
+      "head_sha": "afaf778745cd9e96cb17946a7518c988c09e76b0",
+      "event": "pull_request",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43614907448"
     }
   ],
   "child_runs": [],
@@ -293,31 +332,32 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
-      "tip": "53aeb6bfa60b",
-      "pin": "53aeb6bfa60b",
+      "tip": "24e6bfd21ba8993e3f29376128f8a4027ab641fd",
+      "pin": "24e6bfd21ba8",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-14",
-      "note": "Latest dev includes test-only linter corrections after ab63d63."
+      "observed_at": "2026-11-15",
+      "note": "dev carries the auto-redirect fusion (masked nftables mark ownership, the connmark POSTROUTING match on Android, the nftables capability probe with a bounded iptables fallback, strict route skipping the disabled family, the aborted-flow expiry) plus the review round: an aborted-flow regression test and a uid-range read-back that fails closed when it cannot verify. See docs/audits/upstream-smart-integration-20261114.md."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
-      "tip": "c1b074f1f86828fa968e1186ab522cc1c61aa527",
-      "pin": "c1b074f1f868",
+      "tip": "08c6abd9b3fc6b2429a06337b7b49b2190aed095",
+      "pin": "08c6abd9b3fc",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-13",
-      "note": "Q09's admission fix (c1b074f) is main's own tip, so the pin is identical rather than ahead; the dependencies.json note was corrected in the same window."
+      "observed_at": "2026-11-14",
+      "note": "main's tip sizes the socket at the four entry points that hand a conn to quic-go, through the quic-go helper that checks the datagram type first; the obfuscated hysteria/hysteria2 paths and the realm punch conn are covered, and the per-hop port-hopping calls stay."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/quic-go",
       "branch": "sagernet",
-      "tip": "158445cdda77c05e4430fe40721709bf7bc2ffe2",
-      "pin": "158445cdda77",
+      "tip": "a99a3c489772d58b6cdd82ea70c9e194c9046563",
+      "pin": "a99a3c489772",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-13"
+      "observed_at": "2026-11-14",
+      "note": "sagernet's tip exports SetDesiredBufferSizes(syscall.RawConn) for a socket hidden behind a conn wrapper; the datagram check keeps the TCP socket of a UDP-over-TCP detour out of it."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/utls",
@@ -331,11 +371,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/wireguard-go",
       "branch": "awg3-inject",
-      "tip": "7ece3d66d79dcea5bbf872ebe76b1c7863b69ea6",
-      "pin": "7ece3d66d79d",
+      "tip": "c308e20419f54aa0b24df9cbce5dd21ef74758b7",
+      "pin": "c308e20419f5",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-13"
+      "observed_at": "2026-11-15",
+      "note": "awg3-inject carries upstream's noise double-response guard, the IPv6 payload-length widening and the GRO virtio-header clear, plus the review round's targeted GRO test; the AWG classification, padding and rebind paths are untouched."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-anytls",
@@ -362,30 +403,30 @@
       "branch": "main",
       "tip": "4c96192d73f67c48a91cba3bce358a3c91692444",
       "pin": "362e63b14ce2",
-      "relation": "behind",
+      "relation": "ahead",
       "policy": "update",
-      "observed_at": "2026-11-13",
-      "note": "The root module pins the publish commit that carries the natives; `all` tracks the `go` branch tip 7ce9c49b, which is its own pin. The native platform modules stay controlled at 362e63b1 because their archives need a Chromium toolchain this repository does not have."
+      "observed_at": "2026-11-14",
+      "note": "The root module pins the publish commit that carries the natives, and that commit (main + build + generate) is a descendant of main's tip 4c96192d, which is why the freeze reports `ahead` rather than `behind`; `all` tracks the `go` branch tip 7ce9c49b, which is its own pin. The native platform modules stay controlled at 362e63b1 because their archives need a Chromium toolchain this repository does not have."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "749509f214d97f43cbc66f903fd17b0b50eb6399",
+      "tip": "ef372758435c4b14fb4836ed19e237c21beabf94",
       "pin": "749509f214d9",
-      "relation": "identical",
+      "relation": "behind",
       "policy": "update",
       "observed_at": "2026-11-14",
-      "note": "Three Swift initializer call sites fixed; iOS/macOS compiled in Apple client run 43584135709."
+      "note": "Apple main moved one commit after the pin; the client pair (Apple + Desktop) is still held at the previously verified pair, so the lag is recorded rather than lifted. Three Swift initializer call sites were fixed and ios/macOS compiled in Apple client run 43584135709 at this pin."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
       "branch": "main",
-      "tip": "ba5c6b161827a830cb7343850bf547156fbfdfee",
+      "tip": "9816e0068c82397e0ae48966cec982c0fd3dee18",
       "pin": "9816e0068c82",
-      "relation": "ahead",
+      "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-13",
-      "note": "The pin is window 03's integrated client branch for the same reason; the android branch fast-forwarded to it, so nothing else moved."
+      "observed_at": "2026-11-14",
+      "note": "main is at the pinned window-03 integration revision; nothing moved since the pin was taken."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
