@@ -36,7 +36,13 @@ import (
 
 var (
 	ConfigureHTTP3ListenerFunc func(ctx context.Context, logger logger.Logger, listener *listener.Listener, handler http.Handler, tlsConfig tls.ServerConfig, options option.NaiveInboundOptions) (io.Closer, error)
-	WrapError                  func(error) error
+	// HTTP3ListenerAvailable reports whether ConfigureHTTP3ListenerFunc is backed by a
+	// real HTTP/3 implementation. The function is non-nil in EVERY build: a build
+	// without QUIC installs a stub that returns C.ErrQUICNotIncluded, so its presence
+	// cannot answer "will this configuration actually run QUIC?". The real QUIC package
+	// sets this flag in its init; the stub leaves it false.
+	HTTP3ListenerAvailable bool
+	WrapError              func(error) error
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -98,6 +104,20 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	if len(options.Users) == 0 {
 		return nil, E.New("missing users")
+	}
+	// This is a configuration-shape warning, so it is emitted at CONSTRUCTION, where
+	// `sing-box check` can see it: check constructs inbounds and never starts them. The
+	// warning used to live in the HTTP/3 listener initialiser, which check never reaches,
+	// and it was logged at Info, which the production level of warn filters out. Between
+	// those two filters the line existed but no operator could read it.
+	//
+	// It is emitted only when this configuration will actually run QUIC: a TCP-only
+	// inbound never reads quic_congestion_control, and a build without QUIC support has
+	// no HTTP/3 listener to tune, so either case would be irrelevant noise.
+	if common.Contains(inbound.network, N.NetworkUDP) &&
+		HTTP3ListenerAvailable && options.QUICCongestionControl == "" {
+		logger.Warn("quic_congestion_control is unset; using CUBIC. ",
+			"CUBIC is loss-based: on a lossy link set \"bbr\" explicitly")
 	}
 	// The HTTP/2 resource fields are cast to fixed-width types when the server is
 	// built, so an out-of-range value must be rejected HERE rather than wrapped

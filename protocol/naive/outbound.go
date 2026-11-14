@@ -217,10 +217,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	if options.QUICCongestionControl == "" {
-		logger.Info("naive: quic_congestion_control is unset; using CUBIC. ",
-			"Set \"bbr\" explicitly on lossy paths")
-	} // InsecureConcurrencySingleEngine is passed through only when the operator asked
+	if shouldWarnUnsetCongestionControl(options.QUIC, options.QUICCongestionControl) {
+		// Only a QUIC client uses this choice. Without quic: true the engine speaks
+		// HTTP/2 and the field is never read, so warning there would be noise about a
+		// knob that does nothing. Warn, not Info: the production level is warn, and the
+		// warning is emitted at construction so `sing-box check` sees it as well.
+		logger.Warn("quic_congestion_control is unset; using CUBIC. ",
+			"CUBIC is loss-based: on a lossy link set \"bbr\" explicitly")
+	}
+	// InsecureConcurrencySingleEngine is passed through only when the operator asked
 	// for it. cronet-go ORs this with `runtime.GOOS == "ios"`, so leaving it false
 	// keeps the platform behaviour exactly as upstream: N engines on macOS, one
 	// engine on iOS. Setting it true is what makes the single-engine + isolation-key

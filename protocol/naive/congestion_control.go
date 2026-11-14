@@ -23,3 +23,14 @@ func ValidateCongestionControl(name string) error {
 		return E.New("unknown quic congestion control: ", name)
 	}
 }
+
+// shouldWarnUnsetCongestionControl reports whether an outbound must warn that an
+// unset quic_congestion_control selects the loss-based CUBIC.
+//
+// The transport is part of the condition. Without quic: true the outbound's engine
+// speaks HTTP/2, the field is never read, and a warning would describe a knob that
+// does nothing - noise on exactly the clients that keep their logs clean. The first
+// version of the warning omitted this check.
+func shouldWarnUnsetCongestionControl(quic bool, name string) bool {
+	return quic && name == ""
+}

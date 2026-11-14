@@ -174,6 +174,7 @@ func newNaiveCongestionControl(name string, timeFunc func() time.Time) (func(con
 }
 
 func init() {
+	naive.HTTP3ListenerAvailable = true
 	naive.ConfigureHTTP3ListenerFunc = func(ctx context.Context, logger logger.Logger, listener *listener.Listener, handler http.Handler, tlsConfig tls.ServerConfig, options option.NaiveInboundOptions) (io.Closer, error) {
 		err := qtls.ConfigureHTTP3(tlsConfig)
 		if err != nil {
@@ -208,14 +209,6 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		if options.QUICCongestionControl == "" {
-			// Say which sender an unset field selects. Relying on the library
-			// default made the effective algorithm depend on the dependency, and
-			// "why is throughput poor on a lossy link?" had no answer in the log.
-			logger.Info("naive inbound: quic_congestion_control is unset; using CUBIC. ",
-				"Set \"bbr\" explicitly on lossy paths")
-		}
-
 		quicListener, err := qtls.ListenEarly(udpConn, tlsConfig, nativeNaiveQUICConfig(options))
 		if err != nil {
 			udpConn.Close()
