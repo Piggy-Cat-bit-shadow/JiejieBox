@@ -13,7 +13,7 @@
 | sing-tun UDP NAT 观测 | **FIXED**：`UDPNat.Stats()`：entries / max / sessionsCreated / queuedBytes / caps / drops |
 | sing-tun TCP Dispatcher 观测 | **FIXED**：`TCPDispatcherStats()`：accepted / active handler 调用；四个 dispatch 点统一走 `goDispatch` |
 | 每条逻辑流消耗 | **MEASURED（host Go runtime）**：每条 UDP 流 ≈ 3.4–3.7 KiB HeapAlloc（**已包含** 1.2 KiB 首包）+ 约 7.1–8.0 KiB goroutine 栈；结构成本 heap−queued ≈ 2.2–2.5 KiB/flow。1000 流 ≈ 3.7 MiB heap + 7.1 MiB 栈 ≈ **11 MiB**（不是首版写的 7 MiB） |
-| 是否做 TUN→Route 逻辑流准入 | **DECISION（本轮不做）**：修正前的 7 MiB 低估了栈；实测 11.4 MiB/1000 流已越过 8 KiB/flow 触发线，因此该问题升级为**下一轮第一优先决策**；本轮施工边界仍排除长期入口架构 |
+| 是否做 TUN→Route 逻辑流准入 | **DECISION（本轮不做）**：修正前的 7 MiB 低估了栈；实测约 11 MiB/1000 流、10.8–11.4 KiB/flow 已越过 8 KiB/flow 触发线，因此该问题升级为**下一轮第一优先决策**；本轮施工边界仍排除长期入口架构 |
 | XMUX 物理连接 | **PARTIAL**：`xmuxPoolStats` 统计的是 **Pool Entry（transport wrapper）**，不是物理 socket；已统计 Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released；**Creating 不是可持久状态**；本轮不新增预算 |
 | HTTP/2 请求体 | **OPEN**：现有请求体由 `net/http` 客户端拥有并在 RoundTrip 结束时关闭；没有复现泄漏，不做无证据修改 |
 | 其它 Owner 报告 | NAT/Dispatcher/XMUX 有；AnyTLS Session、QUIC 物理连接/流、Mieru Underlay、MASQUE Tunnel、PacketFlow、Native Engine 见 §5 |
@@ -75,7 +75,7 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 - 全部是 **host Go runtime**；iOS `phys_footprint` 还含 PacketFlow、native、runtime 预留，未测。
 ## 2. 入口准入决策：本轮不做，但触发线已被越过
 
-**修正后的证据**：1000 条 UDP 逻辑流 ≈ **11 MiB** Go 侧（heap 3.7 + 栈 7.7），约为 50 MiB 观测预算的 23%；per-flow ≈ 11.4 KiB，**已经越过首版设定的 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
+**修正后的证据**：1000 条 UDP 逻辑流 ≈ **11 MiB** Go 侧（heap 3.7 + 栈 7.1），约为 50 MiB 观测预算的 23%；per-flow ≈ 10.8–11.4 KiB，**已经越过首版设定的 8 KiB/flow 触发线**。首版"约 7 MiB、未超阈值"的结论来自两个口径错误：把队列首包重复计入总量、把 goroutine 栈漏掉。
 
 **决策**：本轮仍不在 TUN→Route 增加逻辑流 gate，但理由变为"边界与验证条件"而不是"证据不足"：
 

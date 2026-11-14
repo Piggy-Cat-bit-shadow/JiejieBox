@@ -53,7 +53,7 @@
 
 ## 7. 文档统计修正（`FIXED`）
 
-- 闭环台账与报告的总数从 **"3 项 CLOSED_FIXED + 1 项 CLOSED_REJECT"** 改为 **"5 项 CLOSED_FIXED + 1 项 CLOSED_REJECT"**（原来漏计了上一轮追加的后台让路与队列高水位）；
+- 闭环台账与报告的总数从 3 项 FIXED + 1 项 DECISION 校正为 5 项 FIXED + 1 项 DECISION（原来漏计了上一轮追加的后台让路与队列高水位）；
 - 本文件补上本轮 7 项的准确状态；
 - 测试耗时以本轮实测为准（AnyTLS 7.1 s、DNS 8.6 s、httpclient with_quic 2.7 s），旧数字保留在对应轮次的原始日志里，不混用。
 
