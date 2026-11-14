@@ -4,6 +4,29 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.49](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.49) — 2026-11-14
+
+### 本次更新
+
+v0.1.49 是 Apple 客户端修复与发布整合版本，承接 v0.1.48 的跨层资源治理、AnyTLS 创建合并和 TUN 流观测能力，恢复采用修复并通过双平台编译的 Apple UI。
+
+### Apple 客户端
+
+- 修复远程配置更新失败时构造提示错误的 Swift 调用：为 `RemoteProfileUpdateAlertError` 补齐 `report:` 参数标签，覆盖首页配置卡片、配置选择面板和配置编辑页面三处入口。
+- Apple 源码推进到 `749509f214d97f43cbc66f903fd17b0b50eb6399`，将此前因编译阻断而保留在旧 pin 之外的客户端更新纳入发布。
+- 更新 ABI 已验证来源与依赖跟踪声明；iOS、macOS 使用相同固定 Apple 源码和同批 Libbox。
+
+### 依赖与发布整合
+
+- sing-tun 同步至 `53aeb6b`，包含流观测合并后的测试与 linter 修正；生产功能承接 v0.1.48。
+- 重新生成 source lock，更新实际运行所覆盖的 pin 集合及分支观察，核对根模块和嵌套测试模块的依赖一致性。
+- 保持发布版本文件的 LF 格式，确保 Windows 准备的版本号可被 Bash 冻结检查正确读取。
+
+### 验证与发布
+
+- Apple 客户端的 iOS、macOS 实际编译与打包通过，Swift ABI 调用探针无违规；验证运行：[43584135709](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43584135709)。
+- 最终候选 Verify（含 race checks）、Release contract 和 Maintenance ledger 通过；正式编排记录：[Kernel release](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43588752879)。
+
 ## [v0.1.48](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.48) — 2026-11-14
 
 ### 本次更新
