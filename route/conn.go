@@ -810,13 +810,32 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 			destinationAddress = connRemoteAddr
 		}
 	} else {
+		// The same three properties the connected arm above gets, on the arm that carries ORDINARY
+		// proxied UDP.
+		//
+		// The TUN's NAT connection names a peer, but it does not report IsUDPConnect, so a
+		// STUN/mDNS/QUIC burst - the traffic this fork's admission policy was built from - takes
+		// THIS branch, not the one above. Without the gate the setup of such a flow was uncancellable
+		// by a network transition and outlived the path it was dialled on; without the class the
+		// outbound's admission seam saw background work even when a person was waiting, so the
+		// interactive reserve was unreachable for UDP; without the dial gate the reconnect herd this
+		// manager smooths for streams and connected UDP was unsmoothed here.
+		//
+		// The class has to reach the admission seam inside the outbound, which only receives a
+		// context. See dial_setup.go: setup authority covers the listen and ends at establishment,
+		// and releaseDial is called with finishSetup for the same reason as on the stream path.
+		ctx = trafficclass.WithClass(ctx, metadata.TrafficClass)
+		releaseDial := m.enterDialGate(ctx, metadata.TrafficClass)
+		setupCtx, finishSetup := m.dialSetups.begin(ctx)
 		if len(metadata.DestinationAddresses) > 0 {
-			remotePacketConn, destinationAddress, err = dialer.ListenSerialNetworkPacket(ctx, this, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
+			remotePacketConn, destinationAddress, err = dialer.ListenSerialNetworkPacket(setupCtx, this, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
 		} else if packetDialer, withDestination := this.(dialer.PacketDialerWithDestination); withDestination {
-			remotePacketConn, destinationAddress, err = packetDialer.ListenPacketWithDestination(ctx, metadata.Destination)
+			remotePacketConn, destinationAddress, err = packetDialer.ListenPacketWithDestination(setupCtx, metadata.Destination)
 		} else {
-			remotePacketConn, err = this.ListenPacket(ctx, metadata.Destination)
+			remotePacketConn, err = this.ListenPacket(setupCtx, metadata.Destination)
 		}
+		finishSetup()
+		releaseDial()
 		if err != nil {
 			// The destination is part of this message, not decoration.
 			//
