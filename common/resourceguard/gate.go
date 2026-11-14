@@ -224,7 +224,7 @@ func (g *Gate) Acquire(ctx context.Context, class Class) (*Permit, error) {
 			g.maxInflight = g.inflight
 		}
 		g.access.Unlock()
-		return &Permit{gate: g, acquired: started}, nil
+		return &Permit{gate: g, acquired: started, granted: started}, nil
 	}
 	if g.pending >= g.plan.queue {
 		g.refused++
@@ -243,7 +243,7 @@ func (g *Gate) Acquire(ctx context.Context, class Class) (*Permit, error) {
 
 	select {
 	case <-created.channel:
-		return &Permit{gate: g, acquired: started}, nil
+		return &Permit{gate: g, acquired: started, granted: time.Now()}, nil
 	case <-ctx.Done():
 		return nil, g.withdraw(created, ctx.Err(), false)
 	case <-timer.C:
@@ -390,8 +390,13 @@ func (g *Gate) compactLocked() {
 // Permit is one admission slot. Release is idempotent and nil-safe, so a caller that holds a
 // nil permit (no guard configured) does not need a branch.
 type Permit struct {
-	gate     *Gate
+	gate *Gate
+	// acquired is when the caller STARTED asking; granted is when it owned the slot. The two are
+	// separate fields rather than one timestamp because Wait reports the interval between them: a
+	// permit that is used for real work must not report that work as queueing latency. An immediate
+	// admission has granted == acquired, which is a wait of zero.
 	acquired time.Time
+	granted  time.Time
 	once     sync.Once
 }
 
@@ -406,11 +411,15 @@ func (p *Permit) Release() {
 }
 
 // Wait returns how long the permit waited for admission, for callers that record latency.
+//
+// It is the interval from the start of Acquire to the moment the slot was granted - not
+// time.Since(acquired), which would include however long the caller has been holding the permit and
+// would report a handshake's duration as gate queueing.
 func (p *Permit) Wait() time.Duration {
 	if p == nil {
 		return 0
 	}
-	return time.Since(p.acquired)
+	return p.granted.Sub(p.acquired)
 }
 
 // Stats is a point-in-time view of one gate.
