@@ -62,3 +62,7 @@
 
 - 未改：Mieru、XHTTP 协议实现、UI、XMUX 默认值、sing-tun 依赖、NAT 首包账本。
 - 未新增：预算类型、gate 实例、状态机、配置项。新增的只有：一个拒绝分类判断、一个 `Lookup` 的 permit、以及若干测试与注释。
+
+## 8. CI
+
+本轮推送后 `iOS resource guard` 在 HEAD `324a3b011` 上运行：run `43555135120`，`conclusion: success`，`race and unit` 与 `burst matrix` 均 success。CI 覆盖了 `protocol/anytls/**` 的测试改动（路径过滤命中），JSON 在 `raw/targeted/ci_run.txt`。
