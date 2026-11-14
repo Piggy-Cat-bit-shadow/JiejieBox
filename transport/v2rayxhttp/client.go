@@ -24,6 +24,7 @@ package v2rayxhttp
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -645,7 +646,16 @@ type readCloser struct {
 }
 
 func (r readCloser) Read(p []byte) (int, error) { return r.r.Read(p) }
-func (r readCloser) Close() error               { return nil }
+
+// Close delegates to the body. net/http closes Request.Body when the request ends - including
+// cancellation, timeout and a peer reset - so a no-op here meant the upload pipe was only ever
+// closed by conn teardown, not by the request lifecycle that raised it.
+func (r readCloser) Close() error {
+	if closer, isCloser := r.r.(io.Closer); isCloser {
+		return closer.Close()
+	}
+	return nil
+}
 
 // drainAndClose fully discards then closes an HTTP response body.
 func drainAndClose(body interface {

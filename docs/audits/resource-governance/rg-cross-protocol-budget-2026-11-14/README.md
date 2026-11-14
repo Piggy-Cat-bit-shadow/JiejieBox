@@ -137,12 +137,21 @@ tcp dispatches=1000 active=1000 goroutines+1000 (dispatcher goroutines only; no 
 **关键发现**：`get()` 在 `m.access` 锁内调用 `newClientLocked()`，创建串行；不存在"Creating 但未发布"的可持久状态。因此 P1 要求把 Creating 计入预算，在 XMUX 里没有对应状态——除非重做创建模型，那属于被排除的全面预算重构。
 
 **本轮不做**：没有新增 XMUX 预算。现有 inventory 足以报告 entry 的 Active/Idle/Draining/跨代；物理 socket 需要 HTTP transport 层自己报告，当前 `NOT_RUN`。
-## 4. HTTP/2 请求体
+## 4. HTTP/2 请求体生命周期（先测试，发现一处真实缺陷）
 
-`newRequest` 把 body 包成 `readCloser` 并交给 `http.Request`；请求由标准 `http.Client`/RoundTripper 执行，按 net/http 契约在 RoundTrip 返回时关闭 `Request.Body`，取消/超时通过 request context 传播，远端关闭由 transport 结束响应体。仓库内没有发现"请求体在取消/超时后仍被持有"的直接证据，本轮**不修改**（无证据的改动会风险大于收益）。
+**先写的测试**（`request_body_lifecycle_test.go`）：
 
-**状态**：`NOT_REPRODUCED / OPEN`。若要闭环，最小实验是：本地 H2 服务端收到 headers 后不读 body 并 RST_STREAM，客户端取消，使用 finalizer/引用计数断言 body 的 `Close` 恰好一次；该实验未在本轮执行（`NOT_RUN`）。
+- `TestRequestBodyWrapperClosesTheUnderlyingBody`：统计 Close 次数的 body 包进 `readCloser`（`newRequest` 实际交给 net/http 的类型），断言 wrapper 的 Close 必须传到 body。
+- `TestClosingTheRequestBodyUnblocksTheUploadPipe`：Close 后向 `io.Pipe` 写入必须得到 `ErrClosedPipe`。
+- `TestRequestBodyWrapperAcceptsANonClosableBody`：非 Closer body 不 panic。
 
+**测试结果**：第一条断言 `closes=0` 失败——`readCloser.Close` 是 no-op，只 `return nil`，根本不调用底层 body。net/http 会在请求结束（成功、取消、超时、对端 RST）时关闭 `Request.Body`，因此这一层此前把"请求生命周期关闭"吞掉了；上传 pipe 只靠 conn teardown 关闭。
+
+**最小修复**：`readCloser.Close` 在 body 实现 `io.Closer` 时委托调用，否则保持 no-op。修复后三条测试 PASS，XHTTP 全包（`with_xhttp,with_quic`）`ok 20.4s`，`-race` 通过。
+
+**仍未验证（NOT_RUN）**：真实 H2 服务端"收到 Headers 后不读 Body"、服务端主动 RST_STREAM、客户端超时/连接关闭三种场景下的端到端 body Close 次数与 goroutine/缓冲区回收。wrapper 层的委托已证明正确；端到端需要 H2 TLS loopback harness，本轮未执行。
+
+**状态**：`HTTP2_BODY = PARTIAL`（wrapper 缺陷已修复并有测试；端到端场景 `NOT_RUN`）。
 ## 5. Owner 报告矩阵
 
 | Owner | 资源 | 状态 |
