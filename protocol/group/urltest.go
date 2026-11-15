@@ -546,7 +546,7 @@ func (s *URLTest) currentGroup() *URLTestGroup {
 // not keep the object and dial it after an update. See adapter.OutboundGroup.Selected.
 func (s *URLTest) Selected(network string) adapter.Outbound {
 	current := s.currentGroup()
-	if current == nil {
+	if current == nil || current.isClosed() {
 		return nil
 	}
 	var outbound adapter.Outbound
@@ -682,6 +682,11 @@ func (s *URLTest) selectMemberForDial(ctx context.Context, network string) (*URL
 		current := s.currentGroup()
 		if current == nil {
 			return nil, nil, nil, nil, s.noGroupError()
+		}
+		if current.isClosed() {
+			// A group closed between currentGroup() and here is terminal; do not select its member
+			// or begin a dial on it.
+			return nil, nil, nil, nil, os.ErrClosed
 		}
 		revision := current.interruptGroup.Revision()
 		if testHookAfterRevisionSnapshot != nil {
@@ -1131,7 +1136,22 @@ func (g *URLTestGroup) Close() error {
 	return nil
 }
 
+func (g *URLTestGroup) isClosed() bool {
+	if g == nil {
+		return true
+	}
+	g.access.Lock()
+	defer g.access.Unlock()
+	return g.closed
+}
+
 func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+	// A closed group is terminal: it has no services, no background context and no authority to
+	// choose a member. Returning a selection here was the last way a retired group could be handed
+	// new traffic after Close.
+	if g.isClosed() {
+		return nil, false
+	}
 	var minDelay uint16
 	var minOutbound adapter.Outbound
 	switch network {
@@ -1621,7 +1641,7 @@ func (g *URLTestGroup) currentSelectedTag() string {
 // The probe's OBJECT identity is checked the same way: a same-tag replacement means the observation
 // describes an object the group no longer uses, so the commit is refused.
 func (g *URLTestGroup) commitFailoverSelection(tag string, evidence *roundEvidence) {
-	if tag == "" || g.outbound == nil {
+	if tag == "" || g.outbound == nil || g.isClosed() {
 		return
 	}
 	outbound, loaded := g.outbound.Outbound(tag)
@@ -2482,7 +2502,7 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 // path and remains true after a UDP failure. TCP and UDP selection read the same entry, so a UDP
 // failure must not move the TCP selection as a side effect.
 func (g *URLTestGroup) clearSelectionFor(network string, failed adapter.Outbound) {
-	if failed == nil {
+	if failed == nil || g.isClosed() {
 		return
 	}
 
@@ -2742,7 +2762,7 @@ func (g *URLTestGroup) runForcedRound() {
 // observed on its own. It exists because the two effects are separate concerns: which fields the
 // invalidation clears is a rule, and which node selection then settles on is a policy.
 func (g *URLTestGroup) clearSelected(network string, failed adapter.Outbound) {
-	if failed == nil {
+	if failed == nil || g.isClosed() {
 		return
 	}
 	g.updateAccess.Lock()
@@ -2773,6 +2793,12 @@ func (g *URLTestGroup) clearSelected(network string, failed adapter.Outbound) {
 }
 
 func (g *URLTestGroup) performUpdateCheck() {
+	// A closed group is terminal: its services are gone and a selection it publishes now would be
+	// for a group nobody can use. This also keeps a check that was already queued from writing a
+	// selection after Close.
+	if g.isClosed() {
+		return
+	}
 	// The same serialisation the failover commit takes: both paths decide a selection from evidence,
 	// and this one reads the evidence (which takes the history locks) while it builds the state.
 	g.selectionCommit.Lock()
