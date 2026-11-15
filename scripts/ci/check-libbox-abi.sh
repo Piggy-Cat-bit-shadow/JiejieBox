@@ -355,19 +355,17 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 # from this kernel tree, then compiled all three products from this exact source - iOS, macOS and the
 # unsigned self-sign IPA all succeeded. That run is the evidence for this pin; it is not a device or
 # TestFlight result.
-# Moved from 749509f2 to 09473938 for the 0.1.50 preparation. The range carries the two Apple fixes
-# merged after 749509f2 (screen-state unlock recovery, Debug diagnostics cost) and the client-side
-# repairs the same window added; it is Swift client code only and changes no Go surface in
-# experimental/libbox, so what had to be re-proved is the layer-4 caller sweep and the compile.
+# Moved from 09473938 to 2e5b71fa for the 0.1.51 preparation. v0.1.50's Apple build (run 43636617538)
+# resolved the branch tip 2e5b71fa, not the 09473938 gitlink the 0.1.50 lock recorded; the range
+# 09473938..2e5b71fa is one iOS layout fix (two Swift files, no Go surface in experimental/libbox).
 # Layer 4 was RUN against a clean checkout of this revision (no submodules), not inherited:
 #   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
-#     --lang swift --root <clone at 09473938>
+#     --lang swift --root <clone at 2e5b71fa>
 #   {"scanned": 483, "violations": [], "interface_methods": 3, "error": ""}
-# The compile half: Apple client run 43627843866 resolved explicit input 09473938 and built ONE
-# Libbox from kernel 61f61e17, then compiled all three products from this exact source - iOS, macOS
-# and the unsigned self-sign IPA all succeeded. That run is the evidence for this pin; it is not a
-# device or TestFlight result.
-VERIFIED_APPLE_SHA="09473938322bddfc6c30fc3886e747e808c3d526"
+# The compile half: Apple client run 43636617538 built ONE Libbox from kernel 934a290 and compiled
+# iOS and macOS from this exact source; the 0.1.51 candidate gets a fresh compile on the same SHA.
+# It is not a device or TestFlight result.
+VERIFIED_APPLE_SHA="2e5b71fa59809b17faff1e24ab2e56caee52612e"
 
 client_root=""
 skip_client=0
