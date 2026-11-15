@@ -12,6 +12,7 @@ package group
 
 import (
 	"context"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
@@ -64,6 +66,68 @@ func (o *blockingMember) dialError(ctx context.Context) error {
 	return context.Cause(ctx)
 }
 
+// echoMember is a HEALTHY member: it dials a real loopback TCP echo target, so the test can prove
+// that the connection established after the switch actually carries payload, not merely that a
+// dial function returned.
+type echoMember struct {
+	adapter.Outbound
+	tag    string
+	target string
+}
+
+func (o *echoMember) Type() string      { return "stub" }
+func (o *echoMember) Tag() string       { return o.tag }
+func (o *echoMember) Network() []string { return []string{N.NetworkTCP, N.NetworkUDP} }
+
+func (o *echoMember) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, N.NetworkTCP, o.target)
+}
+
+func (o *echoMember) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
+	return nil, E.New("packet is not used by this test")
+}
+
+func startEchoTarget(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen(N.NetworkTCP, "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buffer := make([]byte, 256)
+				for {
+					read, readErr := conn.Read(buffer)
+					if read > 0 {
+						_, _ = conn.Write(buffer[:read])
+					}
+					if readErr != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func echoThrough(t *testing.T, conn net.Conn, payload string) {
+	t.Helper()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err := conn.Write([]byte(payload))
+	require.NoError(t, err)
+	echo := make([]byte, len(payload))
+	_, err = io.ReadFull(conn, echo)
+	require.NoError(t, err)
+	require.Equal(t, payload, string(echo), "the connection established after the switch did not carry payload")
+}
+
 func newSelectorMembers(t *testing.T, interruptExternal bool, members map[string]adapter.Outbound, tags ...string) *Selector {
 	t.Helper()
 	manager := &taggedOutboundManager{byTag: members}
@@ -83,7 +147,7 @@ func newSelectorMembers(t *testing.T, interruptExternal bool, members map[string
 func TestSelectorSwitchCancelsThePendingDial(t *testing.T) {
 	t.Parallel()
 	blocking := newBlockingMember("node-a")
-	nodeB := &trackingOutbound{tag: "node-b"}
+	nodeB := &echoMember{tag: "node-b", target: startEchoTarget(t)}
 	selector := newSelectorMembers(t, false, map[string]adapter.Outbound{
 		"node-a": blocking,
 		"node-b": nodeB,
@@ -115,8 +179,8 @@ func TestSelectorSwitchCancelsThePendingDial(t *testing.T) {
 	// The new selection is used for the next conn, and it is not blocked by the cancelled dial.
 	conn, err := selector.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddr("93.184.216.34:443"))
 	require.NoError(t, err)
+	echoThrough(t, conn, "after-the-switch")
 	require.NoError(t, conn.Close())
-	require.NotNil(t, nodeB.lastConn(), "the new dial did not go to the selected member")
 	require.EqualValues(t, 1, blocking.dials.Load(), "the old member was dialed more than once")
 }
 
@@ -144,7 +208,7 @@ func TestSelectorSwitchKeepsEstablishedConnectionsWhileCancellingSetup(t *testin
 // path occupied.
 func TestURLTestSwitchCancelsThePendingDial(t *testing.T) {
 	blocking := newBlockingMember("node-a")
-	nodeB := &stubOutbound{tag: "node-b"}
+	nodeB := &echoMember{tag: "node-b", target: startEchoTarget(t)}
 	group, storage := newGroupFixture(t, "https://probe.example/generate_204", blocking, nodeB)
 	group.selected.Store(&selectedState{tcp: blocking, udp: blocking})
 	wrapper := newTestURLTestWrapper(group, log.NewNOPFactory().NewLogger("urltest"))
@@ -181,6 +245,6 @@ func TestURLTestSwitchCancelsThePendingDial(t *testing.T) {
 
 	conn, err := wrapper.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddr("93.184.216.34:443"))
 	require.NoError(t, err)
+	echoThrough(t, conn, "after-the-url-test-switch")
 	require.NoError(t, conn.Close())
-	require.EqualValues(t, 1, nodeB.dialCount())
 }
