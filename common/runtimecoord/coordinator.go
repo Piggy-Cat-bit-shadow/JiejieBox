@@ -546,6 +546,31 @@ func (r *Registration) Acknowledge() {
 	r.access.Unlock()
 }
 
+// AcknowledgeIfCurrent records the resource as current only if epoch is STILL the coordinator's
+// current generation, and reports whether it did.
+//
+// This is the acknowledgement a per-dial epoch token needs. Plain Acknowledge() reads the current
+// epoch at acknowledgement time, so a dial that began in the previous epoch can acknowledge a
+// generation it never observed. The check and the write are under the registration lock while the
+// coordinator lock is read, and Advance() publishes its new epoch under that same coordinator lock,
+// so no new epoch can slip between the comparison and the store.
+func (r *Registration) AcknowledgeIfCurrent(epoch uint64) bool {
+	if r == nil {
+		return false
+	}
+	r.access.Lock()
+	defer r.access.Unlock()
+	if r.closed || r.coordinator == nil {
+		return false
+	}
+	if r.coordinator.Epoch() != epoch {
+		return false
+	}
+	r.epoch = epoch
+	r.observed = true
+	return true
+}
+
 // WakeAllowsRebind reports whether a device-wake nudge may rebind this resource.
 //
 // The stale predicate belongs to the caller - a wake with a healthy session must cost nothing. The

@@ -383,12 +383,13 @@ func outboundTLSOptions(options option.Hysteria2OutboundOptions) (string, option
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	var gateEpoch uint64
 	if h.generation != nil {
-		h.generation.BeforeDial(ctx)
+		gateEpoch = h.generation.BeforeDial(ctx)
 	}
 	conn, err := h.dialContext(ctx, network, destination)
 	if h.generation != nil {
-		h.generation.AfterDial(err)
+		h.generation.AfterDial(gateEpoch, err)
 	}
 	return conn, err
 }
@@ -410,12 +411,13 @@ func (h *Outbound) dialContext(ctx context.Context, network string, destination 
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	var gateEpoch uint64
 	if h.generation != nil {
-		h.generation.BeforeDial(ctx)
+		gateEpoch = h.generation.BeforeDial(ctx)
 	}
 	conn, err := h.listenPacket(ctx, destination)
 	if h.generation != nil {
-		h.generation.AfterDial(err)
+		h.generation.AfterDial(gateEpoch, err)
 	}
 	return conn, err
 }

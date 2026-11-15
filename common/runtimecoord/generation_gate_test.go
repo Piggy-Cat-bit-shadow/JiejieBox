@@ -12,9 +12,9 @@ import (
 
 // TestGenerationGateAppliesResetOncePerGeneration is the Q12 contract at the mechanism level: a
 // published generation makes the gate run the owner's network-change action BEFORE the first
-// hand-out, and a successful creation is the only thing that acknowledges the new generation. The
-// action itself runs ONCE for that generation: a failed creation keeps the gate stale (so the next
-// attempt retries), but retrying must not destroy the replacement a concurrent attempt just built.
+// hand-out, and a successful creation from that generation is the only thing that acknowledges it.
+// The action itself runs ONCE for that generation: a failed creation keeps the gate stale (so the
+// next attempt retries), but retrying must not destroy the replacement a concurrent attempt built.
 func TestGenerationGateAppliesResetOncePerGeneration(t *testing.T) {
 	coordinator := New()
 	defer coordinator.Close()
@@ -26,17 +26,16 @@ func TestGenerationGateAppliesResetOncePerGeneration(t *testing.T) {
 	defer gate.Close()
 
 	ctx := context.Background()
-	gate.BeforeDial(ctx)
+	epoch := gate.BeforeDial(ctx)
 	require.Zero(t, resets.Load(), "a current generation must not run the reset action")
-
-	gate.AfterDial(nil)
+	gate.AfterDial(epoch, nil)
 	require.False(t, gate.Stale())
 
 	// The network manager publishes the new generation; the listener phase has NOT run yet.
 	coordinator.Advance(1)
 	require.True(t, gate.Stale())
 
-	gate.BeforeDial(ctx)
+	epoch = gate.BeforeDial(ctx)
 	require.EqualValues(t, 1, resets.Load(), "the first hand-out in the window must run the owner's action")
 	require.True(t, gate.Stale(), "running the action is not proof that a new session exists")
 
@@ -45,13 +44,13 @@ func TestGenerationGateAppliesResetOncePerGeneration(t *testing.T) {
 		"a second hand-out for the SAME generation must not destroy what the first attempt is building")
 
 	// A failed creation must not acknowledge: the generation has produced no usable connection.
-	gate.AfterDial(errors.New("creation failed"))
+	gate.AfterDial(epoch, errors.New("creation failed"))
 	require.True(t, gate.Stale())
 	gate.BeforeDial(ctx)
 	require.EqualValues(t, 1, resets.Load(),
 		"a failed attempt may retry the creation, but not re-run the generation's destructive action")
 
-	gate.AfterDial(nil)
+	gate.AfterDial(epoch, nil)
 	require.False(t, gate.Stale(), "a successful creation acknowledges the generation")
 	gate.BeforeDial(ctx)
 	require.EqualValues(t, 1, resets.Load(), "no further reset once the generation is current")
@@ -60,6 +59,46 @@ func TestGenerationGateAppliesResetOncePerGeneration(t *testing.T) {
 	coordinator.Advance(2)
 	gate.BeforeDial(ctx)
 	require.EqualValues(t, 2, resets.Load())
+}
+
+// TestInFlightOldGenerationDialCannotAcknowledgeNewGeneration is P1-1: a dial that started in
+// generation N and succeeded after generation N+1 was published must not mark N+1 as current. The
+// listener then has to run the transition for N+1 instead of being skipped by Stale().
+func TestInFlightOldGenerationDialCannotAcknowledgeNewGeneration(t *testing.T) {
+	coordinator := New()
+	defer coordinator.Close()
+	var resets atomic.Int32
+	gate := NewGenerationGate(coordinator, "test/resource", func(context.Context) {
+		resets.Add(1)
+	})
+	require.NotNil(t, gate)
+	defer gate.Close()
+
+	// The dial starts on the current network and is in flight.
+	oldEpoch := gate.BeforeDial(context.Background())
+	require.Zero(t, resets.Load())
+
+	// The network changes while the dial is still in flight.
+	coordinator.Advance(1)
+
+	// The old dial happens to succeed after the change. It must not acknowledge the new epoch.
+	gate.AfterDial(oldEpoch, nil)
+	require.True(t, gate.Stale(), "an old-generation dial acknowledged the new generation")
+	require.Zero(t, resets.Load(), "acknowledging is not the transition")
+
+	// The listener for epoch 1 must still reset, even though the gate was touched by the old dial.
+	gate.NetworkChanged(context.Background())
+	require.EqualValues(t, 1, resets.Load(), "the listener skipped the new generation")
+
+	// A dial that starts AFTER the transition can acknowledge epoch 1.
+	newEpoch := gate.BeforeDial(context.Background())
+	require.EqualValues(t, 1, resets.Load(), "the post-transition dial did not need another reset")
+	gate.AfterDial(newEpoch, nil)
+	require.False(t, gate.Stale())
+
+	// A duplicate listener for an already-applied generation stays a no-op.
+	gate.NetworkChanged(context.Background())
+	require.EqualValues(t, 1, resets.Load())
 }
 
 // TestGenerationGateConcurrentHandOutsRunOneReset is the incident's burst: after one published
@@ -74,7 +113,7 @@ func TestGenerationGateConcurrentHandOutsRunOneReset(t *testing.T) {
 		resets.Add(1)
 	})
 	defer gate.Close()
-	gate.AfterDial(nil)
+	gate.AfterDial(gate.BeforeDial(context.Background()), nil)
 	coordinator.Advance(1)
 
 	const callers = 64
@@ -102,15 +141,15 @@ func TestGenerationGateListenerAndDemandShareOneTransition(t *testing.T) {
 		resets.Add(1)
 	})
 	defer gate.Close()
-	gate.AfterDial(nil)
+	gate.AfterDial(gate.BeforeDial(context.Background()), nil)
 
 	coordinator.Advance(1)
 	gate.NetworkChanged(context.Background())
 	require.EqualValues(t, 1, resets.Load(), "the listener must run the transition")
-	gate.BeforeDial(context.Background())
+	epoch := gate.BeforeDial(context.Background())
 	require.EqualValues(t, 1, resets.Load(), "the demand in the same transition must not repeat it")
 
-	gate.AfterDial(nil)
+	gate.AfterDial(epoch, nil)
 	gate.NetworkChanged(context.Background())
 	require.EqualValues(t, 1, resets.Load(), "a duplicate notification on a current generation is a no-op")
 }
@@ -121,9 +160,9 @@ func TestGenerationGateWithoutACoordinatorIsANoOp(t *testing.T) {
 	require.Nil(t, NewGenerationGate(nil, "test/resource", func(context.Context) {}))
 	require.NotPanics(t, func() {
 		var gate *GenerationGate
-		gate.BeforeDial(context.Background())
+		epoch := gate.BeforeDial(context.Background())
 		gate.NetworkChanged(context.Background())
-		gate.AfterDial(nil)
+		gate.AfterDial(epoch, nil)
 		require.False(t, gate.Stale())
 		gate.Close()
 	})
@@ -162,4 +201,18 @@ func TestGenerationGateCloseIsConcurrentSafe(t *testing.T) {
 	}
 	waitGroup.Wait()
 	require.EqualValues(t, 1, removed.Load(), "the unregister must run exactly once")
+}
+
+// TestAcknowledgeIfCurrentRejectsAnOldEpoch pins the coordinator primitive the gate relies on.
+func TestAcknowledgeIfCurrentRejectsAnOldEpoch(t *testing.T) {
+	coordinator := New()
+	defer coordinator.Close()
+	registration, remove := coordinator.Register("test/resource")
+	defer remove()
+	oldEpoch := coordinator.Epoch()
+	coordinator.Advance(oldEpoch + 1)
+	require.False(t, registration.AcknowledgeIfCurrent(oldEpoch))
+	require.True(t, registration.Stale())
+	require.True(t, registration.AcknowledgeIfCurrent(coordinator.Epoch()))
+	require.False(t, registration.Stale())
 }

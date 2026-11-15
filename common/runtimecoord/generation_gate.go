@@ -80,58 +80,81 @@ func NewGenerationGate(coordinator *Coordinator, label string, reset func(contex
 		registration: registration,
 		remove:       remove,
 		reset:        reset,
+		// A registration is born current: the resource it describes has not been built against an
+		// older generation, so a listener notification for this same epoch must not reset it. This
+		// initial value is what lets NetworkChanged trust the reset ledger instead of the mutable
+		// Stale() bit.
+		resetEpoch: registration.currentEpoch(),
+		resetDone:  true,
 	}
 }
 
 // BeforeDial runs the owner's network-change action if the current generation has moved past the
-// one this resource was built against. The action runs at most once per generation: a failed
-// creation does not acknowledge the generation, but it must not cause the next attempt to destroy
-// whatever a concurrent attempt has built. Repeated attempts are allowed; repeated destruction of
-// the same generation's new resources is not. It is safe on a nil gate.
-func (g *GenerationGate) BeforeDial(ctx context.Context) {
+// one this resource was built against, and returns the epoch this dial belongs to.
+//
+// The returned value MUST be passed back to AfterDial for the same dial. It is the epoch the
+// transition was applied for (or the current epoch when no transition was needed), not "whatever
+// epoch is current when the dial happens to finish". A dial that starts in epoch N and succeeds in
+// epoch N+1 therefore cannot acknowledge N+1: its resource may still belong to N. This is the
+// in-flight old-generation acknowledgement race that let an old session impersonate a new one.
+//
+// The action runs at most once per generation: a failed creation does not acknowledge the
+// generation, but it must not cause the next attempt to destroy whatever a concurrent attempt has
+// built. Repeated attempts are allowed; repeated destruction of the same generation's new resources
+// is not. It is safe on a nil gate.
+func (g *GenerationGate) BeforeDial(ctx context.Context) uint64 {
 	if g == nil || g.registration == nil {
-		return
+		return 0
 	}
-	if !g.registration.Stale() {
-		return
+	if g.registration.Stale() {
+		return g.applyTransition(ctx)
 	}
-	g.applyTransition(ctx)
+	return g.registration.currentEpoch()
 }
 
 // NetworkChanged is the listener side of the same transition. Routing the owner's network-change
 // callback through the gate is what makes the push notification and a demand that arrives in the
 // publish-to-listener window the SAME action instead of two destructive passes.
+//
+// It deliberately does NOT gate on Stale(): Stale() answers "has this resource acknowledged the
+// generation", which a dial in flight from the previous epoch must not be able to set. The
+// transition ledger (resetEpoch) is the authority on whether this epoch's destructive action ran.
 func (g *GenerationGate) NetworkChanged(ctx context.Context) {
 	if g == nil || g.registration == nil {
-		return
-	}
-	if !g.registration.Stale() {
 		return
 	}
 	g.applyTransition(ctx)
 }
 
-// applyTransition runs the owner's action for the current coordinator epoch, at most once.
-func (g *GenerationGate) applyTransition(ctx context.Context) {
+// applyTransition runs the owner's action for the current coordinator epoch, at most once, and
+// returns the epoch the action belongs to. The return value is the acknowledgement token for a dial
+// that starts after this call: if a newer epoch is published while the action runs, the token stays
+// the OLDER epoch, so that dial still cannot acknowledge the newer one.
+func (g *GenerationGate) applyTransition(ctx context.Context) uint64 {
 	epoch := g.registration.currentEpoch()
 	g.resetAccess.Lock()
 	defer g.resetAccess.Unlock()
 	if g.resetDone && g.resetEpoch >= epoch {
-		return
+		return g.resetEpoch
 	}
 	g.resetEpoch = epoch
 	g.resetDone = true
 	g.reset(ctx)
+	return epoch
 }
 
-// AfterDial acknowledges a successful creation: the resource has proved it can produce a connection
-// on the current generation. A nil error is the only acknowledgement; a failure keeps the gate
-// stale so the next attempt retries the transition rather than trusting the old generation.
-func (g *GenerationGate) AfterDial(err error) {
+// AfterDial acknowledges a successful creation, but only for the epoch the dial started in and only
+// while that epoch is still current. A dial that began before a network change cannot acknowledge
+// the new generation, whether it reused an old session or created a resource the new network never
+// proved; the listener's transition remains armed for the new epoch.
+//
+// A nil error is the only acknowledgement; a failure keeps the gate stale so the next attempt
+// retries the transition rather than trusting the old generation.
+func (g *GenerationGate) AfterDial(epoch uint64, err error) {
 	if g == nil || g.registration == nil || err != nil {
 		return
 	}
-	g.registration.Acknowledge()
+	g.registration.AcknowledgeIfCurrent(epoch)
 }
 
 // Stale reports whether the resource still belongs to a previous generation. Diagnostics and tests.

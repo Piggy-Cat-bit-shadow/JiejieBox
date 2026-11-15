@@ -505,7 +505,7 @@ func (c *ClientEndpoint) Pref64Prefixes() []netip.Prefix {
 //
 // # The tunnel's transport, not the CONFIGURED version
 //
-// draft-06 §3.5 asks that DoH be coalesced over the same HTTPS connection as the tunnel. That
+// draft-06 鎼?.5 asks that DoH be coalesced over the same HTTPS connection as the tunnel. That
 // is only honest if the tunnel really is that connection, and the configured protocol version
 // is not the same fact: transport/http falls back from H3 to H2, so an endpoint configured for
 // version 3 can end up on an H2 tunnel while the H3 code path still exists.
@@ -526,7 +526,7 @@ func (c *ClientEndpoint) resolverCapability(routes []masque.AddressRange) resolv
 	// The first two are not sufficient and the session truth is not derivable from them: the
 	// tunnel path falls back, so a live HTTP/3 connection can coexist with a session running
 	// over HTTP/2. Sending a DNS query on that connection would put it on a connection the
-	// tunnel traffic does not share, which is precisely what draft-06 §3.5's coalescing
+	// tunnel traffic does not share, which is precisely what draft-06 鎼?.5's coalescing
 	// requirement forbids.
 	//
 	// So the session transport is taken from the session, which recorded it at the branch that
@@ -751,12 +751,13 @@ func (c *ClientEndpoint) NewPacketConnectionEx(ctx context.Context, conn N.Packe
 }
 
 func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	var gateEpoch uint64
 	if c.generation != nil {
-		c.generation.BeforeDial(ctx)
+		gateEpoch = c.generation.BeforeDial(ctx)
 	}
 	conn, err := c.dialContext(ctx, network, destination)
 	if c.generation != nil {
-		c.generation.AfterDial(err)
+		c.generation.AfterDial(gateEpoch, err)
 	}
 	return conn, err
 }
@@ -877,7 +878,7 @@ func (c *ClientEndpoint) lookupInner(ctx context.Context, domain string) ([]neti
 //
 // # Two conditions, and the second is the one that is easy to drop
 //
-// draft-06 §3.5 asks for DoH to be coalesced over the connection the tunnel already uses, which
+// draft-06 鎼?.5 asks for DoH to be coalesced over the connection the tunnel already uses, which
 // presupposes that the tunnel IS that connection. Two separate facts have to hold:
 //
 //  1. a live HTTP/3 connection exists that a request could ride on (a resource);
@@ -973,12 +974,13 @@ func preferIPv6(strategy C.DomainStrategy, addresses []netip.Addr) bool {
 const DefaultInnerFallbackDelay = N.DefaultFallbackDelay
 
 func (c *ClientEndpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
+	var gateEpoch uint64
 	if c.generation != nil {
-		c.generation.BeforeDial(ctx)
+		gateEpoch = c.generation.BeforeDial(ctx)
 	}
 	conn, address, err := c.listenPacketWithDestination(ctx, destination)
 	if c.generation != nil {
-		c.generation.AfterDial(err)
+		c.generation.AfterDial(gateEpoch, err)
 	}
 	return conn, address, err
 }
