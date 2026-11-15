@@ -813,16 +813,9 @@ func (c *Client) CloseIdleConnections() {
 func (c *Client) RetireSuspect() {
 	c.access.Lock()
 	session := c.session
-	if session != nil {
-		c.session = nil
-		session.retiring.Store(true)
-		c.residency.noteRetired()
-	}
 	c.access.Unlock()
 	if session != nil {
-		c.logger.DebugContext(c.ctx, "trusttunnel: retiring ", session.carrier, " session ", session.id,
-			" to ", c.server, " (reuse boundary)")
-		session.drainIfUnused()
+		c.retireSession(session, "reuse boundary")
 	}
 }
 
