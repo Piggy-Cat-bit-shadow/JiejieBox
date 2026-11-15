@@ -429,12 +429,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "09473938322bddfc6c30fc3886e747e808c3d526",
+      "tip": "2e5b71fa59809b17faff1e24ab2e56caee52612e",
       "pin": "09473938322b",
-      "relation": "identical",
-      "policy": "update",
+      "relation": "behind",
+      "policy": "report",
       "observed_at": "2026-11-15",
-      "note": "Lifted to 0947393 for 0.1.50. Layer 4 was re-run against a clean checkout of this revision (probe-accessors.py: 483 files scanned, 0 violations, 3 interface methods), and Apple client run 43627843866 resolved this revision, built one Libbox and compiled iOS, macOS and the unsigned self-sign IPA - 4/4 success. Not device or TestFlight evidence."
+      "note": "HELD at 0947393 for 0.1.51. That revision was built at v0.1.50 (run 43636617538: one Libbox, iOS and macOS compiled), and the 0.1.51 Apple build re-runs it on the new core. Main tip 2e5b71f is a two-file iOS layout fix with no Xcode build; moving it would also invalidate this ledger's pin coverage, so it is excluded from 0.1.51 rather than shipped unbuilt. Not device or TestFlight evidence."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",

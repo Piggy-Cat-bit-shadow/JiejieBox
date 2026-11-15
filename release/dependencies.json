@@ -120,8 +120,8 @@
       "path": "clients/apple",
       "slug": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "policy": "update",
-      "note": "Apple main repaired at 749509f; iOS and macOS compiled successfully in run 43584135709 on 2026-11-14."
+      "policy": "report",
+      "note": "Held at 0947393 for 0.1.51: it is the last Apple revision with a same-candidate iOS/macOS build (v0.1.50 run 43636617538). Main tip 2e5b71f is a two-file iOS layout fix with no Xcode build and no pin-run coverage; building and integrating it is a follow-up, not a 0.1.51 release blocker. policy=report keeps preparation from moving an unbuilt client pin."
     },
     {
       "path": "clients/android",
