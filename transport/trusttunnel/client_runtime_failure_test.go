@@ -86,6 +86,7 @@ func (s *selectiveSession) close() error {
 }
 
 func TestRuntimeH3SilenceRetiresAndFallsBack(t *testing.T) {
+	requireQUIC(t)
 	h3 := &stalledSession{}
 	h2 := newFakeSession()
 	var h3Dials, h2Dials atomic.Int32
@@ -127,11 +128,11 @@ func TestRuntimeH3SilenceRetiresAndFallsBack(t *testing.T) {
 // verdict a stalled CONNECT gets. The option stays off by default; this only proves that enabling it
 // has the intended effect instead of being a field that changes nothing.
 func TestFailedHealthCheckRetiresAndCordons(t *testing.T) {
+	requireQUIC(t)
 	probe := &failingProbeSession{}
 	client := newSharedOfferClient(t, ProtocolHTTP3, func(context.Context) (sessionConn, error) {
 		return probe, nil
 	})
-	require.True(t, quicIncluded)
 	client.quicFallback = true
 	client.h3Cooldown = time.Minute
 	client.healthCheck = true
@@ -168,11 +169,11 @@ func (s *failingProbeSession) close() error {
 }
 
 func TestCallerDeadlineIsNotCarrierSilence(t *testing.T) {
+	requireQUIC(t)
 	h3 := &stalledSession{}
 	client := newSharedOfferClient(t, ProtocolHTTP3, func(context.Context) (sessionConn, error) {
 		return h3, nil
 	})
-	require.True(t, quicIncluded)
 
 	ctx, cancel := context.WithTimeout(testContext(t), 60*time.Millisecond)
 	defer cancel()
@@ -190,13 +191,13 @@ func TestCallerDeadlineIsNotCarrierSilence(t *testing.T) {
 }
 
 func TestOneSlowTargetDoesNotRetireAReceivingCarrier(t *testing.T) {
+	requireQUIC(t)
 	slow := &selectiveSession{}
 	client := newSharedOfferClient(t, ProtocolHTTP3, func(context.Context) (sessionConn, error) {
 		return slow, nil
 	})
 	client.connectBudget = 40 * time.Millisecond
 	client.h3Cooldown = time.Minute
-	require.True(t, quicIncluded)
 
 	ctx := testContext(t)
 	fast, err := client.DialContext(ctx, fallbackDestination)
@@ -279,7 +280,7 @@ func TestSharedCreationBudgetReleasesThePermit(t *testing.T) {
 }
 
 func TestArmedVerdictRetiresAPublishedHTTP3Session(t *testing.T) {
-	require.True(t, quicIncluded)
+	requireQUIC(t)
 	h3 := &selectiveSession{}
 	var h2Calls atomic.Int32
 	h2 := newFakeSession()
@@ -303,4 +304,14 @@ func TestArmedVerdictRetiresAPublishedHTTP3Session(t *testing.T) {
 	require.Eventually(t, func() bool { return h3.closed.Load() }, 2*time.Second, 5*time.Millisecond,
 		"the published HTTP/3 session was reused while the HTTP/2 verdict was open")
 	require.EqualValues(t, 1, h2Calls.Load())
+}
+
+// requireQUIC skips a test whose subject is HTTP/3 when this build does not include it. The Linux
+// with_trusttunnel job builds without with_quic, so these cases must SKIP there rather than fail on
+// the constructor's ErrQUICNotIncluded.
+func requireQUIC(t *testing.T) {
+	t.Helper()
+	if !quicIncluded {
+		t.Skip("HTTP/3 is not in this build")
+	}
 }
