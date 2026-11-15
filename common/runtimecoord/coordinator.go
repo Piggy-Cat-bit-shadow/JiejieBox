@@ -331,6 +331,17 @@ func (r *Registration) Epoch() uint64 {
 	return r.epoch
 }
 
+// currentEpoch reports the coordinator's CURRENT generation, which may be newer than this
+// registration's observed epoch. The generation gate uses it to stamp the destructive action it
+// runs, so "the transition for generation N" is identifiable even while the registration is still
+// stale. An inert registration (no coordinator) reports zero.
+func (r *Registration) currentEpoch() uint64 {
+	if r == nil || r.coordinator == nil {
+		return 0
+	}
+	return r.coordinator.Epoch()
+}
+
 // Closed reports whether the registration has been invalidated by a removal or a coordinator close.
 func (r *Registration) Closed() bool {
 	r.access.Lock()

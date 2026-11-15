@@ -162,7 +162,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	created.generation = runtimecoord.NewGenerationGate(
 		service.FromContext[*runtimecoord.Coordinator](ctx),
 		"trusttunnel/"+options.ServerOptions.Build().String(),
-		created.InterfaceUpdated,
+		created.resetForNetworkChange,
 	)
 	return created, nil
 }
@@ -315,9 +315,22 @@ func (h *Outbound) lookup(ctx context.Context, domain string) (netip.Addr, error
 	return addresses[0], nil
 }
 
-// InterfaceUpdated drops the session: QUIC migration is off on the official
-// endpoint, and an HTTP/2 session on the old network is dead anyway.
+// InterfaceUpdated is the network manager's listener. It routes through the generation gate so the
+// push notification and a demand that arrives in the publish-to-listener window are the SAME
+// transition: one destructive Reset per generation, not one per demand. Without a coordinator the
+// gate is nil, and the reset runs directly (the embedder path).
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	if h.generation != nil {
+		h.generation.NetworkChanged(ctx)
+		return
+	}
+	h.resetForNetworkChange(ctx)
+}
+
+// resetForNetworkChange drops the session: QUIC migration is off on the official endpoint, and an
+// HTTP/2 session on the old network is dead anyway. It is the gate's action, so the gate owns WHEN
+// it runs; this method owns WHAT it does.
+func (h *Outbound) resetForNetworkChange(context.Context) {
 	h.client.Reset()
 }
 
