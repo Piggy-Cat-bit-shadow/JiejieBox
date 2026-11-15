@@ -172,6 +172,13 @@ func (s *http3Session) roundTrip(ctx context.Context, authority string, header h
 		stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeRequestCanceled))
 		stream.CancelWrite(quic.StreamErrorCode(http3.ErrCodeRequestCanceled))
 	}
+	// Register the abort BEFORE the header write. SendRequestHeader performs a synchronous QUIC
+	// stream write: once the peer's stream or connection flow-control window is exhausted, it blocks
+	// inside quic-go until a window update arrives. This Context cannot interrupt that write by
+	// itself - only CancelWrite unblocks it - so registering after the call left a cancellation
+	// window in which a caller's deadline could not end a blocked CONNECT and the stream's credit
+	// stayed held. The callback is idempotent and safe to run concurrently with ReadResponse.
+	stop := context.AfterFunc(ctx, abort)
 	err = stream.SendRequestHeader(&http.Request{
 		Method: http.MethodConnect,
 		URL:    &url.URL{Host: authority},
@@ -179,19 +186,26 @@ func (s *http3Session) roundTrip(ctx context.Context, authority string, header h
 		Header: header,
 	})
 	if err != nil {
+		stop()
 		abort()
+		// A cancellation is a statement about this request, never a verdict about the carrier.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		}
 		return nil, qtls.WrapError(err)
 	}
 	if !withBody {
 		stream.Close()
 	}
-	stop := context.AfterFunc(ctx, abort)
 	response, err := stream.ReadResponse()
 	if !stop() {
 		err = ctx.Err()
 	}
 	if err != nil {
 		abort()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		}
 		return nil, qtls.WrapError(err)
 	}
 	return &rawStream{

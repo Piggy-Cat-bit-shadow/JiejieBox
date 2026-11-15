@@ -337,3 +337,122 @@ func TestRealRelayBlackholeFallsBackToHTTP2(t *testing.T) {
 	require.Equal(t, destination, M.SocksaddrFromNet(source))
 	require.Equal(t, payload, received[:n], "the UDP association over the recovered session carried the datagram")
 }
+
+// TestRealRelayBlackholeAfterHTTP3IsEstablished is the incident's shape on real transports: a real
+// HTTP/3 session is opened, carries traffic, the UDP path is then silently dropped while the TCP
+// path stays healthy, and new CONNECTs arrive. The client must bound each CONNECT, retire the silent
+// HTTP/3 session without cutting the stream already on it, move new demands to the REAL HTTP/2
+// session, and later probe HTTP/3 again without disturbing the HTTP/2 stream.
+//
+// Nothing is mocked: the relay really swallows the QUIC datagrams, the HTTP/2 leg is a real
+// TLS/TCP/HTTP/2 session to the same node, and the recovery is measured by payload that comes back.
+func TestRealRelayBlackholeAfterHTTP3IsEstablished(t *testing.T) {
+	server := startDualProtocolTestServer(t)
+	echo := startEchoServer(t)
+	relay := startTestRelay(t, server.address)
+
+	client, err := NewClient(ClientOptions{
+		Dialer:       relay,
+		Server:       relay.addr,
+		TLSConfig:    server.client.Clone(),
+		Protocol:     ProtocolHTTP3,
+		QUICFallback: true,
+		Username:     testUsername,
+		Password:     testPassword,
+		AppName:      "relay-runtime-blackhole",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	// The establishment budget is the product's own, shrunk so the test measures the recovery
+	// rather than waiting ten seconds for it. The HTTP/3 leg keeps a real handshake budget.
+	client.connectBudget = 400 * time.Millisecond
+	client.creationBudget = 5 * time.Second
+	cooldown := 400 * time.Millisecond
+	client.h3Cooldown = cooldown
+
+	ctx := testContext(t)
+
+	// 1. A real HTTP/3 session and a stream that stays open across the failure.
+	relay.setBlackhole(false)
+	first, err := client.DialContext(ctx, echo)
+	require.NoError(t, err)
+	require.True(t, http3SessionOf(client), "the first session must be a real HTTP/3 one")
+	echoRoundTrip(t, first, 4096)
+	client.access.Lock()
+	silentSession := client.session
+	client.access.Unlock()
+	require.NotNil(t, silentSession)
+
+	// 2. The UDP path dies without a physical network change; the TCP path stays healthy.
+	relay.setBlackhole(true)
+	droppedBefore := relay.dropped.Load()
+	const callers = 4
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan dialResult, callers)
+	started := time.Now()
+	for index := 0; index < callers; index++ {
+		go func() {
+			conn, dialErr := client.DialContext(ctx, echo)
+			results <- dialResult{conn: conn, err: dialErr}
+		}()
+	}
+	recovered := make([]net.Conn, 0, callers)
+	for index := 0; index < callers; index++ {
+		select {
+		case result := <-results:
+			require.NoError(t, result.err, "a CONNECT that met the silent HTTP/3 carrier did not recover")
+			recovered = append(recovered, result.conn)
+		case <-time.After(15 * time.Second):
+			t.Fatalf("only %d of %d calls recovered from the silent HTTP/3 carrier", len(recovered), callers)
+		}
+	}
+	elapsed := time.Since(started)
+	require.GreaterOrEqual(t, elapsed, client.connectBudget/2,
+		"the silent carrier was not detected by a real establishment wait")
+	require.Less(t, elapsed, 15*time.Second, "the CONNECTs were not bounded")
+	require.Greater(t, relay.dropped.Load(), droppedBefore, "the relay really swallowed QUIC datagrams")
+	require.True(t, fallbackSessionOf(client), "new demands must move to the real HTTP/2 session")
+	require.False(t, http3SessionOf(client))
+	for _, conn := range recovered {
+		echoRoundTrip(t, conn, 32*1024)
+	}
+
+	// 3. The silent session is retired, not closed: the stream established before the failure is
+	//    still owned by it, and it is released when that stream ends.
+	require.True(t, silentSession.retiring.Load(), "the silent HTTP/3 session was still accepting streams")
+	require.False(t, silentSession.ctx.Err() != nil, "retiring cut the stream that was already on the carrier")
+	require.NoError(t, first.Close())
+	require.Eventually(t, func() bool { return silentSession.ctx.Err() != nil }, 5*time.Second, 10*time.Millisecond,
+		"the drained HTTP/3 session was not released")
+
+	// 4. Restore UDP, let the cooldown expire, and let a real demand recover HTTP/3 while the
+	//    streams on the retired HTTP/2 session keep working.
+	relay.setBlackhole(false)
+	time.Sleep(cooldown + 100*time.Millisecond)
+	third, err := client.DialContext(ctx, echo)
+	require.NoError(t, err)
+	require.True(t, http3SessionOf(client), "after the cooldown a real demand must recover HTTP/3")
+	echoRoundTrip(t, third, 32*1024)
+	echoRoundTrip(t, recovered[0], 32*1024)
+	require.Greater(t, relay.forwarded.Load(), int64(0))
+	require.Greater(t, relay.returned.Load(), int64(0))
+
+	require.NoError(t, third.Close())
+	for _, conn := range recovered {
+		require.NoError(t, conn.Close())
+	}
+	packetConn, err := client.ListenPacket(ctx)
+	require.NoError(t, err)
+	defer packetConn.Close()
+	destination := M.ParseSocksaddr("127.0.0.1:53")
+	_, err = packetConn.WriteTo([]byte("after-runtime-recovery"), destination.UDPAddr())
+	require.NoError(t, err)
+	received := make([]byte, 2048)
+	n, _, err := packetConn.ReadFrom(received)
+	require.NoError(t, err)
+	require.Equal(t, "after-runtime-recovery", string(received[:n]),
+		"the recovered HTTP/3 session must carry a real UDP association")
+}

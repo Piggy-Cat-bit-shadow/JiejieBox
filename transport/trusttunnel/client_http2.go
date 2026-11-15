@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/sagernet/sing/common/baderror"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -36,6 +37,19 @@ func (c *Client) connectHTTP2(ctx context.Context) (sessionConn, error) {
 		tlsConn.Close()
 		return nil, E.New("server negotiated ALPN ", strconv.Quote(negotiated), ", expected h2")
 	}
+	// NewClientConn writes the preface and waits for the server's SETTINGS with no context of its
+	// own. A peer that completes TLS and then goes silent would therefore hold the creation (and the
+	// single-flight offer behind it) forever. The creation's deadline is applied to the connection
+	// for the handshake only, and cleared once the session is established so the CONNECT streams
+	// keep their own lifetimes.
+	hadDeadline := false
+	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+		hadDeadline = true
+		if err = tlsConn.SetDeadline(deadline); err != nil {
+			tlsConn.Close()
+			return nil, E.Cause(err, "set HTTP/2 handshake deadline")
+		}
+	}
 	transport, err := newHTTP2Transport()
 	if err != nil {
 		tlsConn.Close()
@@ -45,6 +59,12 @@ func (c *Client) connectHTTP2(ctx context.Context) (sessionConn, error) {
 	if err != nil {
 		tlsConn.Close()
 		return nil, E.Cause(err, "HTTP/2 handshake")
+	}
+	if hadDeadline {
+		if err = tlsConn.SetDeadline(time.Time{}); err != nil {
+			clientConn.Close()
+			return nil, E.Cause(err, "clear HTTP/2 handshake deadline")
+		}
 	}
 	return &http2Session{conn: clientConn}, nil
 }

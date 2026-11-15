@@ -36,6 +36,21 @@ const (
 	// caller's whole deadline, before it is rebuilt.
 	staleConnectBudget = 3 * time.Second
 
+	// connectEstablishBudget bounds the wait for a CONNECT answer on a session that is NOT known to
+	// be stale. Without it, a carrier that still looks alive (QUIC's Context is open) but no longer
+	// delivers anything leaves every new CONNECT waiting for as long as the caller's own deadline -
+	// or forever when the caller has none. The figure is the same scale as the stack's request
+	// phase (constant.TCPTimeout, 15 s) but deliberately shorter: it covers a slow upstream connect
+	// several times over while keeping a dead carrier's cost to the person holding the phone in
+	// seconds. It bounds the ESTABLISHMENT only; an accepted stream is not touched by it.
+	connectEstablishBudget = 10 * time.Second
+
+	// sessionCreationBudget bounds one shared session creation from admission to publication, so a
+	// dial, TLS handshake or HTTP/2 initialisation that stops making progress cannot hold the
+	// single-flight offer (and its admission permit) forever. It covers the HTTP/3 leg's own
+	// h3FallbackBudget with room for the HTTP/2 leg behind it.
+	sessionCreationBudget = 15 * time.Second
+
 	// healthCheckThrottle is the silence after which a dial sends _check first;
 	// it is also the minimum distance between two checks.
 	healthCheckThrottle = 30 * time.Second
@@ -168,6 +183,12 @@ type Client struct {
 	// h3Budget and h3Cooldown are the constants above, as fields so tests do not wait them out.
 	h3Budget   time.Duration
 	h3Cooldown time.Duration
+	// connectBudget and creationBudget are connectEstablishBudget and sessionCreationBudget as
+	// fields, for the same reason: a test can shrink them to seconds without changing the product.
+	connectBudget  time.Duration
+	creationBudget time.Duration
+	// nextSessionID names sessions in diagnostics. It is a display identity only.
+	nextSessionID atomic.Uint64
 	// now is the clock the cooldown reads, replaceable in tests.
 	now func() time.Time
 	// cordonHook, when non-nil, runs at the start of cordonForGeneration. Tests use it to pause the
@@ -206,9 +227,13 @@ type clientOffer struct {
 	err       error
 	discarded bool
 	cause     error
-	cancel    context.CancelCauseFunc
+	cancel    func(error)
 	trace     *ClientTrace
 	traceCtx  context.Context
+	// waiters counts the demands currently waiting on this creation. The count is maintained under
+	// the client lock that publishes/clears `pending`, so "the last waiter left" and "a new demand
+	// joined" cannot both win: see abandonOffer.
+	waiters atomic.Int32
 }
 
 // wait waits for the shared result or for THIS waiter's own cancellation. Both
@@ -322,6 +347,8 @@ func NewClient(options ClientOptions) (*Client, error) {
 		tlsConfigH2:    tlsConfigH2,
 		h3Budget:       h3FallbackBudget,
 		h3Cooldown:     h3FallbackCooldown,
+		connectBudget:  connectEstablishBudget,
+		creationBudget: sessionCreationBudget,
 		now:            time.Now,
 	}
 	client.dialSession = client.connectSession
@@ -548,6 +575,21 @@ func (c *Client) cordonForGeneration(generation uint64) (armed bool) {
 	return armed
 }
 
+// cordonNow arms the HTTP/3 verdict for the network generation the client is on NOW. It is the
+// runtime-failure entry point: a session that answered while it was built and then stopped carrying
+// new CONNECTs is evidence about the current network, not about the one the session was created on.
+// The generation check inside cordonForGeneration still refuses a verdict that races a Reset.
+func (c *Client) cordonNow(reason string) {
+	generation := c.currentGeneration()
+	if c.cordonForGeneration(generation) {
+		c.logger.WarnContext(c.ctx, "trusttunnel: HTTP/3 session to ", c.server,
+			" stopped carrying new CONNECTs (", reason, "); using HTTP/2 for the next ", c.h3Cooldown)
+		return
+	}
+	c.logger.DebugContext(c.ctx, "trusttunnel: HTTP/3 carrier is still suspect to ", c.server,
+		" (", reason, ")")
+}
+
 // clearCordonForGeneration drops the verdict, but only for the generation that proved HTTP/3 works:
 // a late success from the old network must not erase the new network's verdict either.
 func (c *Client) clearCordonForGeneration(generation uint64) {
@@ -571,6 +613,61 @@ func (c *Client) clearCordonLocked() {
 func (c *Client) recoverableFallbackSession(session *clientSession) bool {
 	return c.quicFallback && session.fallbackH2 && !c.h3Cordoned()
 }
+
+// retireSession removes a session from reuse without closing the streams it already carries. It is
+// the local-recovery boundary: a session that is confirmed unusable stops taking new work, an
+// established flow that is still healthy is not cut, and the session closes itself when the last
+// stream returns. It reports whether THIS call detached the session (a second caller racing the same
+// failure gets false and must not count the retirement twice).
+func (c *Client) retireSession(session *clientSession, reason string) bool {
+	c.access.Lock()
+	if c.session != session {
+		c.access.Unlock()
+		return false
+	}
+	c.session = nil
+	session.retiring.Store(true)
+	c.residency.noteRetired()
+	c.access.Unlock()
+	c.logger.DebugContext(c.ctx, "trusttunnel: retiring ", session.carrier, " session ", session.id,
+		" to ", c.server, " (", reason, ", streams=", session.streams.Load(), ")")
+	session.drainIfUnused()
+	return true
+}
+
+// retireOnFailure is the error boundary for an established session: a failure that is not a caller
+// cancellation must stop the session from taking new CONNECTs. A session whose transport is already
+// closed is closed here (nothing can be carried on it); one that still reports itself alive is
+// RETIRED, so a stream-level failure cannot cut the other streams sharing the carrier. Local context
+// cancellation and an authentication refusal keep their existing meanings and are decided by the
+// caller.
+func (c *Client) retireOnFailure(session *clientSession, reason string) {
+	if !session.conn.alive() {
+		c.teardown(session)
+		return
+	}
+	c.retireSession(session, reason)
+}
+
+// errConnectEstablishTimeout reports a CONNECT that the carrier accepted but did not answer inside
+// the establishment budget. It is deliberately NOT a StatusError and NOT a context error: the
+// request may be retried on a fresh session, and the failure is evidence about the carrier only when
+// the session also received nothing during the attempt.
+var errConnectEstablishTimeout = E.New("trusttunnel: CONNECT establishment timed out")
+
+// errCarrierRetired accompanies errConnectEstablishTimeout when the timeout was corroborated and the
+// session was actually retired (or the HTTP/3 verdict armed). It is what tells openStream that a
+// retry goes to a DIFFERENT carrier; a timeout that left the session in place only proved that this
+// one target is slow, and retrying the same target on the same session would just pay the budget
+// twice.
+var errCarrierRetired = E.New("trusttunnel: carrier retired after a stalled CONNECT")
+
+// errSessionCreationBudget is the cause of a shared creation that outlived its budget.
+var errSessionCreationBudget = E.New("trusttunnel: session creation exceeded its budget")
+
+// errOfferAbandoned is the cause of a shared creation whose last waiter left. No caller can consume
+// the result, so keeping the dial, its socket and its admission permit alive has no owner.
+var errOfferAbandoned = E.New("trusttunnel: session creation abandoned by its last waiter")
 
 // fallbackHTTP2Session marks a session that the HTTP/2 leg of a fallback produced. The marker is what
 // lets a later demand retire that session to retry HTTP/3 once the cooldown has expired; a plain
@@ -723,6 +820,8 @@ func (c *Client) RetireSuspect() {
 	}
 	c.access.Unlock()
 	if session != nil {
+		c.logger.DebugContext(c.ctx, "trusttunnel: retiring ", session.carrier, " session ", session.id,
+			" to ", c.server, " (reuse boundary)")
 		session.drainIfUnused()
 	}
 }
@@ -761,7 +860,15 @@ func (c *Client) openStream(ctx context.Context, trace *ClientTrace, authority s
 		if errors.Is(err, errSessionRetired) && attempt < 3 {
 			continue
 		}
-		if err == nil || fresh || ctx.Err() != nil || !retryable(err) {
+		// A fresh session whose CONNECT expired on the establishment budget is retried only when the
+		// timeout was corroborated and the session was retired: the retry then goes to a DIFFERENT
+		// carrier (HTTP/2 or a fresh session), and no business byte has been sent yet - only the
+		// CONNECT, which the caller has not received. An uncorroborated timeout is one slow target
+		// and is reported as such instead of paying the budget a second time.
+		if errors.Is(err, errConnectEstablishTimeout) && !errors.Is(err, errCarrierRetired) {
+			return session, stream, err
+		}
+		if err == nil || (fresh && !errors.Is(err, errCarrierRetired)) || ctx.Err() != nil || !retryable(err) {
 			return session, stream, err
 		}
 		c.logger.DebugContext(ctx, "trusttunnel: CONNECT on session to ", c.server, " failed, reconnecting: ", err)
@@ -778,9 +885,12 @@ func (c *Client) openStream(ctx context.Context, trace *ClientTrace, authority s
 // session is draining, so the caller opens a fresh one instead of attaching.
 var errSessionRetired = E.New("trusttunnel: session retired")
 
-// roundTrip sends one CONNECT on the session and checks the answer. A transport
-// failure or an authentication refusal tears the session down; a CONNECT that
-// may land on a stale session is bounded by staleConnectBudget.
+// roundTrip sends one CONNECT on the session and checks the answer. The
+// establishment wait is ALWAYS bounded: staleConnectBudget on a session that has
+// been silent past the stale window, connectEstablishBudget otherwise. A transport
+// failure or an authentication refusal removes the session from reuse; a
+// timeout that arrives with nothing received is evidence that the carrier
+// stopped carrying, and retires it so the next demand can use the recovery path.
 func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *clientSession, authority string, userAgent string, withBody bool, mayBeStale bool) (_ *rawStream, err error) {
 	if session.retiring.Load() {
 		return nil, errSessionRetired
@@ -799,23 +909,69 @@ func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *cli
 	var status int
 	done := trace.connect(ctx, authority)
 	defer func() { done(status, err) }()
-	attemptCtx := ctx
-	if mayBeStale && session.silentFor() > c.staleWindow {
-		var cancel context.CancelFunc
-		attemptCtx, cancel = context.WithTimeout(ctx, staleConnectBudget)
-		defer cancel()
+	// attemptStart is the receive watermark this request starts from: bytes that arrive AFTER it are
+	// proof that the carrier is still delivering, even if this particular target is slow.
+	attemptStart := session.received.Load()
+	session.pending.Add(1)
+	defer session.pending.Add(-1)
+
+	budget := c.connectBudget
+	if budget <= 0 {
+		budget = connectEstablishBudget
 	}
+	staleAttempt := mayBeStale && session.silentFor() > c.staleWindow
+	if staleAttempt {
+		budget = min(budget, staleConnectBudget)
+	}
+	attemptCtx := ctx
+	cancel := func() {}
+	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, ctx.Err()
+		}
+		if budget >= remaining {
+			// The caller's own deadline is already the tighter bound. Deriving a child timer from a
+			// near-equal "remaining" would make OUR budget (and therefore the carrier verdict) fire a
+			// few microseconds BEFORE the caller's deadline, misclassifying a caller cancellation as
+			// carrier silence. The parent context is the bound in this case.
+			budget = 0
+		}
+	}
+	if budget > 0 {
+		attemptCtx, cancel = context.WithTimeout(ctx, budget)
+	}
+	defer cancel()
+	started := time.Now()
 	stream, err := session.conn.roundTrip(attemptCtx, authority, c.requestHeader(userAgent), withBody)
 	if err != nil {
-		if ctx.Err() == nil {
-			c.teardown(session)
+		if ctx.Err() != nil {
+			// The caller stopped waiting. That is a statement about this request, never about the
+			// node, so it must not retire, cordon or cool down anything.
+			if IsAuthenticationRequired(err) {
+				return nil, E.Cause1(ErrAuthenticationRequired, err)
+			}
+			return nil, E.Cause(err, "trusttunnel: CONNECT ", authority)
+		}
+		if attemptCtx.Err() != nil {
+			retired := c.establishTimedOut(ctx, session, authority, attemptStart, staleAttempt, started)
+			timeoutError := E.Cause(errConnectEstablishTimeout, "trusttunnel: CONNECT ", authority)
+			if retired {
+				return nil, E.Cause1(timeoutError, errCarrierRetired)
+			}
+			return nil, timeoutError
 		}
 		if IsAuthenticationRequired(err) {
+			// The protocol requires the session to be dropped on an authentication refusal; this is
+			// a verdict about the credentials, not about the carrier.
+			c.teardown(session)
 			return nil, E.Cause1(ErrAuthenticationRequired, err)
 		}
+		c.retireOnFailure(session, "CONNECT failed: "+err.Error())
 		return nil, E.Cause(err, "trusttunnel: CONNECT ", authority)
 	}
 	status = stream.response.StatusCode
+	session.unanswered.Store(0)
 	if stream.response.StatusCode != http.StatusOK {
 		stream.close()
 		statusError := NewStatusError(stream.response.StatusCode, stream.response.Header)
@@ -831,6 +987,53 @@ func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *cli
 	return stream, nil
 }
 
+// establishTimedOut decides what a CONNECT that expired without an answer means for the carrier.
+// It reports whether the session was actually retired (or its H3 verdict armed), which is what
+// tells the caller that a retry would use a different carrier.
+//
+// It is deliberately conservative, because a slow target is not a dead carrier:
+//
+//   - a stale probe that expired retires the session only. The session had been silent past the
+//     stale window, so the probe's job was to find out whether it still works; it did not. It says
+//     nothing about UDP reachability, so it arms no HTTP/3 verdict.
+//   - a full-budget expiry where the session received NOTHING after the attempt began is treated as
+//     carrier silence: the session is retired and, on HTTP/3 with the fallback configured, the
+//     provisional HTTP/2 verdict is armed. Existing streams are kept (retire, not close).
+//   - a full-budget expiry where the carrier kept receiving bytes is one slow target until a second
+//     unanswered CONNECT or a second concurrent waiter corroborates it. A healthy session carrying
+//     a video must not be retired because one website's upstream connect is slow.
+func (c *Client) establishTimedOut(ctx context.Context, session *clientSession, authority string, attemptStart int64, staleAttempt bool, started time.Time) bool {
+	unanswered := session.unanswered.Add(1)
+	if staleAttempt {
+		c.logger.DebugContext(ctx, "trusttunnel: stale CONNECT probe for ", authority, " on ", session.carrier,
+			" session ", session.id, " timed out after ", time.Since(started).Round(time.Millisecond),
+			"; retiring it")
+		c.retireSession(session, "stale CONNECT probe timed out")
+		return true
+	}
+	pending := session.pending.Load()
+	receivedDuringAttempt := session.received.Load() > attemptStart
+	c.logger.DebugContext(ctx, "trusttunnel: CONNECT ", authority, " on ", session.carrier, " session ",
+		session.id, " got no response within ", time.Since(started).Round(time.Millisecond),
+		" (received=", receivedDuringAttempt, " pending=", pending, " unanswered=", unanswered, ")")
+	if receivedDuringAttempt && pending < 2 && unanswered < 2 {
+		// The carrier is still delivering to this client and only this target is stuck. Keep the
+		// session; the next demand reuses it.
+		return false
+	}
+	reason := "CONNECT establishment timed out with no response"
+	if receivedDuringAttempt {
+		reason = "repeated CONNECT establishment timeouts while other responses stopped arriving"
+	}
+	c.retireSession(session, reason)
+	if c.quicFallback && session.carrier == ProtocolHTTP3 {
+		// Even when a racing failure already detached the session, this timeout is corroborated
+		// evidence about HTTP/3 itself, so the verdict is still worth arming.
+		c.cordonNow(reason)
+	}
+	return true
+}
+
 func (c *Client) check(ctx context.Context, trace *ClientTrace, session *clientSession) (err error) {
 	if session.retiring.Load() {
 		return errSessionRetired
@@ -844,7 +1047,18 @@ func (c *Client) check(ctx context.Context, trace *ClientTrace, session *clientS
 	stream, err := session.conn.roundTrip(checkCtx, AuthorityCheck, c.requestHeader(c.userAgentCheck), false)
 	if err != nil {
 		if ctx.Err() == nil {
-			c.teardown(session)
+			if IsAuthenticationRequired(err) {
+				c.teardown(session)
+			} else {
+				// The check is the only probe this transport sends without a target: its failure is
+				// evidence about the session. Retire rather than close so streams already carried
+				// are not cut by a failed probe, and tell the fallback so the next demand does not
+				// pay for another dead HTTP/3 attempt.
+				c.retireOnFailure(session, "health check failed: "+err.Error())
+				if c.quicFallback && session.carrier == ProtocolHTTP3 {
+					c.cordonNow("health check failed: " + err.Error())
+				}
+			}
 		}
 		if IsAuthenticationRequired(err) {
 			return E.Cause1(ErrAuthenticationRequired, err)
@@ -857,6 +1071,7 @@ func (c *Client) check(ctx context.Context, trace *ClientTrace, session *clientS
 		c.teardown(session)
 		return NewStatusError(stream.response.StatusCode, stream.response.Header)
 	}
+	session.unanswered.Store(0)
 	session.markReceived()
 	return nil
 }
@@ -880,8 +1095,11 @@ func retryable(err error) bool {
 // creation that produced the session.
 //
 // The waiter's ctx only ever bounds this caller's wait: it cannot cancel a dial
-// that other callers (or a later demand) can still use. The dial runs under the
-// client's lifetime, which also makes the client the owner of a late success.
+// that other callers (or a later demand) can still use. The creation itself is
+// bounded by the client's creation budget, and it is abandoned when its last
+// waiter leaves: a creation nobody is waiting for has no consumer, and holding
+// its socket and admission permit until the budget expires would be a leak with
+// no owner. Close and Reset cancel it explicitly.
 func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSession, bool, error) {
 	for {
 		c.access.Lock()
@@ -903,6 +1121,20 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 					session.drainIfUnused()
 					continue
 				}
+				if c.quicFallback && session.carrier == ProtocolHTTP3 && c.h3Cordoned() {
+					// The runtime verdict was armed after this HTTP/3 session was published (for
+					// example by an attempt that was already in flight). The verdict applies to every
+					// HTTP/3 session, not only to new creations, or a just-published session would
+					// silently keep the client on the carrier that was just declared unusable.
+					c.session = nil
+					session.retiring.Store(true)
+					c.residency.noteRetired()
+					c.access.Unlock()
+					c.logger.DebugContext(ctx, "trusttunnel: HTTP/3 session ", session.id,
+						" to ", c.server, " retired while the HTTP/2 verdict is open")
+					session.drainIfUnused()
+					continue
+				}
 				session.markActivity()
 				c.access.Unlock()
 				trace.sessionReused(ctx, c.protocol, c.server, session.opened)
@@ -915,11 +1147,14 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 			continue
 		}
 		if pending := c.pending; pending != nil {
+			pending.waiters.Add(1)
 			c.access.Unlock()
 			session, err := pending.wait(ctx)
 			if err != nil {
+				c.abandonOffer(pending)
 				return nil, false, err
 			}
+			pending.waiters.Add(-1)
 			trace.sessionReused(ctx, c.protocol, c.server, session.opened)
 			return session, false, nil
 		}
@@ -928,23 +1163,75 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 		// set by an outer seam must reach the dial and its TLS handshake, while
 		// this caller stopping its wait must not cancel a creation that other
 		// waiters (or a later demand) can still use. Close and Reset cancel the
-		// offer explicitly.
-		offerCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
+		// offer explicitly; the creation budget and the last waiter bound it
+		// without either of them.
+		offerCtx, cancelOffer := c.offerContext(ctx)
 		pending := &clientOffer{
 			done:     make(chan struct{}),
-			cancel:   cancel,
+			cancel:   cancelOffer,
 			trace:    trace,
 			traceCtx: ctx,
 		}
+		pending.waiters.Store(1)
 		c.pending = pending
 		c.access.Unlock()
 		go c.completeOffer(pending, offerCtx)
 		session, err := pending.wait(ctx)
 		if err != nil {
+			c.abandonOffer(pending)
 			return nil, false, err
 		}
+		pending.waiters.Add(-1)
 		return session, true, nil
 	}
+}
+
+// offerContext builds the context one shared creation runs under: the caller's values, the client's
+// own creation budget, and an explicit cancel func whose cause names WHY the creation ended (Close,
+// Reset, or abandonment). A caller's deadline is deliberately not part of it; the waiter's own wait
+// is bounded separately.
+func (c *Client) offerContext(ctx context.Context) (context.Context, func(error)) {
+	// A cause-cancellable parent under a bounded child: the timeout reports its own cause, and
+	// Close/Reset still reach the creation with net.ErrClosed.
+	parent, cancelCause := context.WithCancelCause(context.WithoutCancel(ctx))
+	budget := c.creationBudget
+	if budget <= 0 {
+		budget = sessionCreationBudget
+	}
+	bounded, cancelBudget := context.WithTimeoutCause(parent, budget, errSessionCreationBudget)
+	return bounded, func(cause error) {
+		cancelCause(cause)
+		cancelBudget()
+	}
+}
+
+// abandonOffer records that one waiter left. When it was the LAST waiter, the creation is discarded
+// and cancelled: a shared dial whose consumers are all gone would otherwise keep its socket, its
+// TLS handshake and its admission permit until the budget expires. The client remains the owner of
+// a late result: completeOffer closes it exactly once (publishOffer), so abandonment cannot publish
+// a session nobody waited for either.
+//
+// The waiter count is re-checked under `access`, the lock a new waiter takes when it joins, so a
+// demand that arrives in the same instant is either counted here (and the creation continues) or
+// finds `pending` already cleared and starts a fresh creation.
+func (c *Client) abandonOffer(pending *clientOffer) {
+	if pending.waiters.Add(-1) != 0 {
+		return
+	}
+	c.access.Lock()
+	if c.pending != pending || pending.waiters.Load() != 0 {
+		c.access.Unlock()
+		return
+	}
+	pending.discarded = true
+	if pending.cause == nil {
+		pending.cause = errOfferAbandoned
+	}
+	c.pending = nil
+	c.access.Unlock()
+	c.logger.DebugContext(pending.traceCtx, "trusttunnel: session creation to ", c.server,
+		" abandoned by its last waiter")
+	pending.cancel(errOfferAbandoned)
 }
 
 // completeOffer runs one shared creation and publishes its result. The client
@@ -972,9 +1259,15 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 		}
 	}
 	conn, err := c.dialSession(dialCtx)
+	cause := context.Cause(dialCtx)
 	finish(err)
 	done(err)
 	pending.cancel(nil)
+	if cause != nil && (errors.Is(cause, errSessionCreationBudget) || errors.Is(cause, errOfferAbandoned)) {
+		// Named separately from the dial error: "the creation ran out of its budget" and "nobody was
+		// waiting for it any more" are lifecycle facts, not transport verdicts about the node.
+		c.logger.DebugContext(traceCtx, "trusttunnel: session creation to ", c.server, " ended: ", cause)
+	}
 	c.publishOffer(pending, conn, err)
 }
 
@@ -988,7 +1281,12 @@ func (c *Client) publishOffer(pending *clientOffer, conn sessionConn, err error)
 	var session *clientSession
 	if err == nil {
 		session = newClientSession(c.ctx, conn)
+		session.id = c.nextSessionID.Add(1)
+		session.carrier = c.protocol
 		session.fallbackH2 = usedFallback(conn)
+		if session.fallbackH2 {
+			session.carrier = ProtocolHTTP2
+		}
 		session.onClose = c.residency.noteReleased
 	}
 	c.access.Lock()
@@ -1002,6 +1300,7 @@ func (c *Client) publishOffer(pending *clientOffer, conn sessionConn, err error)
 	case err != nil:
 		pending.err = E.Cause(err, "trusttunnel: open session to ", c.server)
 	default:
+		session.generation = c.generation
 		pending.session = session
 		c.session = session
 	}
@@ -1011,6 +1310,13 @@ func (c *Client) publishOffer(pending *clientOffer, conn sessionConn, err error)
 	close(pending.done)
 	c.access.Unlock()
 	if discard {
+		// The result belongs to a discarded offer: it is never published. Release the session
+		// context (a child of the client's) even though no stream was ever attached, and close the
+		// connection exactly once. This path is what keeps a late success from Close/Reset from
+		// leaking its context for the rest of the process lifetime.
+		if session != nil {
+			session.cancel()
+		}
 		if conn != nil {
 			conn.close()
 		}
@@ -1024,9 +1330,11 @@ func (c *Client) publishOffer(pending *clientOffer, conn sessionConn, err error)
 		// protocol here is what made the original incident look like "H3 works": the operator saw
 		// "h3 session opened" while every byte was on TCP. Log what was actually opened.
 		c.logger.DebugContext(pending.traceCtx, "trusttunnel: ", ProtocolHTTP2, " session to ", c.server,
-			" opened (fallback after the ", c.protocol, " attempt failed)")
+			" opened (id ", session.id, ", generation ", session.generation,
+			", fallback after the ", c.protocol, " attempt failed)")
 	} else {
-		c.logger.DebugContext(pending.traceCtx, "trusttunnel: ", c.protocol, " session to ", c.server, " opened")
+		c.logger.DebugContext(pending.traceCtx, "trusttunnel: ", c.protocol, " session to ", c.server,
+			" opened (id ", session.id, ", generation ", session.generation, ")")
 	}
 	if c.idleTimeout > 0 {
 		go c.idleWatcher(session)
@@ -1106,6 +1414,18 @@ type clientSession struct {
 	streams   atomic.Int64
 	opened    time.Time
 	closeOnce sync.Once
+	// id, carrier and generation are diagnostics: which session, on which transport, built for which
+	// network generation. They are written once before publication and only read afterwards.
+	id         uint64
+	carrier    string
+	generation uint64
+	// pending counts CONNECTs currently waiting for an answer on this session. It is separate from
+	// streams: streams includes accepted, long-lived flows, while pending is the evidence used to
+	// tell "one target is slow" from "several independent requests are stuck together".
+	pending atomic.Int32
+	// unanswered counts CONNECTs that expired without any answer since the last response. Any
+	// answer - 200 or a refusal - resets it: a server that answers is answering.
+	unanswered atomic.Int32
 	// retiring marks a session removed by RetireSuspect: no new stream attaches
 	// to it, and it closes when its last stream returns.
 	retiring atomic.Bool

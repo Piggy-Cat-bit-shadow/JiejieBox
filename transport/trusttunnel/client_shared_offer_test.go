@@ -471,22 +471,39 @@ func TestClientDialKeepsCallerValues(t *testing.T) {
 	}
 }
 
-// TestClientOwnerCancelKeepsTheSharedDial pins the owner rule from the other
-// side: the first caller cancelling its wait must not cancel the creation the
-// client owns, and a later demand still receives it.
-func TestClientOwnerCancelKeepsTheSharedDial(t *testing.T) {
+// TestClientLastWaiterAbandonsTheCreation pins the ownership rule from the other side: a single
+// caller cancelling its wait must NOT cancel a creation other waiters still use, but when the LAST
+// waiter leaves, the creation has no consumer left. It is then cancelled and discarded, a later
+// demand starts a fresh creation instead of inheriting a dial that may never finish, and a late
+// success from the abandoned dial is closed rather than published.
+//
+// This is the deliberate change from "the client keeps a dial nobody is waiting for": the old rule
+// let a doomed creation hold its socket and admission permit to the end of its budget, and made
+// the next real demand wait behind it.
+func TestClientLastWaiterAbandonsTheCreation(t *testing.T) {
 	for _, protocol := range clientProtocols() {
 		protocol := protocol
 		t.Run(protocol, func(t *testing.T) {
-			started := make(chan struct{}, 1)
 			release := make(chan struct{})
+			dialCtxs := make(chan context.Context, 2)
+			type dialResult struct {
+				session   *fakeSession
+				abandoned bool
+			}
+			var (
+				access  sync.Mutex
+				results []dialResult
+				dials   atomic.Int32
+			)
 			client := newSharedOfferClient(t, protocol, func(ctx context.Context) (sessionConn, error) {
-				started <- struct{}{}
+				dials.Add(1)
+				dialCtxs <- ctx
 				<-release
-				if err := ctx.Err(); err != nil {
-					t.Errorf("the shared dial was cancelled by the first caller: %v", err)
-				}
-				return newFakeSession(), nil
+				session := newFakeSession()
+				access.Lock()
+				results = append(results, dialResult{session: session, abandoned: ctx.Err() != nil})
+				access.Unlock()
+				return session, nil
 			})
 			ownerCtx, cancelOwner := context.WithCancel(testContext(t))
 			ownerResult := make(chan error, 1)
@@ -497,7 +514,7 @@ func TestClientOwnerCancelKeepsTheSharedDial(t *testing.T) {
 				}
 				ownerResult <- err
 			}()
-			<-started
+			firstDialCtx := <-dialCtxs
 			cancelOwner()
 			select {
 			case err := <-ownerResult:
@@ -505,6 +522,12 @@ func TestClientOwnerCancelKeepsTheSharedDial(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("the cancelled owner did not return")
 			}
+			// The abandoned creation is cancelled as soon as its last waiter left, even though the
+			// fake dial keeps holding it open.
+			require.Eventually(t, func() bool { return firstDialCtx.Err() != nil }, 3*time.Second, 5*time.Millisecond,
+				"the abandoned creation was not cancelled")
+
+			// A later demand must not wait behind the abandoned creation: it starts its own.
 			waiterResult := make(chan error, 1)
 			go func() {
 				conn, err := client.DialContext(testContext(t), holdDestination())
@@ -513,14 +536,37 @@ func TestClientOwnerCancelKeepsTheSharedDial(t *testing.T) {
 				}
 				waiterResult <- err
 			}()
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-dialCtxs:
+			case <-time.After(3 * time.Second):
+				t.Fatal("the later demand did not start its own creation")
+			}
 			close(release)
 			select {
 			case err := <-waiterResult:
-				require.NoError(t, err, "a later demand must receive the creation the client owns")
+				require.NoError(t, err, "the later demand must complete its own creation")
 			case <-time.After(5 * time.Second):
-				t.Fatal("the waiter did not receive the shared session")
+				t.Fatal("the waiter did not complete its own creation")
 			}
+
+			// Exactly two dials ran, and the abandoned dial's late success was closed, not published.
+			require.EqualValues(t, 2, dials.Load())
+			access.Lock()
+			require.Len(t, results, 2)
+			var abandonedSession, liveSession *fakeSession
+			for _, result := range results {
+				if result.abandoned {
+					abandonedSession = result.session
+				} else {
+					liveSession = result.session
+				}
+			}
+			access.Unlock()
+			require.NotNil(t, abandonedSession, "the abandoned dial was not the one whose context was cancelled")
+			require.NotNil(t, liveSession)
+			require.Eventually(t, func() bool { return abandonedSession.closed.Load() }, 5*time.Second, 5*time.Millisecond,
+				"the abandoned dial's late success was published or leaked")
+			require.False(t, liveSession.closed.Load())
 		})
 	}
 }
