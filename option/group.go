@@ -12,10 +12,14 @@ type SelectorOutboundOptions struct {
 	// so a provider added to the configuration later is not picked up without a restart.
 	UseAllProviders bool `json:"use_all_providers,omitempty"`
 	// Include and Exclude filter provider nodes by their rendered tag. Exclude wins when both match.
-	Include                   *badoption.Regexp `json:"include,omitempty"`
-	Exclude                   *badoption.Regexp `json:"exclude,omitempty"`
-	Default                   string            `json:"default,omitempty" reference:"outbound"`
-	InterruptExistConnections bool              `json:"interrupt_exist_connections,omitempty"`
+	Include *badoption.Regexp `json:"include,omitempty"`
+	Exclude *badoption.Regexp `json:"exclude,omitempty"`
+	Default string            `json:"default,omitempty" reference:"outbound"`
+	// InterruptExistConnections closes the group's ESTABLISHED connections when the selection
+	// changes. It is a promise about flows that already carry traffic, not about setup: a dial that
+	// has not produced a connection yet is always cancelled by the switch, because it is still
+	// bound to the member the user just left and would otherwise hold new requests on that path.
+	InterruptExistConnections bool `json:"interrupt_exist_connections,omitempty"`
 	// Hidden keeps this group out of the client's GROUP LIST without taking the group away.
 	//
 	// The group is still created, registered, started, closed, referenced by tag, usable as another
@@ -48,11 +52,14 @@ type URLTestOutboundOptions struct {
 	// and an absent field is the historical behaviour: every member is probed every round. A
 	// configuration opts in by naming the block, even with no fields, which means "use the
 	// defaults".
-	Failover                  *FailoverPolicyOptions `json:"failover,omitempty"`
-	Interval                  badoption.Duration     `json:"interval,omitempty"`
-	Tolerance                 uint16                 `json:"tolerance,omitempty"`
-	IdleTimeout               badoption.Duration     `json:"idle_timeout,omitempty"`
-	InterruptExistConnections bool                   `json:"interrupt_exist_connections,omitempty"`
+	Failover    *FailoverPolicyOptions `json:"failover,omitempty"`
+	Interval    badoption.Duration     `json:"interval,omitempty"`
+	Tolerance   uint16                 `json:"tolerance,omitempty"`
+	IdleTimeout badoption.Duration     `json:"idle_timeout,omitempty"`
+	// InterruptExistConnections is the selector's setting with the same split: established flows
+	// follow it, in-flight setup is always cancelled when the selection moves. See
+	// SelectorOutboundOptions.InterruptExistConnections.
+	InterruptExistConnections bool `json:"interrupt_exist_connections,omitempty"`
 	// Hidden is the same display-only property as SelectorOutboundOptions.Hidden: the group keeps
 	// probing, switching and serving its members, and only its own group card is omitted.
 	Hidden bool `json:"hidden,omitempty"`

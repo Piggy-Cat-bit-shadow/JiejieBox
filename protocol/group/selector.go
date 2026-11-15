@@ -758,14 +758,57 @@ func (s *Selector) currentMemberLeased() (adapter.Outbound, func(), error) {
 	}
 	return nil, nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 }
+
+// dialMember resolves the committed member AND registers the dial with the interrupt group in one
+// revision-checked step. The dial context is cancelled by a selection change (a switch cancels
+// in-flight setup; it does not cut established connections), and a member chosen under a revision
+// that has already moved is rejected so the caller re-selects instead of dialing the old node.
+func (s *Selector) dialMember(ctx context.Context) (adapter.Outbound, func(), context.Context, func(), error) {
+	for attempt := 0; attempt < 4; attempt++ {
+		revision := s.interruptGroup.Revision()
+		member, release, err := s.currentMemberLeased()
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		dialCtx, finishDial, stale := s.interruptGroup.BeginDial(ctx, revision)
+		if stale {
+			finishDial()
+			release()
+			continue
+		}
+		return member, release, dialCtx, finishDial, nil
+	}
+	return nil, nil, nil, nil, E.New("outbound group ", s.Tag(), ": the selection changed repeatedly during connection setup")
+}
+
+// finishDialResult maps a dial that returned at the same instant its setup was cancelled: the
+// connection, if any, belongs to the member the user switched away from, so it is closed rather
+// than handed out. A dial error keeps its own meaning.
+func finishDialResult(dialCtx context.Context, conn net.Conn, err error) (net.Conn, error) {
+	if err == nil && dialCtx.Err() != nil {
+		_ = conn.Close()
+		return nil, context.Cause(dialCtx)
+	}
+	return conn, err
+}
+
+func finishDialPacketResult(dialCtx context.Context, conn net.PacketConn, err error) (net.PacketConn, error) {
+	if err == nil && dialCtx.Err() != nil {
+		_ = conn.Close()
+		return nil, context.Cause(dialCtx)
+	}
+	return conn, err
+}
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	member, release, err := s.currentMemberLeased()
+	member, release, dialCtx, finishDial, err := s.dialMember(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, member)
-	conn, err := member.DialContext(ctx, network, destination)
+	conn, err := member.DialContext(dialCtx, network, destination)
+	conn, err = finishDialResult(dialCtx, conn, err)
 	if err != nil {
 		return nil, err
 	}
@@ -778,20 +821,20 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 // remaining family is never tried. The selected member may itself be a group; the same method
 // forwards the list again.
 func (s *Selector) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
-	member, release, err := s.currentMemberLeased()
+	member, release, dialCtx, finishDial, err := s.dialMember(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, member)
+	var conn net.Conn
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
-		conn, err := parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
-		if err != nil {
-			return nil, err
-		}
-		return s.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+		conn, err = parallel.DialParallelNetwork(dialCtx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	} else {
+		conn, err = D.DialSerialNetwork(dialCtx, member, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
-	conn, err := D.DialSerialNetwork(ctx, member, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	conn, err = finishDialResult(dialCtx, conn, err)
 	if err != nil {
 		return nil, err
 	}
@@ -799,20 +842,23 @@ func (s *Selector) DialParallelNetwork(ctx context.Context, network string, dest
 }
 
 func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
-	member, release, err := s.currentMemberLeased()
+	member, release, dialCtx, finishDial, err := s.dialMember(ctx)
 	if err != nil {
 		return nil, netip.Addr{}, err
 	}
 	defer release()
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, member)
+	var (
+		conn    net.PacketConn
+		address netip.Addr
+	)
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
-		conn, address, err := parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
-		if err != nil {
-			return nil, address, err
-		}
-		return s.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
+		conn, address, err = parallel.ListenSerialNetworkPacket(dialCtx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	} else {
+		conn, address, err = D.ListenSerialNetworkPacket(dialCtx, member, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
-	conn, address, err := D.ListenSerialNetworkPacket(ctx, member, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	conn, err = finishDialPacketResult(dialCtx, conn, err)
 	if err != nil {
 		return nil, address, err
 	}
@@ -820,13 +866,15 @@ func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.
 }
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	member, release, err := s.currentMemberLeased()
+	member, release, dialCtx, finishDial, err := s.dialMember(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, member)
-	conn, err := member.ListenPacket(ctx, destination)
+	conn, err := member.ListenPacket(dialCtx, destination)
+	conn, err = finishDialPacketResult(dialCtx, conn, err)
 	if err != nil {
 		return nil, err
 	}

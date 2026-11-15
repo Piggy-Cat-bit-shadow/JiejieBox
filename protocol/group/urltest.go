@@ -722,8 +722,17 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	// Register the setup before the dial so a selection change can cancel it. The revision is read
+	// immediately before BeginDial: a change that lands after the member was chosen is then either
+	// seen as stale here or cancels the context while the dial is in flight.
+	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
+	if stale {
+		return nil, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
+	}
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, outbound)
-	conn, err := outbound.DialContext(ctx, network, destination)
+	conn, err := outbound.DialContext(dialCtx, network, destination)
+	conn, err = finishDialResult(dialCtx, conn, err)
 	if err == nil {
 		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -764,8 +773,14 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
+	if stale {
+		return nil, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
+	}
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, outbound)
-	conn, err := outbound.ListenPacket(ctx, destination)
+	conn, err := outbound.ListenPacket(dialCtx, destination)
+	conn, err = finishDialPacketResult(dialCtx, conn, err)
 	if err == nil {
 		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -806,16 +821,22 @@ func (s *URLTest) DialParallelNetwork(ctx context.Context, network string, desti
 		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
+	if stale {
+		return nil, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
+	}
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, outbound)
 	var (
 		conn net.Conn
 		err  error
 	)
 	if parallel, isParallel := outbound.(D.ParallelNetworkDialer); isParallel {
-		conn, err = parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, err = parallel.DialParallelNetwork(dialCtx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	} else {
-		conn, err = D.DialSerialNetwork(ctx, outbound, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, err = D.DialSerialNetwork(dialCtx, outbound, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
+	conn, err = finishDialResult(dialCtx, conn, err)
 	if err == nil {
 		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -847,6 +868,11 @@ func (s *URLTest) ListenSerialNetworkPacket(ctx context.Context, destination M.S
 		return nil, netip.Addr{}, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
 	}
 	defer release()
+	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
+	if stale {
+		return nil, netip.Addr{}, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
+	}
+	defer finishDial()
 	adapter.RecordDialStep(ctx, s, outbound)
 	var (
 		conn    net.PacketConn
@@ -854,10 +880,11 @@ func (s *URLTest) ListenSerialNetworkPacket(ctx context.Context, destination M.S
 		err     error
 	)
 	if parallel, isParallel := outbound.(D.ParallelNetworkDialer); isParallel {
-		conn, address, err = parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, address, err = parallel.ListenSerialNetworkPacket(dialCtx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	} else {
-		conn, address, err = D.ListenSerialNetworkPacket(ctx, outbound, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, address, err = D.ListenSerialNetworkPacket(dialCtx, outbound, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
+	conn, err = finishDialPacketResult(dialCtx, conn, err)
 	if err == nil {
 		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
 	}
