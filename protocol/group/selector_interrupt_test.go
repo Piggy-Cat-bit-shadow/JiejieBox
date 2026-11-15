@@ -137,6 +137,12 @@ func (o *trackingOutbound) lastConn() *trackedConn {
 	return o.last
 }
 
+func (o *trackingOutbound) dialCount() int {
+	o.access.Lock()
+	defer o.access.Unlock()
+	return len(o.allConns)
+}
+
 // trackedConn is a connection that remembers being closed.
 type trackedConn struct {
 	closed    atomic.Bool

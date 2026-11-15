@@ -7,9 +7,14 @@ package interrupt
 // yet - it is a request waiting on the member the user just switched away from. Leaving it blocked
 // is how "switch node" appears to do nothing while the old request waits for its own timeout, or
 // forever when it has none.
+//
+// The transfer from pending setup to established connection is atomic (P1-2). These tests pin both
+// sides of the boundary: a switch either cancels the setup before it can be delivered, or sees the
+// connection in the established list and applies the configured policy to it.
 
 import (
 	"context"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,15 +25,15 @@ import (
 
 func TestBeginDialContextIsCancelledByInterrupt(t *testing.T) {
 	group := NewGroup()
-	revision := group.Revision()
-	dialCtx, release, stale := group.BeginDial(context.Background(), revision)
+	dial, stale := group.BeginDial(context.Background(), group.Revision())
 	require.False(t, stale)
-	require.NoError(t, dialCtx.Err())
+	require.NotNil(t, dial)
+	require.NoError(t, dial.Context().Err())
 
 	blocked := make(chan error, 1)
 	go func() {
-		<-dialCtx.Done()
-		blocked <- context.Cause(dialCtx)
+		<-dial.Context().Done()
+		blocked <- context.Cause(dial.Context())
 	}()
 
 	group.InterruptSelection(false)
@@ -36,9 +41,9 @@ func TestBeginDialContextIsCancelledByInterrupt(t *testing.T) {
 	case err := <-blocked:
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(2 * time.Second):
-		t.Fatal("a pending dial survived Interrupt")
+		t.Fatal("a pending dial survived InterruptSelection")
 	}
-	release()
+	dial.Release()
 }
 
 func TestBeginDialRejectsAStaleSelection(t *testing.T) {
@@ -46,30 +51,29 @@ func TestBeginDialRejectsAStaleSelection(t *testing.T) {
 	revision := group.Revision()
 	group.InterruptSelection(false)
 
-	dialCtx, release, stale := group.BeginDial(context.Background(), revision)
+	dial, stale := group.BeginDial(context.Background(), revision)
 	require.True(t, stale, "a dial selected before the switch must not run against the old member")
-	require.ErrorIs(t, dialCtx.Err(), context.Canceled)
-	release()
+	require.Nil(t, dial)
 
 	// A dial that selected under the new revision is current.
-	current, releaseCurrent, stale := group.BeginDial(context.Background(), group.Revision())
+	current, stale := group.BeginDial(context.Background(), group.Revision())
 	require.False(t, stale)
-	require.NoError(t, current.Err())
-	releaseCurrent()
+	require.NoError(t, current.Context().Err())
+	current.Release()
 }
 
 // TestInterruptDoesNotCutEstablishedConnectionsWhenDisabled keeps the existing promise intact: only
 // the setup is cancelled unconditionally; the established flow still obeys the setting.
 func TestInterruptDoesNotCutEstablishedConnectionsWhenDisabled(t *testing.T) {
 	group := NewGroup()
-	conn := &trackedCloser{}
+	conn := &trackedConn{}
 	group.Add(conn, true)
-	dialCtx, release, stale := group.BeginDial(context.Background(), group.Revision())
+	dial, stale := group.BeginDial(context.Background(), group.Revision())
 	require.False(t, stale)
-	defer release()
+	defer dial.Release()
 
 	group.InterruptSelection(false)
-	require.ErrorIs(t, dialCtx.Err(), context.Canceled)
+	require.ErrorIs(t, dial.Context().Err(), context.Canceled)
 	require.False(t, conn.closed.Load(), "interrupt_exist_connections=false must keep the established flow")
 }
 
@@ -77,10 +81,10 @@ func TestInterruptDoesNotCutEstablishedConnectionsWhenDisabled(t *testing.T) {
 // dial has returned, so the setup's authority has ended) and removes the entry, exactly once.
 func TestBeginDialReleaseReleasesTheEntry(t *testing.T) {
 	group := NewGroup()
-	dialCtx, release, _ := group.BeginDial(context.Background(), group.Revision())
-	release()
-	release()
-	require.ErrorIs(t, dialCtx.Err(), context.Canceled)
+	dial, _ := group.BeginDial(context.Background(), group.Revision())
+	dial.Release()
+	dial.Release()
+	require.ErrorIs(t, dial.Context().Err(), context.Canceled)
 
 	group.access.Lock()
 	require.Empty(t, group.dials)
@@ -98,13 +102,12 @@ func TestConcurrentInterruptAndBeginDial(t *testing.T) {
 	for index := 0; index < callers; index++ {
 		go func() {
 			defer waitGroup.Done()
-			dialCtx, release, stale := group.BeginDial(context.Background(), group.Revision())
-			defer release()
+			dial, stale := group.BeginDial(context.Background(), group.Revision())
 			if stale {
 				staleCount.Add(1)
 				return
 			}
-			_ = dialCtx
+			dial.Release()
 		}()
 	}
 	// Race the switch against the starts. Every dial must end in exactly one of the two states.
@@ -112,10 +115,10 @@ func TestConcurrentInterruptAndBeginDial(t *testing.T) {
 	waitGroup.Wait()
 
 	// A later dial is current and is not affected by the earlier switch.
-	late, releaseLate, stale := group.BeginDial(context.Background(), group.Revision())
+	late, stale := group.BeginDial(context.Background(), group.Revision())
 	require.False(t, stale)
-	require.NoError(t, late.Err())
-	releaseLate()
+	require.NoError(t, late.Context().Err())
+	late.Release()
 }
 
 // TestInterruptLeavesASubscriptionRefreshDialAlone pins the other half of the boundary: a provider
@@ -125,20 +128,124 @@ func TestConcurrentInterruptAndBeginDial(t *testing.T) {
 func TestInterruptLeavesASubscriptionRefreshDialAlone(t *testing.T) {
 	group := NewGroup()
 	revision := group.Revision()
-	dialCtx, release, stale := group.BeginDial(context.Background(), revision)
+	dial, stale := group.BeginDial(context.Background(), revision)
 	require.False(t, stale)
-	defer release()
+	defer dial.Release()
 
 	group.Interrupt(false)
-	require.NoError(t, dialCtx.Err(), "a provider refresh must not cancel an in-flight dial")
+	require.NoError(t, dial.Context().Err(), "a provider refresh must not cancel an in-flight dial")
 	require.Equal(t, revision, group.Revision(), "a provider refresh is not a selection change")
 }
 
-type trackedCloser struct {
-	closed atomic.Bool
+// TestCompleteConnAfterSelectionChangeClosesTheConnection is the deterministic side of P1-2: the
+// switch wins the pending entry first, so the hand-off that arrives afterwards must close the
+// connection instead of registering it behind the switch's back.
+func TestCompleteConnAfterSelectionChangeClosesTheConnection(t *testing.T) {
+	group := NewGroup()
+	dial, stale := group.BeginDial(context.Background(), group.Revision())
+	require.False(t, stale)
+	conn := &trackedConn{}
+
+	group.InterruptSelection(true)
+	registered, err := dial.CompleteConn(conn, true)
+	require.Nil(t, registered)
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, conn.closed.Load(), "a connection that lost the switch race was delivered")
+
+	group.access.Lock()
+	require.Empty(t, group.dials)
+	require.Zero(t, group.connections.Len())
+	group.access.Unlock()
+	dial.Release()
 }
 
-func (c *trackedCloser) Close() error {
-	c.closed.Store(true)
+// TestInterruptAfterCompletionClosesTheEstablishedConnection is the other deterministic side: the
+// hand-off wins, so the switch must see the connection in the established list and apply the
+// configured policy to it, not miss it because it was appended after the scan.
+func TestInterruptAfterCompletionClosesTheEstablishedConnection(t *testing.T) {
+	group := NewGroup()
+	dial, stale := group.BeginDial(context.Background(), group.Revision())
+	require.False(t, stale)
+	conn := &trackedConn{}
+
+	registered, err := dial.CompleteConn(conn, true)
+	require.NoError(t, err)
+	require.NotNil(t, registered)
+	require.False(t, conn.closed.Load())
+	dial.Release()
+
+	group.InterruptSelection(true)
+	require.True(t, conn.closed.Load(),
+		"a connection registered before the switch was not interrupted")
+	require.NoError(t, registered.Close())
+}
+
+// TestCompleteConnRacesInterruptSelectionNeverDeliversAnOpenConnection is the adversarial form:
+// hand-off and switch are released together, many times. The only two legal outcomes are
+// "hand-off succeeded and the switch closed it" or "hand-off failed and closed it itself"; in both,
+// the connection is closed once the switch returns and nothing stays registered.
+func TestCompleteConnRacesInterruptSelectionNeverDeliversAnOpenConnection(t *testing.T) {
+	group := NewGroup()
+	const rounds = 200
+	for round := 0; round < rounds; round++ {
+		dial, stale := group.BeginDial(context.Background(), group.Revision())
+		require.False(t, stale)
+		conn := &trackedConn{}
+		start := make(chan struct{})
+		var waitGroup sync.WaitGroup
+		waitGroup.Add(2)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			group.InterruptSelection(true)
+		}()
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			_, _ = dial.CompleteConn(conn, true)
+		}()
+		close(start)
+		waitGroup.Wait()
+		require.True(t, conn.closed.Load(),
+			"round %d: a connection was delivered open across a switch", round)
+		dial.Release()
+	}
+	group.access.Lock()
+	require.Empty(t, group.dials)
+	require.Zero(t, group.connections.Len())
+	group.access.Unlock()
+}
+
+// TestInvalidateSetupCancelsDialWithoutClosingEstablished is the provider/clear-selection case: the
+// pending setup is stale, but a flow that is already carrying traffic is not cut by a single target
+// failure.
+func TestInvalidateSetupCancelsDialWithoutClosingEstablished(t *testing.T) {
+	group := NewGroup()
+	conn := &trackedConn{}
+	group.Add(conn, true)
+	dial, stale := group.BeginDial(context.Background(), group.Revision())
+	require.False(t, stale)
+	defer dial.Release()
+
+	group.InvalidateSetup()
+	require.ErrorIs(t, dial.Context().Err(), context.Canceled)
+	require.False(t, conn.closed.Load(), "InvalidateSetup must not close established connections")
+}
+
+type trackedConn struct {
+	closed    atomic.Bool
+	closeOnce sync.Once
+}
+
+func (c *trackedConn) Read([]byte) (int, error)         { return 0, net.ErrClosed }
+func (c *trackedConn) Write(p []byte) (int, error)      { return len(p), nil }
+func (c *trackedConn) LocalAddr() net.Addr              { return nil }
+func (c *trackedConn) RemoteAddr() net.Addr             { return nil }
+func (c *trackedConn) SetDeadline(time.Time) error      { return nil }
+func (c *trackedConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *trackedConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (c *trackedConn) Close() error {
+	c.closeOnce.Do(func() { c.closed.Store(true) })
 	return nil
 }

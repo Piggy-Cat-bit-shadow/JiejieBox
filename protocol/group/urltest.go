@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -650,6 +651,11 @@ func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 	}()
 }
 
+// testHookAfterRevisionSnapshot runs after the helper has read the selection revision and before it
+// reads the member. Tests use it to force a selection change into that exact window; production
+// leaves it nil.
+var testHookAfterRevisionSnapshot func()
+
 // acquireMember pins the selected member for the hand-off about to happen. See the matching helper
 // in selector.go and adapter.OutboundLeaseManager: the publication barrier must not close an object
 // a dial already obtained.
@@ -660,239 +666,168 @@ func (s *URLTest) acquireMember(member adapter.Outbound) (func(), bool) {
 	return func() {}, true
 }
 
-// leaseSelected pins outbound for the hand-off. If a publication closed it before the pin was taken,
-// it re-reads the generation's selection (the callback already moved it to the replacement) and pins
-// that instead; ok=false means even the re-read member was closed, so the caller refuses the flow
-// instead of dialling a closed object.
-func (s *URLTest) leaseSelected(current *URLTestGroup, network string, outbound adapter.Outbound) (adapter.Outbound, func(), bool) {
-	if release, ok := s.acquireMember(outbound); ok {
-		return outbound, release, true
+// selectMemberForDial returns the group, the member, the member lease and the dial handle in ONE
+// revision-consistent snapshot. The revision is read BEFORE the member is chosen, so a selection
+// update that lands in between either makes BeginDial report stale or cancels the context in
+// flight. The group returned is the same group the revision belongs to; a provider replacement that
+// closed the first candidate makes the loop re-read the live group instead of pairing an old group's
+// revision with a member from the new one.
+func (s *URLTest) selectMemberForDial(ctx context.Context, network string) (*URLTestGroup, adapter.Outbound, func(), *interrupt.Dial, error) {
+	switch N.NetworkName(network) {
+	case N.NetworkTCP, N.NetworkUDP:
+	default:
+		return nil, nil, nil, nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
-	// The generation this call started with holds a member that the publication barrier already
-	// closed. Re-read the LIVE generation: Start/onProviderUpdated swap the pointer before the
-	// barrier runs, so the replacement is already visible there.
-	reselectGroup := current
-	if latest := s.currentGroup(); latest != nil {
-		reselectGroup = latest
-	}
-	var next adapter.Outbound
-	if state := reselectGroup.selected.Load(); state != nil {
-		if network == N.NetworkUDP {
-			next = state.udp
-		} else {
-			next = state.tcp
+	for attempt := 0; attempt < 4; attempt++ {
+		current := s.currentGroup()
+		if current == nil {
+			return nil, nil, nil, nil, s.noGroupError()
 		}
+		revision := current.interruptGroup.Revision()
+		if testHookAfterRevisionSnapshot != nil {
+			testHookAfterRevisionSnapshot()
+		}
+		var outbound adapter.Outbound
+		if state := current.selected.Load(); state != nil {
+			if N.NetworkName(network) == N.NetworkUDP {
+				outbound = state.udp
+			} else {
+				outbound = state.tcp
+			}
+		}
+		if outbound == nil {
+			outbound, _ = current.Select(network)
+		}
+		if outbound == nil {
+			return nil, nil, nil, nil, E.New("missing supported outbound")
+		}
+		release, ok := s.acquireMember(outbound)
+		if !ok {
+			// The publication barrier closed this candidate; re-read the live generation.
+			continue
+		}
+		dial, stale := current.interruptGroup.BeginDial(ctx, revision)
+		if stale {
+			release()
+			continue
+		}
+		return current, outbound, release, dial, nil
 	}
-	if next == nil {
-		next, _ = reselectGroup.Select(network)
-	}
-	if next == nil {
-		return nil, func() {}, false
-	}
-	release, ok := s.acquireMember(next)
-	return next, release, ok
+	return nil, nil, nil, nil, E.New("outbound group ", s.Tag(), ": the selection changed repeatedly during connection setup")
 }
+
+// dialFailureMovesSelection reports whether a failed dial is evidence that the selected member
+// should be cleared. A cancellation (the caller gave up, or a switch cancelled this setup) is not:
+// clearing the selection there would let a stale dial clear the member a concurrent switch just
+// chose. A diagnostic dial is not a flow and never moves the selection.
+func (s *URLTest) dialFailureMovesSelection(ctx context.Context, err error) bool {
+	if adapter.IsDiagnosticDial(ctx) || ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return true
+}
+
 func (s *URLTest) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	current := s.currentGroup()
-	if current == nil {
-		return nil, s.noGroupError()
-	}
-	current.Touch()
-	var outbound adapter.Outbound
-	if state := current.selected.Load(); state != nil {
-		switch N.NetworkName(network) {
-		case N.NetworkTCP:
-			outbound = state.tcp
-		case N.NetworkUDP:
-			outbound = state.udp
-		default:
-			return nil, E.Extend(N.ErrUnknownNetwork, network)
-		}
-	} else if N.NetworkName(network) != N.NetworkTCP && N.NetworkName(network) != N.NetworkUDP {
-		return nil, E.Extend(N.ErrUnknownNetwork, network)
-	}
-	if outbound == nil {
-		outbound, _ = current.Select(network)
-	}
-	if outbound == nil {
-		return nil, E.New("missing supported outbound")
-	}
-	outbound, release, ok := s.leaseSelected(current, network, outbound)
-	if !ok {
-		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	current, outbound, release, dial, err := s.selectMemberForDial(ctx, network)
+	if err != nil {
+		return nil, err
 	}
 	defer release()
-	// Register the setup before the dial so a selection change can cancel it. The revision is read
-	// immediately before BeginDial: a change that lands after the member was chosen is then either
-	// seen as stale here or cancels the context while the dial is in flight.
-	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
-	if stale {
-		return nil, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
-	}
-	defer finishDial()
+	defer dial.Release()
+	current.Touch()
 	adapter.RecordDialStep(ctx, s, outbound)
-	conn, err := outbound.DialContext(dialCtx, network, destination)
-	conn, err = finishDialResult(dialCtx, conn, err)
-	if err == nil {
-		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+	conn, err := outbound.DialContext(dial.Context(), network, destination)
+	if err != nil {
+		s.logger.ErrorContext(ctx, err)
+		// A real connection failed, so the node is not usable now regardless of what an earlier
+		// measurement said. Only this target's result is invalidated, and only if this outbound is
+		// still the selected one - a concurrent update may already have moved on.
+		if s.dialFailureMovesSelection(ctx, err) {
+			current.clearSelectionFor(network, outbound)
+		}
+		return nil, err
 	}
-	s.logger.ErrorContext(ctx, err)
-	// A real connection failed, so the node is not usable now regardless of what an earlier
-	// measurement said. Only this target's result is invalidated, and only if this outbound is
-	// still the selected one - a concurrent update may already have moved on.
-	//
-	// A DIAGNOSTIC dial is exempt: it runs the production path so the report can describe it, but it
-	// is not a flow. Clearing the selection here would let a probe taken while the user's network was
-	// briefly down move the member their traffic uses - and the forced recheck that follows the clear
-	// can delete the member's health measurement, so the probe would rewrite the evidence it was
-	// meant to read. The dial and its failure still reach the caller and the report.
-	if !adapter.IsDiagnosticDial(ctx) {
-		current.clearSelectionFor(network, outbound)
-	}
-	return nil, err
+	return dial.CompleteConn(conn, interrupt.IsExternalConnectionFromContext(ctx))
 }
 
 func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	current := s.currentGroup()
-	if current == nil {
-		return nil, s.noGroupError()
-	}
-	current.Touch()
-	var outbound adapter.Outbound
-	if state := current.selected.Load(); state != nil {
-		outbound = state.udp
-	}
-	if outbound == nil {
-		outbound, _ = current.Select(N.NetworkUDP)
-	}
-	if outbound == nil {
-		return nil, E.New("missing supported outbound")
-	}
-	outbound, release, ok := s.leaseSelected(current, N.NetworkUDP, outbound)
-	if !ok {
-		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	current, outbound, release, dial, err := s.selectMemberForDial(ctx, N.NetworkUDP)
+	if err != nil {
+		return nil, err
 	}
 	defer release()
-	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
-	if stale {
-		return nil, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
-	}
-	defer finishDial()
+	defer dial.Release()
+	current.Touch()
 	adapter.RecordDialStep(ctx, s, outbound)
-	conn, err := outbound.ListenPacket(dialCtx, destination)
-	conn, err = finishDialPacketResult(dialCtx, conn, err)
-	if err == nil {
-		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+	conn, err := outbound.ListenPacket(dial.Context(), destination)
+	if err != nil {
+		s.logger.ErrorContext(ctx, err)
+		if s.dialFailureMovesSelection(ctx, err) {
+			current.clearSelectionFor(N.NetworkUDP, outbound)
+		}
+		return nil, err
 	}
-	s.logger.ErrorContext(ctx, err)
-	if !adapter.IsDiagnosticDial(ctx) {
-		current.clearSelectionFor(N.NetworkUDP, outbound)
-	}
-	return nil, err
+	return dial.CompletePacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx))
 }
 
 func (s *URLTest) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
-	current := s.currentGroup()
-	if current == nil {
-		return nil, s.noGroupError()
-	}
-	current.Touch()
-	var outbound adapter.Outbound
-	if state := current.selected.Load(); state != nil {
-		switch N.NetworkName(network) {
-		case N.NetworkTCP:
-			outbound = state.tcp
-		case N.NetworkUDP:
-			outbound = state.udp
-		default:
-			return nil, E.Extend(N.ErrUnknownNetwork, network)
-		}
-	} else if N.NetworkName(network) != N.NetworkTCP && N.NetworkName(network) != N.NetworkUDP {
-		return nil, E.Extend(N.ErrUnknownNetwork, network)
-	}
-	if outbound == nil {
-		outbound, _ = current.Select(network)
-	}
-	if outbound == nil {
-		return nil, E.New("missing supported outbound")
-	}
-	outbound, release, ok := s.leaseSelected(current, network, outbound)
-	if !ok {
-		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	current, outbound, release, dial, err := s.selectMemberForDial(ctx, network)
+	if err != nil {
+		return nil, err
 	}
 	defer release()
-	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
-	if stale {
-		return nil, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
-	}
-	defer finishDial()
+	defer dial.Release()
+	current.Touch()
 	adapter.RecordDialStep(ctx, s, outbound)
-	var (
-		conn net.Conn
-		err  error
-	)
+	var conn net.Conn
 	if parallel, isParallel := outbound.(D.ParallelNetworkDialer); isParallel {
-		conn, err = parallel.DialParallelNetwork(dialCtx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, err = parallel.DialParallelNetwork(dial.Context(), network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	} else {
-		conn, err = D.DialSerialNetwork(dialCtx, outbound, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, err = D.DialSerialNetwork(dial.Context(), outbound, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
-	conn, err = finishDialResult(dialCtx, conn, err)
-	if err == nil {
-		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+	if err != nil {
+		s.logger.ErrorContext(ctx, err)
+		if s.dialFailureMovesSelection(ctx, err) {
+			current.clearSelectionFor(network, outbound)
+		}
+		return nil, err
 	}
-	s.logger.ErrorContext(ctx, err)
-	if !adapter.IsDiagnosticDial(ctx) {
-		current.clearSelectionFor(network, outbound)
-	}
-	return nil, err
+	return dial.CompleteConn(conn, interrupt.IsExternalConnectionFromContext(ctx))
 }
 
 func (s *URLTest) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
-	current := s.currentGroup()
-	if current == nil {
-		return nil, netip.Addr{}, os.ErrClosed
-	}
-	current.Touch()
-	var outbound adapter.Outbound
-	if state := current.selected.Load(); state != nil {
-		outbound = state.udp
-	}
-	if outbound == nil {
-		outbound, _ = current.Select(N.NetworkUDP)
-	}
-	if outbound == nil {
-		return nil, netip.Addr{}, E.New("missing supported outbound")
-	}
-	outbound, release, ok := s.leaseSelected(current, N.NetworkUDP, outbound)
-	if !ok {
-		return nil, netip.Addr{}, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	current, outbound, release, dial, err := s.selectMemberForDial(ctx, N.NetworkUDP)
+	if err != nil {
+		return nil, netip.Addr{}, err
 	}
 	defer release()
-	dialCtx, finishDial, stale := current.interruptGroup.BeginDial(ctx, current.interruptGroup.Revision())
-	if stale {
-		return nil, netip.Addr{}, E.New("outbound group ", s.Tag(), ": the selection changed during connection setup")
-	}
-	defer finishDial()
+	defer dial.Release()
+	current.Touch()
 	adapter.RecordDialStep(ctx, s, outbound)
 	var (
 		conn    net.PacketConn
 		address netip.Addr
-		err     error
 	)
 	if parallel, isParallel := outbound.(D.ParallelNetworkDialer); isParallel {
-		conn, address, err = parallel.ListenSerialNetworkPacket(dialCtx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, address, err = parallel.ListenSerialNetworkPacket(dial.Context(), destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	} else {
-		conn, address, err = D.ListenSerialNetworkPacket(dialCtx, outbound, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		conn, address, err = D.ListenSerialNetworkPacket(dial.Context(), outbound, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
-	conn, err = finishDialPacketResult(dialCtx, conn, err)
-	if err == nil {
-		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
+	if err != nil {
+		s.logger.ErrorContext(ctx, err)
+		if s.dialFailureMovesSelection(ctx, err) {
+			current.clearSelectionFor(N.NetworkUDP, outbound)
+		}
+		return nil, address, err
 	}
-	s.logger.ErrorContext(ctx, err)
-	if !adapter.IsDiagnosticDial(ctx) {
-		current.clearSelectionFor(N.NetworkUDP, outbound)
+	registered, err := dial.CompletePacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx))
+	if err != nil {
+		return nil, address, err
 	}
-	return nil, address, err
+	return registered, address, nil
 }
 
 // selectedState is one immutable generation of the group's selection.
@@ -1155,11 +1090,11 @@ func (g *URLTestGroup) Touch() {
 
 func (g *URLTestGroup) Close() error {
 	g.access.Lock()
-	defer g.access.Unlock()
 
 	// Idempotent: a second Close must not stop a ticker twice, unregister a nil element, or close
 	// an already-closed channel.
 	if g.closed {
+		g.access.Unlock()
 		return nil
 	}
 
@@ -1187,6 +1122,12 @@ func (g *URLTestGroup) Close() error {
 		g.cancelBackground()
 		g.cancelBackground = nil
 	}
+	g.access.Unlock()
+
+	// A closed group owns no pending dial: the callback that selected its member is gone, and the
+	// manager's publication barrier must not wait on a setup whose selection changed. Established
+	// connections are left to the ownership that already holds them.
+	g.interruptGroup.InvalidateSetup()
 	return nil
 }
 
@@ -1735,6 +1676,10 @@ func (g *URLTestGroup) commitFailoverSelection(tag string, evidence *roundEviden
 	}
 	if updated && g.interruptGroup != nil {
 		g.interruptGroup.InterruptSelection(g.interruptExternalConnections)
+	} else if selected && g.interruptGroup != nil {
+		// First committed selection: stop setup that is still on a temporary member, but leave
+		// established flows alone because no member is being replaced.
+		g.interruptGroup.InvalidateSetup()
 	}
 	if selected {
 		g.history.NotifyUpdated()
@@ -2568,6 +2513,10 @@ func (g *URLTestGroup) clearSelectionFor(network string, failed adapter.Outbound
 	g.updateAccess.Unlock()
 
 	if cleared {
+		// The committed member is gone: in-flight setup that selected it must stop waiting on it,
+		// while flows already carrying traffic are not cut by a single target failure. This only
+		// advances the setup revision and cancels pending dials.
+		g.interruptGroup.InvalidateSetup()
 		// Request a health recheck rather than deleting the measurement. The recheck is
 		// single-flight, so a burst of failing connections produces one round of probes rather
 		// than one per failure.
@@ -2797,24 +2746,30 @@ func (g *URLTestGroup) clearSelected(network string, failed adapter.Outbound) {
 		return
 	}
 	g.updateAccess.Lock()
-	defer g.updateAccess.Unlock()
-
 	previous := g.selected.Load()
 	if previous == nil {
+		g.updateAccess.Unlock()
 		return
 	}
 	next := &selectedState{tcp: previous.tcp, udp: previous.udp}
+	cleared := false
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		if next.tcp == failed {
 			next.tcp = nil
+			cleared = true
 		}
 	case N.NetworkUDP:
 		if next.udp == failed {
 			next.udp = nil
+			cleared = true
 		}
 	}
 	g.selected.Store(next)
+	g.updateAccess.Unlock()
+	if cleared {
+		g.interruptGroup.InvalidateSetup()
+	}
 }
 
 func (g *URLTestGroup) performUpdateCheck() {
@@ -2823,7 +2778,6 @@ func (g *URLTestGroup) performUpdateCheck() {
 	g.selectionCommit.Lock()
 	defer g.selectionCommit.Unlock()
 	g.updateAccess.Lock()
-	defer g.updateAccess.Unlock()
 	var (
 		updated  bool
 		selected bool
@@ -2855,8 +2809,16 @@ func (g *URLTestGroup) performUpdateCheck() {
 	}
 
 	g.selected.Store(next)
+	g.updateAccess.Unlock()
+	// The interrupt runs OUTSIDE updateAccess: cancelling a setup context runs its callbacks, and
+	// those may take locks of their own.
 	if updated {
 		g.interruptGroup.InterruptSelection(g.interruptExternalConnections)
+	} else if selected {
+		// The FIRST committed selection is still a selection change for in-flight setup: before it,
+		// traffic could reach a temporary member via Select(). Cancel those setup contexts, but do
+		// not cut established flows: no member was replaced.
+		g.interruptGroup.InvalidateSetup()
 	}
 	if selected {
 		g.history.NotifyUpdated()
