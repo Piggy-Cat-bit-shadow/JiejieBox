@@ -4,6 +4,66 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.51](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.51) — 2026-11-15
+
+### 本次更新
+
+v0.1.51 是 **TrustTunnel P1 断流与恢复链路的收口版本**，同时补上了 runtimecoord 代际确认、分组切换原子交接和 URLTest 终止态三类并发缺陷。目标不是新增功能，而是让“网络切换 / 切节点 / H3 载体失活”三条路径在真实时序下不再把旧连接、旧会话或旧选择带进新状态。
+
+内核侧修复了上一轮 P1 审计与独立复审指出的全部问题：CONNECT 建立无上界、H3 静默失活不退役、H3 显式连接错误不回退、旧代际确认被新代际接受、pending dial 与已建立连接登记之间的竞态、URLTest revision 与成员快照不一致、URLTest 关闭后仍可选择成员，以及 QUIC TLS 分类过宽导致 `no_application_protocol` 无法回退。原有 H3/H2 真实传输、红绿和 race 测试全部保留。
+
+发布侧同时修正了 v0.1.50 的 Apple provenance：v0.1.50 的 Apple build manifest 实际记录的是 `2e5b71f`，而 0.1.50 的 source lock 冻结的是落后一个 UI commit 的 `0947393`。v0.1.51 把 Apple gitlink、source lock 与 ABI 已验证 SHA 统一到 `2e5b71f`，并在最终候选上重新完成 iOS/macOS 编译。
+
+### 一、TrustTunnel：断流、回退与切节点恢复
+
+- **CONNECT 建立上界 15s**：会话“看起来还活着”（QUIC Context 未关）但不再回答 CONNECT 时，新请求不再无限等待调用方的 deadline。预算与内核既有 `constant.TCPTimeout` 对齐；3s stale probe 保留，调用方更短 deadline 仍然优先。新增真实 TLS+HTTP/2 服务延迟 10.2s 才回 200 的测试，确认不会在 10s 处误切慢目标。
+- **H3 静默失活**：运行期 H3 CONNECT 在建立预算内没有响应时，退役当前会话并 arm HTTP/2 verdict；后续请求走 H2。健康检查失败同样退役并 cordon。已建立流不被单目标失败切断。
+- **H3 显式连接级错误**：`*quic.ApplicationError`、`*quic.TransportError`、idle/handshake timeout、version negotiation 归为 carrier 证据，teardown + 当前代际 cordon + 本次请求重试 H2；`*quic.StreamError` 只影响该 CONNECT，不退役共享连接。
+- **收窄 TLS 分类**：不再把整个 `0x0100–0x01ff` CRYPTO_ERROR 当作证书/身份裁决。只有 bad/unsupported/revoked/expired/unknown certificate、unknown_ca、certificate_unobtainable、unrecognized_name、bad status/hash、certificate_required 不回退；`handshake_failure`、`protocol_version`、`no_application_protocol`、`internal_error` 与 extension alerts 可以走 H2。
+- **旧代际隔离**：`cordonSessionFailure` 只接受当前 client generation 的失败；旧会话失败不会关闭新网络的 H3。H3 成功握手不再清除“本次尝试期间被 arm”的 verdict；共享 pending offer 的等待者在 verdict 已打开时收到新 H3 会话，会先退役再走 H2。
+- **共享创建**：创建预算、最后 waiter 放弃、Session 代际检查、pending waiter 的 generation 校验都补齐；等待者不会拿到属于上一代网络的会话。
+- **认证与 TLS 拒绝**：407 / GOAWAY / QUIC application error 与证书/名称拒绝仍保持“不回退、不 cordon”的既有语义。
+
+### 二、runtimecoord：每代际一次 transition，确认绑定起始代际
+
+- `GenerationGate` 仍保证每个网络代际只执行一次破坏性 transition，listener 与首个 demand 共享同一次动作。
+- `BeforeDial` 返回本次拨号所属的 epoch，`AfterDial(epoch, err)` 只通过 `AcknowledgeIfCurrent` 确认仍在当前的 epoch；旧代际拨号即使成功，也不能把新代际标记为已确认。
+- 新增 `Registration.Snapshot()`：在同一把 registration 锁内读取当前 epoch 与 stale 状态，消除 `Stale()` 后再 `currentEpoch()` 的两读窗口。该窗口会把新 epoch 在未执行 transition 的情况下发给拨号，随后 listener 看到已确认而跳过 Reset。
+- 覆盖 7 个使用共享 gate 的 outbound（VMess、VLESS、TUIC、Trojan、TrustTunnel、MASQUE、Hysteria2）。
+
+### 三、分组切换：原子交接与真正终止态
+
+- **pending dial 到 established connection 原子交接**：`interrupt.Dial.CompleteConn/CompletePacketConn` 在同一把 group 锁内删除 pending 条目并登记连接。切换先赢则关闭连接并返回取消；登记先赢则切换能看到连接并按 `interrupt_exist_connections` 处理。Selector 与 URLTest 的四条拨号路径全部接入。
+- **provider 刷新不再误杀在途拨号**：只有真实选择变化才取消 in-flight setup；同 tag 对象替换仍保留 dial lease。
+- **URLTest revision 快照**：先读 revision，再读同一 group 的成员；lease 失败或 revision stale 时重读 live group，避免“旧成员 + 新 revision”。删除会混配 group 与 revision 的 `leaseSelected`。
+- **URLTest 生命周期**：`clearSelectionFor`、`clearSelected`、`URLTestGroup.Close`、首次 committed selection 都会取消 pending setup；关闭后 `Select`/`Selected` 不再返回成员，拨号返回 `os.ErrClosed`，health round 与 selection 写入不能复活。
+- **切换不误清选择**：被切换取消的拨号不再调用 `clearSelectionFor`，避免清掉并发切换刚选中的新成员。
+
+### 四、Apple / Android 发布侧
+
+- Apple source lock、gitlink、ABI verified SHA 统一到 `2e5b71fa59809b17faff1e24ab2e56caee52612e`；该 revision 是 v0.1.50 实际构建的 Apple 源码，layer-4 扫描 483 files / 0 violations / 3 interface methods。
+- 最终候选 Apple client 远端构建成功：Libbox、iOS、macOS 全部通过；manifest 记录 `parent_sha=1bf3c9161`、`jj_version=0.1.51`、`apple_client_sha=2e5b71f`。
+- Android 侧保持 `9816e006` 客户端 pin；Satelite v0.1.51 使用本次内核 tag 剥离后的 commit `1bf3c9161` 重新构建双 ABI 签名 APK：`versionCode=63`、`versionName=0.1.51`，`arm64-v8a` 与 `x86_64` 均为 `signed-by-user`（apksigner 实测），`build-info.json` 与 `apksigner-verify.txt` 已回读。
+
+### 五、验证与发布
+
+- 候选提交：`1bf3c91613daffa465da5c2fd6011efca39b222a`；tag `v0.1.51`（annotated `ecd477631f0bb3a5a5db4107a6f7e3fb5617e33f`）指向该提交。
+- 同一 SHA 的 `Verify`（含 race checks）与 `Release contract verification` 成功；`Android Core ARM64`、`linux-kernel-verify`、`Maintenance ledger` 成功。
+- Apple client run `43717278645`：Libbox / iOS / macOS 成功。
+- Release preparation dry-run `43718049974`：所有 pin 当前、无需移动；生成的 source lock 与提交一致。
+- [Kernel release 43721350987](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43721350987)：freeze、Verify/race、contract、Linux、macOS、Windows core、Desktop 安装器、Android AAR、Apple Libbox 与 iOS/macOS/自签 IPA、stage、publish 全部成功。
+- 公开 Release：[v0.1.51](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.51)，非 draft、非 prerelease；8 项公开附件（7 个产物 + `SHA256SUMS`）。
+- [Satelite v0.1.51](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.51) 已发布：客户端 `17eb94cecaa45678a93210820a4ec1e2c5a8fb69`，`versionCode=63`，`coreCommit=1bf3c9161`；run `43724418843` 构建与 publish 成功，5 项附件（双 ABI 签名 APK、`build-info.json`、`apksigner-verify.txt`、`SHA256SUMS.txt`）。
+- 本地：transport 全量、transport race、group/provider/runtimecoord race、protocol race、route、无 QUIC 构建、发布 tags 全量构建全部通过。
+- 原有 H3/H2 真实传输测试（真实 QUIC/TLS/HTTP2/TCP、UDP blackhole relay）保留并运行；未用 fake session 替代真实传输证据。
+
+### 六、已知边界
+
+- 本版不改变 `interrupt_exist_connections` 的既有语义：选择切换取消尚未建立的 setup，已建立连接是否切断仍由该设置决定。
+- 15s 是 CONNECT 建立上界，不是目标建连超时；大于 15s 的慢目标仍会失败，本次未新增配置项，避免扩大发布 API。
+- 未在本环境执行 iPhone NetworkExtension 真机、TestFlight 上传或真实服务端矩阵；这些仍按独立设备/TF 流程验收。
+- `http3.Error` 未强行归入连接级或流级分类；缺少 frame/stream 上下文时保持保守的 retire 路径。
+
 ## [v0.1.50](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.50) — 2026-11-15
 
 ### 本次更新
