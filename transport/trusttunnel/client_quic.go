@@ -31,6 +31,8 @@ const maxClientIdleTimeout = 600 * time.Second
 func init() {
 	quicAuthenticationError = isQUICAuthenticationError
 	quicTLSLayerError = isQUICTLSLayerError
+	quicConnectionError = isQUICConnectionError
+	quicStreamError = isQUICStreamError
 }
 
 // quicCryptoErrorBase is the first CRYPTO_ERROR code: QUIC encodes a TLS alert as 0x0100 + the alert
@@ -61,6 +63,45 @@ func isQUICAuthenticationError(err error) bool {
 	}
 	var http3Error *http3.Error
 	return errors.As(err, &http3Error) && http3Error.ErrorCode == errorCodeAuthenticationRequired
+}
+
+// isQUICConnectionError reports a CONNECTION-level failure: the connection is gone (remote or local
+// close, stateless reset, idle/handshake timeout, version negotiation). Those are the errors that
+// say the CARRIER cannot be used, as opposed to a stream or one target's answer.
+//
+// It deliberately does not classify http3.Error: that type covers both connection and stream
+// conditions, and the classification would need the frame/stream context that this layer does not
+// have. A stream error is handled by isQUICStreamError; everything else keeps the conservative
+// retire-without-cordon path.
+func isQUICConnectionError(err error) bool {
+	var applicationError *quic.ApplicationError
+	if errors.As(err, &applicationError) {
+		return true
+	}
+	var transportError *quic.TransportError
+	if errors.As(err, &transportError) {
+		return true
+	}
+	var idleTimeout *quic.IdleTimeoutError
+	if errors.As(err, &idleTimeout) {
+		return true
+	}
+	var handshakeTimeout *quic.HandshakeTimeoutError
+	if errors.As(err, &handshakeTimeout) {
+		return true
+	}
+	var versionError *quic.VersionNegotiationError
+	if errors.As(err, &versionError) {
+		return true
+	}
+	return false
+}
+
+// isQUICStreamError reports a STREAM-level failure. The connection is still expected to carry other
+// streams, so one bad CONNECT must not retire the session or arm the HTTP/3 verdict.
+func isQUICStreamError(err error) bool {
+	var streamError *quic.StreamError
+	return errors.As(err, &streamError)
 }
 
 func validateCongestionControl(name string) error {

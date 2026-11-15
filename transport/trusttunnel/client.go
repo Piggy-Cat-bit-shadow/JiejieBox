@@ -39,11 +39,14 @@ const (
 	// connectEstablishBudget bounds the wait for a CONNECT answer on a session that is NOT known to
 	// be stale. Without it, a carrier that still looks alive (QUIC's Context is open) but no longer
 	// delivers anything leaves every new CONNECT waiting for as long as the caller's own deadline -
-	// or forever when the caller has none. The figure is the same scale as the stack's request
-	// phase (constant.TCPTimeout, 15 s) but deliberately shorter: it covers a slow upstream connect
-	// several times over while keeping a dead carrier's cost to the person holding the phone in
-	// seconds. It bounds the ESTABLISHMENT only; an accepted stream is not touched by it.
-	connectEstablishBudget = 10 * time.Second
+	// or forever when the caller has none.
+	//
+	// The figure matches the stack's existing request-phase bound (constant.TCPTimeout, 15 s)
+	// instead of inventing a shorter one. That keeps a genuinely slow target - one that takes more
+	// than the ten seconds an earlier draft used - compatible, while a dead carrier is still bounded
+	// at the same scale as every other request timeout in the core. It bounds the ESTABLISHMENT only;
+	// an accepted stream is not touched by it.
+	connectEstablishBudget = 15 * time.Second
 
 	// sessionCreationBudget bounds one shared session creation from admission to publication, so a
 	// dial, TLS handshake or HTTP/2 initialisation that stops making progress cannot hold the
@@ -406,7 +409,17 @@ func (c *Client) connectSession(ctx context.Context) (sessionConn, error) {
 			conn.close()
 			return nil, ctx.Err()
 		}
-		c.clearCordonForGeneration(generation)
+		if c.h3Cordoned() {
+			// A runtime verdict was armed WHILE this attempt was in flight. A completed handshake is
+			// not proof that the carrier now answers CONNECTs (the failure that armed the verdict may
+			// be response-header starvation, which handshakes fine). Leave the verdict armed; the
+			// published session is retired by the post-creation guard and this demand goes to
+			// HTTP/2. A later attempt that starts with the verdict expired may clear it.
+			c.logger.DebugContext(c.ctx, "trusttunnel: HTTP/3 attempt to ", c.server,
+				" completed after the HTTP/2 verdict was armed; keeping the verdict")
+		} else {
+			c.clearCordonForGeneration(generation)
+		}
 		return conn, nil
 	}
 	if ctx.Err() != nil {
@@ -580,7 +593,13 @@ func (c *Client) cordonForGeneration(generation uint64) (armed bool) {
 // new CONNECTs is evidence about the current network, not about the one the session was created on.
 // The generation check inside cordonForGeneration still refuses a verdict that races a Reset.
 func (c *Client) cordonNow(reason string) {
-	generation := c.currentGeneration()
+	c.cordonGeneration(c.currentGeneration(), reason)
+}
+
+// cordonGeneration arms the verdict for a specific generation. The generation check inside
+// cordonForGeneration is what makes this safe against a Reset that lands between the caller's
+// comparison and this call: a verdict for a generation that is no longer current is refused.
+func (c *Client) cordonGeneration(generation uint64, reason string) {
 	if c.cordonForGeneration(generation) {
 		c.logger.WarnContext(c.ctx, "trusttunnel: HTTP/3 session to ", c.server,
 			" stopped carrying new CONNECTs (", reason, "); using HTTP/2 for the next ", c.h3Cooldown)
@@ -588,6 +607,42 @@ func (c *Client) cordonNow(reason string) {
 	}
 	c.logger.DebugContext(c.ctx, "trusttunnel: HTTP/3 carrier is still suspect to ", c.server,
 		" (", reason, ")")
+}
+
+// rejectPublishedSession reports whether a session that just came out of a shared creation must not
+// be handed to the waiting demand. A creation can publish after another demand armed the HTTP/2
+// verdict; a waiter that joined before the verdict would otherwise receive that HTTP/3 session
+// directly, bypassing the reuse guard in the normal path. The session is retired (its streams, if
+// any, finish) and the demand creates under the verdict instead.
+func (c *Client) rejectPublishedSession(session *clientSession) bool {
+	if !session.conn.alive() {
+		c.teardown(session)
+		return true
+	}
+	if c.quicFallback && session.carrier == ProtocolHTTP3 && c.h3Cordoned() {
+		c.retireSession(session, "HTTP/3 session published while the HTTP/2 verdict was open")
+		return true
+	}
+	return false
+}
+
+// cordonSessionFailure arms the HTTP/3 verdict for a failure observed on session, but only if that
+// session belongs to the CURRENT network generation. A session from the previous network can still
+// be draining (or a late request can still fail on it) after Reset; that failure says nothing about
+// the new network and must not keep its HTTP/3 off for 30 seconds.
+func (c *Client) cordonSessionFailure(session *clientSession, reason string) {
+	if !c.quicFallback || session.carrier != ProtocolHTTP3 {
+		return
+	}
+	current := c.currentGeneration()
+	if session.generation != current {
+		c.logger.DebugContext(c.ctx, "trusttunnel: ignoring HTTP/3 failure from session ", session.id,
+			" of generation ", session.generation, " on generation ", current, " (", reason, ")")
+		return
+	}
+	// Pass the SESSION's generation, not a re-read of the client's: cordonForGeneration refuses the
+	// write if Reset moved the client on between the comparison above and this call.
+	c.cordonGeneration(session.generation, reason)
 }
 
 // clearCordonForGeneration drops the verdict, but only for the generation that proved HTTP/3 works:
@@ -960,6 +1015,20 @@ func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *cli
 			c.teardown(session)
 			return nil, E.Cause1(ErrAuthenticationRequired, err)
 		}
+		if session.carrier == ProtocolHTTP3 && quicStreamError != nil && quicStreamError(err) {
+			// A stream-level failure affects this CONNECT, not the carrier. The connection may still
+			// carry other streams; do not retire or cordon it.
+			return nil, E.Cause(err, "trusttunnel: CONNECT ", authority)
+		}
+		if session.carrier == ProtocolHTTP3 && quicConnectionError != nil && quicConnectionError(err) {
+			// A CONNECTION-level failure is explicit evidence that the carrier is gone. Tear the
+			// session down and arm the HTTP/2 verdict (for the current generation only); the retry
+			// of this request then goes to the other carrier.
+			c.teardown(session)
+			c.cordonSessionFailure(session, "HTTP/3 connection error: "+err.Error())
+			connectionError := E.Cause(err, "trusttunnel: CONNECT ", authority)
+			return nil, E.Cause1(connectionError, errCarrierRetired)
+		}
 		c.retireOnFailure(session, "CONNECT failed: "+err.Error())
 		return nil, E.Cause(err, "trusttunnel: CONNECT ", authority)
 	}
@@ -1021,8 +1090,9 @@ func (c *Client) establishTimedOut(ctx context.Context, session *clientSession, 
 	c.retireSession(session, reason)
 	if c.quicFallback && session.carrier == ProtocolHTTP3 {
 		// Even when a racing failure already detached the session, this timeout is corroborated
-		// evidence about HTTP/3 itself, so the verdict is still worth arming.
-		c.cordonNow(reason)
+		// evidence about HTTP/3 itself, so the verdict is still worth arming - provided the session
+		// is from the current network generation.
+		c.cordonSessionFailure(session, reason)
 	}
 	return true
 }
@@ -1048,9 +1118,7 @@ func (c *Client) check(ctx context.Context, trace *ClientTrace, session *clientS
 				// are not cut by a failed probe, and tell the fallback so the next demand does not
 				// pay for another dead HTTP/3 attempt.
 				c.retireOnFailure(session, "health check failed: "+err.Error())
-				if c.quicFallback && session.carrier == ProtocolHTTP3 {
-					c.cordonNow("health check failed: " + err.Error())
-				}
+				c.cordonSessionFailure(session, "health check failed: "+err.Error())
 			}
 		}
 		if IsAuthenticationRequired(err) {
@@ -1148,6 +1216,9 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 				return nil, false, err
 			}
 			pending.waiters.Add(-1)
+			if c.rejectPublishedSession(session) {
+				continue
+			}
 			trace.sessionReused(ctx, c.protocol, c.server, session.opened)
 			return session, false, nil
 		}
@@ -1175,6 +1246,9 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 			return nil, false, err
 		}
 		pending.waiters.Add(-1)
+		if c.rejectPublishedSession(session) {
+			continue
+		}
 		return session, true, nil
 	}
 }

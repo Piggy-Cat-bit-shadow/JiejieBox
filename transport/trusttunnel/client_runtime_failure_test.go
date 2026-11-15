@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/quic-go"
 	M "github.com/sagernet/sing/common/metadata"
 
 	"github.com/stretchr/testify/require"
@@ -164,6 +165,152 @@ func (s *failingProbeSession) roundTrip(context.Context, string, http.Header, bo
 func (s *failingProbeSession) alive() bool { return !s.closed.Load() }
 
 func (s *failingProbeSession) close() error {
+	s.closed.Store(true)
+	return nil
+}
+
+// TestOldGenerationFailureCannotCordonCurrentGeneration is P2-2: a session from the previous
+// network can still fail while draining after Reset; that failure must not switch the NEW network's
+// HTTP/3 off for 30 seconds.
+func TestOldGenerationFailureCannotCordonCurrentGeneration(t *testing.T) {
+	requireQUIC(t)
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) { return newFakeSession(), nil },
+		func(context.Context) (sessionConn, error) { return newFakeSession(), nil },
+	)
+	client.h3Cooldown = time.Minute
+
+	ctx := testContext(t)
+	first, err := client.DialContext(ctx, fallbackDestination)
+	require.NoError(t, err)
+	require.NoError(t, first.Close())
+	client.access.Lock()
+	oldSession := client.session
+	client.access.Unlock()
+	require.NotNil(t, oldSession)
+
+	// The network changes; the old session is retired and the client moves to generation 1.
+	client.Reset()
+	client.cordonSessionFailure(oldSession, "late failure from the old network")
+	require.False(t, client.h3Cordoned(),
+		"a failure from the previous session generation disabled HTTP/3 on the new network")
+
+	// A session that belongs to the current generation may still arm the verdict.
+	second, err := client.DialContext(ctx, fallbackDestination)
+	require.NoError(t, err)
+	require.NoError(t, second.Close())
+	client.access.Lock()
+	currentSession := client.session
+	client.access.Unlock()
+	require.NotNil(t, currentSession)
+	client.cordonSessionFailure(currentSession, "current-generation failure")
+	require.True(t, client.h3Cordoned())
+}
+
+// TestWaiterDoesNotTakeAnHTTP3SessionPublishedAfterTheVerdict covers the shared-offer hole next to
+// P2-2: a waiter that joined the creation before another demand armed the HTTP/2 verdict must not
+// receive the HTTP/3 session that the in-flight attempt published after the verdict.
+func TestWaiterDoesNotTakeAnHTTP3SessionPublishedAfterTheVerdict(t *testing.T) {
+	requireQUIC(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	h3Session := newFakeSession()
+	h2Session := newFakeSession()
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) {
+			close(started)
+			<-release
+			return h3Session, nil
+		},
+		func(context.Context) (sessionConn, error) { return h2Session, nil },
+	)
+	client.h3Cooldown = time.Minute
+
+	result := make(chan error, 1)
+	go func() {
+		conn, err := client.DialContext(testContext(t), fallbackDestination)
+		if err == nil {
+			_ = conn.Close()
+		}
+		result <- err
+	}()
+	<-started
+
+	// Another failure arms the verdict while the HTTP/3 creation is still in flight.
+	client.cordonNow("concurrent runtime failure")
+	close(release)
+	select {
+	case err := <-result:
+		require.NoError(t, err, "the waiting demand did not recover over HTTP/2")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiting demand hung on the verdict boundary")
+	}
+	require.EqualValues(t, 1, h2Session.roundTrips.Load(),
+		"the waiter used the HTTP/3 session published after the verdict instead of HTTP/2")
+	require.True(t, h3Session.closed.Load(), "the late HTTP/3 session was not released")
+}
+
+// TestExplicitQUICConnectionErrorFallsBackToHTTP2 is P2-1: an explicit connection-level QUIC
+// failure (CONNECTION_CLOSE, transport error) is carrier evidence and must take the HTTP/2 path,
+// unlike a stream-level error.
+func TestExplicitQUICConnectionErrorFallsBackToHTTP2(t *testing.T) {
+	requireQUIC(t)
+	connectionError := &quic.TransportError{Remote: true, ErrorCode: 0x0a}
+	h3 := &errorSession{err: connectionError}
+	h2 := newFakeSession()
+	var h2Calls atomic.Int32
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) { return h3, nil },
+		func(context.Context) (sessionConn, error) { h2Calls.Add(1); return h2, nil },
+	)
+	client.h3Cooldown = time.Minute
+
+	conn, err := client.DialContext(testContext(t), fallbackDestination)
+	require.NoError(t, err, "an explicit QUIC connection error did not fall back to HTTP/2")
+	require.NoError(t, conn.Close())
+	require.EqualValues(t, 1, h2Calls.Load())
+	require.EqualValues(t, 1, h2.roundTrips.Load())
+	require.True(t, h3.closed.Load(), "the failed HTTP/3 session was not released")
+	require.True(t, client.h3Cordoned(), "an explicit connection error did not arm the HTTP/2 verdict")
+}
+
+// TestQUICStreamErrorDoesNotRetireOrCordon keeps the other half of P2-1: a stream-level failure is
+// one target's failure. The connection can still carry other streams, so it neither retires the
+// session nor disables HTTP/3.
+func TestQUICStreamErrorDoesNotRetireOrCordon(t *testing.T) {
+	requireQUIC(t)
+	streamError := &quic.StreamError{StreamID: 0, ErrorCode: 0x0, Remote: true}
+	h3 := &errorSession{err: streamError}
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) { return h3, nil },
+		func(context.Context) (sessionConn, error) { return newFakeSession(), nil },
+	)
+	client.h3Cooldown = time.Minute
+
+	_, err := client.DialContext(testContext(t), fallbackDestination)
+	require.Error(t, err)
+	require.ErrorIs(t, err, streamError)
+	require.False(t, h3.closed.Load(), "a stream error closed the shared connection")
+	require.False(t, client.h3Cordoned(), "a stream error disabled HTTP/3 for the whole node")
+	client.access.Lock()
+	session := client.session
+	client.access.Unlock()
+	require.NotNil(t, session)
+	require.False(t, session.retiring.Load())
+}
+
+type errorSession struct {
+	err    error
+	closed atomic.Bool
+}
+
+func (s *errorSession) roundTrip(context.Context, string, http.Header, bool) (*rawStream, error) {
+	return nil, s.err
+}
+
+func (s *errorSession) alive() bool { return !s.closed.Load() }
+
+func (s *errorSession) close() error {
 	s.closed.Store(true)
 	return nil
 }

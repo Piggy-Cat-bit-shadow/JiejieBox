@@ -145,6 +145,16 @@ var quicAuthenticationError func(error) bool
 // half of the package; nil in builds without HTTP/3, where the error cannot occur.
 var quicTLSLayerError func(error) bool
 
+// quicConnectionError recognises a CONNECTION-level QUIC failure: the connection is closed, timed
+// out, or reset. It is evidence about the carrier, not about one target, so the HTTP/3 fallback is
+// allowed to act on it. Set by the with_quic half; nil without HTTP/3.
+var quicConnectionError func(error) bool
+
+// quicStreamError recognises a STREAM-level QUIC failure. The connection may still be healthy and
+// other streams unaffected, so it must not retire the session or arm the HTTP/3 verdict. Set by the
+// with_quic half; nil without HTTP/3.
+var quicStreamError func(error) bool
+
 // streamClosedError reports a stream that either side ended normally rather
 // than with a protocol error: io.EOF for NO_ERROR (HTTP/2) and H3_NO_ERROR,
 // net.ErrClosed for CANCEL (HTTP/2), H3_REQUEST_CANCELLED and a closed HTTP/2
