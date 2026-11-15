@@ -31,7 +31,7 @@ func TestBeginDialContextIsCancelledByInterrupt(t *testing.T) {
 		blocked <- context.Cause(dialCtx)
 	}()
 
-	group.Interrupt(false)
+	group.InterruptSelection(false)
 	select {
 	case err := <-blocked:
 		require.ErrorIs(t, err, context.Canceled)
@@ -44,7 +44,7 @@ func TestBeginDialContextIsCancelledByInterrupt(t *testing.T) {
 func TestBeginDialRejectsAStaleSelection(t *testing.T) {
 	group := NewGroup()
 	revision := group.Revision()
-	group.Interrupt(false)
+	group.InterruptSelection(false)
 
 	dialCtx, release, stale := group.BeginDial(context.Background(), revision)
 	require.True(t, stale, "a dial selected before the switch must not run against the old member")
@@ -68,7 +68,7 @@ func TestInterruptDoesNotCutEstablishedConnectionsWhenDisabled(t *testing.T) {
 	require.False(t, stale)
 	defer release()
 
-	group.Interrupt(false)
+	group.InterruptSelection(false)
 	require.ErrorIs(t, dialCtx.Err(), context.Canceled)
 	require.False(t, conn.closed.Load(), "interrupt_exist_connections=false must keep the established flow")
 }
@@ -108,7 +108,7 @@ func TestConcurrentInterruptAndBeginDial(t *testing.T) {
 		}()
 	}
 	// Race the switch against the starts. Every dial must end in exactly one of the two states.
-	group.Interrupt(false)
+	group.InterruptSelection(false)
 	waitGroup.Wait()
 
 	// A later dial is current and is not affected by the earlier switch.
@@ -116,6 +116,22 @@ func TestConcurrentInterruptAndBeginDial(t *testing.T) {
 	require.False(t, stale)
 	require.NoError(t, late.Err())
 	releaseLate()
+}
+
+// TestInterruptLeavesASubscriptionRefreshDialAlone pins the other half of the boundary: a provider
+// republication that replaces the object behind the SAME selected tag is not a switch. The dial's
+// lease keeps the old object open, so the dial must be allowed to finish it; cancelling here turned a
+// routine subscription refresh into a failed connection.
+func TestInterruptLeavesASubscriptionRefreshDialAlone(t *testing.T) {
+	group := NewGroup()
+	revision := group.Revision()
+	dialCtx, release, stale := group.BeginDial(context.Background(), revision)
+	require.False(t, stale)
+	defer release()
+
+	group.Interrupt(false)
+	require.NoError(t, dialCtx.Err(), "a provider refresh must not cancel an in-flight dial")
+	require.Equal(t, revision, group.Revision(), "a provider refresh is not a selection change")
 }
 
 type trackedCloser struct {

@@ -1734,7 +1734,7 @@ func (g *URLTestGroup) commitFailoverSelection(tag string, evidence *roundEviden
 		return
 	}
 	if updated && g.interruptGroup != nil {
-		g.interruptGroup.Interrupt(g.interruptExternalConnections)
+		g.interruptGroup.InterruptSelection(g.interruptExternalConnections)
 	}
 	if selected {
 		g.history.NotifyUpdated()
@@ -2856,7 +2856,7 @@ func (g *URLTestGroup) performUpdateCheck() {
 
 	g.selected.Store(next)
 	if updated {
-		g.interruptGroup.Interrupt(g.interruptExternalConnections)
+		g.interruptGroup.InterruptSelection(g.interruptExternalConnections)
 	}
 	if selected {
 		g.history.NotifyUpdated()

@@ -402,7 +402,7 @@ func (s *Selector) onProviderUpdated(tag string) error {
 	}
 	// The prospective membership is validated before it is published: a provider update that would
 	// close a recursion is refused here, and the previous members AND selection stay in place.
-	var changed bool
+	var changed, selectionMoved bool
 	publishErr := publishProviderMembership(s.outbound, s.Tag(), tags, func() {
 		s.stateAccess.Lock()
 		previous := s.selected.Swap(selected)
@@ -411,6 +411,10 @@ func (s *Selector) onProviderUpdated(tag string) error {
 			// the revision must advance, or a caller that reads it cannot tell that the member moved
 			// underneath it.
 			changed = true
+			// Replacing the OBJECT behind the same tag is a subscription refresh, not a switch: the
+			// in-flight dial's lease keeps the old object open and the dial must be allowed to
+			// finish. Only a different tag (including becoming empty) moves this flow's member.
+			selectionMoved = previous != nil && (selected == nil || previous.Tag() != selected.Tag())
 			s.selectionRevision.Add(1)
 		}
 		s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
@@ -422,7 +426,11 @@ func (s *Selector) onProviderUpdated(tag string) error {
 	}
 	s.providerAccess.Unlock()
 	if changed {
-		s.interruptGroup.Interrupt(s.interruptExternalConnections)
+		if selectionMoved {
+			s.interruptGroup.InterruptSelection(s.interruptExternalConnections)
+		} else {
+			s.interruptGroup.Interrupt(s.interruptExternalConnections)
+		}
 		if s.history != nil {
 			s.history.NotifyUpdated()
 		}
@@ -665,7 +673,7 @@ func (s *Selector) SelectOutboundSnapshot(tag string) (SelectionSnapshot, bool) 
 	// other owners, and holding providerAccess across them would widen the critical section beyond
 	// the state transition this method exists to make atomic.
 	if changed {
-		s.interruptGroup.Interrupt(s.interruptExternalConnections)
+		s.interruptGroup.InterruptSelection(s.interruptExternalConnections)
 		if s.history != nil {
 			s.history.NotifyUpdated()
 		}

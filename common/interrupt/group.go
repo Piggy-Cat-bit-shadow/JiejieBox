@@ -9,17 +9,24 @@ import (
 	"github.com/sagernet/sing/common/x/list"
 )
 
-// Group owns the two kinds of work a group switch must be able to end:
+// Group owns the two kinds of work a group selection change must be able to end:
 //
 //   - established connections, added with NewConn/NewPacketConn/Add. A switch closes the ones the
 //     interrupt_exist_connections setting covers.
-//   - dials that have not produced a connection yet, begun with BeginDial. A switch cancels them
-//     whatever that setting says: they are not established traffic, their member is the one being
-//     switched away from, and a dial stuck on a dead node is exactly what makes a switch appear to
-//     do nothing while the old request waits for its own timeout (or forever, when it has none).
+//   - dials that have not produced a connection yet, begun with BeginDial. A SELECTION change
+//     (InterruptSelection) cancels them whatever that setting says: they are not established
+//     traffic, their member is the one being switched away from, and a dial stuck on a dead node is
+//     exactly what makes a switch appear to do nothing while the old request waits for its own
+//     timeout (or forever, when it has none).
 //
-// The two are separate on purpose. "Interrupt existing connections = false" is a promise about
-// flows that already carry traffic, not a promise to keep a half-finished handshake alive.
+// A provider republication that replaces the object behind the SAME selected tag is not a selection
+// change (plain Interrupt): the dial's lease keeps the old object open, and cancelling the dial
+// would turn a routine subscription refresh into a failed connection. That is why the two entry
+// points are separate.
+//
+// The established-connection half is the same for both: "interrupt_exist_connections = false" is a
+// promise about flows that already carry traffic, not a promise to keep a half-finished handshake
+// alive.
 type Group struct {
 	access      sync.Mutex
 	connections list.List[*groupConnItem]
@@ -109,16 +116,30 @@ func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool) net.PacketCo
 	return newPacketConn(g, conn, item)
 }
 
-// Interrupt applies one switch: every pending dial is cancelled (they belong to the member being
-// switched away from and have produced no connection), and the established connections the setting
-// covers are closed.
+// Interrupt applies a non-selection switch: it closes the established connections the setting
+// covers, but it leaves in-flight setup alone. It is the provider-republication path: the selected
+// TAG did not move, the old object is retained by the dial's lease until the dial returns, and
+// cancelling that dial would turn a routine subscription refresh into a failed connection.
 func (g *Group) Interrupt(interruptExternalConnections bool) {
+	g.interrupt(interruptExternalConnections, false)
+}
+
+// InterruptSelection applies a SELECTION change: every pending dial is cancelled (they belong to the
+// member the user or the latency test switched away from and have produced no connection), and the
+// established connections the setting covers are closed.
+func (g *Group) InterruptSelection(interruptExternalConnections bool) {
+	g.interrupt(interruptExternalConnections, true)
+}
+
+func (g *Group) interrupt(interruptExternalConnections bool, selectionChanged bool) {
 	g.access.Lock()
-	g.revision++
 	var cancels []context.CancelFunc
-	for id, cancel := range g.dials {
-		cancels = append(cancels, cancel)
-		delete(g.dials, id)
+	if selectionChanged {
+		g.revision++
+		for id, cancel := range g.dials {
+			cancels = append(cancels, cancel)
+			delete(g.dials, id)
+		}
 	}
 	var closers []io.Closer
 	for element := g.connections.Front(); element != nil; {
