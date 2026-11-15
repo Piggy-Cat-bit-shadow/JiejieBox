@@ -101,6 +101,44 @@ func TestInFlightOldGenerationDialCannotAcknowledgeNewGeneration(t *testing.T) {
 	require.EqualValues(t, 1, resets.Load())
 }
 
+// TestGenerationGateSnapshotIsAtomic is the remaining P1-1 window: the stale decision and the
+// epoch must be ONE observation. With a separate Stale() and currentEpoch(), a generation that
+// advances between them makes BeforeDial hand out the NEW epoch without running its transition;
+// the dial then acknowledges a generation it never observed, and the listener skips it.
+func TestGenerationGateSnapshotIsAtomic(t *testing.T) {
+	coordinator := New()
+	defer coordinator.Close()
+	var resets atomic.Int32
+	gate := NewGenerationGate(coordinator, "test/resource", func(context.Context) {
+		resets.Add(1)
+	})
+	require.NotNil(t, gate)
+	defer gate.Close()
+
+	// The resource is current at epoch 0.
+	gate.AfterDial(gate.BeforeDial(context.Background()), nil)
+
+	// Move the coordinator in the middle of the former two-read window: after the gate has taken
+	// its snapshot and before it returns the token.
+	testHookAfterGenerationSnapshot = func() {
+		coordinator.Advance(1)
+	}
+	defer func() { testHookAfterGenerationSnapshot = nil }()
+
+	epoch := gate.BeforeDial(context.Background())
+	require.Zero(t, epoch, "BeforeDial handed out the new epoch without observing it")
+	require.Zero(t, resets.Load(), "no transition was run for the new epoch")
+	require.True(t, gate.Stale(), "the new generation is still owed a transition")
+
+	// The listener for epoch 1 must run it, and a post-transition dial may acknowledge it.
+	gate.NetworkChanged(context.Background())
+	require.EqualValues(t, 1, resets.Load(), "the listener skipped the generation the snapshot missed")
+	newEpoch := gate.BeforeDial(context.Background())
+	require.EqualValues(t, 1, newEpoch)
+	gate.AfterDial(newEpoch, nil)
+	require.False(t, gate.Stale())
+}
+
 // TestGenerationGateConcurrentHandOutsRunOneReset is the incident's burst: after one published
 // generation, many dials arrive together. Every one of them must see the transition applied (the
 // gate blocks on the lock while it runs), and the destructive action must run exactly once - not

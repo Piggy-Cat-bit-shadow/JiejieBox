@@ -342,6 +342,28 @@ func (r *Registration) currentEpoch() uint64 {
 	return r.coordinator.Epoch()
 }
 
+// Snapshot returns the current generation and whether this registration still needs its transition
+// for it, as ONE observation.
+//
+// Stale() followed by currentEpoch() is two observations: a generation can advance between them, so
+// a caller that saw "not stale" can then read the NEW epoch and hand it out without ever running the
+// transition for it. That is the token P1-1 exists to make impossible. Snapshot reads the
+// registration state and the coordinator epoch under the registration lock, so the epoch it returns
+// is the one the stale answer is about; Advance() publishes under the coordinator lock and then
+// calls observeEpoch(), so a later epoch is observed by the next Snapshot.
+func (r *Registration) Snapshot() (uint64, bool) {
+	if r == nil || r.coordinator == nil {
+		return 0, false
+	}
+	r.access.Lock()
+	defer r.access.Unlock()
+	if r.closed {
+		return r.coordinator.Epoch(), true
+	}
+	epoch := r.coordinator.Epoch()
+	return epoch, !r.observed || epoch > r.epoch
+}
+
 // Closed reports whether the registration has been invalidated by a removal or a coordinator close.
 func (r *Registration) Closed() bool {
 	r.access.Lock()

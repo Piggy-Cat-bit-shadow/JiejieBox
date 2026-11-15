@@ -89,14 +89,22 @@ func NewGenerationGate(coordinator *Coordinator, label string, reset func(contex
 	}
 }
 
+// testHookAfterGenerationSnapshot runs after BeforeDial has taken its one atomic observation and
+// before it branches on it. Tests use it to move the coordinator into that former two-read window;
+// production leaves it nil.
+var testHookAfterGenerationSnapshot func()
+
 // BeforeDial runs the owner's network-change action if the current generation has moved past the
 // one this resource was built against, and returns the epoch this dial belongs to.
 //
 // The returned value MUST be passed back to AfterDial for the same dial. It is the epoch the
-// transition was applied for (or the current epoch when no transition was needed), not "whatever
-// epoch is current when the dial happens to finish". A dial that starts in epoch N and succeeds in
-// epoch N+1 therefore cannot acknowledge N+1: its resource may still belong to N. This is the
-// in-flight old-generation acknowledgement race that let an old session impersonate a new one.
+// transition was applied for (or the epoch whose staleness this dial observed when no transition
+// was needed), not "whatever epoch is current when the dial happens to finish". The epoch and the
+// stale decision come from ONE Registration.Snapshot: checking Stale() and then reading the epoch
+// separately lets a network change land between them and hand out the NEW epoch without running
+// its transition. A dial that starts in epoch N and succeeds in epoch N+1 therefore cannot
+// acknowledge N+1: its resource may still belong to N. This is the in-flight old-generation
+// acknowledgement race that let an old session impersonate a new one.
 //
 // The action runs at most once per generation: a failed creation does not acknowledge the
 // generation, but it must not cause the next attempt to destroy whatever a concurrent attempt has
@@ -106,10 +114,14 @@ func (g *GenerationGate) BeforeDial(ctx context.Context) uint64 {
 	if g == nil || g.registration == nil {
 		return 0
 	}
-	if g.registration.Stale() {
+	epoch, stale := g.registration.Snapshot()
+	if testHookAfterGenerationSnapshot != nil {
+		testHookAfterGenerationSnapshot()
+	}
+	if stale {
 		return g.applyTransition(ctx)
 	}
-	return g.registration.currentEpoch()
+	return epoch
 }
 
 // NetworkChanged is the listener side of the same transition. Routing the owner's network-change
