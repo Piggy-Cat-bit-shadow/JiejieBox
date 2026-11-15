@@ -120,8 +120,8 @@
       "path": "clients/apple",
       "slug": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "policy": "report",
-      "note": "Held at 0947393 for 0.1.51: it is the last Apple revision with a same-candidate iOS/macOS build (v0.1.50 run 43636617538). Main tip 2e5b71f is a two-file iOS layout fix with no Xcode build and no pin-run coverage; building and integrating it is a follow-up, not a 0.1.51 release blocker. policy=report keeps preparation from moving an unbuilt client pin."
+      "policy": "update",
+      "note": "Moved to 2e5b71f for 0.1.51: v0.1.50's Apple build (run 43636617538) actually resolved this branch tip and compiled iOS/macOS, while the 0.1.50 lock's 0947393 was one commit behind. Layer-4 probe at 2e5b71f: 483 files scanned, 0 violations, 3 interface methods. The 0.1.51 candidate re-compiles the same SHA."
     },
     {
       "path": "clients/android",

@@ -430,11 +430,11 @@
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
       "tip": "2e5b71fa59809b17faff1e24ab2e56caee52612e",
-      "pin": "09473938322b",
-      "relation": "behind",
-      "policy": "report",
+      "pin": "2e5b71fa5980",
+      "relation": "identical",
+      "policy": "update",
       "observed_at": "2026-11-15",
-      "note": "HELD at 0947393 for 0.1.51. That revision was built at v0.1.50 (run 43636617538: one Libbox, iOS and macOS compiled), and the 0.1.51 Apple build re-runs it on the new core. Main tip 2e5b71f is a two-file iOS layout fix with no Xcode build; moving it would also invalidate this ledger's pin coverage, so it is excluded from 0.1.51 rather than shipped unbuilt. Not device or TestFlight evidence."
+      "note": "Moved to 2e5b71f for 0.1.51. v0.1.50's Apple build (run 43636617538) resolved this tip, not the 0947393 gitlink the 0.1.50 lock recorded, and compiled iOS and macOS; the 0.1.51 candidate re-compiles the same SHA. Parent-run coverage for this pin is recorded after the candidate's first executed build, as the 2026-11-14 window did. Not device or TestFlight evidence."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
