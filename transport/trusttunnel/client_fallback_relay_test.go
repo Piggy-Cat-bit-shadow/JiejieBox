@@ -56,11 +56,16 @@ func startDualProtocolTestServer(t *testing.T) *dualTestServer {
 		tcpListener net.Listener
 		udpConn     net.PacketConn
 	)
-	for attempt := 0; attempt < 20; attempt++ {
-		tcpListener, err = net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		port := tcpListener.Addr().(*net.TCPAddr).Port
-		udpConn, err = net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	seed := uint64(time.Now().UnixNano())
+	for attempt := 0; attempt < 512; attempt++ {
+		port := 20000 + int((seed+uint64(attempt)*2654435761)%30000)
+		address := fmt.Sprintf("127.0.0.1:%d", port)
+		tcpListener, err = net.Listen("tcp", address)
+		if err != nil {
+			tcpListener = nil
+			continue
+		}
+		udpConn, err = net.ListenPacket("udp", address)
 		if err == nil {
 			break
 		}
@@ -113,11 +118,16 @@ func startTestRelay(t *testing.T, server M.Socksaddr) *testRelay {
 		udpSocket net.PacketConn
 		err       error
 	)
-	for attempt := 0; attempt < 20; attempt++ {
-		tcpProxy, err = net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		port := tcpProxy.Addr().(*net.TCPAddr).Port
-		udpSocket, err = net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	seed := uint64(time.Now().UnixNano())
+	for attempt := 0; attempt < 512; attempt++ {
+		port := 20000 + int((seed+uint64(attempt)*2654435761)%30000)
+		address := fmt.Sprintf("127.0.0.1:%d", port)
+		tcpProxy, err = net.Listen("tcp", address)
+		if err != nil {
+			tcpProxy = nil
+			continue
+		}
+		udpSocket, err = net.ListenPacket("udp", address)
 		if err == nil {
 			break
 		}
@@ -364,7 +374,8 @@ func TestRealRelayBlackholeAfterHTTP3IsEstablished(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	// The establishment budget is the product's own, shrunk so the test measures the recovery
-	// rather than waiting ten seconds for it. The HTTP/3 leg keeps a real handshake budget.
+	// rather than waiting the full production budget for it. The HTTP/3 leg keeps a real handshake
+	// budget.
 	client.connectBudget = 400 * time.Millisecond
 	client.creationBudget = 5 * time.Second
 	cooldown := 400 * time.Millisecond

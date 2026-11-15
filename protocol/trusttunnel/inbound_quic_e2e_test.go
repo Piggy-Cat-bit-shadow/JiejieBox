@@ -26,15 +26,23 @@ import (
 // TCP and UDP two different ephemeral ports (the dual-stack property is what is
 // under test). Probing both families also skips Windows' excluded UDP ranges,
 // where binding fails with WSAEACCES.
+//
+// The candidate comes from an explicit range below the Windows dynamic range, not
+// from Listen(":0"). On a host with large excluded ranges the ephemeral allocator
+// can hand the SAME TCP port back on every attempt, and that port may be excluded
+// for UDP; the old loop then failed 20 times in a row. Scanning an explicit range
+// advances past the excluded block and still verifies that both families bind.
 func freeDualPort(t *testing.T) uint16 {
 	t.Helper()
-	for attempt := 0; attempt < 20; attempt++ {
-		tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	seed := uint64(time.Now().UnixNano())
+	for attempt := 0; attempt < 512; attempt++ {
+		port := 20000 + int((seed+uint64(attempt)*2654435761)%30000)
+		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		tcpListener, err := net.Listen("tcp", address)
 		if err != nil {
 			continue
 		}
-		port := tcpListener.Addr().(*net.TCPAddr).Port
-		udpConn, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		udpConn, err := net.ListenPacket("udp", address)
 		if err != nil {
 			_ = tcpListener.Close()
 			continue
