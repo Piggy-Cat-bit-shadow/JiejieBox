@@ -29,10 +29,13 @@ func TestFallbackEligibilityClassifiesQUICRepresentations(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"remote handshake_failure", E.Cause(&quic.TransportError{Remote: true, ErrorCode: 0x0128}, "QUIC handshake"), false},
+		{"remote handshake_failure is not an identity verdict", E.Cause(&quic.TransportError{Remote: true, ErrorCode: 0x0128}, "QUIC handshake"), true},
 		{"remote bad_certificate", E.Cause(&quic.TransportError{Remote: true, ErrorCode: 0x012a}, "QUIC handshake"), false},
-		{"first crypto code", E.Cause(&quic.TransportError{ErrorCode: 0x0100}, "QUIC handshake"), false},
-		{"last crypto code", E.Cause(&quic.TransportError{ErrorCode: 0x01ff}, "QUIC handshake"), false},
+		{"remote unknown_ca", E.Cause(&quic.TransportError{Remote: true, ErrorCode: 0x0130}, "QUIC handshake"), false},
+		{"remote unrecognized_name", E.Cause(&quic.TransportError{Remote: true, ErrorCode: 0x0170}, "QUIC handshake"), false},
+		{"remote no_application_protocol is a carrier verdict", E.Cause(&quic.TransportError{Remote: true, ErrorCode: 0x0178}, "QUIC handshake"), true},
+		{"first crypto code is close_notify, not an identity verdict", E.Cause(&quic.TransportError{ErrorCode: 0x0100}, "QUIC handshake"), true},
+		{"last crypto code is not an identity verdict", E.Cause(&quic.TransportError{ErrorCode: 0x01ff}, "QUIC handshake"), true},
 		{"below the crypto range", E.Cause(&quic.TransportError{ErrorCode: 0x00ff}, "QUIC handshake"), true},
 		{"above the crypto range", E.Cause(&quic.TransportError{ErrorCode: 0x0200}, "QUIC handshake"), true},
 		{"stateless reset is not a TLS verdict", E.Cause(&quic.TransportError{Remote: true, ErrorCode: 0x000a}, "QUIC handshake"), true},
@@ -45,9 +48,9 @@ func TestFallbackEligibilityClassifiesQUICRepresentations(t *testing.T) {
 	}
 }
 
-// A remote TLS alert must keep its own meaning on the real path: no HTTP/2 leg, no cooldown.
+// A certificate/name verdict must keep its own meaning on the real path: no HTTP/2 leg, no cooldown.
 func TestFallbackDoesNotFallBackOnAQUICRemoteTLSAlert(t *testing.T) {
-	for _, code := range []quic.TransportErrorCode{0x0128, 0x012a} {
+	for _, code := range []quic.TransportErrorCode{0x012a, 0x0130, 0x0170} {
 		code := code
 		t.Run(fmt.Sprintf("crypto_%x", uint64(code)), func(t *testing.T) {
 			var h2Calls atomic.Int32
@@ -80,4 +83,24 @@ func TestFallbackStillFallsBackOnAQUICTransportFailure(t *testing.T) {
 	require.NoError(t, dialFallback(t, context.Background(), client))
 	require.EqualValues(t, 1, h2Calls.Load())
 	require.True(t, client.h3Cordoned())
+}
+
+// A handshake_failure or no_application_protocol alert is not an identity verdict: the HTTP/2 leg
+// presents different protocol machinery and may succeed, which is exactly the fallback's job.
+func TestFallbackFallsBackOnAQUICHandshakeFailure(t *testing.T) {
+	for _, code := range []quic.TransportErrorCode{0x0128, 0x0178} {
+		code := code
+		t.Run(fmt.Sprintf("crypto_%x", uint64(code)), func(t *testing.T) {
+			var h2Calls atomic.Int32
+			client, _ := newFallbackTestClient(t,
+				func(context.Context) (sessionConn, error) {
+					return nil, E.Cause(&quic.TransportError{Remote: true, ErrorCode: code}, "QUIC handshake")
+				},
+				func(context.Context) (sessionConn, error) { h2Calls.Add(1); return newFakeSession(), nil },
+			)
+			require.NoError(t, dialFallback(t, context.Background(), client))
+			require.EqualValues(t, 1, h2Calls.Load())
+			require.True(t, client.h3Cordoned())
+		})
+	}
 }

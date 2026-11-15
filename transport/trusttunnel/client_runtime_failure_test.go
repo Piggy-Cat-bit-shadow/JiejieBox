@@ -315,6 +315,51 @@ func (s *errorSession) close() error {
 	return nil
 }
 
+// TestPendingWaiterRejectsSessionFromPreviousGeneration is the waiter half of P2-2: the shared
+// creation may publish a session for the generation that existed when the creation began, while the
+// waiter is waking up after the client has moved to a new generation. That session belongs to the
+// old network and must not be handed to the new generation's demand, even if its connection is still
+// alive.
+func TestPendingWaiterRejectsSessionFromPreviousGeneration(t *testing.T) {
+	requireQUIC(t)
+	h3Old := newFakeSession()
+	h3New := newFakeSession()
+	h2Session := newFakeSession()
+	var h3Calls atomic.Int32
+	client, _ := newFallbackTestClient(t,
+		func(context.Context) (sessionConn, error) {
+			if h3Calls.Add(1) == 1 {
+				return h3Old, nil
+			}
+			return h3New, nil
+		},
+		func(context.Context) (sessionConn, error) { return h2Session, nil },
+	)
+	client.h3Cooldown = time.Minute
+
+	var advanced atomic.Bool
+	testHookAfterPendingSessionWait = func(*clientSession) {
+		if advanced.CompareAndSwap(false, true) {
+			// Move the client generation while the published session is still alive: the waiter holds
+			// a live connection stamped with the previous generation, which is precisely the state the
+			// generation check must refuse. Reset would also close it, hiding the check behind the
+			// aliveness guard.
+			client.access.Lock()
+			client.generation++
+			client.access.Unlock()
+		}
+	}
+	defer func() { testHookAfterPendingSessionWait = nil }()
+
+	conn, err := client.DialContext(testContext(t), fallbackDestination)
+	require.NoError(t, err, "the waiter did not recover after rejecting the old generation's session")
+	require.NoError(t, conn.Close())
+	require.EqualValues(t, 1, h3New.roundTrips.Load(),
+		"the waiter did not create a session on the new generation")
+	require.Zero(t, h2Session.roundTrips.Load(), "a fresh HTTP/3 creation was available on the new generation")
+	require.True(t, h3Old.closed.Load(), "the previous generation's session was not released")
+}
+
 func TestCallerDeadlineIsNotCarrierSilence(t *testing.T) {
 	requireQUIC(t)
 	h3 := &stalledSession{}

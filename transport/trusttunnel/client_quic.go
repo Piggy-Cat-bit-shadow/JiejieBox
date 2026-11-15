@@ -42,18 +42,45 @@ const (
 	quicCryptoErrorLast quic.TransportErrorCode = 0x01ff
 )
 
-// isQUICTLSLayerError reports whether err is a TLS verdict in its QUIC representation.
+// isQUICTLSLayerError reports whether err is a certificate/name verdict in its QUIC representation.
 //
-// A remote TLS alert arrives as *quic.TransportError with Remote set and a CRYPTO_ERROR code;
-// TransportError.Unwrap does not restore a tls.AlertError, so the standard-library checks in
-// fallbackEligible never see it. Reading the code is the type-level way to answer the same question,
-// and it covers certificate, name and configuration refusals for both directions of the handshake.
+// # Why this is an allow-list, not the whole CRYPTO_ERROR range
+//
+// QUIC encodes every TLS alert as 0x0100 + the alert (RFC 9001 §4.8), but the alerts do not all mean
+// the same thing. bad_certificate, unknown_ca, certificate_expired, unrecognized_name and their
+// relatives are statements about the peer's identity or its certificate chain: HTTP/2 presents the
+// same certificate to the same name, so retrying there repeats the refusal. handshake_failure,
+// protocol_version, no_application_protocol, internal_error and the extension alerts are not: they
+// can be specific to this handshake or to HTTP/3/QUIC, and HTTP/2 may well succeed.
+//
+// The earlier version classified the entire 0x0100-0x01ff range as a TLS-layer verdict. That made a
+// server's no_application_protocol alert suppress the HTTP/2 leg - the one case the fallback exists
+// for - and made a generic handshake_failure look like a certificate refusal. The range is still
+// checked first, but only the identity alerts below are promoted to a verdict.
 func isQUICTLSLayerError(err error) bool {
 	var transportError *quic.TransportError
 	if !errors.As(err, &transportError) {
 		return false
 	}
-	return transportError.ErrorCode >= quicCryptoErrorBase && transportError.ErrorCode <= quicCryptoErrorLast
+	if transportError.ErrorCode < quicCryptoErrorBase || transportError.ErrorCode > quicCryptoErrorLast {
+		return false
+	}
+	switch int(transportError.ErrorCode - quicCryptoErrorBase) {
+	case 42, // bad_certificate
+		43,  // unsupported_certificate
+		44,  // certificate_revoked
+		45,  // certificate_expired
+		46,  // certificate_unknown
+		48,  // unknown_ca
+		111, // certificate_unobtainable
+		112, // unrecognized_name
+		113, // bad_certificate_status_response
+		114, // bad_certificate_hash_value
+		116: // certificate_required
+		return true
+	default:
+		return false
+	}
 }
 
 func isQUICAuthenticationError(err error) bool {

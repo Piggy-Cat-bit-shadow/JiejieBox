@@ -479,14 +479,16 @@ func (c *Client) h3AttemptContext(ctx context.Context) (context.Context, context
 // unusable right now.
 //
 // Eligible: the UDP dial, the QUIC handshake, a transport reset, the attempt's own budget expiring
-// while the creation is alive, and a negotiated ALPN that is not h3 (a server that answers h2 on the
-// same endpoint is exactly the case the fallback exists for).
+// while the creation is alive, a negotiated ALPN that is not h3 (a server that answers h2 on the
+// same endpoint is exactly the case the fallback exists for), and TLS alerts that are not identity
+// verdicts - handshake_failure, protocol_version, no_application_protocol and the extension alerts
+// can all be specific to this handshake or to HTTP/3, and HTTP/2 may well succeed.
 //
-// Not eligible: a cancelled attempt, a build without HTTP/3, and every TLS verdict - certificate
-// verification, unknown authority, hostname mismatch, invalid or expired certificate, and a TLS alert
-// from the peer. Those are statements about the peer's identity or its configuration, and the HTTP/2
-// leg presents the same certificate to the same name, so retrying there repeats the refusal; remembering
-// one as "HTTP/3 is down" would keep a node off UDP for a reason HTTP/2 does not share.
+// Not eligible: a cancelled attempt, a build without HTTP/3, an authentication refusal, and the
+// certificate/name alerts (bad_certificate, unknown_ca, expired/revoked certificate,
+// unrecognized_name and their relatives). Those are statements about the peer's identity, and the
+// HTTP/2 leg presents the same certificate to the same name, so retrying there repeats the refusal;
+// remembering one as "HTTP/3 is down" would keep a node off UDP for a reason HTTP/2 does not share.
 func fallbackEligible(err error) bool {
 	if err == nil {
 		return false
@@ -517,8 +519,9 @@ func fallbackEligible(err error) bool {
 	if errors.As(err, &alertError) {
 		return false
 	}
-	// The same TLS verdict as the QUIC stack represents it (CRYPTO_ERROR), and an authentication
-	// refusal: neither is evidence about the UDP path, and retrying them over TCP repeats the refusal.
+	// The certificate/name alerts as the QUIC stack represents them (CRYPTO_ERROR), and an
+	// authentication refusal: neither is evidence about the UDP path, and retrying them over TCP
+	// repeats the refusal. Other TLS alerts remain fallback-eligible.
 	if quicTLSLayerError != nil && quicTLSLayerError(err) {
 		return false
 	}
@@ -609,12 +612,24 @@ func (c *Client) cordonGeneration(generation uint64, reason string) {
 		" (", reason, ")")
 }
 
+// testHookAfterPendingSessionWait runs after a waiter has received the shared creation's session
+// and before rejectPublishedSession judges it. Tests use it to advance the client generation in that
+// exact window; production leaves it nil.
+var testHookAfterPendingSessionWait func(*clientSession)
+
 // rejectPublishedSession reports whether a session that just came out of a shared creation must not
 // be handed to the waiting demand. A creation can publish after another demand armed the HTTP/2
 // verdict; a waiter that joined before the verdict would otherwise receive that HTTP/3 session
 // directly, bypassing the reuse guard in the normal path. The session is retired (its streams, if
 // any, finish) and the demand creates under the verdict instead.
 func (c *Client) rejectPublishedSession(session *clientSession) bool {
+	if session.generation != c.currentGeneration() {
+		// The share was created for a generation Reset has since left. Its connection belongs to the
+		// old network (or to a period before the transition); handing it to this demand would make the
+		// new generation borrow it, and the listener's reset would have already missed it.
+		c.retireSession(session, "session published for a previous generation")
+		return true
+	}
 	if !session.conn.alive() {
 		c.teardown(session)
 		return true
@@ -1216,6 +1231,9 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 				return nil, false, err
 			}
 			pending.waiters.Add(-1)
+			if testHookAfterPendingSessionWait != nil {
+				testHookAfterPendingSessionWait(session)
+			}
 			if c.rejectPublishedSession(session) {
 				continue
 			}
@@ -1246,6 +1264,9 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 			return nil, false, err
 		}
 		pending.waiters.Add(-1)
+		if testHookAfterPendingSessionWait != nil {
+			testHookAfterPendingSessionWait(session)
+		}
 		if c.rejectPublishedSession(session) {
 			continue
 		}
