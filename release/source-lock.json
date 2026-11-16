@@ -17,7 +17,7 @@
     "modules": 29,
     "policy": "controlled",
     "shas": [
-      "362e63b14ce2"
+      "b9f445ddb1f4"
     ]
   },
   "go_modules": [
@@ -29,57 +29,57 @@
     },
     {
       "module": "github.com/sagernet/sing-tun",
-      "pinned": "24e6bfd21ba8",
+      "pinned": "f4d0d5b6cd64",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-tun",
-      "version": "v0.9.7-0.20261114160640-24e6bfd21ba8"
+      "version": "v0.9.7-0.20261116151035-f4d0d5b6cd64"
     },
     {
       "module": "github.com/sagernet/sing-quic",
-      "pinned": "08c6abd9b3fc",
+      "pinned": "cdb57d74152e",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-quic",
-      "version": "v0.7.2-0.20261114143018-08c6abd9b3fc"
+      "version": "v0.7.2-0.20261116152031-cdb57d74152e"
     },
     {
       "module": "github.com/sagernet/quic-go",
-      "pinned": "a99a3c489772",
+      "pinned": "d51ec71bf0dd",
       "target": "github.com/Piggy-Cat-bit-shadow/quic-go",
-      "version": "v0.61.1-0.20261114142722-a99a3c489772"
+      "version": "v0.61.1-0.20261116151243-d51ec71bf0dd"
     },
     {
       "module": "github.com/metacubex/utls",
-      "pinned": "e14b88879d80",
+      "pinned": "87a09712c441",
       "target": "github.com/Piggy-Cat-bit-shadow/utls",
-      "version": "v1.8.8-0.20261110231903-e14b88879d80"
+      "version": "v1.8.8-0.20261116171412-87a09712c441"
     },
     {
       "module": "github.com/sagernet/wireguard-go",
-      "pinned": "c308e20419f5",
+      "pinned": "7f8be415c871",
       "target": "github.com/Piggy-Cat-bit-shadow/wireguard-go",
-      "version": "v0.0.0-20261114161408-c308e20419f5"
+      "version": "v0.8.0-awg.4.0.20261116143700-7f8be415c871"
     },
     {
       "module": "github.com/sagernet/sing-anytls",
-      "pinned": "8473492a5afe",
+      "pinned": "8282e0069970",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-anytls",
-      "version": "v0.0.0-20261114030206-8473492a5afe"
+      "version": "v0.0.0-20261116141833-8282e0069970"
     },
     {
       "module": "github.com/enfein/mieru/v3",
-      "pinned": "b5934f7136b4",
+      "pinned": "04259b115daf",
       "target": "github.com/Piggy-Cat-bit-shadow/mieru/v3",
-      "version": "v3.39.1-0.20261112135526-b5934f7136b4"
+      "version": "v3.39.1-0.20261116170915-04259b115daf"
     },
     {
       "module": "github.com/sagernet/cronet-go",
-      "pinned": "362e63b14ce2",
+      "pinned": "b9f445ddb1f4",
       "target": "github.com/Piggy-Cat-bit-shadow/cronet-go",
-      "version": "v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2"
+      "version": "v0.0.1-143.0.7499.109-2.0.20261116145241-b9f445ddb1f4"
     },
     {
       "module": "github.com/sagernet/cronet-go/all",
-      "pinned": "7ce9c49b464a",
+      "pinned": "b9f445ddb1f4",
       "target": "github.com/Piggy-Cat-bit-shadow/cronet-go/all",
-      "version": "v0.0.0-20261105062941-7ce9c49b464a"
+      "version": "v0.0.0-20261116145241-b9f445ddb1f4"
     }
   ],
   "nested": [

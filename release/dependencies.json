@@ -96,16 +96,16 @@
     {
       "module": "github.com/sagernet/cronet-go",
       "slug": "Piggy-Cat-bit-shadow/cronet-go",
-      "branch": "main",
-      "policy": "update",
-      "note": "Root module: Go bindings for the native engine. Moves with `all`. The exact pin 362e63b14ce2 is the fork's Build from 4c96192d commit, which lives on the publish line `go` (main + build + generate), not on main; `branch` stays main because release-freeze tracks the source line and must not move a controlled-native pin on its own."
+      "branch": "go",
+      "policy": "controlled",
+      "note": "Root module: Go bindings for the native engine. Moves with `all`. The release now consumes the publish line `go`: the pin b9f445ddb1f4 is the published Go 1.27.4 cgo-archive fix, and its native version (154.0.8037.49) is unchanged from 362e63b. `branch` names `go` so check compares like with like; `policy` stays `controlled` so release preparation still cannot move a native publish pin on its own - a move needs the rebuilt archives and a recorded pin run."
     },
     {
       "module": "github.com/sagernet/cronet-go/all",
       "slug": "Piggy-Cat-bit-shadow/cronet-go",
-      "branch": "main",
-      "policy": "update",
-      "note": "The aggregate module. Its publish commit is one ahead of the root: the first publish commit carries the natives (362e63b14ce2), the second regenerates this module and the lib requires (7ce9c49b464a); both live on the `go` line, which is what the two pins name. release-freeze.py verify compares both; `branch` stays main for the same reason as the root entry."
+      "branch": "go",
+      "policy": "controlled",
+      "note": "The aggregate module. After the cgo-archive fix its publish commit is the same `go`-line commit as the root (b9f445ddb1f4), replacing the earlier split (362e63b14ce2 natives, 7ce9c49b464a aggregate). `branch` names `go` and `policy` is `controlled` for the same reason as the root entry."
     }
   ],
   "cronet_native": {
@@ -113,7 +113,7 @@
     "slug": "Piggy-Cat-bit-shadow/cronet-go",
     "expected_modules": 29,
     "policy": "controlled",
-    "note": "The 29 platform archives. They and the root module resolve to the SAME native publish commit (362e63b14ce2) - go.mod says so and this file's earlier claim that the archives were an older SHA than the root was stale; only the `all` aggregate module is one publish commit later (7ce9c49b464a). They stay controlled: the range is never moved by a release preparation or by a branch tip. See go.mod's comment and release/cronet-provenance.txt."
+    "note": "The 29 platform archives. They and the root module resolve to the SAME publish commit (b9f445ddb1f4) after the Go 1.27.4 cgo-archive fix; the earlier split (362e63b14ce2 natives, 7ce9c49b464a aggregate) is gone. They stay controlled: the range is never moved by a release preparation or by a branch tip. See go.mod's comment and release/cronet-provenance.txt."
   },
   "clients": [
     {

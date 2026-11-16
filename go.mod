@@ -38,8 +38,8 @@ require (
 	github.com/sagernet/asc-go v0.0.0-20260914163356-9e3d45a797c1
 	github.com/sagernet/bbolt v0.0.0-20260915102804-500ee1e84832
 	github.com/sagernet/cors v1.2.1
-	github.com/sagernet/cronet-go v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2
-	github.com/sagernet/cronet-go/all v0.0.0-20261105062941-7ce9c49b464a
+	github.com/sagernet/cronet-go v0.0.1-143.0.7499.109-2.0.20261116145241-b9f445ddb1f4
+	github.com/sagernet/cronet-go/all v0.0.0-20261116145241-b9f445ddb1f4
 	github.com/sagernet/fswatch v0.1.2
 	github.com/sagernet/gliderssh v0.3.4-0.20261023092853-e0cad6d28647
 	github.com/sagernet/gomobile v0.1.12
@@ -145,35 +145,35 @@ require (
 	github.com/pires/go-proxyproto v0.8.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/safchain/ethtool v0.3.0 // indirect
-	github.com/sagernet/cronet-go/lib/android_386 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/android_amd64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/android_arm v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/android_arm64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/darwin_amd64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/darwin_arm64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/ios_amd64_simulator v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/ios_arm64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/ios_arm64_simulator v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_386 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_386_musl v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_amd64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_amd64_musl v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_arm v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_arm64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_arm64_musl v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_arm_musl v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_loong64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_loong64_musl v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_mips64le v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_mipsle v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_mipsle_musl v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_riscv64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/linux_riscv64_musl v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/tvos_amd64_simulator v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/tvos_arm64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/tvos_arm64_simulator v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/windows_amd64 v0.0.0-20261105062326-362e63b14ce2 // indirect
-	github.com/sagernet/cronet-go/lib/windows_arm64 v0.0.0-20261105062326-362e63b14ce2 // indirect
+	github.com/sagernet/cronet-go/lib/android_386 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/android_amd64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/android_arm v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/android_arm64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/darwin_amd64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/darwin_arm64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/ios_amd64_simulator v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/ios_arm64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/ios_arm64_simulator v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_386 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_386_musl v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_amd64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_amd64_musl v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_arm v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_arm64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_arm64_musl v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_arm_musl v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_loong64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_loong64_musl v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_mips64le v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_mipsle v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_mipsle_musl v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_riscv64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/linux_riscv64_musl v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/tvos_amd64_simulator v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/tvos_arm64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/tvos_arm64_simulator v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/windows_amd64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
+	github.com/sagernet/cronet-go/lib/windows_arm64 v0.0.0-20261116145241-b9f445ddb1f4 // indirect
 	github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1 // indirect
 	github.com/smallstep/pkcs7 v0.1.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
@@ -227,72 +227,73 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // compromised eMudhra SPKI hashes, the QUIC receive-window limits with dynamic scaling, and
 // the Linux DNS bridge fix (a reply on the anonymous AF_UNIX socketpair went to a nil
 // address and was dropped, so the engine fell back to the system resolver and dialled a
-// public address on the proxy port). The root and the 29 natives resolve to 362e63b, the
-// commit the publish wrote with the five rebuilt archives; `all` resolves to 7ce9c49, the
-// second publish commit, which regenerates the aggregate module and the lib requires. The
-// fork's `go` branch carries both, and release/cronet-provenance.txt records the bytes the
-// Apple slices resolve to.
-replace github.com/sagernet/cronet-go => github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261105062326-362e63b14ce2
+// public address on the proxy port). The root and the 29 natives resolve to b9f445dd, the
+// Go 1.27.4 publish commit that replaces the `-l:libcronet.a` cgo flag Go 1.27 rejects with
+// an explicit archive path; that commit rebuilds no native archive, so the bytes recorded in
+// release/cronet-provenance.txt are the same ones 362e63b carried. `all` resolves to the
+// same publish commit, which regenerates the aggregate module and the lib requires. The
+// fork's `go` branch is the publish line these pins name.
+replace github.com/sagernet/cronet-go => github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/all => github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261105062941-7ce9c49b464a
+replace github.com/sagernet/cronet-go/all => github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/android_386 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_386 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/android_386 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_386 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/android_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_amd64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/android_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_amd64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/android_arm => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_arm v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/android_arm => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_arm v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/android_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_arm64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/android_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_arm64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/darwin_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/darwin_amd64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/darwin_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/darwin_amd64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/darwin_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/darwin_arm64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/darwin_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/darwin_arm64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/ios_amd64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/ios_amd64_simulator v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/ios_amd64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/ios_amd64_simulator v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/ios_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/ios_arm64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/ios_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/ios_arm64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/ios_arm64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/ios_arm64_simulator v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/ios_arm64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/ios_arm64_simulator v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_386 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_386 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_386 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_386 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_386_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_386_musl v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_386_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_386_musl v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_amd64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_amd64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_amd64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_amd64_musl v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_amd64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_amd64_musl v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_arm => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_arm => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_arm64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm64_musl v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_arm64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm64_musl v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_arm_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm_musl v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_arm_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_arm_musl v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_loong64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_loong64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_loong64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_loong64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_loong64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_loong64_musl v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_loong64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_loong64_musl v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_mips64le => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_mips64le v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_mips64le => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_mips64le v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_mipsle => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_mipsle v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_mipsle => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_mipsle v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_mipsle_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_mipsle_musl v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_mipsle_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_mipsle_musl v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_riscv64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_riscv64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_riscv64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_riscv64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/linux_riscv64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_riscv64_musl v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/linux_riscv64_musl => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/linux_riscv64_musl v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/tvos_amd64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/tvos_amd64_simulator v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/tvos_amd64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/tvos_amd64_simulator v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/tvos_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/tvos_arm64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/tvos_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/tvos_arm64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/tvos_arm64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/tvos_arm64_simulator v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/tvos_arm64_simulator => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/tvos_arm64_simulator v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/windows_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/windows_amd64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-20261116145241-b9f445ddb1f4
 
-replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261105062326-362e63b14ce2
+replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261116145241-b9f445ddb1f4
 
 // Adds the ownership-transferring DATAGRAM API (SendDatagramOwned, SendDatagramsOwned and
 // datagramQueue.AddBatch) used by the MASQUE zero-copy outbound path, plus the
@@ -315,7 +316,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // sing-quic calls for a socket hidden behind an obfuscation wrapper. It checks SO_TYPE first, so
 // the TCP socket under a UDP-over-TCP detour is never sized as a datagram socket, and it keeps
 // the library's SO_RCVBUFFORCE/SO_SNDBUFFORCE fallback instead of a hardcoded size.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261114142722-a99a3c489772
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261116151243-d51ec71bf0dd
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
 // owned-DATAGRAM send path for Hysteria2 and TUIC.
@@ -329,7 +330,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // (withSyscallConn, CreatePacketTransport, ListenWithOptions, ListenEarlyWithOptions) through
 // that helper, which covers the obfuscated hysteria/hysteria2 clients and the realm punch conn;
 // the per-hop calls of the port-hopping conn stay because a HopConn exposes no Upstream().
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261114143018-08c6abd9b3fc
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261116152031-cdb57d74152e
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
@@ -394,9 +395,9 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // The 2026-11-14 pin (957715c) adds upstream's double-response guard in ConsumeMessageResponse and
 // the IPv6 payload-length widening in the receive path, plus the virtio header clear in the GRO
 // table; the AWG classification, padding and rebind paths are untouched.
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261114161408-c308e20419f5
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.8.0-awg.4.0.20261116143700-7f8be415c871
 
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261114160640-24e6bfd21ba8
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261116151035-f4d0d5b6cd64
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //
@@ -422,8 +423,8 @@ replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun
 //
 // See docs/fork/lx-stability-audit-phase1.md (048) and docs/fork/upstream-sync-2026-10.md.
 
-replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261110231903-e14b88879d80
+replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261116171412-87a09712c441
 
-replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261114030206-8473492a5afe
+replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261116141833-8282e0069970
 
-replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261112135526-b5934f7136b4
+replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261116170915-04259b115daf
