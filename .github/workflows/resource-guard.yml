@@ -16,7 +16,7 @@ name: iOS resource guard
 # ceiling against the REAL sing-anytls client, and that the counters balance. It does NOT prove
 # jetsam survival on a device, and a green run here must never be read as that: the process budget
 # belongs to the platform, and the device is the only place it can be tested. See
-# docs/fork/ios-resource-guard.md 搂9 for the exact list of what is not covered.
+# docs/fork/ios-resource-guard.md §9 for the exact list of what is not covered.
 #
 # # Cost
 #

@@ -312,7 +312,7 @@ jobs:
             if [ "$(otool -l "$BINARY" | grep -c 'segname __DWARF')" -eq 0 ]; then
               echo "| stripped | yes (no \`__DWARF\`) |"
             else
-              echo "| stripped | **NO 鈥?__DWARF present** |"
+              echo "| stripped | **NO — __DWARF present** |"
               echo "FAIL: the shipped macOS binary carries DWARF debug info" >&2
               exit 1
             fi
