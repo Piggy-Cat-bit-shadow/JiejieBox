@@ -13,12 +13,15 @@ import (
 //
 // # The failure it exists to prevent
 //
-// Six of the seven workflows resolve the Go toolchain with `go-version-file: go.mod`, so the
-// toolchain a gate runs under IS the language version the module declares. The Windows core workflow
-// wrote it by hand instead:
+// Every workflow resolves the Go toolchain with `go-version-file: go.mod`, so the toolchain a gate
+// runs under IS the one the module declares. That was not always true: the Windows core workflow
+// wrote it by hand instead, and the literal drifted from the module:
 //
 //	env:
-//	  GO_VERSION: "1.26.8"     go.mod declares go 1.25.5
+//	  GO_VERSION: "1.26.8"     go.mod declared go 1.25.5
+//
+// The Go 1.27.4 migration removed that last literal and pointed the workflow at go.mod, so the
+// divergence table below is now empty. It stays as the single declaration point for any future one.
 //
 // A hand-written toolchain is the same class of mistake as a hand-written tag list or a hand-written
 // replace set: it is a value that already exists in the repository, typed a second time, with nothing
@@ -56,17 +59,7 @@ type toolchainDivergence struct {
 //
 // EMPTY-OR-EXPLAINED, and kept explicit rather than derived: this is the one place a divergence is
 // allowed to exist, so adding an entry must be a visible decision in a diff.
-var toolchainDivergences = map[string]toolchainDivergence{
-	"windows-core-amd64.yml": {
-		version: "1.26.8",
-		reason: "Windows matches the toolchain UPSTREAM builds its core releases with, which is not " +
-			"the language version this module declares. The divergence is real and is the reason this " +
-			"table exists; scripts/ci/check-go-module-integrity.sh and tag_checklinkname_test.go both " +
-			"reason about the toolchain go.mod pins, so this artifact's gates answer a question about " +
-			"a different runtime and must be read as such. Raising or lowering this literal is a " +
-			"deliberate release decision and fails this test until the table is updated with it.",
-	},
-}
+var toolchainDivergences = map[string]toolchainDivergence{}
 
 // workflowGoVersion pins the two shapes a workflow can use to choose a toolchain.
 var (
@@ -77,18 +70,28 @@ var (
 	explicitGoVersionRE = regexp.MustCompile(`(?m)^\s*(?:GO_VERSION|go-version):\s*["']?(\d+\.\d+(?:\.\d+)?)["']?\s*$`)
 	// goDirectiveRE reads the language version out of go.mod.
 	goDirectiveRE = regexp.MustCompile(`(?m)^go\s+(\d+\.\d+(?:\.\d+)?)\s*$`)
+	// toolchainDirectiveRE reads the `toolchain` directive out of go.mod. That directive, not the
+	// `go` directive, is the toolchain a build actually runs: setup-go v6 honours it when it reads
+	// go-version-file, and GOTOOLCHAIN=auto switches to it. Keeping the two layers separate is the
+	// point - the `go` directive stays at the minimum language version this module supports.
+	toolchainDirectiveRE = regexp.MustCompile(`(?m)^toolchain\s+go(\d+\.\d+(?:\.\d+)?)\s*$`)
 )
 
-// declaredGoVersion reads the module's own language version.
-func declaredGoVersion(t *testing.T, root string) string {
+// declaredToolchain reads the toolchain this module actually builds with: the `toolchain`
+// directive when present, the `go` directive otherwise. setup-go v6 resolves go-version-file the
+// same way, so this asks the question the workflows answer rather than a different one.
+func declaredToolchain(t *testing.T, root string) string {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if match := toolchainDirectiveRE.FindStringSubmatch(string(content)); match != nil {
+		return match[1]
+	}
 	match := goDirectiveRE.FindStringSubmatch(string(content))
 	if match == nil {
-		t.Fatal("go.mod has no `go <version>` directive; this test would pass vacuously")
+		t.Fatal("go.mod has neither a `toolchain` nor a `go <version>` directive; this test would pass vacuously")
 	}
 	return match[1]
 }
@@ -96,7 +99,7 @@ func declaredGoVersion(t *testing.T, root string) string {
 // TestEveryWorkflowToolchainIsDerivedOrDeclared is the gate.
 func TestEveryWorkflowToolchainIsDerivedOrDeclared(t *testing.T) {
 	root := repoRoot(t)
-	declared := declaredGoVersion(t, root)
+	declared := declaredToolchain(t, root)
 
 	workflowDir := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(workflowDir)
@@ -185,6 +188,12 @@ func TestEveryWorkflowToolchainIsDerivedOrDeclared(t *testing.T) {
 // TestTheDeclaredToolchainDivergenceIsTheOnlyOne is the human-readable half: it names the single
 // divergence in the failure message so the next reader does not have to reconstruct it from the map.
 func TestTheDeclaredToolchainDivergenceIsTheOnlyOne(t *testing.T) {
+	if len(toolchainDivergences) == 0 {
+		// The goal state: nothing hand-writes a toolchain, so every workflow and the module
+		// agree by construction and there is nothing to exempt.
+		t.Log("no declared toolchain divergences: every workflow derives the toolchain from go.mod")
+		return
+	}
 	if len(toolchainDivergences) != 1 {
 		t.Fatalf("there are now %d declared toolchain divergences; each one is an artifact whose "+
 			"gates answer a question about a runtime the other workflows never see, so the set must "+

@@ -150,9 +150,11 @@ trap cleanup_module_views EXIT
 # Toolchain selection, per module.
 #
 # A module declares the toolchain it needs with its `go` directive. The root and `test`
-# modules declare go 1.25.5, the same as the toolchain the repository pins; the reference
-# isolation module declares a NEWER one (1.26.0), because it pins upstream quic-go and is
-# deliberately on its own dependency graph.
+# modules declare the language minimum 1.25.5 and pin the build toolchain separately with
+# `toolchain go1.27.4`; this script compares `go` directives, so those two modules are
+# evaluated against whichever Go is running (GOTOOLCHAIN=auto follows the toolchain line).
+# The reference isolation module declares a NEWER `go` (1.26.0), because it pins upstream
+# quic-go and is deliberately on its own dependency graph.
 #
 # With GOTOOLCHAIN=auto -- what `actions/setup-go` leaves behind -- `go` switches to the
 # declared toolchain by itself and every module is checkable. With GOTOOLCHAIN pinned to a

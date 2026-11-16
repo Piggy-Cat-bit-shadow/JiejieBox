@@ -2,6 +2,8 @@ module github.com/sagernet/sing-box
 
 go 1.25.5
 
+toolchain go1.27.4
+
 require (
 	filippo.io/age v1.3.1
 	github.com/anthropics/anthropic-sdk-go v1.26.0

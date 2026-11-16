@@ -281,7 +281,7 @@ jobs:
           '
 
       - name: "[gate 1] install Go ${{ steps.toolchain.outputs.go }}"
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ steps.toolchain.outputs.go }}
           # The Go module graph this job builds is the CORE checkout's, not this

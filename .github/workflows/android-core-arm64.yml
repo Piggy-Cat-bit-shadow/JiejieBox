@@ -92,7 +92,7 @@ jobs:
           fi
           echo "android client at $(git -C clients/android rev-parse --short HEAD)"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
