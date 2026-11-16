@@ -524,6 +524,49 @@ func TestBuildBoxddKeepsChecklinkname0(t *testing.T) {
 	}
 }
 
+// TestProfileTagFilesKeepTheHTTP2TransportPin pins the transport decision the Go 1.27 migration
+// made. On Go 1.27 x/net/http2 replaces its own Transports with a wrapper around net/http, and this
+// fork's Go 1.27 path reaches into net/http internals: it needs -checklinkname=0 (which bare
+// builds cannot pass) and it reinterprets net/http's private layout. The profile files therefore
+// name http2legacy, so the shipped implementation stays the one Go 1.25/1.26 actually shipped.
+//
+// Nothing in the build would fail if that tag disappeared: the wrap sits behind an explicit
+// opt-in, so the fallback would still compile and would quietly change which HTTP/2
+// implementation ships. That is the silent drift this test exists to prevent.
+func TestProfileTagFilesKeepTheHTTP2TransportPin(t *testing.T) {
+	root := repoRoot(t)
+	matches, err := filepath.Glob(filepath.Join(root, "release", "DEFAULT_BUILD_TAGS*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("no release/DEFAULT_BUILD_TAGS* files found; this test would pass vacuously")
+	}
+	for _, path := range matches {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := make(map[string]bool)
+		for _, tag := range strings.Split(strings.TrimSpace(string(content)), ",") {
+			names[strings.TrimSpace(tag)] = true
+		}
+		if !names["http2legacy"] {
+			t.Errorf("release/%s does not name http2legacy.\n"+
+				"    On Go 1.27 the stdlib HTTP/2 wrap needs -checklinkname=0 and reinterprets net/http's\n"+
+				"    private layout; the profile pin keeps the shipped implementation identical to the one\n"+
+				"    Go 1.25/1.26 shipped. Removing it is a deliberate transport change, not a cleanup.",
+				filepath.Base(path))
+		}
+		if names["http2stdlibwrap"] {
+			t.Errorf("release/%s names http2stdlibwrap.\n"+
+				"    That opt-in is only true for a build that also carries %s and passes\n"+
+				"    -ldflags=-checklinkname=0; a profile file is read by bare builds too.",
+				filepath.Base(path), checklinknameTag)
+		}
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

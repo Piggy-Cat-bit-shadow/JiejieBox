@@ -77,21 +77,21 @@ var (
 	toolchainDirectiveRE = regexp.MustCompile(`(?m)^toolchain\s+go(\d+\.\d+(?:\.\d+)?)\s*$`)
 )
 
-// declaredToolchain reads the toolchain this module actually builds with: the `toolchain`
-// directive when present, the `go` directive otherwise. setup-go v6 resolves go-version-file the
-// same way, so this asks the question the workflows answer rather than a different one.
+// declaredToolchain reads the toolchain this module actually builds with. The `toolchain`
+// directive is REQUIRED: setup-go v6 resolves go-version-file through it, and falling back to the
+// `go` directive would make a deleted directive look like a passing gate while every workflow
+// silently installed the language minimum. The two layers are separate on purpose, and this test
+// is the thing that notices when the build layer disappears.
 func declaredToolchain(t *testing.T, root string) string {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match := toolchainDirectiveRE.FindStringSubmatch(string(content)); match != nil {
-		return match[1]
-	}
-	match := goDirectiveRE.FindStringSubmatch(string(content))
+	match := toolchainDirectiveRE.FindStringSubmatch(string(content))
 	if match == nil {
-		t.Fatal("go.mod has neither a `toolchain` nor a `go <version>` directive; this test would pass vacuously")
+		t.Fatal("go.mod has no `toolchain go<version>` directive: the build toolchain must be declared, " +
+			"not inferred from the language version, or every go-version-file workflow silently uses the minimum")
 	}
 	return match[1]
 }
