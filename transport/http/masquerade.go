@@ -35,7 +35,7 @@ func NewMasqueradeHandler(ctx context.Context, options *option.Hysteria2Masquera
 			}
 			return nil, E.New("invalid masquerade URL: ", options.ProxyOptions.URL)
 		}
-		return &httputil.ReverseProxy{
+		proxy := &httputil.ReverseProxy{
 			Rewrite: func(request *httputil.ProxyRequest) {
 				request.SetURL(target)
 				if !options.ProxyOptions.RewriteHost {
@@ -45,7 +45,10 @@ func NewMasqueradeHandler(ctx context.Context, options *option.Hysteria2Masquera
 			ErrorHandler: func(writer http.ResponseWriter, _ *http.Request, _ error) {
 				writer.WriteHeader(http.StatusBadGateway)
 			},
-		}, nil
+		}
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			proxy.ServeHTTP(writer, masqueradeRequest(request))
+		}), nil
 	case C.Hysterai2MasqueradeTypeString:
 		return http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			for key, values := range options.StringOptions.Headers {
@@ -61,6 +64,31 @@ func NewMasqueradeHandler(ctx context.Context, options *option.Hysteria2Masquera
 	default:
 		return nil, E.New("unknown masquerade type: ", options.Type)
 	}
+}
+
+// masqueradeRequest presents a plain CONNECT as a GET of the site root.
+//
+// Go 1.27's httputil.ReverseProxy refuses CONNECT before any round trip and calls
+// ErrorHandler, with the comment "We cannot handle CONNECT requests." A failed
+// authentication over a plain CONNECT therefore produced this package's own bare 502
+// instead of the decoy site's page, which is the one thing the masquerade exists to
+// avoid. An ordinary web server would not treat CONNECT as a request for a page, and the
+// decoy is meant to look like an ordinary web server, so the request is presented to the
+// decoy backend as the root GET it does answer.
+//
+// Extended CONNECT (a :protocol pseudo-header) deliberately keeps its method: it is not a
+// page request, and the existing contract answers it with the backend's bare 502.
+func masqueradeRequest(request *http.Request) *http.Request {
+	if request.Method != http.MethodConnect || request.Header.Get(":protocol") != "" {
+		return request
+	}
+	cloned := request.Clone(request.Context())
+	cloned.Method = http.MethodGet
+	cloned.URL.Path = "/"
+	cloned.URL.RawQuery = ""
+	cloned.Body = http.NoBody
+	cloned.ContentLength = 0
+	return cloned
 }
 
 // OverLimitDecoy builds the response used when a request both fails
