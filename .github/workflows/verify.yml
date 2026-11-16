@@ -300,6 +300,27 @@ jobs:
         # that flag. Together they are what keeps a bare `go build ./...` linkable.
         run: go test -count=1 ./cmd/internal/...
 
+      - name: the module's toolchain directive is the toolchain that runs
+        # setup-go v6 reads go.mod's `toolchain` directive through go-version-file; v5 read only
+        # the `go` directive. If that behaviour ever changes, every workflow that derives its Go
+        # from this file would silently fall back to the language minimum (1.25.5) and the
+        # artifacts would be compiled by the wrong toolchain with nothing failing - the same class
+        # of silent second source of truth that cmd/internal/build_libbox/toolchain_source_test.go
+        # exists to stop inside the repository. This step turns that silent downgrade into a
+        # failure, because the repository alternative (a hand-written literal in each workflow)
+        # would reintroduce exactly the drift that migration removed.
+        run: |
+          set -euo pipefail
+          want="$(awk '$1 == "toolchain" && NF >= 2 { sub(/^go/, "", $2); print $2; exit }' go.mod)"
+          [ -n "$want" ] || { echo "FAIL: go.mod has no toolchain directive" >&2; exit 1; }
+          got="$(go env GOVERSION)"
+          if [ "$got" != "go$want" ]; then
+            echo "FAIL: go.mod pins toolchain go$want but the running toolchain is $got" >&2
+            echo "      go-version-file must resolve the toolchain directive (actions/setup-go v6+)" >&2
+            exit 1
+          fi
+          echo "PASS: running toolchain $got matches go.mod's toolchain directive"
+
       - name: generated schema matches its source
         # `docs/schema.json` is a tracked product artifact consumed outside this repository -
         # the documentation site and an editor schema URL - and no gate compared it with
