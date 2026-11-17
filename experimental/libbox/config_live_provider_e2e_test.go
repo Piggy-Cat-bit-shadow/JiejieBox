@@ -274,20 +274,21 @@ func freeLibboxPort(t *testing.T) int {
 	// probe can land in a Windows UDP exclusion range and make the later bind
 	// fail with WSAEACCES, so check both protocols before handing the port out.
 	for attempt := 0; attempt < 64; attempt++ {
-		// Ask UDP first: Windows administrators can exclude a wide UDP range,
-		// and a TCP-first probe can repeatedly land inside it. Once the UDP
-		// port is proven free, prove TCP can bind the same port.
-		packet, err := net.ListenPacket("udp", "127.0.0.1:0")
+		// Walk a fixed user range instead of asking the kernel for an ephemeral
+		// port. Windows can reserve most of the TCP or UDP ephemeral range; a
+		// fixed candidate outside both exclusions is stable across runs.
+		port := 20000 + (attempt*7919)%20000
+		packet, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			continue
 		}
-		port := packet.LocalAddr().(*net.UDPAddr).Port
-		require.NoError(t, packet.Close())
 		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
+			require.NoError(t, packet.Close())
 			continue
 		}
 		require.NoError(t, listener.Close())
+		require.NoError(t, packet.Close())
 		return port
 	}
 	t.Fatal("no loopback port free for both TCP and UDP after 64 attempts")
