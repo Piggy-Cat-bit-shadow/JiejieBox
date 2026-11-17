@@ -39,6 +39,10 @@ type CommandServer struct {
 	oomRecorder       *oomkiller.Recorder
 	grpcServer        *grpc.Server
 	listener          net.Listener
+	// socketLock holds the command socket path's ownership lock for the life of the listener. It is
+	// what makes "probe, then remove" safe: no other instance of this package can reach the probe while
+	// this one holds the lock, so the answer cannot be invalidated by a competitor binding in between.
+	socketLock *os.File
 	// The device level, remembered across a service reload so a fact delivered while there is no Box
 	// is not lost. See rememberDeviceLevel for the window this closes and why only the level, and not
 	// the edges, is kept.
@@ -184,15 +188,24 @@ func (s *CommandServer) Start() error {
 		// process that lost control of its own socket has no way to notice. Refusing is the honest
 		// outcome. The stale case still recovers, because when a previous process died without
 		// unlinking (SIGSEGV, Jetsam) nothing answers the probe and the file is removed.
-		err = claimCommandSocket(sockPath, socketPathIsLive)
-		if err != nil {
-			return E.Cause(err, "listen command server")
+		// Claim the path under its ownership lock. Only the lock holder probes and removes, so a second
+		// instance starting on the same path cannot bind it between our probe and our removal - the
+		// window that let a live socket be deleted. The lock is held for the life of the listener.
+		lock, lockErr := acquireCommandSocket(sockPath)
+		if lockErr != nil {
+			return E.Cause(lockErr, "listen command server")
 		}
+		// A second Start on the same server (a reload path that re-runs setup) must not leak the
+		// previous lock; the old listener is already closed by then.
+		unlockCommandSocketPath(s.socketLock)
+		s.socketLock = lock
 		listener, err = net.ListenUnix("unix", &net.UnixAddr{
 			Name: sockPath,
 			Net:  "unix",
 		})
 		if err != nil {
+			unlockCommandSocketPath(s.socketLock)
+			s.socketLock = nil
 			return E.Cause(err, "listen command server")
 		}
 		if sUserID != os.Getuid() {
@@ -200,6 +213,8 @@ func (s *CommandServer) Start() error {
 			if err != nil {
 				listener.Close()
 				os.Remove(sockPath)
+				unlockCommandSocketPath(s.socketLock)
+				s.socketLock = nil
 				return E.Cause(err, "chown")
 			}
 		}
@@ -230,6 +245,10 @@ func (s *CommandServer) Close() {
 		s.grpcServer.Stop()
 	}
 	common.Close(s.listener)
+	// The path is free once the listener is closed, so the ownership lock can go. Releasing it earlier
+	// would let another instance bind while this one still accepts on the old inode.
+	unlockCommandSocketPath(s.socketLock)
+	s.socketLock = nil
 	// Close is the process-local shutdown, so it owns the Box as well as the subscribers. The
 	// separate CloseService RPC is the ordered path a client uses while the transport is alive;
 	// an embedder that tears the transport down first must not leave the Box running merely

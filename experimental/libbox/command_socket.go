@@ -197,23 +197,81 @@ func isGeneratedSocketName(name string) bool {
 // directions, so this is a ceiling, not a delay.
 const commandSocketClaimTimeout = 200 * time.Millisecond
 
-// socketPathIsLive reports whether something is accepting connections on path.
+// socketLiveness is the answer to "may this socket path be cleared?".
 //
-// A failed connect is the normal case here - the file is supposed to be stale - so only a successful
-// connect counts as evidence of a live listener. Every other outcome, including "this platform cannot
-// dial unix sockets", is treated as "not live", which restores the previous unlink-then-bind
-// behaviour for it.
-func socketPathIsLive(path string) bool {
+// It is three-valued on purpose. A boolean forced every probe outcome into "live" or "not live", so a
+// timeout, a permission error and a platform without unix sockets all read as "nothing is listening"
+// and the path was deleted - the removal then reported a healthy instance's socket as gone. Only
+// socketStale may be removed.
+type socketLiveness int
+
+const (
+	// socketStale: nothing can be accepting on the path. A refused connect means the file is there and
+	// nobody is bound (a process that exited without closing), ENOENT means the file is gone, and a
+	// non-socket file cannot be a listener at all.
+	socketStale socketLiveness = iota
+	// socketLive: something answered, so the path belongs to a running instance.
+	socketLive
+	// socketUnknown: the probe could not decide - timeout, permission, an unsupported transport. The
+	// honest action is to leave the file alone and report that we could not tell.
+	socketUnknown
+)
+
+// probeSocketLiveness classifies path by attempting one connect.
+func probeSocketLiveness(path string) socketLiveness {
 	dialer := net.Dialer{Timeout: commandSocketClaimTimeout}
 	connection, err := dialer.Dial("unix", path)
-	if err != nil {
-		return false
+	if err == nil {
+		_ = connection.Close()
+		return socketLive
 	}
-	_ = connection.Close()
-	return true
+	if isNoListenerError(err) {
+		return socketStale
+	}
+	return socketUnknown
 }
 
-// claimCommandSocket prepares path for bind(2).
+// commandSocketLockPath is the ownership lock that sits next to the socket.
+//
+// A lock file rather than the socket itself: the socket's inode changes when it is replaced, and a lock
+// has to survive the unlink-bind sequence it protects. The name is derived from the socket so two
+// instances that resolved the same socket path also contend on the same lock.
+func commandSocketLockPath(socketPath string) string {
+	return socketPath + ".lock"
+}
+
+// acquireCommandSocket prepares path for bind and returns the ownership lock to hold for the life of
+// the listener.
+//
+// # Why a lock, and not a more careful check
+//
+// `claimCommandSocket` was a check-then-act: it asked whether the path answered, and if not, removed
+// the file. Between the answer and the remove, another instance starting on the same path could bind
+// it - and the removal then deleted a LIVE socket, leaving the instance that had just bound it
+// unreachable for every new client while it kept serving the connections it already had. No ordering of
+// probe and remove closes that window, because the two steps are not atomic.
+//
+// An exclusive, non-blocking lock on a sibling file is: while one instance holds it, no other instance
+// can reach the probe at all, so the probe's answer cannot be invalidated by a competitor. The second
+// instance fails immediately with a clear reason instead of deleting anything.
+//
+// The lock only orders instances of THIS package. A process that binds the path without taking the lock
+// can still race, which is why the probe below is kept as a second check rather than removed: under the
+// lock, "live" means a foreign listener owns the name, and the claim refuses it.
+func acquireCommandSocket(path string) (*os.File, error) {
+	lock, err := lockCommandSocketPath(commandSocketLockPath(path))
+	if err != nil {
+		return nil, E.New("another instance owns ", socketPathDiagnostics(path), ": ", err)
+	}
+	err = claimCommandSocket(path, probeSocketLiveness)
+	if err != nil {
+		unlockCommandSocketPath(lock)
+		return nil, err
+	}
+	return lock, nil
+}
+
+// claimCommandSocket prepares path for bind(2) while the caller holds the ownership lock.
 //
 // # Why this is not os.Remove
 //
@@ -226,15 +284,16 @@ func socketPathIsLive(path string) bool {
 // So:
 //
 //   - nothing there                        -> nothing to do;
-//   - our name, nothing answering          -> remove it (the stale case, and the only recovery a
+//   - our name, definitively nothing there -> remove it (the stale case, and the only recovery a
 //     crashed Network Extension needs);
 //   - our name, something answering        -> refuse, and say so;
+//   - our name, probe could not decide     -> refuse; deleting on a guess is the bug this prevents;
 //   - a name this package never allocates  -> refuse and leave it alone.
 //
-// isLive is a parameter rather than a direct call so the decision is testable on a platform that has
-// no unix sockets to leave behind.
-func claimCommandSocket(path string, isLive func(string) bool) error {
-	_, err := os.Lstat(path)
+// liveness is a parameter rather than a direct call so each branch is testable without a platform that
+// can leave a socket file behind.
+func claimCommandSocket(path string, liveness func(string) socketLiveness) error {
+	info, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -245,8 +304,18 @@ func claimCommandSocket(path string, isLive func(string) bool) error {
 	if base != commandSocketName && !isGeneratedSocketName(base) {
 		return E.New("refusing to take over the socket path ", socketPathDiagnostics(path), ": not a name this server allocates")
 	}
-	if isLive(path) {
+	// Only a socket or a plain leftover file may be cleared. A directory, a device or a symlink at this
+	// name is somebody else's object: os.Remove on an empty directory would "succeed" and silently
+	// delete a directory tree's leaf on a stale probe.
+	mode := info.Mode()
+	if !mode.IsRegular() && mode&os.ModeSocket == 0 {
+		return E.New("refusing to remove ", socketPathDiagnostics(path), ": not a socket or a regular file")
+	}
+	switch liveness(path) {
+	case socketLive:
 		return E.New("another instance is already listening on ", socketPathDiagnostics(path))
+	case socketUnknown:
+		return E.New("cannot tell whether ", socketPathDiagnostics(path), " is live; refusing to remove it")
 	}
 	err = os.Remove(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

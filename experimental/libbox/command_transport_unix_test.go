@@ -73,7 +73,7 @@ func TestTheClientReachesAServerOnAUnixSocket(t *testing.T) {
 	// stale file is removed, a missing one is nothing to do. This is the recovery a relaunched
 	// NetworkExtension performs, and refusing here would mean the tunnel never gets a control channel
 	// back.
-	require.NoError(t, claimCommandSocket(socketPath, socketPathIsLive),
+	require.NoError(t, claimCommandSocket(socketPath, probeSocketLiveness),
 		"the stale socket file must not block the next instance")
 
 	replacement, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
@@ -107,9 +107,9 @@ func TestALiveUnixSocketIsNotStolenOnThisPlatform(t *testing.T) {
 		listener.Close()
 	}()
 
-	require.True(t, socketPathIsLive(path), "a bound unix listener must answer the liveness probe")
+	require.Equal(t, socketLive, probeSocketLiveness(path), "a bound unix listener must answer the liveness probe")
 
-	err = claimCommandSocket(path, socketPathIsLive)
+	err = claimCommandSocket(path, probeSocketLiveness)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already listening")
 
@@ -124,8 +124,8 @@ func TestALiveUnixSocketIsNotStolenOnThisPlatform(t *testing.T) {
 func TestAStaleUnixSocketFileIsRemoved(t *testing.T) {
 	path := resolveSocketPathInTempDir(t)
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
-	require.False(t, socketPathIsLive(path), "a plain file must not answer the liveness probe")
-	require.NoError(t, claimCommandSocket(path, socketPathIsLive))
+	require.Equal(t, socketStale, probeSocketLiveness(path), "a plain file must not answer the liveness probe")
+	require.NoError(t, claimCommandSocket(path, probeSocketLiveness))
 	_, err := os.Lstat(path)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
