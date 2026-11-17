@@ -112,4 +112,5 @@ on the core, and nothing about the socket path, the authentication secret, or th
 | a live server's `Unavailable` answer does NOT tear the connection down | same file, `TestAServerAnswerOfUnavailableKeepsTheConnection` |
 | a stale socket file is cleared, a live one is not stolen | `experimental/libbox/command_socket_claim_test.go` |
 | the probe and the dialer agree on where the server is | `TestCommandEndpointMatchesDialTarget` |
-| the iOS/NetworkExtension path itself | **NOT_RUN**: no device in this environment. The unix-socket branch is compile-verified (`darwin/arm64`) and its logic is the same code the TCP tests exercise. |
+| the unix transport itself, including the stale socket file | `experimental/libbox/command_transport_unix_test.go` — a real AF_UNIX listener through the production resolver, dialer, probe and classifier, then the file/listener state the incident reported, then recovery. Runs on any host where AF_UNIX works. |
+| the iOS/NetworkExtension path itself | **NOT_RUN**: no device in this environment. The Go side, including the unix transport, is verified on the host; what remains is the device's own lifecycle (Jetsam, extension relaunch, App Group container). |

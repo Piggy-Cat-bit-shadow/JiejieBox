@@ -347,8 +347,9 @@ jobs:
         #   * "the core is not running" was indistinguishable from a transient RPC failure, so the
         #     only thing a UI could do with it was display it.
         #
-        # The tests drive the production client against real gRPC servers on TCP (a unix socket
-        # cannot be bound on this runner, and the decision is transport-independent), and the
+        # The tests drive the production client against real gRPC servers - on TCP for the state
+        # machine, and on a real AF_UNIX socket for the transport the NetworkExtension actually uses
+        # (Go supports AF_UNIX on the runners; the transport tests skip where it does not). The
         # socket-claim tests pin who may take a socket path away from whom.
         #
         # The -run list is explicit and its coverage is asserted below, because a filter that matches
@@ -357,7 +358,7 @@ jobs:
           set -euo pipefail
           mkdir -p build
           go test -count=1 -v ./experimental/libbox/ \
-            -run 'TestClaimCommandSocket|TestCommandEndpointMatchesDialTarget|TestProbeCommandServer|TestAStandaloneClientSaysTheCoreIsNotRunning|TestAHandlerBoundClientSaysTheCoreIsNotRunningWithoutHanging|TestAClientRecoversWhenTheCoreReturns|TestAServerAnswerOfUnavailableKeepsTheConnection' \
+            -run 'TestClaimCommandSocket|TestCommandEndpointMatchesDialTarget|TestProbeCommandServer|TestAStandaloneClientSaysTheCoreIsNotRunning|TestAHandlerBoundClientSaysTheCoreIsNotRunningWithoutHanging|TestAClientRecoversWhenTheCoreReturns|TestAServerAnswerOfUnavailableKeepsTheConnection|TestTheClientReachesAServerOnAUnixSocket|TestALiveUnixSocketIsNotStolenOnThisPlatform|TestAStaleUnixSocketFileIsRemoved' \
             2>&1 | tee build/command-channel-gate.log
           ./scripts/ci/require-executed-coverage.sh build/command-channel-gate.log "control channel failure states"
           echo "PASS: the control channel reports, recovers from, and never fabricates a dead core"
