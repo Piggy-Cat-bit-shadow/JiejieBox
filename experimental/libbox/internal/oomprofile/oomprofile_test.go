@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/pprof"
 	"testing"
@@ -134,6 +135,73 @@ func TestWriteFileRejectsUnknownProfile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err == nil {
 		t.Fatal("WriteFile left a file behind after rejecting the profile name")
+	}
+}
+
+// TestHeapWriterArithmeticOnAFixedRecord pins the writer's arithmetic on a record this test owns, so
+// the expected numbers are arithmetic rather than observations.
+//
+// This is the deterministic half of the semantic gate. It is what states, in numbers, that a record
+// carrying (ObjectSize, AllocObjects, FreeObjects) produces:
+//
+//	alloc_objects = AllocObjects
+//	alloc_space   = AllocObjects * ObjectSize
+//	inuse_objects = AllocObjects - FreeObjects
+//	inuse_space   = (AllocObjects - FreeObjects) * ObjectSize
+//	bytes label   = ObjectSize
+//
+// With the pre-1.27 arithmetic (which scaled the total bytes it expected instead of the per-object
+// size) alloc_space would come out as 8192 instead of 24576, and the label as 2730 instead of 8192.
+func TestHeapWriterArithmeticOnAFixedRecord(t *testing.T) {
+	pc := uintptr(reflect.ValueOf(TestHeapWriterArithmeticOnAFixedRecord).Pointer())
+	const objectSize = 8192
+	records := []memProfileRecord{{
+		ObjectSize:   objectSize,
+		AllocObjects: 3,
+		FreeObjects:  1,
+		Stack:        []uintptr{pc},
+	}}
+
+	var buffer bytes.Buffer
+	// rate == 1 makes scaleHeapSample the identity, so the expected values are exact.
+	if err := writeHeapProto(&buffer, records, 1, ""); err != nil {
+		t.Fatalf("writeHeapProto: %v", err)
+	}
+	profile := parseProfile(t, buffer.Bytes())
+
+	wantTypes := []string{"alloc_objects/count", "alloc_space/bytes", "inuse_objects/count", "inuse_space/bytes"}
+	if got := profile.sampleTypeStrings(); fmt.Sprint(got) != fmt.Sprint(wantTypes) {
+		t.Fatalf("sample types = %v, want %v", got, wantTypes)
+	}
+	if profile.period != 1 {
+		t.Fatalf("period = %d, want 1", profile.period)
+	}
+	if profile.defaultSampleType != "" {
+		t.Fatalf("default sample type = %q, want none for the heap profile", profile.defaultSampleType)
+	}
+	if len(profile.samples) != 1 {
+		t.Fatalf("got %d samples, want 1", len(profile.samples))
+	}
+	sample := profile.samples[0]
+	wantValues := []int64{3, 3 * objectSize, 2, 2 * objectSize}
+	if fmt.Sprint(sample.values) != fmt.Sprint(wantValues) {
+		t.Fatalf("sample values = %v, want %v", sample.values, wantValues)
+	}
+	if len(sample.locations) == 0 {
+		t.Fatal("the sample has no locations, so the stack was not symbolised")
+	}
+	found := false
+	for _, label := range sample.labels {
+		if label.key != "bytes" {
+			continue
+		}
+		found = true
+		if label.num != objectSize {
+			t.Fatalf("bytes label = %d, want the object size %d", label.num, objectSize)
+		}
+	}
+	if !found {
+		t.Fatalf("no bytes label on the sample: %+v", sample.labels)
 	}
 }
 
@@ -332,23 +400,44 @@ func TestMirrorAgreesWithStandardLibrary(t *testing.T) {
 			mAllocObjects, mAllocBytes, mInUseObjects, mInUseBytes,
 			sAllocObjects, sAllocBytes, sInUseObjects, sInUseBytes)
 
-		// The two profiles are taken a few hundred microseconds apart and each write allocates into
-		// the heap it is measuring, so the totals are compared with a tolerance rather than for
-		// equality. The tolerance is far tighter than any layout or arithmetic error would produce.
-		for _, field := range []struct {
-			name           string
-			mirror, stdlib int64
-		}{
-			{"alloc_objects", mAllocObjects, sAllocObjects},
-			{"alloc_space", mAllocBytes, sAllocBytes},
-			{"inuse_objects", mInUseObjects, sInUseObjects},
-			{"inuse_space", mInUseBytes, sInUseBytes},
-		} {
-			if !withinTolerance(field.mirror, field.stdlib, 0.25) {
-				t.Fatalf("%s: %s differs between the mirror (%d) and the standard library (%d); "+
-					"the mirrored record layout or its arithmetic no longer matches the pinned toolchain",
-					name, field.name, field.mirror, field.stdlib)
-			}
+		// The two profiles are two OBSERVATIONS of a live heap, taken a few hundred microseconds
+		// apart, and each write allocates into the heap it is measuring. So equality is not the
+		// property to assert here: under a GC between the two calls, in-use totals legitimately move
+		// in either direction. What IS ordered is the allocation counters (they only grow), and what
+		// a layout or arithmetic error violates is their magnitude, not their order.
+		//
+		// The exact arithmetic is pinned by TestHeapWriterArithmeticOnAFixedRecord instead, on a
+		// record the test owns, where the expected numbers are arithmetic rather than observations.
+		if sAllocObjects < mAllocObjects {
+			t.Fatalf("%s: the standard library saw %d allocations after the mirror saw %d; the heap "+
+				"cannot shrink its allocation count, so the two writers disagree about what they read",
+				name, sAllocObjects, mAllocObjects)
+		}
+		if sAllocBytes < mAllocBytes {
+			t.Fatalf("%s: the standard library saw %d allocated bytes after the mirror saw %d",
+				name, sAllocBytes, mAllocBytes)
+		}
+		// Allocations made between the two writes are bounded by what two profile writes cost; a
+		// wrong object size or a wrong scaling formula moves the figures by a factor of the object
+		// count, which this bound refuses.
+		if sAllocObjects > 4*mAllocObjects+1024 {
+			t.Fatalf("%s: the standard library reports %d allocations against the mirror's %d; "+
+				"the mirrored record layout or its arithmetic no longer matches the pinned toolchain",
+				name, sAllocObjects, mAllocObjects)
+		}
+		if sAllocBytes > 4*mAllocBytes+1<<20 {
+			t.Fatalf("%s: the standard library reports %d allocated bytes against the mirror's %d",
+				name, sAllocBytes, mAllocBytes)
+		}
+		// In-use figures are only required to be plausible against the allocation figures of the
+		// SAME profile: a record cannot hold more live bytes than it ever allocated.
+		if mInUseBytes > mAllocBytes || sInUseBytes > sAllocBytes {
+			t.Fatalf("%s: in-use exceeds allocated (mirror %d>%d, standard %d>%d)",
+				name, mInUseBytes, mAllocBytes, sInUseBytes, sAllocBytes)
+		}
+		if mInUseObjects > mAllocObjects || sInUseObjects > sAllocObjects {
+			t.Fatalf("%s: in-use objects exceed allocated objects (mirror %d>%d, standard %d>%d)",
+				name, mInUseObjects, mAllocObjects, sInUseObjects, sAllocObjects)
 		}
 	}
 }
@@ -371,23 +460,6 @@ func decodeStandardLibraryProfile(t *testing.T, content []byte) []byte {
 		t.Fatalf("decompress runtime/pprof profile: %v", err)
 	}
 	return decoded
-}
-
-// withinTolerance reports whether two counts agree, allowing for the allocations that happen between
-// the two observations.
-func withinTolerance(a, b int64, tolerance float64) bool {
-	if a == b {
-		return true
-	}
-	larger := max(a, b)
-	if larger == 0 {
-		return true
-	}
-	difference := a - b
-	if difference < 0 {
-		difference = -difference
-	}
-	return float64(difference)/float64(larger) <= tolerance
 }
 
 // parsedProfile holds the parts of a profile.proto message these tests assert on.

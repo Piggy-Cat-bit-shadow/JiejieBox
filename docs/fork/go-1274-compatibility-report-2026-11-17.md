@@ -1,4 +1,4 @@
-# Go 1.25 â†’ 1.27.4 compatibility program â€” construction report (2026-11-17)
+# Go 1.25 â†?1.27.4 compatibility program â€?construction report (2026-11-17)
 
 **Baseline:** `testing` at `4dc2593fbc1bf736afd1d79a3fdec5f7371db328` (clean worktree, equals
 `origin/testing` at the start of this session).
@@ -12,14 +12,14 @@ minimum, **not** the compiler: `go version` and `go env GOVERSION` both report 1
 
 | Item | Result |
 |---|---|
-| P0 â€” `oomprofile` / Go 1.27 internal ABI crash | **Root-caused and fixed**; reproduced on the host with the same frames as the device, fixed, and gated by three independent tests |
-| P0/P1 â€” `command.sock` ECONNREFUSED / `SetGroupExpand` | **Diagnosed as "no listener"**, and the main-repo half fixed: the state is now classified, a dead connection is no longer reused, a live socket can no longer be stolen by a second instance |
+| P0 â€?`oomprofile` / Go 1.27 internal ABI crash | **Root-caused and fixed**; reproduced on the host with the same frames as the device, fixed, and gated by three independent tests |
+| P0/P1 â€?`command.sock` ECONNREFUSED / `SetGroupExpand` | **Diagnosed as "no listener"**, and the main-repo half fixed: the state is now classified, a dead connection is no longer reused, a live socket can no longer be stolen by a second instance |
 | Same-class audit | All first-party Go-non-public dependencies inventoried; two previously ungated runtime mirrors now gated; residual gaps named in `docs/fork/go-toolchain-abi-gates.md` |
 | New problems found independently | One: the `runtime.g` mirror had no test, so its silent degradation was invisible (P2, now gated). Two platform traps documented (Windows `ECONNREFUSED` encoding; `runtime.g` layout is not statically checkable) |
 | Can this go to device/release verification? | The oomprofile half: **yes**, it is the specific crash. The control-channel half: **yes for the Go side**, with the Apple-side contract in `docs/fork/ios-command-client-state.md` unimplemented by design (different repository) |
 | iOS/macOS runtime | **NOT_RUN.** No device, no Mac, no signed NetworkExtension in this environment |
 
-## B. Go 1.25 â†’ 1.27.4 mapping, narrowed to what is reachable here
+## B. Go 1.25 â†?1.27.4 mapping, narrowed to what is reachable here
 
 The prior rounds of this migration already landed the broad compatibility work (toolchain pin, tag
 profiles, the `-checklinkname` policy gates, the HTTP/2 transport pin). This round asked a different
@@ -30,19 +30,19 @@ Verified differences, from the two toolchains' own sources:
 
 | Surface | Go 1.25.5 | Go 1.27.4 | Consequence here |
 |---|---|---|---|
-| `internal/profilerecord.MemProfileRecord` | `AllocBytes, FreeBytes int64; AllocObjects, FreeObjects int64; Stack []uintptr` â€” 56 bytes, `Stack` at 32 | `ObjectSize int64; AllocObjects, FreeObjects int64; Stack []uintptr` â€” 48 bytes, `Stack` at 24 | **the crash**; and `InUseBytes` changed from measured to derived (`InUseObjects() * ObjectSize`) |
+| `internal/profilerecord.MemProfileRecord` | `AllocBytes, FreeBytes int64; AllocObjects, FreeObjects int64; Stack []uintptr` â€?56 bytes, `Stack` at 32 | `ObjectSize int64; AllocObjects, FreeObjects int64; Stack []uintptr` â€?48 bytes, `Stack` at 24 | **the crash**; and `InUseBytes` changed from measured to derived (`InUseObjects() * ObjectSize`) |
 | `runtime/pprof.protomem` | `scaleHeapSample(count, size, rate)` with `size` = total bytes; `bytes` label = average block size | `scaleHeapSample(count, avgSize, rate)` with `avgSize` = per-object size; `bytes` label = `ObjectSize` | a mirror that copied only the struct would report `inuse_space` inflated by the object count |
-| `runtime/pprof.labelMap` | `LabelSet{list []label}`, `label{key, value string}` | `label.Set{List []Label}` from `internal/runtime/pprof/label`, `Label{Key, Value string}` | **layout identical** (one slice header, 32-byte elements) â€” verified, and now gated so the next move is caught |
+| `runtime/pprof.labelMap` | `LabelSet{list []label}`, `label{key, value string}` | `label.Set{List []Label}` from `internal/runtime/pprof/label`, `Label{Key, Value string}` | **layout identical** (one slice header, 32-byte elements) â€?verified, and now gated so the next move is caught |
 | `runtime/pprof` profile builder | gzip-wrapped | gzip-wrapped | the fork's copy is deliberately **not** gzip; asserted so it cannot change silently |
-| every other pulled symbol in Â§1.1 | â€” | still present with the same signature | verified by reading `runtime/mprof.go`, `runtime/symtab.go`, `runtime/cpuprof.go`, `runtime/pprof/vminfo_darwin.go`, `runtime/pprof/defs_darwin*.go` |
-| `runtime.g` prefix | â€” | verified behaviourally on 1.27.4 | see Â§D |
+| every other pulled symbol in Â§1.1 | â€?| still present with the same signature | verified by reading `runtime/mprof.go`, `runtime/symtab.go`, `runtime/cpuprof.go`, `runtime/pprof/vminfo_darwin.go`, `runtime/pprof/defs_darwin*.go` |
+| `runtime.g` prefix | â€?| verified behaviourally on 1.27.4 | see Â§D |
 
 Not verified, and not claimed: a line-by-line diff of every Go commit between 1.25 and 1.27.4. That
 work was scoped to the surfaces this repository actually depends on, which is the only part that can
 change its behaviour. `docs/fork/go-toolchain-abi-gates.md` Â§2 is the procedure for re-deriving it on
 the next upgrade.
 
-## C. The 0.1.52 Network Extension crash â€” closed
+## C. The 0.1.52 Network Extension crash â€?closed
 
 ### C.1 The facts, from the crash report
 
@@ -72,7 +72,7 @@ writes `[]profilerecord.MemProfileRecord` into a slice of **our** type, with **i
 `Stack` at offset 24. The mirror still declared the 1.26 shape (56-byte stride, `Stack` at 32), so:
 
 - record 0's `Stack` was read from the right place by coincidence (offset 24 in both);
-- record 1's "data pointer" was read from byte 80, which is record 0's **length** field â€” a small
+- record 1's "data pointer" was read from byte 80, which is record 0's **length** field â€?a small
   integer;
 - `for i, addr := range stk` dereferenced that small integer. On the device it faulted at `0x14`
   (20); on this host at `0x5`.
@@ -115,30 +115,38 @@ numbers, and asserts the file is not compressed, so the decision is recorded rat
 |---|---|
 | `TestToolchainProfileRecordsStillMatchTheMirrors` | parses `$GOROOT/src/internal/profilerecord/profilerecord.go` with `go/parser` and compares the field list of all three records, then requires `InUseBytes` to still derive from `InUseObjects()` and `ObjectSize`. **This is the test that fails on the next toolchain move**, and it names the fields. |
 | `TestMemProfileRecordLayoutMatchesGo1274` | the concrete 64-bit numbers (48/24), with the 0.1.52 crash named in the message |
-| `TestHeapSampleValuesMatchTheirObjectSizeLabel` | every heap/allocs sample: `alloc_space == alloc_objects Ã— bytes-label` and `inuse_space == inuse_objects Ã— bytes-label`. Hermetic â€” it needs nothing outside the profile. |
-| `TestMirrorAgreesWithStandardLibrary` | the same instant written by this package and by `runtime/pprof`, comparing sample types, default sample type, period and all four totals |
+| `TestHeapSampleValuesMatchTheirObjectSizeLabel` | every heap/allocs sample: `alloc_space == alloc_objects Ã— bytes-label` and `inuse_space == inuse_objects Ã— bytes-label`. Hermetic â€?it needs nothing outside the profile. |
+| `TestHeapWriterArithmeticOnAFixedRecord` | the writer's arithmetic on a record the test owns: `{ObjectSize 8192, AllocObjects 3, FreeObjects 1}` at rate 1 must produce `[3, 24576, 2, 16384]` and a `bytes` label of 8192. Deterministic, and states the expected numbers instead of observing them. |
+| `TestMirrorAgreesWithStandardLibrary` | the same heap written by this package and by `runtime/pprof`: sample types, default sample type, period and the raw-protobuf format compared exactly; the allocation counters compared as ordered magnitudes (a layout or arithmetic error moves them by a factor of the object count) |
 | `TestGoroutineProfileCarriesLabels` | the `pprof.labelMap` mirror, behaviourally: a goroutine labelled with `pprof.Labels` must appear labelled |
 | `TestWriteFileProducesWellFormedProfiles` | all six profiles parse, with the sample types and units pprof consumers expect |
 
 Negative controls, run deliberately:
 
-- mirror struct left at 1.26 but the arithmetic updated â†’ `memProfileRecord has 4 fields in the pinned
+- mirror struct left at 1.26 but the arithmetic updated â†?`MemProfileRecord has 4 fields in the pinned
   toolchain and 5 in this mirror` (simulated drift);
-- struct fixed but the old arithmetic kept â†’ two failures:
-  `heap: sample 37 reports alloc_space 4096 for 256 objects of size 4096; want 1048576` and
-  `alloc_space differs between the mirror (184000) and the standard library (5931368)`;
-- the pre-fix code itself â†’ the SIGSEGV in C.2.
+- struct fixed but the old arithmetic kept â†?three failures:
+  `heap: sample 37 reports alloc_space 4096 for 256 objects of size 4096; want 1048576`,
+  `sample values = [3 8192 2 8192], want [3 24576 2 16384]`, and
+  `heap: the standard library reports 2785136 allocated bytes against the mirror's 40056`;
+- the pre-fix code itself â†?the SIGSEGV in C.2.
+
+The differential comparison was reworked after a stress run: `-count=10` exposed that two separate
+observations of a live heap can disagree on the in-use figures by a large factor when a GC runs
+between them, so equality was the wrong assertion there. The exact arithmetic moved to the fixed-record
+test above, where it is deterministic, and the cross-writer test kept the structural equality and the
+ordered allocation counters. `-count=10` now passes.
 
 ### C.5 Profile semantics after the fix
 
-`TestMirrorAgreesWithStandardLibrary` on this host, at `MemProfileRate=1`:
+The fixed-record test states the contract in numbers. The cross-writer test compares the same heap
+through both writers, and on this host the two files report the same sample types, the same period,
+and allocation counters that agree to the byte:
 
 ```text
 heap:   mirror alloc=5941/9664768 inuse=233/3677288 standard alloc=5941/9664768 inuse=233/3677288
 allocs: mirror alloc=5941/9664768 inuse=233/3677288 standard alloc=5941/9664768 inuse=233/3677288
-```
-
-Byte-for-byte identical totals. The six profiles are covered by
+``` The six profiles are covered by
 `TestWriteFileProducesWellFormedProfiles`, including the empty-profile case (`block`/`mutex` with
 their rates at zero), and `TestWriteFileRejectsUnknownProfile` covers the failure path.
 
@@ -158,7 +166,7 @@ good place to do this work. A budgeted/deferred variant is a larger change to th
 and needs device measurements to justify, so it is left as the next experiment rather than pushed in
 blind.
 
-## C2. The `command.sock` incident â€” closed on the Go side
+## C2. The `command.sock` incident â€?closed on the Go side
 
 ### C2.1 Which failure this is
 
@@ -168,30 +176,30 @@ is not the historical 138-byte `EINVAL` (a bind-time path-length failure, fixed 
 inside the 103-byte budget, which is consistent: `resolveCommandSocketPath` produced the documented
 `command.sock`, and both sides agreed on it.
 
-The state it describes â€” socket file present, listener gone â€” is exactly what a Network Extension that
+The state it describes â€?socket file present, listener gone â€?is exactly what a Network Extension that
 exits without `Close` leaves behind, because `UnixListener.Close` is what unlinks the file.
 
 ### C2.2 The causal chain, and its limit
 
 The device session contains a SIGSEGV in the OOM profile writer at 03:16:12. `ECONNREFUSED` is the
-signature of a process that exited without unlinking. So **the chain NE crashed â†’ stale socket â†’ UI
+signature of a process that exited without unlinking. So **the chain NE crashed â†?stale socket â†?UI
 gets ECONNREFUSED is consistent with the evidence**, and the two reports are from one session.
 
 What cannot be proven from the available material: that the UI error was observed *after* that SIGSEGV
 rather than before it (no timestamped UI log was provided), and that no second exit happened. The
 report therefore treats the chain as **supported, not proven**, and fixes the control channel's own
-defects independently â€” because they are wrong regardless of what killed the core.
+defects independently â€?because they are wrong regardless of what killed the core.
 
 ### C2.3 What was actually wrong in this repository
 
 1. **A cached connection was never invalidated.** `getClientForCall` returned `c.grpcClient` whenever it
    was non-nil. When the core dies, that connection is in `TRANSIENT_FAILURE`, and gRPC reconnects on
-   its own backoff â€” up to two minutes between attempts. A kernel that comes back a few seconds later
+   its own backoff â€?up to two minutes between attempts. A kernel that comes back a few seconds later
    would keep failing every UI operation, each of which looks like a fresh failure to the user.
 2. **"The core is not running" was not expressible.** Every transport failure arrived as
    `Unavailable`/`DeadlineExceeded` with prose inside. A UI could only display it. Worse, the
    handler-bound establishment path (the one the UI uses) reports `DeadlineExceeded`, because it
-   probes with `WaitForReady(true)` until its own deadline â€” a code that reads as "slow", inviting a
+   probes with `WaitForReady(true)` until its own deadline â€?a code that reads as "slow", inviting a
    retry of an operation nothing received.
 3. **`CommandServer.Start` would unlink a live socket.** `os.Remove(sockPath)` ran unconditionally
    before `bind`. With two live instances the first keeps its accepted connections while every new
@@ -200,11 +208,11 @@ defects independently â€” because they are wrong regardless of what killed the c
 ### C2.4 The fix
 
 - `classifyCommandFailure` (new, `command_endpoint.go`): after a failed call whose status is
-  `Unavailable` or `DeadlineExceeded`, probe the endpoint the client actually dialed â€” a `connect(2)`
+  `Unavailable` or `DeadlineExceeded`, probe the endpoint the client actually dialed â€?a `connect(2)`
   with a 150 ms cap. If the probe is definitive and says nothing is listening, close the connection and
   return `ErrCommandServerNotRunning`. If the probe says something IS listening (a live server's
   semantic `Unavailable`, e.g. `daemon/managed_service.go`'s "OOM recorder not available"), return the
-  original error untouched â€” a healthy connection with live subscriptions must not be torn down for an
+  original error untouched â€?a healthy connection with live subscriptions must not be torn down for an
   answer.
 - `ProbeCommandServer()` (new): `{"state":"running|notRunning|unknown","detail":...}`, so a UI can ask
   before acting. `unknown` for XPC/remote transports, because claiming "down" without evidence is worse
@@ -239,7 +247,7 @@ the tunnel reports connected.
    nothing failed, and a device would simply report less. Added
    `goroutine_badlinkname_test.go`, which requires the report to exist, be non-empty, and carry
    function names and stack bytes. It passes on 1.27.4 (`total=9, groups=9, stackBytes=81920` in the
-   probe run), so the mirror is currently correct â€” the point is that it can no longer become silently
+   probe run), so the mirror is currently correct â€?the point is that it can no longer become silently
    wrong.
 2. **`syscall.ECONNREFUSED` is the wrong constant on Windows.** Measured on the pinned toolchain: a
    refused connect reports errno 10061, while `syscall.ECONNREFUSED` is `0x20000016`; `errors.Is(err,
@@ -280,11 +288,11 @@ All on `go1.27.4 windows/amd64`, `CGO_ENABLED=0`, from `C:\Deepseek\JiejieBox`.
 
 | Command | Result |
 |---|---|
-| `go test -count=1 -v ./experimental/libbox/internal/oomprofile/` | PASS (8 test cases + subtests) |
-| `go test -count=1 -v ./experimental/libbox/internal/oomprofile/` before the fix | **panic / FAIL** â€” Â§C.2 |
+| `go test -count=1 -v ./experimental/libbox/internal/oomprofile/` | PASS (9 test cases + subtests; `-count=10` also PASS) |
+| `go test -count=1 -v ./experimental/libbox/internal/oomprofile/` before the fix | **panic / FAIL** â€?Â§C.2 |
 | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS),tfogo_checklinkname0" -ldflags=-checklinkname=0 ./experimental/libbox/internal/runtimeinfo/` | PASS (2) |
-| `go test -count=1 -v ./experimental/libbox/ -run 'TestClaimCommandSocket\|TestCommandEndpointMatchesDialTarget\|TestProbeCommandServer\|TestAStandaloneClientâ€¦\|TestAHandlerBoundClientâ€¦\|TestAClientRecoversâ€¦\|TestAServerAnswerOfUnavailableâ€¦'` | PASS (12) |
-| `go test -count=1 ./experimental/libbox/` (the whole package) | PASS (`ok â€¦ 12.341s`) |
+| `go test -count=1 -v ./experimental/libbox/ -run 'TestClaimCommandSocket\|TestCommandEndpointMatchesDialTarget\|TestProbeCommandServer\|TestAStandaloneClientâ€¦\|TestAHandlerBoundClientâ€¦\|TestAClientRecoversâ€¦\|TestAServerAnswerOfUnavailableâ€?` | PASS (12) |
+| `go test -count=1 ./experimental/libbox/` (the whole package) | PASS (`ok â€?12.341s`) |
 | `go test -count=1 -c` for `darwin/arm64` and `linux/arm64` (oomprofile) | compiles |
 | `GOOS=linux/arm64`, `darwin/arm64`, `windows/amd64` `go build ./experimental/libbox/` | PASS |
 | `go build ./...` (untagged) | PASS |
@@ -300,9 +308,9 @@ available. The `verify.yml` race job is the owner of that coverage.
 
 Added to the push gate, both anti-vacuity guarded:
 
-1. **`mirrored runtime structures match the pinned toolchain`** â€” the oomprofile source/semantic/
+1. **`mirrored runtime structures match the pinned toolchain`** â€?the oomprofile source/semantic/
    differential gates plus the `runtimeinfo` mirrors under their real tags.
-2. **`the control channel's failure states`** â€” the 12 tests above.
+2. **`the control channel's failure states`** â€?the 12 tests above.
 
 The durable artifact is `docs/fork/go-toolchain-abi-gates.md`: the inventory of every first-party
 dependency on non-public Go surface, which ones are gated, which are loud, which are gaps, and the
