@@ -13,6 +13,77 @@ The method was not "read the release notes and guess". Every row below is one of
 
 ---
 
+## R3–R5 — the independent review's findings (2026-11-18), all fixed
+
+An external review of this round found three defects in the control-channel work. They are recorded as
+the reviewer stated them, with the fix, the test that now holds the line, and the negative control that
+proves the test would have caught the original defect.
+
+### R3 [P1] — a stale failure closed the NEW connection
+
+**The defect.** `classifyCommandFailure` closed "the client's connection" whenever the probe said
+nothing was listening. By the time a failure is classified, that connection may no longer be the
+client's current one: if another goroutine re-established in the meantime, the late failure cleared the
+**new** connection - healthy, newer than the failure, and carrying the live subscriptions. The locking was
+correct, the decision was about the wrong object, which is why the existing race tests could not exclude
+it.
+
+**The fix.** Every call now carries a `commandCallLease`: the epoch of the connection it ran on and the
+endpoint that connection points at. `invalidateConnection(epoch)` compares the epoch and closes **under
+one lock acquisition**, so a concurrent install cannot slip between check and close. A stale lease
+neither closes anything nor is reported as `ErrCommandServerNotRunning`, because the client is in fact
+connected; the original error is forwarded unchanged. File: `experimental/libbox/command_endpoint.go`,
+`command_client.go`.
+
+**The test.** `TestAStaleFailureCannotInvalidateANewerConnection` (two real gRPC servers: establish on A,
+re-establish on B, stop A, then classify a failure carrying A's lease) plus
+`TestAConnectionReplacedBetweenCallsIsNotClosedByAnOlderFailure` for the primitive, and
+`TestTheLeaseEndpointIsTheOneTheCallUsed` for the endpoint half.
+
+**Negative control.** Restoring the old body (`_ = c.invalidateConnection(lease.epoch); c.closeConnection()`)
+makes the test fail with `a failure of an older connection must not be reported as 'the core is not
+running' while a newer one is live: command server is not running: ...`.
+
+### R4 [P1] — the socket claim could still delete a live instance's socket, and could not tell "unknown"
+
+**The defect.** Two halves. (a) `claimCommandSocket` was check-then-act: between "nothing answers" and
+`os.Remove`, another instance could bind the path, and the removal then deleted a **live** socket. (b)
+The liveness probe returned a bool, so a timeout, a permission error or an unsupported transport was
+indistinguishable from "nothing is listening" - and the path was deleted on that guess.
+
+**The fix.** (a) An exclusive, non-blocking ownership lock on a sibling file (`<socket>.lock`, `flock`
+on unix, `LockFileEx(LOCKFILE_FAIL_IMMEDIATELY)` on Windows) is taken **before** the probe and held for
+the life of the listener. A second instance fails immediately with "another instance owns ..." and never
+reaches the probe. (b) The probe is now three-valued (`socketStale` / `socketLive` / `socketUnknown`);
+only `socketStale` may be removed, and `socketUnknown` refuses. A mode check additionally refuses
+anything that is neither a socket nor a regular file, so an empty directory at the socket name can no
+longer be `os.Remove`d on a stale probe. Files: `command_socket.go`,
+`command_socket_lock_unix.go`, `command_socket_lock_windows.go`, `command_server.go` (lock lifecycle).
+
+The lock orders instances **of this package**. A foreign process that binds the path without taking the
+lock can still race us, which is why the probe is kept as a second check rather than removed.
+
+**The tests.** `TestTheOwnershipLockSerialisesInstances`, `TestASecondInstanceCannotDeleteALiveSocket`
+(real unix listener; the second acquire fails and the first stays reachable),
+`TestAcquireCommandSocketReleasesTheLockOnClaimFailure`, `TestClaimCommandSocketRefusesWhenItCannotTell`,
+`TestClaimCommandSocketRefusesADirectoryWithOurName`.
+
+**Negative control.** Restoring the boolean semantics (any non-live answer clears the path) makes
+`TestClaimCommandSocketRefusesWhenItCannotTell` fail with the file already deleted.
+
+### R5 [P2] — the error contract promised more than a probe can know
+
+**The defect.** `ErrCommandServerNotRunning` was documented as "the request was never delivered and
+nothing was applied". A post-hoc probe cannot establish that: the request may have been delivered,
+executed, and the reply lost with the transport. The Apple-side contract inherited the overpromise.
+
+**The fix.** The contract now says what it proves - "the endpoint was unreachable at classification
+time" - and explicitly not what it cannot: delivery and application are unknown. The UI guidance changed
+with it: re-issue means **re-assert the desired state** (read the group's expansion, set it only if it
+differs), never "repeat the command". Files: `command_endpoint.go` (error and probe docs),
+`docs/fork/ios-command-client-state.md` §2.1, §2.2, §3. `TestProbeCommandServerDoesNotClaimHistory`
+pins that the probe document carries no claim about earlier requests.
+
 ## R2 — a hidden-provider test raced the provider's first download
 
 **Status: fixed as a test dependency; the underlying product behaviour is R2b/W8.**
@@ -170,7 +241,7 @@ for this repository at this toolchain.
 | W5 | `compress/flate` output bytes changed (1.27) | Gzip artifacts (report archives) differ byte-for-byte while remaining valid; anything comparing archive bytes to a golden value must not |
 | W6 | **Darwin binaries require macOS 13+ from 1.27**; the linker defaults `minos` to 13.0 | The macOS client's deployment target must be ≥ 13, and any promise of older macOS has to be dropped with it. `.github/setup_go_for_macos1013.sh` is pinned at Go 1.26.8 and is referenced by **no workflow**: the legacy path is orphaned, and it cannot be rebuilt with the toolchain this repository now pins |
 | W7 | `go test` runs the `stdversion` vet check (1.27); `gofmt` alignment changed | Using a 1.27-only stdlib symbol while `go.mod` still says `go 1.25.5` now fails `go test`. The `go` directive is the language/API floor, the `toolchain` line is the compiler - they move independently |
-| W8 | A provider's **first** download can be aborted by this fork's own `network changed while dialling`, and the subscription then stays empty until `update_interval` (an hour in the hidden-provider profile) or a manual refresh | Not a Go-version change: found while chasing R2b, and it fires on every alone-run of the provider test on Linux, where the interface monitor emits a change inside the first download (Windows ordering hides it). A user who launches on a network that flutters during start-up can see an empty provider-backed group until they refresh. Next step: retry the first download once when the failure is this error, with a test that injects the interface event instead of waiting for one |
+| W8 | A provider's **first** download can be aborted by this fork's own `network changed while dialling`, and the subscription then stays empty until `update_interval` (an hour in the hidden-provider profile) or a manual refresh | **FIXED** on 2026-11-18: `provider/remote` retries the download up to `providerDownloadRetries` times with a short backoff, only for `dialer.IsNetworkChanged` - the one failure that provably never reached the server, so a retry cannot double-apply. `dialer.ErrNetworkChanged` and `dialer.IsNetworkChanged` are exported for it. Tests: `provider/remote/download_retry_test.go` (retried once, not retried for an ordinary transport error, bounded, cancelled context). Negative control: disabling the retry makes the first test fail |
 
 ## The tool
 

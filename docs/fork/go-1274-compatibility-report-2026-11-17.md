@@ -208,20 +208,35 @@ defects independently — because they are wrong regardless of what killed the c
 ### C2.4 The fix
 
 - `classifyCommandFailure` (new, `command_endpoint.go`): after a failed call whose status is
-  `Unavailable` or `DeadlineExceeded`, probe the endpoint the client actually dialed — a `connect(2)`
-  with a 150 ms cap. If the probe is definitive and says nothing is listening, close the connection and
-  return `ErrCommandServerNotRunning`. If the probe says something IS listening (a live server's
-  semantic `Unavailable`, e.g. `daemon/managed_service.go`'s "OOM recorder not available"), return the
-  original error untouched — a healthy connection with live subscriptions must not be torn down for an
-  answer.
+  `Unavailable` or `DeadlineExceeded`, probe the endpoint the call actually used — a `connect(2)`
+  with a 150 ms cap. If the probe is definitive and says nothing is listening, invalidate **that
+  connection** and return `ErrCommandServerNotRunning`. If the probe says something IS listening (a live
+  server's semantic `Unavailable`, e.g. `daemon/managed_service.go`'s "OOM recorder not available"),
+  return the original error untouched — a healthy connection with live subscriptions must not be torn
+  down for an answer.
+- An independent review on 2026-11-18 found three defects in the first version of this fix; all three
+  are fixed and gated. In short: (1) the invalidation is now scoped to the connection the failed call
+  ran on, so a late failure cannot clear a newer session; (2) socket ownership is taken with an
+  exclusive lock *before* the probe, and an undecidable probe refuses instead of deleting; (3) the error
+  contract no longer claims the request was never applied. See
+  `docs/fork/go-1274-regressions.md` §R3–R5, which records the reviewer's wording, the fix, the test and
+  the negative control for each.
 - `ProbeCommandServer()` (new): `{"state":"running|notRunning|unknown","detail":...}`, so a UI can ask
   before acting. `unknown` for XPC/remote transports, because claiming "down" without evidence is worse
-  than forwarding the error.
+  than forwarding the error. It answers about the present only: it cannot say whether an earlier request
+  was applied.
 - `claimCommandSocket` (new, `command_socket.go`): remove our socket file only when nothing answers on
   it; refuse to take it from a live listener; never touch a name this package does not allocate. The
-  stale-socket recovery a crashed extension needs still works, because there nobody answers.
-- The endpoint a client dialed is remembered at establishment (`serverEndpoint`), so the classifier
-  never probes an address it did not use.
+  stale-socket recovery a crashed extension needs still works, because there nobody answers. Ownership is
+  taken with an exclusive lock *before* the probe (`acquireCommandSocket`), so a second instance cannot
+  bind between the probe and the removal; a probe that cannot decide refuses instead of deleting.
+- The endpoint a client dialed is remembered at establishment, and every call carries it with the
+  connection's identity (`commandCallLease`), so the classifier never probes an address the call did not
+  use and never invalidates a connection it did not run on.
+
+No RPC is retried. `ECONNREFUSED` is no longer merely reworded: the connection the failed call ran on is
+dropped and the next operation re-establishes. The error reports "unreachable at classification time",
+not "never applied" — the difference matters when a request may have executed and lost its reply.
 
 No RPC is retried. `ECONNREFUSED` is no longer merely reworded: the connection is dropped and the next
 operation re-establishes.
@@ -305,10 +320,11 @@ No dependency changed. No tag profile changed. No API was removed.
 | `experimental/libbox/internal/runtimeinfo/goroutine_badlinkname_test.go` (new) | the missing gate for the `runtime.g` mirror |
 | `experimental/libbox/command_endpoint.go` (new) | endpoint model, liveness probe, `ErrCommandServerNotRunning`, `classifyCommandFailure`, `ProbeCommandServer` |
 | `experimental/libbox/command_endpoint_unix.go`, `command_endpoint_windows.go` (new) | the platform-correct refused-connect test |
-| `experimental/libbox/command_client.go` | classify failures on both call paths; remember the dialed endpoint |
-| `experimental/libbox/command_server.go` | claim the socket path through `claimCommandSocket` |
-| `experimental/libbox/command_socket.go` | `claimCommandSocket` + `socketPathIsLive` |
-| `experimental/libbox/command_client_control_test.go`, `command_socket_claim_test.go`, `command_transport_unix_test.go` (new) | 15 tests over real gRPC transports, including a real AF_UNIX socket |
+| `experimental/libbox/command_client.go` | classify failures against the call's own connection lease (epoch + endpoint) |
+| `experimental/libbox/command_server.go` | hold the socket path's ownership lock for the listener's life |
+| `experimental/libbox/command_socket.go`, `command_socket_lock_{unix,windows}.go` | `acquireCommandSocket`, tri-state `probeSocketLiveness`, `claimCommandSocket`, the path lock |
+| `experimental/libbox/command_client_control_test.go`, `command_socket_claim_test.go`, `command_transport_unix_test.go`, `command_boundary_test.go` (new) | transport, ownership and lease-scoping tests over real gRPC transports, including a real AF_UNIX socket |
+| `provider/remote/remote.go`, `provider/remote/download_retry_test.go`, `common/dialer/default.go` | the W8 retry and the exported `ErrNetworkChanged` / `IsNetworkChanged` |
 | `.github/workflows/verify.yml` | two push-gate steps, both behind `scripts/ci/require-executed-coverage.sh` so a `-run` filter that matches nothing fails |
 | `docs/fork/go-toolchain-abi-gates.md`, `docs/fork/ios-command-client-state.md`, this report (new) | the durable record |
 

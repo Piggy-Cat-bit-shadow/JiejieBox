@@ -32,7 +32,7 @@ socket path.
 
 ## 2. What the kernel now reports
 
-### 2.1 A stable error prefix
+### 2.1 A stable error prefix, and what it does NOT prove
 
 A call that fails because **nothing is listening** is returned as:
 
@@ -50,10 +50,33 @@ The prefix is `ErrCommandServerNotRunning` (`"command server is not running"`). 
 `errors.Is(err, libbox.ErrCommandServerNotRunning)` is true. Across the gomobile bridge an error is a
 string, so **match the prefix** or, preferably, ask the probe below.
 
-The classification is decided by an independent probe of the endpoint (a `connect(2)` to the command
-socket, or to the local TCP port), not by reading gRPC's error text. It is made only after a call has
-failed, and only when the probe is DEFINITIVE: a timeout or a permission error is reported as the
-original error, never as "the core is down".
+**The error proves the channel was unreachable when the call failed. It does NOT prove the request was
+never delivered or never applied.** A review of the first version of this contract found that the
+implementation promised more than a post-hoc probe can know:
+
+- the request may never have left the app (no listener, nothing could dial); **or**
+- it may have been delivered, executed, and the reply lost when the transport died between the server's
+  commit and the app's read.
+
+A probe run afterwards cannot tell those apart. Treat the error as **"core unreachable, outcome
+unknown"**: re-read the affected state before re-issuing anything with a side effect. That is why the
+kernel still does not retry an RPC automatically - a retry is exactly the operation whose effect nobody
+observed.
+
+The classification is decided by an independent probe of the endpoint, not by reading gRPC's error text.
+It is made only after a call has failed, and only when the probe is DEFINITIVE: a timeout or a permission
+error is reported as the original error, never as "the core is down".
+
+### 2.1a A late failure cannot clear a newer session
+
+Reported by the same review and fixed: a failure of an OLD request used to close "the client's
+connection", which by then could be a NEW connection that was healthy. A tap that failed before a
+reconnect could therefore knock out the session the reconnect had just established.
+
+Every request now carries the identity of the connection it ran on, and an invalidation only ever
+applies to that connection. A failure whose connection has already been replaced is reported as the
+original error and changes nothing - it is history, not a statement about the current session. Nothing in
+the UI needs to change for this: it is the absence of a spurious disconnect.
 
 ### 2.2 A probe the UI can ask before acting
 
@@ -72,19 +95,25 @@ returns a JSON document:
 | `state` | Meaning | What a UI should do |
 |---|---|---|
 | `running` | a listener accepted the probe | perform the operation; a failure is about the operation |
-| `notRunning` | nothing is listening: the core is stopped, crashed, or not started yet | tell the user the VPN is not running; do not retry the same operation in a loop |
+| `notRunning` | nothing is listening **right now** | tell the user the VPN is not running; do not auto-retry, and re-read state before re-issuing anything with a side effect |
 | `unknown` | this process cannot probe the transport (XPC, remote daemon, unresolvable path) | treat as a normal error |
+
+`state` describes the present only. `notRunning` says nothing about whether an EARLIER request was
+applied - see §2.1.
 
 `detail` is bounded on purpose: a file name and a directory LENGTH, never a container path. It is safe
 to log and to paste into an issue.
 
-### 2.3 A dead connection is no longer reused
+### 2.3 A dead connection is no longer reused, and a stale one cannot take a live session with it
 
-When a call fails and the probe proves nothing is listening, the client drops its cached connection.
-The next operation re-establishes and probes once, instead of sending into a `grpc.ClientConn` whose
-own reconnect backoff can be minutes long by then. **No RPC is retried automatically**: an operation
-whose result nobody observed must not be applied twice. The caller sees one failure, and the next
-call is the one that recovers.
+When a call fails and the probe proves nothing is listening, the client drops **the connection that call
+ran on**. The next operation re-establishes and probes once, instead of sending into a
+`grpc.ClientConn` whose own reconnect backoff can be minutes long by then. **No RPC is retried
+automatically**: an operation whose result nobody observed must not be applied twice. The caller sees one
+failure, and the next call is the one that recovers.
+
+The drop is scoped to that connection (§2.1a). A failure delivered after a reconnect leaves the new
+session alone.
 
 ## 3. The minimum change on the Apple side
 
@@ -95,10 +124,12 @@ Neither of these is implemented here; both are small and independent.
    `ProbeCommandServer()` first, or match the `command server is not running` prefix. Present
    "the VPN is not running" rather than a raw RPC error, and do not offer "retry" for that state: it
    cannot succeed until the tunnel is up.
-2. **Re-drive the pending state once the tunnel reports connected.** `SetGroupExpand` is a UI-state
-   write that the core stores; the local expansion state the user already sees can be kept, and the
-   call re-issued when the extension reports `Connected`/`Reasserting` finished. This is what turns
-   "my tap was lost" into "my tap applied a second later".
+2. **Re-drive the pending state once the tunnel reports connected - but re-read state first.**
+   `SetGroupExpand` is a UI-state write that the core stores; the local expansion state the user
+   already sees can be kept, and the call re-issued when the extension reports
+   `Connected`/`Reasserting` finished. Because the error cannot prove the earlier call was not applied
+   (§2.1), re-issue means *re-assert the desired state*, not *repeat the command*: read the group's
+   current expansion and set it only if it differs.
 
 `SetGroupExpand`'s own contract is unchanged by this work: the call still sets one group's expansion
 on the core, and nothing about the socket path, the authentication secret, or the group model moved.
@@ -111,6 +142,9 @@ on the core, and nothing about the socket path, the authentication secret, or th
 | the next call recovers after the core returns | same file, `TestAClientRecoversWhenTheCoreReturns` |
 | a live server's `Unavailable` answer does NOT tear the connection down | same file, `TestAServerAnswerOfUnavailableKeepsTheConnection` |
 | a stale socket file is cleared, a live one is not stolen | `experimental/libbox/command_socket_claim_test.go` |
+| a second instance cannot even reach the probe while the first owns the path (the probe-then-remove window) | same file, `TestTheOwnershipLockSerialisesInstances`, `TestASecondInstanceCannotDeleteALiveSocket` |
+| an undecidable probe refuses instead of deleting | same file, `TestClaimCommandSocketRefusesWhenItCannotTell` |
+| a late failure cannot clear a newer connection | `experimental/libbox/command_boundary_test.go`, `TestAStaleFailureCannotInvalidateANewerConnection` |
 | the probe and the dialer agree on where the server is | `TestCommandEndpointMatchesDialTarget` |
 | the unix transport itself, including the stale socket file | `experimental/libbox/command_transport_unix_test.go` — a real AF_UNIX listener through the production resolver, dialer, probe and classifier, then the file/listener state the incident reported, then recovery. Runs on any host where AF_UNIX works. |
 | the iOS/NetworkExtension path itself | **NOT_RUN**: no device in this environment. The Go side, including the unix transport, is verified on the host; what remains is the device's own lifecycle (Jetsam, extension relaunch, App Group container). |
