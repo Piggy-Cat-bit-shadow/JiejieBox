@@ -673,6 +673,23 @@ jobs:
           tags="$(cat release/DEFAULT_BUILD_TAGS)"
           go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./route/... ./adapter/...
 
+      - name: race on the control channel
+        # The control channel's decision logic is concurrent by construction - a connection generation
+        # counter, a per-call connection lease, a connectAccess/clientAccess pair, and a socket
+        # ownership lock - and it is raced NOWHERE ELSE: neither artifact workflow's deep leg includes
+        # experimental/libbox, and the sibling step above races a different package set under a
+        # different profile (release/DEFAULT_BUILD_TAGS links cronet on Darwin, and libbox ships under
+        # the server profile here).
+        #
+        # It is a separate step for the same reason "race on the configuration surface" is: the profile
+        # difference is not cosmetic, it decides whether cronet links at all on a Linux runner.
+        #
+        # Measured at ~15 s on the development host, so it fits the push gate's budget.
+        run: |
+          set -euo pipefail
+          tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          go test -race -count=1 -timeout 20m -tags "$tags" ./experimental/libbox/ ./provider/remote/
+
       - name: race on the configuration surface
         # The configuration surface is a separate step because the `option` package's TEST
         # binary links cronet (through a naive-related test), and no Linux product links cronet:

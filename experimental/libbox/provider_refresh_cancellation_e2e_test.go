@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,10 +36,12 @@ func TestACancellationDuringAProviderRefreshKeepsTheBox(t *testing.T) {
 	})
 
 	document := `{"outbounds":[{"type":"socks","tag":"n1","server":"127.0.0.1","server_port":1080}]}`
-	var firstServed bool
+	// atomic, because the handler runs on the server's goroutine and the assertion below polls from the
+	// test's: a plain bool here is a data race the Linux -race job reports as a failure of the test (it
+	// did, on 2026-11-18), which would be a test defect masquerading as a product one.
+	var firstServed atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !firstServed {
-			firstServed = true
+		if !firstServed.Swap(true) {
 			_, _ = writer.Write([]byte(document))
 			return
 		}
@@ -63,7 +66,7 @@ func TestACancellationDuringAProviderRefreshKeepsTheBox(t *testing.T) {
 	require.NoError(t, commandServer.StartOrReloadService(profile, &OverrideOptions{}))
 	boxBefore := commandServer.Instance()
 	require.NotNil(t, boxBefore)
-	require.Eventually(t, func() bool { return firstServed }, 5*time.Second, 20*time.Millisecond,
+	require.Eventually(t, func() bool { return firstServed.Load() }, 5*time.Second, 20*time.Millisecond,
 		"the provider's first fetch must complete before the cancelling refresh")
 
 	// The same document, cancelled while its provider refresh runs.

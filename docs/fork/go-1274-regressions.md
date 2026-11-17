@@ -13,6 +13,30 @@ The method was not "read the release notes and guess". Every row below is one of
 
 ---
 
+## R7 — the Linux race job found a data race in one of this round's own tests
+
+**Status: fixed. Test-only; no product code was racing.**
+
+Adding `./experimental/libbox` to the push gate's race leg (it had none - see the step's comment) made the
+first Linux `-race` run fail on `TestACancellationDuringAProviderRefreshKeepsTheBox`:
+
+```text
+WARNING: DATA RACE
+Read at ... by goroutine 49:
+  ...TestACancellationDuringAProviderRefreshKeepsTheBox.func3()   provider_refresh_cancellation_e2e_test.go:66
+Previous write at ... by goroutine 44:
+  ...TestACancellationDuringAProviderRefreshKeepsTheBox.func2()   provider_refresh_cancellation_e2e_test.go:41
+```
+
+`firstServed` was a plain `bool`: written by the httptest handler's goroutine, read by the assertion's
+polling closure. Windows happened not to schedule the pair that way; Linux did. It is now an
+`atomic.Bool`, and the race leg is in the gate so the next one of these is caught at push time rather than
+by review.
+
+Why this is worth a row rather than a silent fix: a test-only race is reported by the same `FAIL` line as a
+product race, so a reader who only sees the log cannot tell them apart. The distinction has to be in the
+record.
+
 ## R6 — a manual provider refresh answered "busy" after 150 ms, no matter what the caller asked
 
 **Status: fixed. Found while chasing the second CI failure of the hidden-provider test.**
@@ -268,7 +292,7 @@ for this repository at this toolchain.
 | # | Change | Why it matters here |
 |---|---|---|
 | W1 | **Green Tea GC is the default collector from 1.26** (10-40% less GC overhead, different pacing) | The OOM killer's 50 MiB budget, `GOGC` target and `GOMEMLIMIT` were calibrated under the old collector. `GOEXPERIMENT=nogreenteagc` still exists in 1.27.4's flag list, but 1.26's notes say the opt-out is expected to be removed - assume it is permanent. Re-baseline the memory timeline on device before tuning anything further |
-| W2 | `crypto/tls` default key exchanges now include `SecP256r1MLKEM768`/`SecP384r1MLKEM1024` (1.26) | ClientHello grows and carries PQ groups for every outbound that leaves `CurvePreferences` nil. `internal/godebugs` records `tlssecpmlkem Changed: 26, Old: "0"`, so a module declaring `go 1.25.5` keeps the pre-1.26 default - it flips the moment the `go` directive moves. Reasoned from the GODEBUG table, **not yet captured from a ClientHello**; the probe belongs in the next round |
+| W2 | `crypto/tls` default key exchanges now include `SecP256r1MLKEM768`/`SecP384r1MLKEM1024` (1.26) | **MEASURED 2026-11-18** with `scripts/ci/clienthello-probe` (three runs, same host): `go 1.25.5` directive + 1.27.4 toolchain → `[4588 29 23 24 25]`; `go 1.27.4` directive + 1.27.4 → `[4588 4587 4589 29 23 24 25]`; `go 1.25.5` + 1.25.5 → `[4588 29 23 24 25]`. So the `tlssecpmlkem` gate follows the **`go` line, not the toolchain**, and this repository (go 1.25.5) keeps the pre-1.26 set even when built by 1.27.4. Two consequences: today's binaries are unchanged, and the ClientHello grows the day the directive moves - which is a deliberate decision to take then, not a silent upgrade. (X25519MLKEM768, group 4588, was already offered under 1.25.5: PQ was not introduced by this migration) |
 | W3 | HTTP/1 `Response.Body.Close` now drains unread content (1.27): ≤256 KiB, ≤50 ms, in a goroutine | Every early-closed response body on the outbound HTTP paths now reads (and discards) up to 256 KiB after the consumer stops caring - measurable as data use on a metered link and as one extra goroutine per early close |
 | W4 | HTTP/2 **server** honours client priority (1.27), disable with `Server.DisableClientPriority` | Inbound HTTP/2 servers (the API surface) change scheduling; irrelevant with one local client, worth knowing when it is exposed |
 | W5 | `compress/flate` output bytes changed (1.27) | Gzip artifacts (report archives) differ byte-for-byte while remaining valid; anything comparing archive bytes to a golden value must not |
