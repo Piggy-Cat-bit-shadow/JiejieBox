@@ -4,6 +4,69 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.52](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.52) — 2026-11-17
+
+### 本次更新
+
+v0.1.52 是 **官方 Go 1.27.4 工具链迁移版**。本版把内核和发布所消费的 10 个 Go 依赖模块从旧工具链迁到官方 Go 1.27.4，并合入 B/C/D 三组已审核的依赖候选。目标不是改协议或加功能，而是让正式产物真正由 Go 1.27.4 编译，同时把 Go 1.27 对 HTTP/2、linkname、cgo 归档和移动端构建链的破坏点全部收口。
+
+发布侧同时把 `sing-tun` 从 `f4d0d5b` 前移到只增加测试的 `c0855e6`，使 Kernel release 的 freeze 不再有 behind 的 update pin；版本由已发布的 0.1.51 提升到 0.1.52，避免复用不可移动的旧 tag。
+
+### 一、工具链：官方 Go 1.27.4
+
+- `go.mod` 和 `test/go.mod` 增加 `toolchain go1.27.4`；`go 1.25.5` 继续作为语言最低版本。工具链与语言版本分层，避免为了编译器升级而抬高源码语言要求。
+- 17 个派生工作流统一通过 `setup-go@v6` 从 `go.mod` 的 toolchain 解析到 `go1.27.4`；`windows-core-amd64` 删除了手写 `GO_VERSION`，不再保留第二份工具链声明。
+- `Verify` 新增运行工具链断言：实际执行的 Go 版本必须等于 `go.mod` 的 toolchain，防止 `GOTOOLCHAIN` 静默切回旧版本。
+- `cmd/internal/build_libbox/toolchain_source_test.go` 改为读取 toolchain 而不是 `go` 指令；`tag_checklinkname_test.go` 新增构建标签与 linkname 的失败断言，让半配置的构建直接报错而不是静默降级。
+- 正式产物由 `go1.27.4` 编译；产物 `go version -m` 记录 `go1.27.4`，并保留 9 条依赖 `=>` 的候选 SHA。未 fork `golang/go`，未关闭 Go 1.27 的新能力。
+
+### 二、Go 1.27 兼容修复
+
+- **HTTP/2 stdlib wrap 的 linkname 门禁**：Go 1.27 用 `net/http` 包装替换了 `x/net/http2` transport，本 fork 的 Go 1.27 路径需要 `net/http/internal/http2.disableExtendedConnectProtocol`、`net/http.http2RoundTrip` 和 `NetHTTPClientConn.RoundTrip` 三个 linkname。此前只按 `badlinkname` 开启，但 profile tag 文件包含 `badlinkname` 而不包含 `-checklinkname=0`，导致带 profile tag 的裸构建和 untagged 构建都链接失败。现在 stdlib wrap 同时要求 `tfogo_checklinkname0` 与显式 opt-in `http2stdlibwrap`；三个 profile tag 文件固定 `http2legacy`，使发布配方、profile 裸构建与 untagged 构建统一走 Go 1.26 已有的实现。
+- **extended CONNECT 的可用性**：恢复 `!badlinkname` 下的 `extendedConnectAvailable=false` 常量，避免 untagged 构建误以为可以发起无法链接/无法服务的 extended CONNECT；`http2stdlibwrap` 缺少 `tfogo_checklinkname0` 时直接编译失败。新增无 tag 与 opt-in 两组断言。
+- **masquerade 的失败认证 CONNECT**：Go 1.27 的 `httputil.ReverseProxy` 在 round trip 前拒绝 CONNECT，导致未认证 CONNECT 不再到达伪装站点，而是返回本包的空 502，暴露监听器不是普通 Web 服务器。现在把失败认证的普通 CONNECT 以根 GET 形式交给伪装后端，extended CONNECT（`:protocol`）保留原方法；Hysteria2 和 Naive 的伪装路径共用同一修复。新增 `masquerade_connect_test.go` 覆盖探针矩阵。
+- **cronet cgo 归档**：Go 1.27 拒绝 `-l:libcronet.a` 形式，cronet-go 发布线改为 `${SRCDIR}/libcronet.a`；内核 repin 到 `b9f445ddb1f4`。原生归档版本保持 `154.0.8037.49`，29 个原生模块继续 controlled，未在无 Chromium 工具链的情况下移动字节。
+- **runtimeinfo buffer-pool 布局**：新增测试断言 `sync.Pool` 镜像布局仍与运行时一致，防止 Go 版本升级后 linkname 读取错位。
+- `protocol/vless` 的一个测试字面量按 Go 1.27 的 `gofmt` 重新对齐；`setup-go` 升级时被破坏的 workflow 文本已修复。
+
+### 三、依赖整合（B/C/D 候选）
+
+| 模块 | 候选 pin | 主要内容 |
+|---|---|---|
+| sing | `4abfaed41727` | 本版未改动；在 Go 1.27.4 下直接通过构建与测试 |
+| sing-tun | `c0855e676180` | Close 栅栏、延迟 interface publication、auto-redirect/nftables mark 与 connmark 修复、UID range fail-closed、flow 观测；tip 相对已验证候选只多一条 `monitor_shared_test.go` 测试 |
+| sing-quic | `cdb57d74152e` | owned datagram ceiling、Q09 创建准入与 TUIC 认证合并、packet wait、minimum-Go 构建 |
+| quic-go | `d51ec71bf0dd` | `SetDesiredBufferSizes(syscall.RawConn)`、按 datagram 类型判断后再设 socket buffer、ChromeParrot 测试线 |
+| utls | `87a09712c441` | 对齐 MetaCubeX/utls `v1.9.0-mod-meta` 线 |
+| wireguard-go | `7f8be415c871` | Noise 响应双重消费保护、IPv6 payload 长度扩为 uint32、GRO 删除路径清理 virtio header |
+| sing-anytls | `8282e0069970` | 共享创建、调用方 deadline、pending waiter gauge |
+| mieru | `04259b115daf` | 关闭 underlay 上拒绝 session attach；stream/packet wrapper 生命周期加锁 |
+| cronet-go | `b9f445ddb1f4` | Go 1.27.4 cgo-archive 发布修复；root、`all` 和 29 个原生模块同一 publish SHA |
+
+`release/dependencies.json`、根 `go.mod`、`test/go.mod`、`release/source-lock.json` 与 `release/pin-runs.json` 已同步；`check-go-module-integrity.sh --require-checked test` 通过。
+
+### 四、客户端与发布
+
+- **Apple**：客户端 pin 保持 `2e5b71fa59809b17faff1e24ab2e56caee52612e`；同一候选构建 Libbox、iOS、macOS 和 iOS self-sign。Libbox manifest 记录 `parent_sha=e3aa2bb81`、`jj_version=0.1.52`、`go1.27.4`、`Xcode 26.6`、`apple_client_sha=2e5b71fa`。
+- **Android**：客户端 pin 保持 `9816e0068c82397e0ae48966cec982c0fd3dee18`；Android Core ARM64 AAR 由 Go 1.27.4 构建并通过 provenance 检查。
+- **Desktop**：客户端 pin `1bd68313`，内嵌 dashboard `b6e3193`；Windows x64 安装器与候选核心一起构建和验收。
+- 版本 `0.1.52`；候选提交 `e3aa2bb816dc60b9f1542586fc790a22c7e1ccec`；tag `v0.1.52`。
+- 公开附件：Linux amd64、macOS arm64 CLI、Windows amd64 core、Android ARM64 AAR、Apple Libbox、Windows x64 安装器、自签 unsigned IPA、`SHA256SUMS`。
+
+### 五、验证与发布
+
+- 同一候选 SHA 的 `Verify`（含 race checks）、`Release contract verification`、`Android Core ARM64` 成功。
+- `Release preparation` 确认没有 pin 需要移动、没有新提交、exact-SHA evidence 与 ABI pin 通过。
+- [Kernel release 44000063046](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44000063046) 的 freeze、Linux、macOS、Windows、Desktop、Android、Apple Libbox、iOS、macOS、iOS self-sign、stage、publish 全部成功；stage 验证 5 个平台和 7 个产物 + `SHA256SUMS`，publish 于 2026-11-17T02:26:52Z 公开 v0.1.52。
+- 本地：`release-freeze.py verify --strict`、`check`、`check-pin-runs.py`、`check-knowledge-facts.py`、`check-upstream-retirement.py`、`go build`、profile-tag build 和 `test` 模块 `go vet` 全部通过。
+
+### 六、已知边界
+
+- `http2stdlibwrap`（Go 1.27 新 H2 栈）仍为显式 opt-in，默认关闭；在缺少设备证据前不切换默认传输。
+- 未在本环境执行 iPhone NetworkExtension 真机、TestFlight 上传或真实服务端矩阵；这些按独立设备/TF 流程验收。
+- quic-go 仓库级 Actions 仍被禁用（dispatch 返回 422），其独立 CI 未运行；父仓 `Verify` 和 `Kernel release` 已实际编译/测试该 pin。
+- `sing-quic` 的 lint job 仍有既有告警；它不是本仓 release gate，本版未做无关的 lint 重构。
+
 ## [v0.1.51](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.51) — 2026-11-15
 
 ### 本次更新
