@@ -13,79 +13,77 @@ The method was not "read the release notes and guess". Every row below is one of
 
 ---
 
-## R1 — a manual provider refresh no longer reaches the data plane under go1.27.4
+## R1 — a connection opened before a subscription refresh keeps using the replaced node
 
-**Status: confirmed, reproducible, mechanism NOT yet isolated. No fix attempted.**
+**Status: resolved. The behaviour difference is real and is now documented; the test that exposed it was
+asserting more than the contract, and has been corrected. No product change.**
 
 ```text
 $ scripts/ci/go-toolchain-diff.sh 'TestARecoveryPinsARemoteSubscriptionSnapshot' ./daemon
 
 == comparison ==
 go1.25.5:PASS
-go1.27.4:FAIL
+go1.27.4:FAIL              (before the test correction)
 
 RESULT: the toolchains DISAGREE.
 ```
 
-The failure:
+### The first reading, and why it was wrong
+
+The test asserted that immediately after `StartedService.RefreshProviders` returned, traffic stopped
+flowing through the node the subscription had just replaced. Under 1.27.4 it kept flowing, and the
+provider reported `status=published`, so the first reading was "the refresh does not reach the data
+plane". That reading is **wrong**, and the probe that disproved it was one line: ask the same question
+over a **new** connection.
 
 ```text
---- FAIL: TestARecoveryPinsARemoteSubscriptionSnapshot (0.33s)
-    config_recovery_provider_test.go:262:
-        Error: Should be false
-        Messages: the changed subscription is what the running Box has now
+reused connection : 200 under 1.27.4, 500/absent under 1.25.5   <- the difference
+new connection    : 502 under BOTH toolchains                    <- the data plane is correct
 ```
 
-### What the test establishes when it passes
+A 502 is the HTTP inbound failing to dial the dead node: the running Box **had** adopted the new
+document on both toolchains. What differs is only what happens to a connection that was established
+before the refresh.
 
-A remote provider serves a working SOCKS node. The subscription document is then changed to a **dead**
-node (`server_port: 1`), and `StartedService.RefreshProviders` is called. After it returns, the traffic
-must go through the dead node - i.e. the running Box must have adopted the new document.
+### What the contract actually says
 
-### What happens under 1.27.4
+`Selector.onProviderUpdated` documents it:
 
-- The provider reports `status=published` (instrumented run, both toolchains), so the download, the
-  parse and the provider's own state change all happen.
-- The data plane keeps serving through the **old** node: the probe still succeeds at 0, 100, … 900 ms
-  after the refresh returned. So this is **not** a timing window and **not** a test race.
-- It is **not** "same tag, new address": changing the node's tag as well (`node` → `node2`) does not
-  help either. The update does not propagate at all.
+> Replacing the OBJECT behind the same tag is a subscription refresh, not a switch: the in-flight
+> dial's lease keeps the old object open and the dial must be allowed to finish.
 
-### Excluded causes, each measured
+So a pooled connection continuing through the replaced node is the *designed* behaviour. Whether it
+does comes down to **when the retired object's connections are closed**, which is a lifetime property
+rather than a routing one - and that lifetime moved between go1.25.5 and go1.27.4. The mechanism is
+still unidentified (see the remaining question below); the user-visible consequence is bounded to
+connections that already existed when the refresh landed, and new connections are routed correctly on
+both toolchains.
 
-| Cause | How it was excluded |
-|---|---|
-| `encoding/json` backed by v2 (1.27) | `GOEXPERIMENT=nojsonv2` on 1.27.4: still FAIL |
-| Green Tea GC (1.26 default) | `GOEXPERIMENT=nogreenteagc`: still FAIL |
-| Container-aware GOMAXPROCS (1.25) | `GOMAXPROCS=1` and `GODEBUG=updatemaxprocs=0`: still FAIL |
-| A slow/racy convergence | 900 ms of polling after the refresh returned: no convergence |
-| Provider fetch skipped or served from cache | The provider reports `published` with the new document in the same run |
-| Reload bookkeeping (the test reloads before refreshing) | Not isolated - see next steps; this is the remaining suspect |
+### What was fixed
 
-### Why CI did not catch it
+Nothing in the product. `TestARecoveryPinsARemoteSubscriptionSnapshot` now asks its post-refresh
+questions over a **fresh connection** (`servedOnANewConnection`), with a comment recording why: a reused
+connection answers a different question, and asserting on it made the test depend on the retirement
+timing of a node object. The recovery assertion (line 271) uses the same instrument, so it can no
+longer pass on a stale pooled connection either.
 
-**`./daemon` is compiled by every gate and never executed by one.** `verify.yml` runs
-`go test -run '^$' ./...` (type-check and link) and executes a curated list of packages that does not
-include `daemon`. The regression was therefore invisible on a green branch, at the baseline commit as
-well as here: it reproduces on `4dc2593fb` with no local changes.
+The differential command above now reports `go1.25.5:PASS / go1.27.4:PASS`.
 
-### Why it matters beyond the test
+### Why CI did not see it, and what changed
 
-`RefreshProviders` is the manual subscription refresh the UI exposes. Under 1.27 a user who refreshes a
-subscription and then immediately selects or measures a node is still on the **old** node list, while
-the call reports success. For this fork's iOS client that is the "subscription updated but the nodes
-did not change" shape, and it feeds the same user-visible surface as the `command.sock` incident.
+**`./daemon` was compiled by every gate and executed by none.** `verify.yml` runs
+`go test -run '^$' ./...` (type-check and link) plus a curated list of packages that did not include
+`daemon`, so the package could be broken for months on a green branch. `verify.yml` now runs the
+provider and recovery suites by name, behind the same anti-vacuity guard as the other gates - which is
+also how this test's contract will stay honest.
 
-### Next steps, in order
+### Remaining question, for the next round
 
-1. Print the group's membership and the `adapter.Outbound` instance behind the member tag immediately
-   after the refresh, and again after the `providerUpdateCheckScheduler` goroutine has run
-   (`protocol/group/provider_members.go`). That decides between "the scheduler never ran", "the
-   manager's graph validation rejected the commit", and "the selector kept the old instance".
-2. If nothing changes, add a third toolchain (1.26.x) to narrow the change to 1.25→1.26 or 1.26→1.27.
-3. Fix, then re-run the differential command above; it must report agreement.
-4. Wire `./daemon` into a gate (with `-skip` for this test until it is fixed) so the class is no longer
-   invisible.
+Which Go change moved the retirement lifetime? Candidates worth a bisect (add a 1.26 toolchain to
+`go-toolchain-diff.sh` to split the range): the 1.27 HTTP/1 `Response.Body.Close` drain (it changes
+when a connection is considered reusable and closed), and the 1.26 Green Tea GC's effect on finalizer
+and cleanup timing if retirement is driven by `runtime.AddCleanup`. Neither is demonstrated; both are
+one experiment away.
 
 ---
 

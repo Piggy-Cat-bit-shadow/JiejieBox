@@ -270,15 +270,23 @@ the tunnel reports connected.
    dialer, the probe and the classifier against a real socket file, then reproduces the state the
    incident reported and requires the server side to claim the path again. Only the device remains
    `NOT_RUN`.
-6. **A third, independent regression, found by the toolchain-differential sweep: a manual provider
-   refresh does not reach the data plane under go1.27.4.** `TestARecoveryPinsARemoteSubscriptionSnapshot`
-   passes under go1.25.5 and fails under go1.27.4 on the same source, deterministically; the provider
-   reports `published` and the traffic keeps using the old node for at least 900 ms afterwards. JSON v2,
-   the Green Tea GC, GOMAXPROCS and a slow convergence were each excluded by measurement. It is
-   **recorded, not fixed** - the mechanism is not isolated yet, and guessing at a fix here would be
-   worse than the diagnosis. Full evidence, exclusions and next steps:
-   `docs/fork/go-1274-regressions.md` §R1.
-7. **Eight further candidates were examined and excluded with evidence**, and seven behaviour changes
+6. **A toolchain-caused behaviour difference, found by the differential sweep, and what it turned out
+   to be.** `TestARecoveryPinsARemoteSubscriptionSnapshot` passed under go1.25.5 and failed under
+   go1.27.4 on the same source, deterministically. The first reading was "a manual provider refresh no
+   longer reaches the data plane"; one extra probe (ask the same question over a NEW connection)
+   disproved it - a new connection gets a 502 on **both** toolchains, i.e. the Box did adopt the new
+   document. What actually differs is a connection opened **before** the refresh: it keeps carrying
+   traffic through the replaced node under 1.27.4 and not under 1.25.5. That is a lifetime property,
+   and the selector documents it as intended ("the in-flight dial's lease keeps the old object open").
+   The test was asserting more than the contract, so the **test** was corrected (its post-refresh
+   probes now use a fresh connection, and the recovery probe with it), the product was not touched, and
+   the differential now reports agreement on both toolchains. Recorded with the wrong first reading and
+   the evidence that overturned it: `docs/fork/go-1274-regressions.md` §R1.
+7. **A gate gap that made the above invisible: `./daemon` was compiled by every gate and executed by
+   none.** `verify.yml` ran `go test -run '^$' ./...` plus a curated package list that skipped it, so
+   the package could be broken for months on a green branch. It is now executed in the push gate (192
+   tests, ~40 s, one skip), behind the same anti-vacuity guard as the other steps.
+8. **Eight further candidates were examined and excluded with evidence**, and seven behaviour changes
    were catalogued as "watch, do not act yet": see the same file, §E and §W. The most consequential of
    those is the Green Tea GC becoming the default collector in 1.26, which invalidates the calibration
    of this fork's OOM budget until it is re-measured on device.

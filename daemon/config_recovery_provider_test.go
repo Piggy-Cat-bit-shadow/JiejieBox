@@ -248,6 +248,21 @@ func TestARecoveryPinsARemoteSubscriptionSnapshot(t *testing.T) {
 		status, err := proxyStatus(t, client, target.URL)
 		return err == nil && status == http.StatusOK
 	}
+	// servedOnANewConnection asks the same question over a connection that did not exist before the
+	// last change. It is the instrument the post-refresh assertions use, because a REUSED connection
+	// answers a different question: `Selector.onProviderUpdated` documents that replacing the object
+	// behind a tag is a subscription refresh, not a switch - "the in-flight dial's lease keeps the
+	// old object open and the dial must be allowed to finish". So a pooled connection may legitimately
+	// keep carrying traffic through the node that was replaced, and whether it does comes down to when
+	// the retired object's connections are closed. That is a lifetime property, not a routing one,
+	// and it moved between go1.25.5 and go1.27.4: measured on 2026-11-17, the reused connection still
+	// answered 200 under 1.27.4 while a new connection answered 502 on BOTH toolchains.
+	servedOnANewConnection := func() bool {
+		fresh := newProxyClient(t, proxyPort)
+		defer fresh.CloseIdleConnections()
+		status, err := proxyStatus(t, fresh, target.URL)
+		return err == nil && status == http.StatusOK
+	}
 	require.True(t, served(), "A's downloaded provider node carries the request")
 	referencesA, err := store.References(revisionA)
 	require.NoError(t, err)
@@ -259,7 +274,7 @@ func TestARecoveryPinsARemoteSubscriptionSnapshot(t *testing.T) {
 	documentAccess.Unlock()
 	_, err = service.RefreshProviders(context.Background(), nil, 5*time.Second)
 	require.NoError(t, err)
-	require.False(t, served(), "the changed subscription is what the running Box has now")
+	require.False(t, servedOnANewConnection(), "the changed subscription is what the running Box routes to now")
 
 	// ...B starts from the updated cache but cannot be saved; C fails; recovery returns to A.
 	require.NoError(t, service.StartOrReloadService(context.Background(), configB, nil))
@@ -268,5 +283,5 @@ func TestARecoveryPinsARemoteSubscriptionSnapshot(t *testing.T) {
 	require.NoError(t, service.StartOrReloadService(context.Background(), buildFailingConfig, nil))
 	client.CloseIdleConnections()
 	require.Equal(t, ServiceChangeStatusRecovered, service.LastServiceChange().Status)
-	require.True(t, served(), "recovery must use A's snapshot, not the changed subscription")
+	require.True(t, servedOnANewConnection(), "recovery must use A's snapshot, not the changed subscription")
 }

@@ -363,6 +363,26 @@ jobs:
           ./scripts/ci/require-executed-coverage.sh build/command-channel-gate.log "control channel failure states"
           echo "PASS: the control channel reports, recovers from, and never fabricates a dead core"
 
+      - name: daemon configuration recovery
+        # This package was compiled by every gate and executed by NONE of them: `go test -run '^$'
+        # ./...` type-checks it and the curated package list skipped it. A toolchain behaviour change
+        # lived there undetected (docs/fork/go-1274-regressions.md, R1), which is what a gate that only
+        # links a package looks like from the inside.
+        #
+        # The WHOLE package runs, not a -run subset: its tests share loopback fixtures and cost about
+        # 40 seconds together, so a second name-based filter would only add a way for the gate to go
+        # quietly stale when a test is renamed.
+        #
+        # It runs on the pinned toolchain because that is what ships. The differential that answers
+        # "did the upgrade do this" is `scripts/ci/go-toolchain-diff.sh <test> ./daemon`, run by hand
+        # when this step fails.
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          go test -count=1 -v -timeout 10m ./daemon/ 2>&1 | tee build/daemon-gate.log
+          ./scripts/ci/require-executed-coverage.sh build/daemon-gate.log "daemon configuration recovery"
+          echo "PASS: recovery, provider snapshots, reload identity and the pinned-artifact repairs still hold"
+
       - name: the module's toolchain directive is the toolchain that runs
         # setup-go v6 reads go.mod's `toolchain` directive through go-version-file; v5 read only
         # the `go` directive. If that behaviour ever changes, every workflow that derives its Go
