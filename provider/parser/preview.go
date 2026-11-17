@@ -68,6 +68,10 @@ type SubscriptionPreview struct {
 	// them. Zero means "this reader does not report a declaration", NOT "the document declared
 	// nothing" - the parsed count is the fact; this is the context for it.
 	Declared int
+	// Cancelled reports that ctx ended while the link list was still being read. The nodes in
+	// Outbounds are what was parsed UP TO that point: a caller that needs a complete answer must
+	// treat this as a refusal, not as a short document.
+	Cancelled bool
 	// Diagnostics carries every reader's error, keyed by format name. Nothing is recognised by
 	// reading this; it is what lets a person understand a refusal, and it must not be shown as
 	// the primary message.
@@ -114,12 +118,13 @@ func ParseSubscriptionPreview(ctx context.Context, content string) *Subscription
 	base64Encoded := false
 	linkContent := content
 	if decoded, err := DecodeBase64URLSafe(content); err == nil && decoded != content {
-		if decodedOutbounds, _, _ := parseRawPreview(decoded); len(decodedOutbounds) > 0 {
+		if decodedOutbounds, _, _, _ := parseRawPreview(ctx, decoded); len(decodedOutbounds) > 0 {
 			linkContent = decoded
 			base64Encoded = true
 		}
 	}
-	outbounds, skipped, declared := parseRawPreview(linkContent)
+	outbounds, skipped, declared, cancelled := parseRawPreview(ctx, linkContent)
+	preview.Cancelled = cancelled
 	if len(outbounds) > 0 {
 		preview.adopt(PreviewFormatLinks, outbounds, nil, skipped, declared)
 		preview.Base64 = base64Encoded
@@ -150,11 +155,25 @@ func (p *SubscriptionPreview) adopt(format string, outbounds []option.Outbound, 
 // Empty and whitespace-only lines are not skips: they declare nothing, and reporting them would
 // bury the one line that did fail. Every other line is handed to ParseSubscriptionLink UNCHANGED,
 // so this function cannot become more permissive than the reader it previews.
-func parseRawPreview(content string) (outbounds []option.Outbound, skipped []PreviewSkip, declared int) {
+//
+// # Cancellation
+//
+// A subscription can be arbitrarily large (the core puts no cap on the body it accepts), so the
+// loop honours ctx: once it is done, the lines parsed so far are returned together with
+// cancelled=true. The check runs every previewCancelCheckInterval lines rather than per line: a
+// context lookup per line would cost more than parsing a short link, and the interval bounds the
+// overshoot to a few hundred cheap calls.
+//
+// A caller that wants "all or nothing" must treat cancelled=true as a refusal; the contract says
+// the partial list is what the document declared UP TO that point, not a complete result.
+func parseRawPreview(ctx context.Context, content string) (outbounds []option.Outbound, skipped []PreviewSkip, declared int, cancelled bool) {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	lineNumber := 0
 	for lineContent := range strings.SplitSeq(content, "\n") {
 		lineNumber++
+		if ctx != nil && lineNumber%previewCancelCheckInterval == 0 && ctx.Err() != nil {
+			return outbounds, skipped, declared, true
+		}
 		if strings.TrimSpace(lineContent) == "" {
 			continue
 		}
@@ -166,8 +185,11 @@ func parseRawPreview(content string) (outbounds []option.Outbound, skipped []Pre
 		}
 		outbounds = append(outbounds, outbound)
 	}
-	return
+	return outbounds, skipped, declared, false
 }
+
+// previewCancelCheckInterval is how many lines pass between two context checks.
+const previewCancelCheckInterval = 256
 
 // formatLinkDiagnostics renders the skipped lines as the reader's summary, so a preview that
 // produced nothing still carries the same kind of explanation ParseSubscription would return.

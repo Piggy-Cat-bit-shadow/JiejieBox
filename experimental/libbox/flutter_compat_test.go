@@ -156,15 +156,15 @@ func TestFlutterCompatBaselineMatrix(t *testing.T) {
 		t.Fatalf("analyze clean config: %v", analysisErr)
 	}
 	var document struct {
-		Parsed           bool `json:"parsed"`
+		Parsed           bool                                                       `json:"parsed"`
 		Checks           struct{ Parsed, DeclarationsChecked, RuntimeChecked bool } `json:"checks"`
-		ConfigRevision   string `json:"configRevision"`
-		BuildID          string `json:"buildId"`
-		Platform         string `json:"platform"`
-		BuildQUIC        bool   `json:"buildQuic"`
-		Findings         []struct{ Code, Detail string } `json:"findings"`
-		PendingProviders []struct{ Tag, Type string } `json:"pendingProviders"`
-		References       []struct{ From, Kind, Tag, State string } `json:"references"`
+		ConfigRevision   string                                                     `json:"configRevision"`
+		BuildID          string                                                     `json:"buildId"`
+		Platform         string                                                     `json:"platform"`
+		BuildQUIC        bool                                                       `json:"buildQuic"`
+		Findings         []struct{ Code, Detail string }                            `json:"findings"`
+		PendingProviders []struct{ Tag, Type string }                               `json:"pendingProviders"`
+		References       []struct{ From, Kind, Tag, State string }                  `json:"references"`
 		Capabilities     []struct {
 			Kind  string   `json:"kind"`
 			Types []string `json:"types"`
