@@ -121,6 +121,12 @@ the caller thinks — which is the gap the oomprofile crash fell through.
 Run this when `go.mod`'s `toolchain` moves. It is ordered by the cost of being wrong, not by file
 order.
 
+0. **Run the differential first on anything that starts failing.**
+   `scripts/ci/go-toolchain-diff.sh <test> <package>` runs the same test under the language floor and
+   the pinned toolchain and says whether they disagree. A disagreement is the only direct evidence
+   that the upgrade changed behaviour; everything else narrows the search. Known regressions and the
+   candidates that were already excluded (with their evidence) are in
+   `docs/fork/go-1274-regressions.md`.
 1. **Read the toolchain's own source, not the release notes.** The two facts that caused the crash
    were a renamed field pair and a changed per-object semantic; neither is in a release-note bullet.
    `$GOROOT/src/internal/profilerecord/profilerecord.go` and `runtime/pprof/protomem.go` are the

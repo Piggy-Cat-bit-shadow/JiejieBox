@@ -270,6 +270,18 @@ the tunnel reports connected.
    dialer, the probe and the classifier against a real socket file, then reproduces the state the
    incident reported and requires the server side to claim the path again. Only the device remains
    `NOT_RUN`.
+6. **A third, independent regression, found by the toolchain-differential sweep: a manual provider
+   refresh does not reach the data plane under go1.27.4.** `TestARecoveryPinsARemoteSubscriptionSnapshot`
+   passes under go1.25.5 and fails under go1.27.4 on the same source, deterministically; the provider
+   reports `published` and the traffic keeps using the old node for at least 900 ms afterwards. JSON v2,
+   the Green Tea GC, GOMAXPROCS and a slow convergence were each excluded by measurement. It is
+   **recorded, not fixed** - the mechanism is not isolated yet, and guessing at a fix here would be
+   worse than the diagnosis. Full evidence, exclusions and next steps:
+   `docs/fork/go-1274-regressions.md` §R1.
+7. **Eight further candidates were examined and excluded with evidence**, and seven behaviour changes
+   were catalogued as "watch, do not act yet": see the same file, §E and §W. The most consequential of
+   those is the Green Tea GC becoming the default collector in 1.26, which invalidates the calibration
+   of this fork's OOM budget until it is re-measured on device.
 
 ## E. Code and dependency changes
 
