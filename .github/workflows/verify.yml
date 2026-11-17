@@ -300,6 +300,68 @@ jobs:
         # that flag. Together they are what keeps a bare `go build ./...` linkable.
         run: go test -count=1 ./cmd/internal/...
 
+      - name: mirrored runtime structures match the pinned toolchain
+        # The 0.1.52 Network Extension crash was this class of defect, and nothing in this file
+        # would have caught it. `experimental/libbox/internal/oomprofile` mirrors
+        # internal/profilerecord's record types and calls the runtime's private profile collectors
+        # through //go:linkname; Go 1.27 replaced (AllocBytes, FreeBytes) with a single per-object
+        # ObjectSize, so the mirror described a 56-byte record while the runtime wrote 48-byte ones.
+        # The build stayed green, and the process died inside writeHeapProto on a memory-pressure
+        # callback 27 minutes into a session - after every gate here had passed.
+        #
+        # What runs, and why each half is needed:
+        #
+        #   * the toolchain-source gates read $GOROOT's own definitions and compare them with the
+        #     mirrors field by field. This is the half that fails on the NEXT toolchain move, with
+        #     the field names in the message, instead of on a device;
+        #   * the semantic gate writes six real profiles and checks that each sample's values agree
+        #     with the object size it reports. A fix that copies the new layout but keeps the old
+        #     arithmetic compiles, produces a parseable profile, and reports numbers inflated by the
+        #     object count - only this catches it;
+        #   * the differential gate compares this package's heap/allocs profile against
+        #     runtime/pprof's own writer for the same instant, so "correct" is defined by the pinned
+        #     stdlib rather than by a copy of it;
+        #   * the runtimeinfo half is the same gate for the other two runtime mirrors - sync.Pool's
+        #     private layout, and runtime.g itself, which is walked at hand-computed offsets.
+        #
+        # runtimeinfo needs the real tags because its implementation is compiled only where both are
+        # present: badlinkname permits the linkname, tfogo_checklinkname0 records that the build
+        # passes -checklinkname=0 (the linker rejects a pull of runtime.allgs otherwise).
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          go test -count=1 -v ./experimental/libbox/internal/oomprofile/ 2>&1 | tee build/oomprofile-gate.log
+          ./scripts/ci/require-executed-coverage.sh build/oomprofile-gate.log "OOM profile toolchain gate"
+          tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS),tfogo_checklinkname0"
+          go test -count=1 -v -tags "$tags" -ldflags=-checklinkname=0 ./experimental/libbox/internal/runtimeinfo/ 2>&1 | tee build/runtimeinfo-gate.log
+          ./scripts/ci/require-executed-coverage.sh build/runtimeinfo-gate.log "runtimeinfo mirror gate"
+          echo "PASS: every mirrored runtime structure matches the pinned toolchain"
+
+      - name: the control channel's failure states
+        # `set group expand: get command client: probe command server: rpc error: code = Unavailable
+        # ... connect: connection refused` is what the iOS client showed when its Network Extension
+        # was no longer running. Two defects sat behind it, and this step is the gate for both:
+        #
+        #   * the client kept a connection it had already lost, so a kernel that came back a second
+        #     later was ignored by its own UI for as long as gRPC's reconnect backoff lasted;
+        #   * "the core is not running" was indistinguishable from a transient RPC failure, so the
+        #     only thing a UI could do with it was display it.
+        #
+        # The tests drive the production client against real gRPC servers on TCP (a unix socket
+        # cannot be bound on this runner, and the decision is transport-independent), and the
+        # socket-claim tests pin who may take a socket path away from whom.
+        #
+        # The -run list is explicit and its coverage is asserted below, because a filter that matches
+        # nothing is the classic all-green gate.
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          go test -count=1 -v ./experimental/libbox/ \
+            -run 'TestClaimCommandSocket|TestCommandEndpointMatchesDialTarget|TestProbeCommandServer|TestAStandaloneClientSaysTheCoreIsNotRunning|TestAHandlerBoundClientSaysTheCoreIsNotRunningWithoutHanging|TestAClientRecoversWhenTheCoreReturns|TestAServerAnswerOfUnavailableKeepsTheConnection' \
+            2>&1 | tee build/command-channel-gate.log
+          ./scripts/ci/require-executed-coverage.sh build/command-channel-gate.log "control channel failure states"
+          echo "PASS: the control channel reports, recovers from, and never fabricates a dead core"
+
       - name: the module's toolchain directive is the toolchain that runs
         # setup-go v6 reads go.mod's `toolchain` directive through go-version-file; v5 read only
         # the `go` directive. If that behaviour ever changes, every workflow that derives its Go
