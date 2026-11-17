@@ -1,4 +1,4 @@
-//go:build badlinkname && tfogo_checklinkname0
+//go:build badlinkname && tfogo_checklinkname0 && !race
 
 // The allgs linkname below is a pull of a runtime variable that has no linkname push, is not
 // an ABI wrapper and is not in the linker's blockedLinknames allowlist, so the default
@@ -11,7 +11,27 @@
 // Gating on badlinkname alone made every test binary of this module unlinkable, because cmd/go
 // links tests with the default policy and no recipe can inject -ldflags per package.
 //
-// The stub negates both tags, so the package always has exactly one collectGoroutines.
+// # Why `!race`
+//
+// This file reads bytes PAST the end of the type it casts a runtime.g to. That is the whole
+// mechanism: probeGoroutine discovers the offsets of gopc and startpc by scanning the words that
+// follow goid, and the type it scans through is a truncated mirror, so the scan is out of bounds by
+// construction.
+//
+// The race detector enables checkptr, which instruments exactly that arithmetic and refuses it:
+//
+//	runtime: pointer 0xc000073e00 to unused region of span span.base()=0xc000072000 span.limit=0xc000073e00
+//	fatal error: found bad pointer in Go heap (incorrect use of unsafe or cgo?)
+//	runtime.checkptrBase -> runtimeinfo.(*runtimeG).word -> runtimeinfo.probeGoroutine
+//
+// A fatal error cannot be recovered, so a race build gets the stub instead: the goroutine section is
+// omitted, and nothing else changes. Race builds are development-only - every artifact tag set in
+// release/ builds without it - and this package is a diagnostic, so losing one section in a race
+// build is the correct trade against crashing every `go test -race` run that touches Collect().
+// `-gcflags=all=-d=checkptr=1` without -race hits the same wall and has no build tag to gate on;
+// do not run the goroutine report under checkptr.
+//
+// The stub negates both tags and race, so the package always has exactly one collectGoroutines.
 package runtimeinfo
 
 import (

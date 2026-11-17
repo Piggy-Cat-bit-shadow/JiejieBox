@@ -73,6 +73,14 @@ Both of these degrade to "no section" rather than to garbage, which is why they 
 P0: the diagnostic gets smaller, the process does not read arbitrary memory. The gates turn that
 silent loss into a failure.
 
+**The `runtime.g` walk is incompatible with `checkptr`, by construction.** It reads the words after
+`goid` through a truncated mirror type, so the access is out of bounds; `-race` enables checkptr and
+turns that into an unrecoverable `fatal error: found bad pointer in Go heap`. The implementation and
+its test are therefore gated on `!race`, and the stub is compiled instead — the section is omitted in
+a race build rather than crashing every `go test -race` run that touches `Collect()`. Race builds are
+development-only; no artifact tag set in `release/` enables them. `-d=checkptr=1` without `-race` hits
+the same wall and there is no build tag to detect it: do not run the goroutine report under checkptr.
+
 ### 1.3 Crash handler — `experimental/libbox/signal_handler_darwin.go`
 
 Pulls `runtime.getsig`, `runtime.setsig`, `runtime.cgoSigtramp`, `runtime.fwdSig`,
