@@ -284,8 +284,10 @@ the tunnel reports connected.
    the evidence that overturned it: `docs/fork/go-1274-regressions.md` §R1.
 7. **A gate gap that made the above invisible: `./daemon` was compiled by every gate and executed by
    none.** `verify.yml` ran `go test -run '^$' ./...` plus a curated package list that skipped it, so
-   the package could be broken for months on a green branch. It is now executed in the push gate (192
-   tests, ~40 s, one skip), behind the same anti-vacuity guard as the other steps.
+   the package could be broken for months on a green branch. It now runs in the push gate: 191 tests
+   (~40 s), with one test excluded by name because it is not self-contained on Linux - see
+   `docs/fork/go-1274-regressions.md` §R2b - and any failure is published as a check-run annotation.
+   Its first CI run did exactly what it was added for: it failed, and the annotation named the test.
 8. **Eight further candidates were examined and excluded with evidence**, and seven behaviour changes
    were catalogued as "watch, do not act yet": see the same file, §E and §W. The most consequential of
    those is the Green Tea GC becoming the default collector in 1.26, which invalidates the calibration
@@ -356,11 +358,30 @@ Added to the push gate, both anti-vacuity guarded:
    differential gates plus the `runtimeinfo` mirrors under their real tags.
 2. **`the control channel's failure states`** — the 15 tests above, over TCP and over a real AF_UNIX
    socket.
+3. **`daemon configuration recovery`** — the whole `daemon` package (191 tests, ~40 s) with one test
+   excluded by name (`-skip`), which is the package that had never been executed by a gate.
 
 The durable artifact is `docs/fork/go-toolchain-abi-gates.md`: the inventory of every first-party
 dependency on non-public Go surface, which ones are gated, which are loud, which are gaps, and the
 ordered procedure for the next upgrade. That document is what makes the next `toolchain` bump a
 reviewable change instead of an experiment.
+
+### Reading CI without repository admin rights
+
+The repository is **public**, and a green branch is not the same as an unobservable one. What is and is
+not reachable anonymously:
+
+| Endpoint | Reachable anonymously | Use |
+|---|---|---|
+| `GET /repos/{o}/{r}` | yes (`private: false`) | confirm the repository is public before claiming CI is unobservable |
+| `GET /repos/{o}/{r}/actions/runs?head_sha=<sha>` | yes | the run for one commit, with `status`/`conclusion` |
+| `GET /repos/{o}/{r}/actions/runs/{id}/jobs` | yes | per-job and **per-step** `conclusion` |
+| `GET /repos/{o}/{r}/check-runs/{id}/annotations` | yes | the `::error::` messages a step emitted |
+| `GET /repos/{o}/{r}/actions/jobs/{id}/logs` | **no** (`Must have admin rights`) | raw logs |
+
+That asymmetry is why the gates now emit failing test names as `::error::` annotations rather than
+relying on the log: the annotation is the only part of a failure that a reader without admin rights can
+see. It worked on the daemon gate's first failure, which is how R2 was identified without a log.
 
 ## H. Residual risk and limits
 
