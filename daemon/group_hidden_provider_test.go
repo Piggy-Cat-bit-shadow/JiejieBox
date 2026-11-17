@@ -73,8 +73,14 @@ func TestHiddenURLTestSurvivesAProviderRepublication(t *testing.T) {
 	started := newHiddenGroupService(t, profile)
 
 	// --- before any update ---
+	// The remote provider downloads on its own schedule, so the group is legitimately empty until the
+	// first publication lands. Asserting the member immediately after Start raced that download: it
+	// won on this host and lost on a cold CI runner (docs/fork/go-1274-regressions.md, R2). The wait
+	// below is the same one the republication steps use, and it asserts the same expectation.
 	require.Equal(t, []string{"MAIN"}, reportedGroupTags(t, started))
-	require.Equal(t, []string{"pool/node-1"}, liveGroupMembers(t, started, "REGION"))
+	require.True(t, waitForMembers(t, started, "REGION", 15*time.Second, "pool/node-1"),
+		"the provider's first publication must reach the hidden group; last members: %v",
+		liveGroupMembers(t, started, "REGION"))
 	require.Equal(t, []string{"REGION"}, reportedGroupItems(t, started, "MAIN"))
 	wrapper, isLoaded := started.Instance().outboundManager.Outbound("REGION")
 	require.True(t, isLoaded)
