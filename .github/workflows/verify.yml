@@ -377,17 +377,15 @@ jobs:
         # "did the upgrade do this" is `scripts/ci/go-toolchain-diff.sh <test> ./daemon`, run by hand
         # when this step fails.
         #
-        # # The one excluded test, and why the exclusion is in the command
+        # # The test that was briefly skipped, and why it is back
         #
-        # `TestHiddenURLTestSurvivesAProviderRepublication` is not self-contained: on a Linux host it
-        # passes inside the package and FAILS when run alone (a cancelled dial, and a second run in one
-        # process never publishes). That is a test-design defect recorded as R2b in
-        # docs/fork/go-1274-regressions.md, not a product finding - the same test agrees across
-        # go1.25.5 and go1.27.4, which is what "toolchain-caused" would have to survive.
-        #
-        # It is skipped BY NAME here rather than by narrowing the whole step to a -run list, so the
-        # other 191 tests keep running and the exclusion is one visible argument instead of a filter
-        # that silently drops whatever a future rename makes it drop.
+        # `TestHiddenURLTestSurvivesAProviderRepublication` was excluded by name for one commit. It is
+        # included again: the cause was not flakiness but a real start-up dependency - the provider's
+        # first download is aborted by this fork's own "network changed while dialling" when the
+        # interface monitor fires during it, which happens on Linux and never on Windows. The test now
+        # publishes through the manual refresh (the production path, and what its sibling tests use)
+        # instead of depending on the start-time download, and it passes 6/6 alone on Linux and
+        # repeatedly on Windows. Recorded as R2/R2b in docs/fork/go-1274-regressions.md.
         #
         # # Why it no longer uses `set -e` around the test command
         #
@@ -402,9 +400,7 @@ jobs:
           set -uo pipefail
           mkdir -p build
           status=0
-          go test -count=1 -v -timeout 10m \
-            -skip 'TestHiddenURLTestSurvivesAProviderRepublication' \
-            ./daemon/ 2>&1 | tee build/daemon-gate.log || status=$?
+          go test -count=1 -v -timeout 10m ./daemon/ 2>&1 | tee build/daemon-gate.log || status=$?
           ./scripts/ci/require-executed-coverage.sh build/daemon-gate.log "daemon configuration recovery" || status=$?
           if [ "$status" -ne 0 ]; then
             failing="$(grep -E '^--- FAIL:' build/daemon-gate.log | sed -e 's/^--- FAIL: //' -e 's/ (.*//' | tr '\n' ' ')"

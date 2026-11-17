@@ -73,10 +73,14 @@ func TestHiddenURLTestSurvivesAProviderRepublication(t *testing.T) {
 	started := newHiddenGroupService(t, profile)
 
 	// --- before any update ---
-	// The remote provider downloads on its own schedule, so the group is legitimately empty until the
-	// first publication lands. Asserting the member immediately after Start raced that download: it
-	// won on this host and lost on a cold CI runner (docs/fork/go-1274-regressions.md, R2). The wait
-	// below is the same one the republication steps use, and it asserts the same expectation.
+	// The provider's START-TIME download is not something a test may depend on. This fork aborts a dial
+	// when the interface monitor reports a change ("network changed while dialling"), and on Linux that
+	// event lands inside the very first download: the provider logs the failure and stays empty until
+	// it is refreshed (docs/fork/go-1274-regressions.md, R2b). It happened on every alone-run there and
+	// never on Windows, which is why this test looked platform-dependent. The production path for "I
+	// want the subscription now" is the manual refresh - the same call the sibling provider tests use -
+	// so the setup publishes through it and the assertion stops depending on start-up timing.
+	requirePublished(t, started, "pool")
 	require.Equal(t, []string{"MAIN"}, reportedGroupTags(t, started))
 	require.True(t, waitForMembers(t, started, "REGION", 15*time.Second, "pool/node-1"),
 		"the provider's first publication must reach the hidden group; last members: %v",
@@ -87,6 +91,15 @@ func TestHiddenURLTestSurvivesAProviderRepublication(t *testing.T) {
 	hiddenGroup, isHiddenCapable := wrapper.(adapter.HiddenOutboundGroup)
 	require.True(t, isHiddenCapable)
 	require.True(t, hiddenGroup.Hidden())
+	// A dial issued while the group's selection is being published is cancelled BY DESIGN:
+	// selectMemberForDial reads the revision before it picks the member, and "a selection update that
+	// lands in between either makes BeginDial report stale or cancels the context in flight". The
+	// group measures its members on start, so the first dial raced that first publication - it won on
+	// a warm host, lost on a cold runner, and behaved differently again when this test ran alone
+	// (docs/fork/go-1274-regressions.md, R2b). Completing one round FIRST removes the race instead of
+	// retrying around a cancellation the product documents as meaningful.
+	_, measureErr := started.URLTest(context.Background(), &URLTestRequest{OutboundTag: "REGION"})
+	require.NoError(t, measureErr, "the hidden group must complete one measurement round before the flow")
 	require.Equal(t, "node-1", dialThroughCountingGroup(t, started, "MAIN", nodes))
 
 	// --- additive republication: the provider publishes one MORE node ---

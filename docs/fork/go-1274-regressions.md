@@ -15,7 +15,7 @@ The method was not "read the release notes and guess". Every row below is one of
 
 ## R2 — a hidden-provider test raced the provider's first download
 
-**Status: fixed. Test defect, no product change.**
+**Status: fixed as a test dependency; the underlying product behaviour is R2b/W8.**
 
 Found by the daemon gate on its first CI run, and only because that step was changed in the same
 commit to name failing tests in a public annotation: the check run said
@@ -42,40 +42,32 @@ next. The differential was the instrument that separated them -
 `go-toolchain-diff.sh TestHiddenURLTestSurvivesAProviderRepublication ./daemon` reports agreement on
 both toolchains, so the failure was environmental ordering, not a behaviour change.
 
-### R2b — what running that test ALONE on Linux still shows (open)
+### R2b — the real cause: the provider's first download is aborted on Linux (resolved)
 
-The start-up race is fixed, but the test is not isolated: run by itself on Linux (go1.27.4) it behaves
-differently from the same test inside the package, and both are worth knowing before anyone reads a
-red run as a product finding.
+Running that test alone, repeatedly, gave the answer — and it is not about the dialect at all. The
+provider logs it:
 
 ```text
-$ go test -count=1 -run TestHiddenURLTestSurvivesAProviderRepublication ./daemon/     # Linux
-group_hidden_provider_test.go:90: dial tcp 127.0.0.1:45775: operation was canceled
-    "the group MAIN must be able to dial through its selected member"                (fails in 0.04 s)
-
-$ go test -count=2 -run TestHiddenURLTestSurvivesAProviderRepublication ./daemon/     # Linux
-group_hidden_provider_test.go:81: "the provider's first publication must reach the hidden group;
-    last members: []"                                                               (second run, 15 s)
+ERROR provider/remote[pool]: update outbound provider: download provider document:
+      Get "http://127.0.0.1:43307/sub.json": network changed while dialling
 ```
 
-Three facts, none of them explained yet:
+`network changed while dialling` is **this fork's own error**, raised when the interface monitor
+reports a change during a dial. On Linux that event lands inside the provider's very FIRST download, so
+the download fails, the provider stays empty, and the test's 15-second wait expires. On Windows the
+event ordering differs and the first download survives - which is why the failure looked
+platform-dependent, and why the package run passed while the same test alone failed: earlier tests had
+already absorbed the interface events.
 
-1. **It passes inside the package** on both Linux and Windows (`ok ... 7.4s` / `37s`), and fails alone
-   on Linux. So some earlier test leaves state that this one depends on - the test is not
-   self-contained, which is a test-design defect independent of the toolchain.
-2. **The dial is cancelled** (not refused, not timed out) in the single-run case, which points at a
-   context that somebody else cancels rather than at the node being wrong.
-3. **A second run in one process never publishes.** `-count=2` reproduces it deterministically, which
-   makes it cheap to investigate.
+**Two things followed.**
 
-None of this reproduces on Windows, and the differential reports agreement, so it is not a toolchain
-behaviour change. It is recorded, not fixed: the next step is to find which earlier test makes the
-package run work (run the package with `-v` and bisect the order), and to remove the ambient dependency.
-
-Until then the push gate runs the other 191 tests and excludes this one **by name**
-(`go test -skip 'TestHiddenURLTestSurvivesAProviderRepublication'`), so the exclusion is a visible
-argument in the step rather than a filter that would quietly drop whatever a future rename made it
-drop.
+- The test no longer depends on the start-time download: it publishes through the manual refresh
+  (`RefreshRemoteProviders`, the production path and what its sibling tests use) before asserting
+  membership. Verified on Linux: 6/6 separate-process runs, the whole package green; on Windows:
+  repeated focused runs and the whole package green. It is back in the push gate, with no `-skip`.
+- The product observation is recorded as **W8** below, not fixed here: the first provider download can
+  fail on an interface event and the subscription stays empty until the next `update_interval` (an hour
+  in this profile) or a manual refresh.
 
 ## R1 — a connection opened before a subscription refresh keeps using the replaced node
 
@@ -178,6 +170,7 @@ for this repository at this toolchain.
 | W5 | `compress/flate` output bytes changed (1.27) | Gzip artifacts (report archives) differ byte-for-byte while remaining valid; anything comparing archive bytes to a golden value must not |
 | W6 | **Darwin binaries require macOS 13+ from 1.27**; the linker defaults `minos` to 13.0 | The macOS client's deployment target must be ≥ 13, and any promise of older macOS has to be dropped with it. `.github/setup_go_for_macos1013.sh` is pinned at Go 1.26.8 and is referenced by **no workflow**: the legacy path is orphaned, and it cannot be rebuilt with the toolchain this repository now pins |
 | W7 | `go test` runs the `stdversion` vet check (1.27); `gofmt` alignment changed | Using a 1.27-only stdlib symbol while `go.mod` still says `go 1.25.5` now fails `go test`. The `go` directive is the language/API floor, the `toolchain` line is the compiler - they move independently |
+| W8 | A provider's **first** download can be aborted by this fork's own `network changed while dialling`, and the subscription then stays empty until `update_interval` (an hour in the hidden-provider profile) or a manual refresh | Not a Go-version change: found while chasing R2b, and it fires on every alone-run of the provider test on Linux, where the interface monitor emits a change inside the first download (Windows ordering hides it). A user who launches on a network that flutters during start-up can see an empty provider-backed group until they refresh. Next step: retry the first download once when the failure is this error, with a test that injects the interface event instead of waiting for one |
 
 ## The tool
 
