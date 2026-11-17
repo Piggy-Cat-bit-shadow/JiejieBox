@@ -358,10 +358,33 @@ jobs:
           set -euo pipefail
           mkdir -p build
           go test -count=1 -v ./experimental/libbox/ \
-            -run 'TestClaimCommandSocket|TestCommandEndpointMatchesDialTarget|TestProbeCommandServer|TestAStandaloneClientSaysTheCoreIsNotRunning|TestAHandlerBoundClientSaysTheCoreIsNotRunningWithoutHanging|TestAClientRecoversWhenTheCoreReturns|TestAServerAnswerOfUnavailableKeepsTheConnection|TestTheClientReachesAServerOnAUnixSocket|TestALiveUnixSocketIsNotStolenOnThisPlatform|TestAStaleUnixSocketFileIsRemoved' \
+            -run 'TestClaimCommandSocket|TestCommandEndpointMatchesDialTarget|TestProbeCommandServer|TestAStandaloneClientSaysTheCoreIsNotRunning|TestAHandlerBoundClientSaysTheCoreIsNotRunningWithoutHanging|TestAClientRecoversWhenTheCoreReturns|TestAServerAnswerOfUnavailableKeepsTheConnection|TestTheClientReachesAServerOnAUnixSocket|TestALiveUnixSocketIsNotStolenOnThisPlatform|TestAStaleUnixSocketFileIsRemoved|TestAStaleFailureCannotInvalidateANewerConnection|TestTheLeaseEndpointIsTheOneTheCallUsed|TestAConnectionReplacedBetweenCallsIsNotClosedByAnOlderFailure|TestTheOwnershipLockSerialisesInstances|TestASecondInstanceCannotDeleteALiveSocket|TestAcquireCommandSocketReleasesTheLockOnClaimFailure' \
             2>&1 | tee build/command-channel-gate.log
           ./scripts/ci/require-executed-coverage.sh build/command-channel-gate.log "control channel failure states"
           echo "PASS: the control channel reports, recovers from, and never fabricates a dead core"
+
+      - name: provider download recovery
+        # W8 in docs/fork/go-1274-regressions.md: a provider's first download could be refused by the
+        # dialer across a network reset ("network changed while dialling") with nothing retrying, so a
+        # subscription stayed empty until its next update_interval. The retry is bounded and applies ONLY
+        # to the failure that provably never reached the server, because a retry of anything else could
+        # double-apply a document.
+        #
+        # The negative side is gated as deliberately as the positive one: an ordinary transport failure
+        # must NOT be retried, and a cancelled caller must not wait through a backoff.
+        run: |
+          set -uo pipefail
+          mkdir -p build
+          status=0
+          go test -count=1 -v -run 'TestANetworkChangeDuringTheDownloadIsRetried|TestAnOrdinaryTransportFailureIsNotRetried|TestTheRetryIsBounded|TestACancelledContextStopsTheRetry' \
+            ./provider/remote/ 2>&1 | tee build/provider-download-gate.log || status=$?
+          ./scripts/ci/require-executed-coverage.sh build/provider-download-gate.log "provider download recovery" || status=$?
+          if [ "$status" -ne 0 ]; then
+            failing="$(grep -E '^--- FAIL:' build/provider-download-gate.log | sed -e 's/^--- FAIL: //' -e 's/ (.*//' | tr '\n' ' ')"
+            echo "::error::provider download gate failing tests: ${failing:-none named}"
+            exit "$status"
+          fi
+          echo "PASS: a download refused by a network reset is retried; anything else is not"
 
       - name: daemon configuration recovery
         # This package was compiled by every gate and executed by NONE of them: `go test -run '^$'
