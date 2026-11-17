@@ -43,6 +43,13 @@ type CommandClient struct {
 	// is already in flight: every delivery re-checks this generation, and a newer connect makes the
 	// older stream's remaining batches and its Disconnected callback stale.
 	connectionGeneration atomic.Uint64
+
+	// serverEndpoint is where the current connection points, captured when it was established. It is
+	// what classifyCommandFailure probes after a failure, so the answer is about the endpoint this
+	// client actually dialed rather than about whatever the process globals name by then. Guarded by
+	// clientAccess; empty when the endpoint is not a probatory address (XPC, remote, or a connection
+	// this client did not establish).
+	serverEndpoint commandEndpoint
 }
 
 // connectionSubscriptionID numbers connection subscriptions PROCESS-WIDE, so two clients (or one
@@ -197,6 +204,13 @@ func (c *CommandClient) establishConnection(ctx context.Context) (*grpc.ClientCo
 	if c.remote != nil {
 		return c.dialRemote(ctx)
 	}
+	// Record the endpoint BEFORE dialing. A failed attempt still has an address, and that address is
+	// what the failure classifier probes to tell "the core is not running" from "this call failed":
+	// on the establishment path there is no connection to inspect, so the address is the only
+	// evidence there is.
+	c.clientAccess.Lock()
+	c.serverEndpoint = currentCommandEndpoint()
+	c.clientAccess.Unlock()
 	target, contextDialer := dialTarget()
 	return c.dialWithRetry(ctx, target, localDialOptions(contextDialer), !c.standalone)
 }
@@ -340,6 +354,7 @@ func (c *CommandClient) connect(dial func(context.Context) (*grpc.ClientConn, da
 	c.grpcConn = connection
 	c.grpcClient = client
 	c.grpcManagedClient = daemon.NewManagedServiceClient(connection)
+	c.serverEndpoint = currentCommandEndpoint()
 	c.clientAccess.Unlock()
 	c.connectAccess.Unlock()
 
@@ -438,6 +453,10 @@ func (c *CommandClient) getClientForCall() (daemon.StartedServiceClient, context
 	c.grpcConn = connection
 	c.grpcClient = client
 	c.grpcManagedClient = daemon.NewManagedServiceClient(connection)
+	// Remember WHERE this connection points. The failure classifier probes it to decide whether a
+	// failed call means "the core is gone"; without it, a client handed a connection from elsewhere
+	// would probe whatever the process globals happen to name.
+	c.serverEndpoint = currentCommandEndpoint()
 	c.clientAccess.Unlock()
 	return client, ctx, nil
 }
@@ -462,12 +481,18 @@ func callWithResult[T any](c *CommandClient, call func(ctx context.Context, clie
 	client, ctx, err := c.getClientForCall()
 	if err != nil {
 		var zero T
-		return zero, err
+		// An establishment failure is already classified; this covers the one shape it cannot:
+		// a fail-fast standalone probe that raced a server which has since exited.
+		return zero, c.classifyCommandFailure(err)
 	}
 	if c.standalone {
 		defer c.closeConnection()
 	}
-	return call(ctx, client)
+	result, err := call(ctx, client)
+	if err != nil {
+		return result, c.classifyCommandFailure(err)
+	}
+	return result, nil
 }
 
 func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Context, client daemon.ManagedServiceClient) (T, error)) (T, error) {
@@ -478,7 +503,7 @@ func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Contex
 	_, ctx, err := c.getClientForCall()
 	if err != nil {
 		var zero T
-		return zero, err
+		return zero, c.classifyCommandFailure(err)
 	}
 	if c.standalone {
 		defer c.closeConnection()
@@ -490,7 +515,11 @@ func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Contex
 		var zero T
 		return zero, os.ErrClosed
 	}
-	return call(ctx, client)
+	result, err := call(ctx, client)
+	if err != nil {
+		return result, c.classifyCommandFailure(err)
+	}
+	return result, nil
 }
 
 func (c *CommandClient) handleLogStream(client daemon.StartedServiceClient, ctx context.Context, generation uint64) {

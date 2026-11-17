@@ -1,11 +1,17 @@
 package libbox
 
 import (
+	"errors"
 	"fmt"
 	"hash/crc32"
+	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	E "github.com/sagernet/sing/common/exceptions"
 )
 
 // commandSocketName is the documented socket name, used in the base path.
@@ -184,4 +190,67 @@ func isGeneratedSocketName(name string) bool {
 		}
 	}
 	return true
+}
+
+// commandSocketClaimTimeout bounds how long the server waits for an answer when deciding whether an
+// existing socket file is live. A connect(2) to a local unix socket answers immediately in both
+// directions, so this is a ceiling, not a delay.
+const commandSocketClaimTimeout = 200 * time.Millisecond
+
+// socketPathIsLive reports whether something is accepting connections on path.
+//
+// A failed connect is the normal case here - the file is supposed to be stale - so only a successful
+// connect counts as evidence of a live listener. Every other outcome, including "this platform cannot
+// dial unix sockets", is treated as "not live", which restores the previous unlink-then-bind
+// behaviour for it.
+func socketPathIsLive(path string) bool {
+	dialer := net.Dialer{Timeout: commandSocketClaimTimeout}
+	connection, err := dialer.Dial("unix", path)
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	return true
+}
+
+// claimCommandSocket prepares path for bind(2).
+//
+// # Why this is not os.Remove
+//
+// The socket file is a NAME, and two live servers cannot share one. Unlinking unconditionally makes
+// the second server believe it owns the address while the first keeps its already-accepted
+// connections: the process that was working is now unreachable for every new client and nothing
+// reports it. The server that is starting has no way to tell that apart from recovering a file left
+// by a process that died - except by asking the file whether anything answers on it.
+//
+// So:
+//
+//   - nothing there                        -> nothing to do;
+//   - our name, nothing answering          -> remove it (the stale case, and the only recovery a
+//     crashed Network Extension needs);
+//   - our name, something answering        -> refuse, and say so;
+//   - a name this package never allocates  -> refuse and leave it alone.
+//
+// isLive is a parameter rather than a direct call so the decision is testable on a platform that has
+// no unix sockets to leave behind.
+func claimCommandSocket(path string, isLive func(string) bool) error {
+	_, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return E.Cause(err, "stat command socket")
+	}
+	base := filepath.Base(path)
+	if base != commandSocketName && !isGeneratedSocketName(base) {
+		return E.New("refusing to take over the socket path ", socketPathDiagnostics(path), ": not a name this server allocates")
+	}
+	if isLive(path) {
+		return E.New("another instance is already listening on ", socketPathDiagnostics(path))
+	}
+	err = os.Remove(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return E.Cause(err, "remove stale command socket")
+	}
+	return nil
 }

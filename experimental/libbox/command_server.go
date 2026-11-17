@@ -173,12 +173,20 @@ func (s *CommandServer) Start() error {
 		if sockErr != nil {
 			return E.Cause(sockErr, "listen command server")
 		}
-		// Only a name this package could have created is cleared. The base path's command.sock is
-		// ours by convention; a fallback name carries our hash. Anything else in these
-		// directories belongs to somebody else and is left alone: an unconditional remove here
-		// would delete a file the command server has no claim on.
-		if base := filepath.Base(sockPath); base == commandSocketName || isGeneratedSocketName(base) {
-			os.Remove(sockPath)
+		// Only a name this package could have created is cleared, and only when nothing is listening
+		// on it. The base path's command.sock is ours by convention; a fallback name carries our
+		// hash. Anything else in these directories belongs to somebody else and is left alone: an
+		// unconditional remove here would delete a file the command server has no claim on.
+		//
+		// The liveness half is what keeps two live instances from taking each other's address. An
+		// unlink-then-bind is invisible from the outside: the old listener keeps serving the
+		// connections it already accepted while every NEW connection lands on the new one, and the
+		// process that lost control of its own socket has no way to notice. Refusing is the honest
+		// outcome. The stale case still recovers, because when a previous process died without
+		// unlinking (SIGSEGV, Jetsam) nothing answers the probe and the file is removed.
+		err = claimCommandSocket(sockPath, socketPathIsLive)
+		if err != nil {
+			return E.Cause(err, "listen command server")
 		}
 		listener, err = net.ListenUnix("unix", &net.UnixAddr{
 			Name: sockPath,
