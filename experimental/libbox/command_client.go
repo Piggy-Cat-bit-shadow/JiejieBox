@@ -45,11 +45,16 @@ type CommandClient struct {
 	connectionGeneration atomic.Uint64
 
 	// serverEndpoint is where the current connection points, captured when it was established. It is
-	// what classifyCommandFailure probes after a failure, so the answer is about the endpoint this
-	// client actually dialed rather than about whatever the process globals name by then. Guarded by
-	// clientAccess; empty when the endpoint is not a probatory address (XPC, remote, or a connection
-	// this client did not establish).
+	// what the call's lease carries, so a failure is classified against the address that call used
+	// rather than against whatever the process globals name by then. Guarded by clientAccess; empty
+	// when the endpoint is not a probatory address (XPC, remote, or a connection this client did not
+	// establish).
 	serverEndpoint commandEndpoint
+	// connectionEpoch identifies the CURRENT connection. It is bumped on every install, and every
+	// call carries the value it ran under (see commandCallLease). The bump is what lets an
+	// invalidation tell "the connection this call used" from "a newer one that replaced it": a late
+	// failure whose epoch is stale must not clear the live connection.
+	connectionEpoch uint64
 }
 
 // connectionSubscriptionID numbers connection subscriptions PROCESS-WIDE, so two clients (or one
@@ -204,13 +209,6 @@ func (c *CommandClient) establishConnection(ctx context.Context) (*grpc.ClientCo
 	if c.remote != nil {
 		return c.dialRemote(ctx)
 	}
-	// Record the endpoint BEFORE dialing. A failed attempt still has an address, and that address is
-	// what the failure classifier probes to tell "the core is not running" from "this call failed":
-	// on the establishment path there is no connection to inspect, so the address is the only
-	// evidence there is.
-	c.clientAccess.Lock()
-	c.serverEndpoint = currentCommandEndpoint()
-	c.clientAccess.Unlock()
 	target, contextDialer := dialTarget()
 	return c.dialWithRetry(ctx, target, localDialOptions(contextDialer), !c.standalone)
 }
@@ -355,6 +353,9 @@ func (c *CommandClient) connect(dial func(context.Context) (*grpc.ClientConn, da
 	c.grpcClient = client
 	c.grpcManagedClient = daemon.NewManagedServiceClient(connection)
 	c.serverEndpoint = currentCommandEndpoint()
+	// A new identity as well: calls already in flight on the previous connection carry the old epoch,
+	// so their failures cannot invalidate this one.
+	c.connectionEpoch++
 	c.clientAccess.Unlock()
 	c.connectAccess.Unlock()
 
@@ -417,13 +418,25 @@ func (c *CommandClient) Disconnect() error {
 	return common.Close(common.PtrOrNil(connection))
 }
 
+// getClientForCall keeps the historical signature for the stream/one-shot callers that only need a
+// client and a context.
 func (c *CommandClient) getClientForCall() (daemon.StartedServiceClient, context.Context, error) {
+	client, ctx, _, err := c.getClientForCallWithLease()
+	return client, ctx, err
+}
+
+// getClientForCallWithLease also returns the lease the call must carry into
+// classifyCommandFailure: the epoch of the connection it is about to use and the endpoint that
+// connection points at.
+func (c *CommandClient) getClientForCallWithLease() (daemon.StartedServiceClient, context.Context, commandCallLease, error) {
 	c.clientAccess.RLock()
 	if c.grpcClient != nil {
+		lease := commandCallLease{epoch: c.connectionEpoch, endpoint: c.serverEndpoint}
 		defer c.clientAccess.RUnlock()
-		return c.grpcClient, c.ctx, nil
+		return c.grpcClient, c.ctx, lease, nil
 	}
 	ctx := c.ctx
+	epochBefore := c.connectionEpoch
 	c.clientAccess.RUnlock()
 
 	c.connectAccess.Lock()
@@ -432,33 +445,59 @@ func (c *CommandClient) getClientForCall() (daemon.StartedServiceClient, context
 	c.clientAccess.RLock()
 	if ctx.Err() != nil {
 		c.clientAccess.RUnlock()
-		return nil, nil, ctx.Err()
+		return nil, nil, commandCallLease{}, ctx.Err()
 	}
 	if c.grpcClient != nil {
+		lease := commandCallLease{epoch: c.connectionEpoch, endpoint: c.serverEndpoint}
 		defer c.clientAccess.RUnlock()
-		return c.grpcClient, ctx, nil
+		return c.grpcClient, ctx, lease, nil
 	}
 	c.clientAccess.RUnlock()
 
+	endpoint := currentCommandEndpoint()
 	connection, client, err := c.establishConnection(ctx)
 	if err != nil {
-		return nil, nil, E.Cause(err, "get command client")
+		// The lease still names the epoch the client had BEFORE this attempt, and the address the
+		// attempt used. If somebody else installed a connection while this one was failing, the
+		// epoch no longer matches and the classifier leaves that connection alone.
+		return nil, nil, commandCallLease{epoch: epochBefore, endpoint: endpoint}, E.Cause(err, "get command client")
 	}
 	c.clientAccess.Lock()
 	if ctx.Err() != nil {
 		c.clientAccess.Unlock()
 		connection.Close()
-		return nil, nil, ctx.Err()
+		return nil, nil, commandCallLease{}, ctx.Err()
 	}
 	c.grpcConn = connection
 	c.grpcClient = client
 	c.grpcManagedClient = daemon.NewManagedServiceClient(connection)
-	// Remember WHERE this connection points. The failure classifier probes it to decide whether a
-	// failed call means "the core is gone"; without it, a client handed a connection from elsewhere
-	// would probe whatever the process globals happen to name.
-	c.serverEndpoint = currentCommandEndpoint()
+	// Remember WHERE this connection points, and give it an identity. A call carries both so that its
+	// failure can be judged against the connection it actually used.
+	c.serverEndpoint = endpoint
+	c.connectionEpoch++
+	lease := commandCallLease{epoch: c.connectionEpoch, endpoint: c.serverEndpoint}
 	c.clientAccess.Unlock()
-	return client, ctx, nil
+	return client, ctx, lease, nil
+}
+
+// invalidateConnection closes the client's connection ONLY if it is still the one the failed call ran
+// on, and reports whether it did.
+//
+// The check and the close happen under one lock acquisition: checking the epoch and then calling
+// closeConnection() would reopen exactly the window this exists to close.
+func (c *CommandClient) invalidateConnection(epoch uint64) bool {
+	c.clientAccess.Lock()
+	if c.connectionEpoch != epoch {
+		c.clientAccess.Unlock()
+		return false
+	}
+	connection := c.grpcConn
+	c.grpcConn = nil
+	c.grpcClient = nil
+	c.grpcManagedClient = nil
+	c.clientAccess.Unlock()
+	common.Close(common.PtrOrNil(connection))
+	return true
 }
 
 func (c *CommandClient) closeConnection() {
@@ -478,19 +517,19 @@ func callWithResult[T any](c *CommandClient, call func(ctx context.Context, clie
 		var zero T
 		return zero, E.New("command client is nil")
 	}
-	client, ctx, err := c.getClientForCall()
+	client, ctx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		var zero T
 		// An establishment failure is already classified; this covers the one shape it cannot:
 		// a fail-fast standalone probe that raced a server which has since exited.
-		return zero, c.classifyCommandFailure(err)
+		return zero, c.classifyCommandFailure(err, lease)
 	}
 	if c.standalone {
 		defer c.closeConnection()
 	}
 	result, err := call(ctx, client)
 	if err != nil {
-		return result, c.classifyCommandFailure(err)
+		return result, c.classifyCommandFailure(err, lease)
 	}
 	return result, nil
 }
@@ -500,10 +539,10 @@ func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Contex
 		var zero T
 		return zero, E.New("command client is nil")
 	}
-	_, ctx, err := c.getClientForCall()
+	_, ctx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		var zero T
-		return zero, c.classifyCommandFailure(err)
+		return zero, c.classifyCommandFailure(err, lease)
 	}
 	if c.standalone {
 		defer c.closeConnection()
@@ -517,7 +556,7 @@ func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Contex
 	}
 	result, err := call(ctx, client)
 	if err != nil {
-		return result, c.classifyCommandFailure(err)
+		return result, c.classifyCommandFailure(err, lease)
 	}
 	return result, nil
 }

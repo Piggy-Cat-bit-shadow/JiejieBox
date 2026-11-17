@@ -55,8 +55,23 @@ import (
 // long a "nothing is listening" verdict may take on a platform that blackholes the call.
 const commandEndpointProbeTimeout = 150 * time.Millisecond
 
-// ErrCommandServerNotRunning reports that the core's control channel has no listener, so the request
-// was never delivered and nothing was applied.
+// ErrCommandServerNotRunning reports that, when this call failed, nothing was accepting connections on
+// the control channel.
+//
+// # What it proves, and what it does NOT
+//
+// It proves the endpoint was unreachable AT CLASSIFICATION TIME. It does NOT prove the request was
+// never delivered or never applied:
+//
+//   - the request may never have left this process (no listener, so nothing could dial);
+//   - or it may have been delivered, executed, and the reply lost when the transport died between the
+//     server's commit and the client's read.
+//
+// A post-hoc probe cannot tell those apart, so the error must not claim it can. Callers must treat it
+// as "the core is not reachable; the outcome is unknown" and re-read state before re-issuing an
+// operation with side effects. It deliberately stays a sentinel whose text is stable, because the
+// platform matches the prefix; the honest wording lives here and in
+// docs/fork/ios-command-client-state.md, not in the string a UI shows.
 //
 // It is a sentinel so a caller in Go can branch with errors.Is. Across the gomobile bridge an
 // exception arrives as a string, so the error text starts with the same words; the Apple client can
@@ -79,6 +94,23 @@ func (e *commandServerNotRunningError) Unwrap() error {
 
 func (e *commandServerNotRunningError) Is(target error) bool {
 	return target == ErrCommandServerNotRunning
+}
+
+// commandCallLease identifies the connection a call ran on.
+//
+// # Why a call has to carry this
+//
+// An invalidation decision made after a failure is about ONE connection, and by the time it is made
+// that connection may no longer be the client's current one: the failure is delivered after another
+// goroutine re-established. Acting on "the client" instead of on "the connection this call used" then
+// clears a connection that is healthy and newer than the failure - the exact bug a review of this code
+// found. epoch is bumped on every install, so a mismatch is proof that the failure describes history.
+//
+// endpoint is captured with the connection for the same reason: the probe must ask about the address
+// this call used, not about whatever the process globals name by the time the error is classified.
+type commandCallLease struct {
+	epoch    uint64
+	endpoint commandEndpoint
 }
 
 // commandEndpoint is where the local command server listens, described in terms a probe can use.
@@ -188,24 +220,27 @@ func commandStatusCode(err error) codes.Code {
 	return codes.Unknown
 }
 
-// classifyCommandFailure decides what a failed call means for the connection that produced it.
+// classifyCommandFailure decides what a failed call means for the connection it ran on.
 //
 //   - The failure is not "the control channel could not be reached" -> returned unchanged. An answer
 //     from a live server is a verdict about the REQUEST, and tearing the connection down for it
 //     would kill the subscriptions riding on it.
-//   - Nothing is listening at the endpoint this client dialed -> the connection is worthless: it is
+//   - Nothing is listening at the endpoint this call used -> that connection is worthless: it is
 //     closed, so the next operation re-establishes instead of waiting out gRPC's reconnect backoff
 //     (which grows to minutes and would keep failing long after the kernel came back). The error is
-//     then reported as ErrCommandServerNotRunning, because "no listener" is a fact the platform can
-//     act on.
+//     then reported as ErrCommandServerNotRunning.
 //   - The endpoint cannot be probed, or something IS listening -> returned unchanged. The connection
 //     may still recover on its own, and claiming the core is down without evidence is worse than
 //     forwarding the original error.
 //
-// The endpoint probed is the one THIS client dialed, remembered at establishment, not whatever the
-// current process globals say: a client handed a connection from somewhere else (a test, an embedder,
-// an XPC handoff) has no address to probe, and guessing one would let a healthy core be declared dead.
-func (c *CommandClient) classifyCommandFailure(err error) error {
+// # The lease guard
+//
+// The close is performed only while the lease's epoch is still the client's current one. A failure
+// delivered AFTER a newer connection was installed is history: it must not clear the connection that
+// replaced it, and it must not be reported as "the core is not running", because the client is in fact
+// connected. Both are checked under one lock acquisition, so there is no window between the check and
+// the close.
+func (c *CommandClient) classifyCommandFailure(err error, lease commandCallLease) error {
 	if err == nil {
 		return nil
 	}
@@ -217,14 +252,15 @@ func (c *CommandClient) classifyCommandFailure(err error) error {
 	if !isUnreachableStatus(err) {
 		return err
 	}
-	c.clientAccess.RLock()
-	endpoint := c.serverEndpoint
-	c.clientAccess.RUnlock()
-	listening, definitive := endpoint.probe()
+	listening, definitive := lease.endpoint.probe()
 	if !definitive || listening {
 		return err
 	}
-	c.closeConnection()
+	if !c.invalidateConnection(lease.epoch) {
+		// A newer connection took over while this call was failing. Report the failure as history and
+		// leave the live connection alone.
+		return err
+	}
 	return &commandServerNotRunningError{cause: err}
 }
 
@@ -261,8 +297,12 @@ type commandServerProbe struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// ProbeCommandServer answers "is the core reachable" without performing any operation, so a UI can
-// tell "the VPN is not running" from "this action failed" instead of parsing an RPC error.
+// ProbeCommandServer answers "is the core reachable RIGHT NOW" without performing any operation, so a
+// UI can tell "the VPN is not running" from "this action failed" instead of parsing an RPC error.
+//
+// It breaks the failures, not the history: `notRunning` says nothing was accepting connections when the
+// probe ran, so it cannot be used to decide whether an EARLIER request was applied. See
+// ErrCommandServerNotRunning's note on what a probe can and cannot prove.
 //
 // It returns a document rather than an error for the same reason the other new entry points do: a
 // gomobile call that returns an error loses its result in the generated bridge, and "not running" is
