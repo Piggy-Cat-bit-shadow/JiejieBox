@@ -769,12 +769,22 @@ func (d *DefaultDialer) captureEpoch() func() bool {
 	return ownership.predicate
 }
 
-// errNetworkChanged reports that a network operation completed across a network reset.
+// ErrNetworkChanged reports that a network operation completed across a network reset.
 //
-// It is deliberately not a new public error type: the operation did not fail for a reason the
-// caller can act on differently from any other transient network failure, and the dial is retryable
-// in exactly the way a failed one is.
-var errNetworkChanged = E.New("network changed while dialling")
+// It is deliberately not a new public error TYPE: the operation did not fail for a reason the caller
+// can act on differently from any other transient network failure, and the dial is retryable in
+// exactly the way a failed one is.
+//
+// It IS exported, because a caller that wants to retry has to be able to recognise it. The canonical
+// case is a download that never left the device: a provider's first document fetch at start-up can be
+// refused here when the interface monitor fires during the dial, and without a retry the subscription
+// stays empty until its next interval.
+var ErrNetworkChanged = E.New("network changed while dialling")
+
+// IsNetworkChanged reports whether err is ErrNetworkChanged through any amount of wrapping.
+func IsNetworkChanged(err error) bool {
+	return errors.Is(err, ErrNetworkChanged)
+}
 
 // stillCurrentEpoch closes the connection and reports an error when the network changed while the
 // operation was in flight.
@@ -799,7 +809,7 @@ func (d *DefaultDialer) stillCurrentEpoch(epochCurrent func() bool, conn net.Con
 		return conn, nil
 	}
 	_ = conn.Close()
-	return nil, errNetworkChanged
+	return nil, ErrNetworkChanged
 }
 
 // admitAndTrackConn is the atomic admission: acquire the slot, then hand the socket to the
@@ -920,7 +930,7 @@ func (d *DefaultDialer) stillCurrentEpochPacketConn(epochCurrent func() bool, co
 		return conn, nil
 	}
 	_ = conn.Close()
-	return nil, errNetworkChanged
+	return nil, ErrNetworkChanged
 }
 
 func (d *DefaultDialer) trackPacketConn(ctx context.Context, destination M.Socksaddr, conn net.PacketConn, err error) (net.PacketConn, error) {

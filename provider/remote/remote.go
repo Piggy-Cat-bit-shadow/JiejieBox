@@ -26,6 +26,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/provider"
 	"github.com/sagernet/sing-box/common/artifact"
 	"github.com/sagernet/sing-box/common/buildgate"
+	"github.com/sagernet/sing-box/common/dialer"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -580,6 +581,48 @@ func (s *ProviderRemote) fetchContext(caller context.Context) (context.Context, 
 // return value rather than a later read of `LastApplyReport` because a provider's own timer and a
 // manual refresh can complete in either order: reading the global value afterwards is how one
 // attempt ends up reporting another attempt's publish.
+// providerDownloadRetries and providerDownloadRetryDelay bound the recovery from a download that never
+// left the device.
+//
+// # The failure this exists for
+//
+// The dialer refuses a dial taken across a network reset with dialer.ErrNetworkChanged ("network
+// changed while dialling"). On a Linux host the interface monitor emits its first event during
+// start-up, which lands inside a provider's FIRST document download: the download fails, the provider
+// publishes nothing, and the subscription stays empty until the next update_interval - an hour, in a
+// profile that idles at an hour. That is measured, not hypothetical: it is why the daemon provider test
+// failed on every alone-run on Linux and never on Windows.
+//
+// The dialer's own contract says such a dial "is retryable in exactly the way a failed one is", and the
+// request provably never reached the server (the reset happened while connecting), so a retry cannot
+// double-apply anything. The budget is small on purpose: a start-up event settles in milliseconds, and a
+// caller waiting on a manual refresh must not wait through a long backoff.
+const (
+	providerDownloadRetries    = 2
+	providerDownloadRetryDelay = 100 * time.Millisecond
+)
+
+// downloadDocument performs the GET, retrying only the failure that provably never reached the server.
+func (s *ProviderRemote) downloadDocument(ctx context.Context, req *http.Request) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		// A request cannot be handed to Do twice, so each attempt gets its own copy. Clone keeps the
+		// conditional headers (If-None-Match) and the user agent.
+		response, err := s.httpClient.Do(req.Clone(ctx))
+		if err == nil {
+			return response, nil
+		}
+		if attempt >= providerDownloadRetries || !dialer.IsNetworkChanged(err) || ctx.Err() != nil {
+			return nil, err
+		}
+		s.logger.Debug("provider ", s.Tag(), ": download refused by a network change while dialling, retrying (", attempt+1, "/", providerDownloadRetries, ")")
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(time.Duration(attempt+1) * providerDownloadRetryDelay):
+		}
+	}
+}
+
 func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	_, err := s.fetchReport(ctx, isStart)
 	return err
@@ -668,7 +711,7 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 	if !isStart {
 		defer s.httpClient.CloseIdleConnections()
 	}
-	resp, err := s.httpClient.Do(req.WithContext(ctx))
+	resp, err := s.downloadDocument(ctx, req)
 	if err != nil {
 		// The transport error embeds the request URL, query string and all. It is redacted here
 		// rather than at every log site, so a token cannot leak through a wrapped error.
