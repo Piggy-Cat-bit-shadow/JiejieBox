@@ -270,9 +270,23 @@ func TestAnUnchangedProfileRefreshesProvidersWithoutRebuildingTheBox(t *testing.
 
 func freeLibboxPort(t *testing.T) int {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener.Close())
-	return port
+	// A shadowsocks inbound binds both TCP and UDP on the same port. A TCP-only
+	// probe can land in a Windows UDP exclusion range and make the later bind
+	// fail with WSAEACCES, so check both protocols before handing the port out.
+	for attempt := 0; attempt < 64; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			continue
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		require.NoError(t, listener.Close())
+		packet, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
+		}
+		require.NoError(t, packet.Close())
+		return port
+	}
+	t.Fatal("no loopback port free for both TCP and UDP after 64 attempts")
+	return 0
 }
