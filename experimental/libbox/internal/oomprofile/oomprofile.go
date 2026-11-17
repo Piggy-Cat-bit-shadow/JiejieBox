@@ -18,14 +18,43 @@ type stackRecord struct {
 	Stack []uintptr
 }
 
+// memProfileRecord mirrors internal/profilerecord.MemProfileRecord of the PINNED toolchain.
+//
+// It is a mirror, not a definition: runtimeMemProfileInternal writes records into a slice of this
+// type using the layout of the real one, so every field, its order and its type must match the
+// toolchain exactly. A mismatch is silent at compile time and reads the wrong bytes at run time.
+//
+// Go 1.27 replaced the pair (AllocBytes, FreeBytes) with the single per-object size. Before:
+//
+//	type MemProfileRecord struct {
+//		AllocBytes, FreeBytes     int64
+//		AllocObjects, FreeObjects int64
+//		Stack                     []uintptr
+//	}
+//
+// 56 bytes, Stack at offset 32. Go 1.27.4:
+//
+//	type MemProfileRecord struct {
+//		ObjectSize                int64
+//		AllocObjects, FreeObjects int64
+//		Stack                     []uintptr
+//	}
+//
+// 48 bytes, Stack at offset 24, and InUseBytes is derived from the object size rather than measured.
+//
+// The 0.1.52 Network Extension SIGSEGV was this mirror left on the old layout: the runtime wrote
+// 48-byte records into a 56-byte slice, so every record after the first had its Stack slice header
+// read from inside the wrong record. Record 1's "data pointer" was record 0's length field, which
+// is what the crash reports as a dereference of a small address (0x14). TestMemProfileRecordMirrorsToolchain
+// now fails loudly when the pinned toolchain moves this type again.
 type memProfileRecord struct {
-	AllocBytes, FreeBytes     int64
+	ObjectSize                int64
 	AllocObjects, FreeObjects int64
 	Stack                     []uintptr
 }
 
 func (r *memProfileRecord) InUseBytes() int64 {
-	return r.AllocBytes - r.FreeBytes
+	return r.InUseObjects() * r.ObjectSize
 }
 
 func (r *memProfileRecord) InUseObjects() int64 {
@@ -302,6 +331,12 @@ func expandInlinedFrames(dst []uintptr, pcs []uintptr) int {
 	return n
 }
 
+// writeHeapProto mirrors runtime/pprof.writeHeapProto of the pinned toolchain. The sample values it
+// derives changed with Go 1.27 together with the record layout: the scale correction is applied per
+// object (count, object size) instead of per record (count, total bytes), and the "bytes" label is
+// the object size rather than the average block size. Keeping the old arithmetic on the new record
+// would not crash - it would report inuse_space inflated by the record's object count, which is the
+// quieter half of the same bug.
 func writeHeapProto(w io.Writer, profile []memProfileRecord, rate int64, defaultSampleType string) error {
 	builder := newProfileBuilder(w)
 	builder.pbValueType(tagProfile_PeriodType, "space", "bytes")
@@ -336,34 +371,32 @@ func writeHeapProto(w io.Writer, profile []memProfileRecord, rate int64, default
 			hideRuntime = false
 		}
 
-		values[0], values[1] = scaleHeapSample(record.AllocObjects, record.AllocBytes, rate)
-		values[2], values[3] = scaleHeapSample(record.InUseObjects(), record.InUseBytes(), rate)
-
-		var blockSize int64
-		if record.AllocObjects > 0 {
-			blockSize = record.AllocBytes / record.AllocObjects
-		}
+		values[0], values[1] = scaleHeapSample(record.AllocObjects, record.ObjectSize, rate)
+		values[2], values[3] = scaleHeapSample(record.InUseObjects(), record.ObjectSize, rate)
 		builder.pbSample(values, locs, func() {
-			if blockSize != 0 {
-				builder.pbLabel(tagSample_Label, "bytes", "", blockSize)
-			}
+			builder.pbLabel(tagSample_Label, "bytes", "", record.ObjectSize)
 		})
 	}
 
 	return builder.build()
 }
 
-func scaleHeapSample(count int64, size int64, rate int64) (int64, int64) {
-	if count == 0 || size == 0 {
+// scaleHeapSample adjusts a heap sample for its probability of appearing in the collected data, and
+// returns (objects, bytes). avgSize is the size of ONE object, which is what Go 1.27's record carries;
+// the pre-1.27 signature took the total size of the record and divided it by count internally.
+func scaleHeapSample(count, avgSize, rate int64) (int64, int64) {
+	if count == 0 || avgSize == 0 {
 		return 0, 0
 	}
 	if rate <= 1 {
-		return count, size
+		// If rate==1 all samples were collected so no adjustment is needed.
+		// If rate<1 treat as unknown and skip scaling.
+		return count, count * avgSize
 	}
 
-	avgSize := float64(size) / float64(count)
-	scale := 1 / (1 - math.Exp(-avgSize/float64(rate)))
-	return int64(float64(count) * scale), int64(float64(size) * scale)
+	scale := 1 / (1 - math.Exp(-float64(avgSize)/float64(rate)))
+
+	return int64(float64(count) * scale), int64(float64(count*avgSize) * scale)
 }
 
 type profileBuilder struct {
