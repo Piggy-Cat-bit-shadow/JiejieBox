@@ -80,7 +80,7 @@ func TestHiddenURLTestSurvivesAProviderRepublication(t *testing.T) {
 	// never on Windows, which is why this test looked platform-dependent. The production path for "I
 	// want the subscription now" is the manual refresh - the same call the sibling provider tests use -
 	// so the setup publishes through it and the assertion stops depending on start-up timing.
-	requirePublished(t, started, "pool")
+	requireDocumentInEffect(t, started, "pool")
 	require.Equal(t, []string{"MAIN"}, reportedGroupTags(t, started))
 	require.True(t, waitForMembers(t, started, "REGION", 15*time.Second, "pool/node-1"),
 		"the provider's first publication must reach the hidden group; last members: %v",
@@ -154,6 +154,28 @@ func requirePublished(t *testing.T, started *StartedService, providerTag string)
 	require.Len(t, refresh.Results, 1, "the refresh must address exactly the named provider")
 	require.Equal(t, string(ProviderRefreshPublished), refresh.Results[0].Status,
 		"the provider must publish the new document: %s", refresh.Results[0].Reason)
+}
+
+// requireDocumentInEffect is requirePublished for a SETUP step, where the requirement is "this document
+// is the one in force", not "this call is the one that installed it".
+//
+// The distinction is not pedantry: the provider downloads on its own schedule, so a manual refresh that
+// arrives after the automatic update already applied the same document legitimately answers "unchanged"
+// (the server's conditional fetch found nothing new). Asserting `published` there made the test depend on
+// which of the two got there first - the same race that produced R2, one layer down.
+func requireDocumentInEffect(t *testing.T, started *StartedService, providerTag string) {
+	t.Helper()
+	refresh, err := started.RefreshRemoteProviders(context.Background(), &RefreshRemoteProvidersRequest{
+		Tags:      []string{providerTag},
+		TimeoutMs: 15000,
+	})
+	require.NoError(t, err)
+	require.Len(t, refresh.Results, 1, "the refresh must address exactly the named provider")
+	status := refresh.Results[0].Status
+	// The RPC maps the kernel's typed status into a string (provider_refresh_rpc.go), so the comparison
+	// is against the strings, not against the constants.
+	require.Contains(t, []string{string(ProviderRefreshPublished), string(ProviderRefreshUnchanged)}, status,
+		"the provider's document must be in effect after the refresh: %s (%s)", status, refresh.Results[0].Reason)
 }
 
 // providerDocument renders the document the subscription server serves.

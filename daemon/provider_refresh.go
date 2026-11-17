@@ -93,12 +93,40 @@ type providerContextReporter interface {
 // refreshBusyReason is the message a provider's own timer produces while it holds the fetch.
 const refreshBusyReason = "provider is updating"
 
-// refreshAttempts and refreshRetryDelay bound the wait when the automatic timer holds a
-// provider: two short sleeps, then an honest "busy".
-var (
-	refreshAttempts   = 3
-	refreshRetryDelay = 50 * time.Millisecond
+// The wait for a provider whose own timer holds it is a TIME budget derived from the caller's timeout,
+// not a fixed attempt count.
+//
+// # Why the old fixed count was wrong
+//
+// Three attempts 50 ms apart is ~150 ms of patience regardless of what the caller asked for. That is
+// enough on an idle machine and not enough on a cold one: measured on a 2-CPU host, a provider's
+// start-time update outlasted it, so EVERY manual refresh answered "busy" - and a manual refresh is the
+// caller saying "do it now", which must wait for the download that is already running rather than fail.
+// The daemon provider test failed on CI for exactly this and passed on a 12-core workstation.
+//
+// The caller's timeout is the budget it already agreed to, so half of it is the wait, clamped to
+// [minBusyWait, maxBusyWait]: a caller must not sit through its whole deadline on a "busy" answer, and a
+// near-zero timeout must not disable the wait entirely.
+const (
+	minBusyWait   = 200 * time.Millisecond
+	maxBusyWait   = 2 * time.Second
+	busyPollDelay = 25 * time.Millisecond
 )
+
+// busyWaitBudget is how long a manual refresh waits for a provider's own update before reporting busy.
+func busyWaitBudget(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	budget := timeout / 2
+	if budget > maxBusyWait {
+		budget = maxBusyWait
+	}
+	if budget < minBusyWait {
+		budget = minBusyWait
+	}
+	return budget
+}
 
 // providerRefreshBatchBudget bounds a WHOLE selection, independent of the per-provider timeout.
 //
@@ -212,8 +240,9 @@ func refreshOneProvider(ctx context.Context, provider adapter.Provider, timeout 
 	}
 	providerContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	busyDeadline := time.Now().Add(busyWaitBudget(timeout))
 	var lastErr error
-	for attempt := 0; attempt < refreshAttempts; attempt++ {
+	for {
 		if providerContext.Err() != nil {
 			result.Status = ProviderRefreshCancelled
 			result.Reason = providerContext.Err().Error()
@@ -241,12 +270,20 @@ func refreshOneProvider(ctx context.Context, provider adapter.Provider, timeout 
 		if !strings.Contains(err.Error(), refreshBusyReason) {
 			break
 		}
+		remaining := time.Until(busyDeadline)
+		if remaining <= 0 {
+			break
+		}
+		poll := busyPollDelay
+		if remaining < poll {
+			poll = remaining
+		}
 		select {
 		case <-providerContext.Done():
 			result.Status = ProviderRefreshCancelled
 			result.Reason = providerContext.Err().Error()
 			return result
-		case <-time.After(refreshRetryDelay):
+		case <-time.After(poll):
 		}
 	}
 	if lastErr != nil && strings.Contains(lastErr.Error(), refreshBusyReason) {

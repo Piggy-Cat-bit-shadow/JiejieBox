@@ -427,7 +427,10 @@ jobs:
           ./scripts/ci/require-executed-coverage.sh build/daemon-gate.log "daemon configuration recovery" || status=$?
           if [ "$status" -ne 0 ]; then
             failing="$(grep -E '^--- FAIL:' build/daemon-gate.log | sed -e 's/^--- FAIL: //' -e 's/ (.*//' | tr '\n' ' ')"
-            echo "::error::daemon gate failing tests: ${failing:-none named - the test binary did not build or the run did not reach a test result}"
+            # The assertion, not just the name: a public annotation is the only failure detail a reader
+            # without admin rights can see, and "which test" is not enough to act on.
+            detail="$(grep -E 'Error Trace:|Error:|Messages:' build/daemon-gate.log | sed -e 's/^[[:space:]]*//' | tr '\n' '|' | cut -c1-700)"
+            echo "::error::daemon gate failing tests: ${failing:-none named - the test binary did not build or the run did not reach a test result} :: ${detail:-no assertion detail}"
             exit "$status"
           fi
           echo "PASS: recovery, provider snapshots, reload identity, hidden-group republication and the pinned-artifact repairs still hold"

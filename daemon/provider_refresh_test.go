@@ -112,10 +112,17 @@ func TestRefreshWaitsOutAProviderItsOwnTimerHolds(t *testing.T) {
 	held.report = nil
 	service := refreshService(held)
 
+	// The wait is a TIME budget now, not a fixed attempt count: it derives from the caller's timeout and
+	// is clamped. A caller that gave 2 s must wait longer than the old ~150 ms, and must still stop short
+	// of its own deadline so "busy" remains an answer rather than a timeout.
+	started := time.Now()
 	summary, err := service.RefreshProviders(context.Background(), nil, 2*time.Second)
+	elapsed := time.Since(started)
 	require.NoError(t, err)
 	require.Equal(t, ProviderRefreshBusy, summary.Results[0].Status, "a bounded wait that ran out is reported as busy")
-	require.Equal(t, refreshAttempts, held.calls, "the wait is bounded")
+	require.Greater(t, held.calls, 1, "the provider must be asked again while the budget lasts")
+	require.GreaterOrEqual(t, elapsed, minBusyWait, "the wait must use the budget the caller agreed to")
+	require.Less(t, elapsed, 2*time.Second, "the wait must not consume the caller's whole deadline")
 }
 
 func TestRefreshIsCancelledByTheCaller(t *testing.T) {
