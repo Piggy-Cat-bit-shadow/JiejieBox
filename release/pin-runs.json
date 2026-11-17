@@ -379,6 +379,24 @@
       "event": "workflow_dispatch",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43979473831"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 43991875219,
+      "head_sha": "d865220eb8191415d1d2dd7cbd19d819872c0be0",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43991875219"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 43991875072,
+      "head_sha": "d865220eb8191415d1d2dd7cbd19d819872c0be0",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/43991875072"
     }
   ],
   "child_runs": [],
@@ -396,11 +414,11 @@
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
       "tip": "c0855e6761800b87a36988d5e01e88874bf3ea4f",
-      "pin": "f4d0d5b6cd64",
-      "relation": "behind",
+      "pin": "c0855e676180",
+      "relation": "identical",
       "policy": "update",
       "observed_at": "2026-11-17",
-      "note": "dev advanced to c0855e67 after the candidate was verified; the pin stays the verified candidate f4d0d5b6 under the integration freeze."
+      "note": "dev advanced one commit past f4d0d5b6; c0855e67 adds only monitor_shared_test.go, which pins that Close stops and clears the update timer, and changes no production source. The release candidate moved the pin to that tip because Kernel release's freeze rejects an update pin that is behind; Android Core run 43991875219 and Release contract run 43991875072 built the moved pin set."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
