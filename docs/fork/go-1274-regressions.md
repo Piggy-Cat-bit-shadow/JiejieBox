@@ -13,6 +13,39 @@ The method was not "read the release notes and guess". Every row below is one of
 
 ---
 
+## R6 — a manual provider refresh answered "busy" after 150 ms, no matter what the caller asked
+
+**Status: fixed. Found while chasing the second CI failure of the hidden-provider test.**
+
+```text
+the provider must publish the new document: the provider's own refresh held it for the whole bounded wait
+```
+
+The message came from `refreshOneProvider` in `daemon/provider_refresh.go`: it waited for a provider whose
+own timer held it with a FIXED budget - three attempts 50 ms apart, about 150 ms - and then reported
+`busy`. The caller's `timeout` was applied to the provider's own fetch, but not to this wait.
+
+A manual refresh is the caller saying "do it now". If the provider is already downloading, the right answer
+is to wait for that download (it publishes the same document), not to answer "busy" after 150 ms - and a UI
+that offers "refresh now" gets an error for pressing it at the wrong moment. On a 12-core workstation the
+automatic update finishes inside the window; on a 2-CPU runner it does not, which is why the daemon test
+failed on CI and passed locally. The W8 retry made the automatic download slightly longer and therefore
+easier to hit.
+
+**The fix.** The wait is a time budget derived from the caller's timeout, clamped to `[200 ms, 2 s]`
+(`busyWaitBudget`): a caller does not sit through its whole deadline on a "busy" answer, and a near-zero
+timeout does not disable the wait. `TestRefreshWaitsOutAProviderItsOwnTimerHolds` now asserts the budget
+(`elapsed >= minBusyWait`, `elapsed < timeout`, more than one attempt) instead of a fixed call count.
+
+**The second half was the test's own bug.** The RPC maps the kernel's typed status to a string
+(`provider_refresh_rpc.go`), and the hidden-provider test's setup assertion compared that string against
+typed constants, so it could never match. The setup now accepts "the document is in effect"
+(`published` or `unchanged`) rather than "this call is the one that installed it", which is the honest
+requirement: the provider downloads on its own schedule and either order is correct.
+
+**Verification.** On the shape that failed: Linux, two CPUs, the test alone ×6 and the whole package
+(9.9 s) green; Windows whole package green (41.5 s); CI green with the test in the gate.
+
 ## R3–R5 — the independent review's findings (2026-11-18), all fixed
 
 An external review of this round found three defects in the control-channel work. They are recorded as
