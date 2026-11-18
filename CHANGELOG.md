@@ -4,6 +4,63 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.53](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.53) — 2026-11-18
+
+### 本次更新
+
+v0.1.53 是 **控制通道可靠性与发布门禁的收口版**。0.1.52 把内核迁到官方 Go 1.27.4；本版处理升级后才暴露、以及独立复审指出的运行时与生命周期缺陷，目标不是新增功能，而是让“内核崩溃后 UI 看到什么”“旧请求失败会不会拖垮新连接”“两个实例抢同一个 socket”这类边界在真实时序下不再给出错误结论。
+
+三条 P1/P2 来自对 0.1.52 之后控制通道改造的外部复审：旧请求的迟到失败会关掉新连接、socket 接管仍可能误删活跃实例、以及错误契约把“不可达”说成了“请求未送达、未应用”。三条全部修复，并各自配了能在旧实现上失败的确定性测试。
+
+### 一、Go 1.27.4 运行时镜像（崩溃修复）
+
+- **`oomprofile` 的 `MemProfileRecord` 镜像**：Go 1.27.4 把该结构从 `AllocBytes/FreeBytes + Stack`（56 字节，`Stack@32`）改成 `ObjectSize + AllocObjects/FreeObjects + Stack`（48 字节，`Stack@24`），`InUseBytes()` 改为 `InUseObjects() * ObjectSize`，`runtime/pprof` 的 `scaleHeapSample` 也改成按对象计量。旧镜像在 OOM 快照路径上按 56 字节步长读 48 字节的数组，是升级后 Network Extension 崩溃的直接原因（`invalid memory address or nil pointer dereference`，`writeHeapProto` ← `writeAlloc`）。
+- 修复后镜像与 `InUseBytes` 派生值按 1.27.4 语义重写，`writeHeapProto` 的堆样本按对象大小缩放，`bytes` 标签无条件携带；`internal/profilerecord` 的结构漂移由解析 `$GOROOT` 源码的镜像测试守住，`InUseBytes` 的函数体也被比对。
+- `runtimeinfo` 的 `runtime.g`/`allgs` 镜像在 race 构建下被 checkptr 拒绝（越界扫描），改为 `!race` 门禁并提供 race 构建的桩；`-checklinkname=0` 下的镜像由独立测试覆盖。
+
+### 二、控制通道：失败分类与连接代际
+
+- **“内核没在跑”成为可判定事实**：调用失败且状态为 `Unavailable`/`DeadlineExceeded` 时，对**本次调用使用的地址**做一次 `connect(2)` 探测；只有探测确定“无人监听”才丢弃连接并返回 `ErrCommandServerNotRunning`。服务端返回的语义 `Unavailable`（例如 OOM 记录器未就绪）不会被误判，也不会因为一次业务失败拆掉承载订阅的连接。
+- **按调用租约失效**（复审 P1）：每次调用携带连接身份（epoch）与地址；失效只在“该调用所用连接仍是当前连接”时发生，判定与关闭在同一把锁内完成。迟到的旧请求失败既不会关掉新连接，也不会被报告成“内核没在跑”。
+- **一次性客户端的清理同样按租约**（复审 P2）：`callWithResult`/`callManagedWithResult` 及全部 16 处 stream/session 拆除点改为 `releaseStandaloneConnection(lease)`；`closeConnection` 只保留在真正拥有客户端生命周期的 `connect` 与 `Disconnect`。一个结束的调用不再可能回头掐掉更新的连接。
+- **socket 归属**（复审 P1）：接管 `command.sock` 前先取独占、非阻塞的路径锁（unix `flock`／Windows `LockFileEx`），第二个实例在探测之前就失败；探测改为三态（stale/live/unknown），只有确定无人监听才删除，`unknown` 拒绝删除；非 socket、非普通文件的路径一律不删。
+- **错误契约不再承诺过头**（复审 P2）：`ErrCommandServerNotRunning` 现在只声明“分类时刻不可达”，明确写出请求可能已送达并执行、只是回包丢失；UI 指引同步改为“重发＝重述期望状态，先读当前状态”，而不是“重复命令”。
+- 新增 `ProbeCommandServer()` 返回 `{"state":"running|notRunning|unknown","detail":…}`，供 UI 在操作前询问；XPC/远程传输返回 `unknown`。契约与最小 UI 改动见 `docs/fork/ios-command-client-state.md`。
+
+### 三、Provider 与刷新
+
+- **首次下载被网络重置拒绝后重试**（W8）：provider 的首次文档下载可能被本 fork 自己的 `network changed while dialling` 拒绝，随后订阅一直为空直到下个 `update_interval`。现在只对 `dialer.IsNetworkChanged` 这一类“请求从未到达服务器”的失败做有界重试（2 次、短退避、随 context 取消），普通传输错误不重试以免重复应用文档；`dialer.ErrNetworkChanged`/`IsNetworkChanged` 随之导出。
+- **手动刷新不再固定等 150ms**（R6）：`refreshOneProvider` 对“provider 自身正在更新”的等待改为由调用方 timeout 推导并钳在 200ms–2s。2 核机器上旧的固定预算会让每次“立即刷新”都返回 busy（12 核工作站看不出来），这是 CI 上 daemon 门禁反复失败的真实原因。
+- daemon 的隐藏 provider 测试改为先按需发布再断言，`-skip` 移除，整包进入 push 门禁。
+
+### 四、门禁与证据
+
+- `Verify` 新增五个步骤：镜像运行时结构与工具链一致、控制通道失败状态（25 例，含租约、路径锁、不可判定探测、一次性清理）、provider 下载恢复（4 例）、daemon 整包（含隐藏 provider 与配置恢复）、以及**控制通道的 `-race`**（此前 `experimental/libbox` 在任何工作流里都没有 race 覆盖）。全部使用 `require-executed-coverage.sh`，`-run` 过滤到空会失败而不是空跑变绿。
+- 失败注解改为携带断言内容（公开可读），不再只报测试名。
+- `experimental/libbox` 的 Linux `-race` 首次运行即发现本窗口自己写的一处测试数据竞争（已修）；`protocol/mieru` 的 idle-underlay 测试在 2 核 + `-race -cpu=1` 下 20 次中失败 4 次，改为有界等待异步 session 清理后，同形态 20/20 通过。
+
+### 五、依赖与客户端
+
+- 本版**不移动任何 pin**：10 个 Go 模块与 3 个客户端 gitlink 全部等于各自跟踪分支头（13/13 identical），`Release preparation` 报告 `CHANGED: false`、`nothing to push`。
+- Apple 客户端 `2e5b71fa59809b17faff1e24ab2e56caee52612e`，Android `9816e0068c82397e0ae48966cec982c0fd3dee18`，Desktop `1bd68313caaca2986983a93d6dae18d11af80541`（内嵌 dashboard `b6e3193`）。
+- 版本 `0.1.53`；候选提交 `bc7eab50fc63131ad7b28295965b43b8ef2cba01`；tag `v0.1.53`。
+
+### 六、验证与发布
+
+- **同一候选 SHA 的门禁**：[Verify](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44282222321)（含 race checks）、[Release contract verification](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44282894436)、[Mobile contract verification](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44282222662)、[Android Core ARM64](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44282224484) 全部成功。
+- [Release preparation](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44284638177)（`dry_run=false`、`create_tag=false`）：13 个 pin 全部与分支头相同，`CHANGED: false`、`nothing to push`；脚本逐条回读并确认 exact-SHA evidence（Verify 44282222321、contract 44282894436）后才放行。
+- [Apple 客户端构建](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44282451342)：Libbox、iOS、macOS、iOS self-sign 全部成功，产出 unsigned IPA、arm64 DMG、自签 IPA 与 Libbox 归档；仓库自带的发布判定器输出 `libbox=success ios=success macos=success`。
+- [Kernel release 44290513674](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44290513674)（attempt 2）：freeze、Linux、macOS CLI、Windows core、Desktop、Android、Apple（Libbox + iOS + macOS + self-sign）、stage、publish 全部成功，2026-11-18T11:50:22Z 公开 v0.1.53。attempt 1 仅因 `apple / libbox` 在 `macos-latest` 队列中约 15 分钟未取得 runner 被取消（GitHub 托管 macOS 容量问题，工作流注释中早有记录）；按发布指引“Apple Libbox 尚未产出时须重跑整次 Kernel release 以重建发布身份”，整轮重跑后一次通过。
+- 公开附件（7 项 + 校验和）：Linux amd64、macOS arm64 CLI、Windows amd64 core、Android ARM64 AAR、Apple Libbox、Windows x64 安装器、自签 unsigned IPA、`SHA256SUMS`；`SHA256SUMS` 与各附件已回读核对。
+- 本地：`release-freeze.py verify --strict`、`check-pin-runs.py`、`check-knowledge-facts.py`、`check-upstream-retirement.py`、`check-release-workflows.py`（170 项）、`check-libbox-abi.sh --pin-only`、Apple 访问器探针（483 文件、0 违规）全部通过。
+
+### 七、已知边界
+
+- 未在本环境执行 iPhone NetworkExtension 真机、TestFlight 上传或真实服务端矩阵；这些按独立设备/TF 流程验收。
+- macOS 13+ 成为内核最低部署目标（Go 1.27 链接器默认 `minos=13.0`），旧的 10.13 构建脚本已孤立，本版未删除。
+- Go 1.26 起 Green Tea GC 成为默认收集器，OOM 预算/GOGC 的标定早于这次变化，需在设备上重新标定。
+- 默认 PQ 曲线集仍由 `go.mod` 的 `go` 行控制：本仓保持 1.25.5，因此 ClientHello 未变（实测三组配置）；移动 `go` 行会新增 `SecP256r1MLKEM768`/`SecP384r1MLKEM1024`。
+
 ## [v0.1.52](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.52) — 2026-11-17
 
 ### 本次更新
