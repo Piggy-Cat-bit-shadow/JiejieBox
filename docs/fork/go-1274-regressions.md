@@ -13,6 +13,39 @@ The method was not "read the release notes and guess". Every row below is one of
 
 ---
 
+## R8 — the one-shot cleanup still closed a connection it did not own
+
+**Status: fixed. Found by the second review of this round (2026-11-18), in the cleanup branch the lease fix
+had missed.**
+
+The failure path learned to invalidate only the connection a call ran on (R3). The CLEANUP path did not:
+`callWithResult`/`callManagedWithResult` still ran `defer c.closeConnection()`, which closes whatever
+connection is current when the call returns. A one-shot client whose older call was slow to unwind could
+therefore tear down a NEW connection that a later call had just established.
+
+The same `if c.standalone { c.closeConnection() }` block existed at sixteen more sites - every stream and
+session teardown (`RefreshRemoteProviders`, the network-quality / STUN / tailscale-ping / tailscale-ssh
+sessions, USB devices, taildrop inbox and download). Fixing only the two wrappers would have left the class
+in place, so all of them now call `releaseStandaloneConnection(lease)`, which invalidates only while the
+call's epoch is still the client's current one. `closeConnection` itself remains for the two places that
+own the client's lifecycle: `connect` (a deliberate replacement) and `Disconnect`.
+
+**The test.** `TestAFinishedStandaloneCallCannotCloseANewerConnection`: one-shot client, call one
+establishes and finishes (taking its own connection), call two establishes a new connection and is still
+in flight, then call one's teardown is invoked with its lease. The new connection must survive, and the
+last one-shot call must still close its own. Negative control: restoring `closeConnection` in the helper
+makes it fail with *"a finished call must not close the connection a newer call is using"*.
+
+The test invokes the old teardown directly rather than racing for the interleaving, and says so: the
+harmful ordering needs the older call to be slow to return after its transport died (it still has a 150 ms
+probe to run before its defer), which is a scheduler property rather than a code path. Invoking the
+teardown with the old lease is the same defect, deterministically.
+
+**What is still true, and now written down instead of implied:** a one-shot client's contract is one
+operation at a time. Two calls racing on ONE standalone client share a connection by design, and the last
+one out closes it - so the wrapper still closes the connection when its epoch IS the current one. What
+changed is that a teardown can no longer reach backwards and take a newer connection with it.
+
 ## R7 — the Linux race job found a data race in one of this round's own tests
 
 **Status: fixed. Test-only; no product code was racing.**

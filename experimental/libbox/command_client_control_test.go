@@ -48,6 +48,12 @@ type controlStubStartedService struct {
 
 	expandCalls atomic.Int32
 	expandError error
+
+	// expandEntered and expandGates let a test ORDER two concurrent calls deterministically: the i-th
+	// SetGroupExpand announces its index on expandEntered and then waits for expandGates[i-1] to close.
+	// Nil means "do not gate", which is what every other test in this package wants.
+	expandEntered chan int32
+	expandGates   []chan struct{}
 }
 
 func (s *controlStubStartedService) GetStartedAt(context.Context, *emptypb.Empty) (*daemon.StartedAt, error) {
@@ -55,7 +61,13 @@ func (s *controlStubStartedService) GetStartedAt(context.Context, *emptypb.Empty
 }
 
 func (s *controlStubStartedService) SetGroupExpand(context.Context, *daemon.SetGroupExpandRequest) (*emptypb.Empty, error) {
-	s.expandCalls.Add(1)
+	index := s.expandCalls.Add(1)
+	if s.expandEntered != nil {
+		s.expandEntered <- index
+	}
+	if gate := s.expandGates; gate != nil && int(index) <= len(gate) {
+		<-gate[index-1]
+	}
 	if s.expandError != nil {
 		return nil, s.expandError
 	}

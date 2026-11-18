@@ -132,6 +132,62 @@ func TestAConnectionReplacedBetweenCallsIsNotClosedByAnOlderFailure(t *testing.T
 	replacement.stop()
 }
 
+// TestAFinishedStandaloneCallCannotCloseANewerConnection is the review's second finding about the same
+// connection-generation bug, in its cleanup branch.
+//
+// The cleanup used to close "the client's connection" when a one-shot call returned, whatever connection
+// that was by then. The failure path had been fixed with a per-call lease; the cleanup path had not, and
+// the same `if c.standalone { c.closeConnection() }` shape existed in every stream and session teardown.
+//
+// The property: a call's teardown is scoped to the connection that call ran on.
+//
+// # Why the old call's teardown is invoked directly here
+//
+// The harmful interleaving needs the older call to be SLOW TO RETURN after its connection died: the
+// transport cancellation wakes the RPC at once, but the goroutine still has to run the failure
+// classification (a probe with a 150 ms cap) before its deferred cleanup executes. During that window a
+// newer call can establish a newer connection. That ordering is a scheduler property, not a code path, so
+// a test that waits for it is a flake; invoking the teardown with the old lease is the same defect, made
+// deterministic. What the wrapper does with the lease - and that the last one-shot call still closes its
+// own connection - is asserted here too.
+func TestAFinishedStandaloneCallCannotCloseANewerConnection(t *testing.T) {
+	implementation := &controlStubStartedService{
+		expandEntered: make(chan int32, 4),
+		expandGates:   []chan struct{}{make(chan struct{}), make(chan struct{})},
+	}
+	server := startControlServer(t, 0, implementation)
+	useControlServerPort(t, server.port)
+	client := NewStandaloneCommandClient()
+
+	// Call one: it establishes the first connection and finishes, taking its own connection with it.
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- client.SetGroupExpand("proxy", true) }()
+	require.EqualValues(t, 1, <-implementation.expandEntered, "the first call must be in flight")
+	firstLease := client.currentLeaseForTest()
+	require.NotZero(t, firstLease.epoch)
+	close(implementation.expandGates[0])
+	require.NoError(t, <-firstDone)
+	require.Nil(t, client.connectionForTest(), "a one-shot call closes the connection it used")
+
+	// Call two: a later call establishes a NEW connection and is still in flight.
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- client.SetGroupExpand("proxy", true) }()
+	require.EqualValues(t, 2, <-implementation.expandEntered, "the second call must be in flight")
+	require.NotNil(t, client.connectionForTest())
+	secondLease := client.currentLeaseForTest()
+	require.NotEqual(t, firstLease.epoch, secondLease.epoch, "a re-established connection must have a new identity")
+
+	// The delayed cleanup of call one. It must not touch the connection call two is using.
+	client.releaseStandaloneConnection(firstLease)
+	require.NotNil(t, client.connectionForTest(),
+		"a finished call must not close the connection a newer call is using")
+
+	// The last one-shot call still closes its own connection.
+	close(implementation.expandGates[1])
+	require.NoError(t, <-secondDone)
+	require.Nil(t, client.connectionForTest())
+}
+
 // TestProbeCommandServerDoesNotClaimHistory pins finding 3 at the API boundary: the probe answers about
 // the present only, and its document carries no claim about earlier requests.
 func TestProbeCommandServerDoesNotClaimHistory(t *testing.T) {

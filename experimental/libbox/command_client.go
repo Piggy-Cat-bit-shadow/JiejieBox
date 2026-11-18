@@ -510,6 +510,23 @@ func (c *CommandClient) closeConnection() {
 	common.Close(common.PtrOrNil(connection))
 }
 
+// releaseStandaloneConnection closes the connection THIS call ran on, if this client is one-shot.
+//
+// # Why closeConnection() was wrong here
+//
+// `closeConnection` closes "the client's connection", which by the time a call returns may be a NEWER
+// connection that another goroutine established after this one started. On a shared standalone client
+// that turned a finished call into a teardown of somebody else's live session - the same defect the
+// per-call lease fixed for the failure path, still present in every cleanup branch. A review found it in
+// callWithResult; the same `if c.standalone` block existed in every stream and session teardown, which is
+// why this is a helper rather than a fix at one site.
+//
+// The comparison is the connection's epoch, under the same lock that installs connections, so "still
+// mine" and "close it" cannot be separated by a concurrent install.
+func (c *CommandClient) releaseStandaloneConnection(lease commandCallLease) {
+	c.invalidateConnection(lease.epoch)
+}
+
 func callWithResult[T any](c *CommandClient, call func(ctx context.Context, client daemon.StartedServiceClient) (T, error)) (T, error) {
 	if c == nil {
 		// The bound type can reach the platform as a typed nil pointer. Every client call goes
@@ -525,7 +542,7 @@ func callWithResult[T any](c *CommandClient, call func(ctx context.Context, clie
 		return zero, c.classifyCommandFailure(err, lease)
 	}
 	if c.standalone {
-		defer c.closeConnection()
+		defer c.releaseStandaloneConnection(lease)
 	}
 	result, err := call(ctx, client)
 	if err != nil {
@@ -545,7 +562,7 @@ func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Contex
 		return zero, c.classifyCommandFailure(err, lease)
 	}
 	if c.standalone {
-		defer c.closeConnection()
+		defer c.releaseStandaloneConnection(lease)
 	}
 	c.clientAccess.RLock()
 	client := c.grpcManagedClient
@@ -1029,12 +1046,12 @@ func (c *CommandClient) RefreshRemoteProviders(tags string, timeoutMilliseconds 
 		providerTimeout = defaultProviderRefreshTimeout
 	}
 	batchDeadline := refreshBatchDeadline(providerTimeout)
-	client, ctx, err := c.getClientForCall()
+	client, ctx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, err
 	}
 	if c.standalone {
-		defer c.closeConnection()
+		defer c.releaseStandaloneConnection(lease)
 	}
 	callContext, cancel := context.WithTimeout(ctx, batchDeadline)
 	defer cancel()
@@ -1342,7 +1359,7 @@ func (c *CommandClient) SetGroupExpand(groupTag string, isExpand bool) error {
 }
 
 func (c *CommandClient) StartNetworkQualityTest(configURL string, outboundTag string, serial bool, maxRuntimeSeconds int32, http3 bool, handler NetworkQualityTestHandler) (*NetworkQualityTestSession, error) {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, E.Cause(err, "start network quality test")
 	}
@@ -1359,7 +1376,7 @@ func (c *CommandClient) StartNetworkQualityTest(configURL string, outboundTag st
 	failStart := func(cause error, message string) (*NetworkQualityTestSession, error) {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return nil, E.Cause(cause, message)
 	}
@@ -1380,7 +1397,7 @@ func (c *CommandClient) StartNetworkQualityTest(configURL string, outboundTag st
 		defer func() {
 			close(session.closeDone)
 			if standalone {
-				c.closeConnection()
+				c.releaseStandaloneConnection(lease)
 			}
 		}()
 		for {
@@ -1418,7 +1435,7 @@ func (c *CommandClient) StartNetworkQualityTest(configURL string, outboundTag st
 }
 
 func (c *CommandClient) StartSTUNTest(server string, outboundTag string, handler STUNTestHandler) (*STUNTestSession, error) {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, E.Cause(err, "start stun test")
 	}
@@ -1435,7 +1452,7 @@ func (c *CommandClient) StartSTUNTest(server string, outboundTag string, handler
 	failStart := func(cause error, message string) (*STUNTestSession, error) {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return nil, E.Cause(cause, message)
 	}
@@ -1453,7 +1470,7 @@ func (c *CommandClient) StartSTUNTest(server string, outboundTag string, handler
 		defer func() {
 			close(session.closeDone)
 			if standalone {
-				c.closeConnection()
+				c.releaseStandaloneConnection(lease)
 			}
 		}()
 		for {
@@ -1487,7 +1504,7 @@ func (c *CommandClient) StartSTUNTest(server string, outboundTag string, handler
 }
 
 func subscribeStatus[T any](c *CommandClient, session *streamSession, name string, start func(context.Context, daemon.StartedServiceClient) (grpc.ServerStreamingClient[T], error), onUpdate func(*T), onError func(string)) error {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return E.Cause(err, "subscribe ", name)
 	}
@@ -1503,7 +1520,7 @@ func subscribeStatus[T any](c *CommandClient, session *streamSession, name strin
 	if err != nil {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return E.Cause(err, "subscribe ", name)
 	}
@@ -1513,7 +1530,7 @@ func subscribeStatus[T any](c *CommandClient, session *streamSession, name strin
 		defer func() {
 			close(session.closeDone)
 			if standalone {
-				c.closeConnection()
+				c.releaseStandaloneConnection(lease)
 			}
 		}()
 		for {
@@ -1684,7 +1701,7 @@ func (c *CommandClient) TailscaleLogout(endpointTag string) error {
 }
 
 func (c *CommandClient) StartTailscalePing(endpointTag string, peerIP string, handler TailscalePingHandler) (*TailscalePingSession, error) {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, E.Cause(err, "start tailscale ping")
 	}
@@ -1701,7 +1718,7 @@ func (c *CommandClient) StartTailscalePing(endpointTag string, peerIP string, ha
 	failStart := func(cause error, message string) (*TailscalePingSession, error) {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return nil, E.Cause(cause, message)
 	}
@@ -1719,7 +1736,7 @@ func (c *CommandClient) StartTailscalePing(endpointTag string, peerIP string, ha
 		defer func() {
 			close(session.closeDone)
 			if standalone {
-				c.closeConnection()
+				c.releaseStandaloneConnection(lease)
 			}
 		}()
 		for {
@@ -1739,7 +1756,7 @@ func (c *CommandClient) StartTailscalePing(endpointTag string, peerIP string, ha
 }
 
 func (c *CommandClient) StartTailscaleSSHSession(opts *TailscaleSSHOptions, handler TailscaleSSHHandler) (*TailscaleSSHSession, error) {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, E.Cause(err, "start tailscale ssh session")
 	}
@@ -1748,7 +1765,7 @@ func (c *CommandClient) StartTailscaleSSHSession(opts *TailscaleSSHOptions, hand
 	failStart := func(cause error, message string) (*TailscaleSSHSession, error) {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return nil, E.Cause(cause, message)
 	}
@@ -1849,7 +1866,7 @@ func (c *CommandClient) StartTailscaleSSHSession(opts *TailscaleSSHOptions, hand
 		session.wg.Wait()
 		close(session.closeDone)
 		if standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 	}()
 
@@ -1857,7 +1874,7 @@ func (c *CommandClient) StartTailscaleSSHSession(opts *TailscaleSSHOptions, hand
 }
 
 func (c *CommandClient) ProvideUSBDevices(handler USBProviderHandler) (*USBProviderSession, error) {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, E.Cause(err, "provide usb devices")
 	}
@@ -1867,7 +1884,7 @@ func (c *CommandClient) ProvideUSBDevices(handler USBProviderHandler) (*USBProvi
 	if err != nil {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return nil, E.Cause(err, "provide usb devices")
 	}
@@ -1905,7 +1922,7 @@ func (c *CommandClient) ProvideUSBDevices(handler USBProviderHandler) (*USBProvi
 			}
 		}
 		if standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 	}()
 
@@ -1926,7 +1943,7 @@ func (c *CommandClient) SubscribeTaildropInbox(endpointTag string, handler Taild
 }
 
 func (c *CommandClient) SendTaildropFiles(options *TaildropSendOptions, handler TaildropSendHandler) (*TaildropSendSession, error) {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, E.Cause(err, "send taildrop files")
 	}
@@ -1935,7 +1952,7 @@ func (c *CommandClient) SendTaildropFiles(options *TaildropSendOptions, handler 
 	failStart := func(cause error, message string) (*TaildropSendSession, error) {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return nil, E.Cause(cause, message)
 	}
@@ -1969,7 +1986,7 @@ func (c *CommandClient) SendTaildropFiles(options *TaildropSendOptions, handler 
 		defer func() {
 			close(session.closeDone)
 			if standalone {
-				c.closeConnection()
+				c.releaseStandaloneConnection(lease)
 			}
 		}()
 		for {
@@ -2000,7 +2017,7 @@ func (c *CommandClient) SendTaildropFiles(options *TaildropSendOptions, handler 
 }
 
 func (c *CommandClient) DownloadTaildropFile(endpointTag string, name string, destinationPath string, handler TaildropDownloadHandler) (*TaildropDownloadSession, error) {
-	client, parentCtx, err := c.getClientForCall()
+	client, parentCtx, lease, err := c.getClientForCallWithLease()
 	if err != nil {
 		return nil, E.Cause(err, "download taildrop file")
 	}
@@ -2009,7 +2026,7 @@ func (c *CommandClient) DownloadTaildropFile(endpointTag string, name string, de
 	failStart := func(cause error, message string) (*TaildropDownloadSession, error) {
 		cancel()
 		if c.standalone {
-			c.closeConnection()
+			c.releaseStandaloneConnection(lease)
 		}
 		return nil, E.Cause(cause, message)
 	}
@@ -2043,7 +2060,7 @@ func (c *CommandClient) DownloadTaildropFile(endpointTag string, name string, de
 		defer func() {
 			close(session.closeDone)
 			if standalone {
-				c.closeConnection()
+				c.releaseStandaloneConnection(lease)
 			}
 		}()
 		totalSize := firstChunk.Size
