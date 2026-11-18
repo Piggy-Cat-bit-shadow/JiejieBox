@@ -136,8 +136,36 @@ func TestMieruClientObservesServerClosingAnIdleUnderlay(t *testing.T) {
 	require.Less(t, time.Since(start), 6*time.Second)
 
 	// The proxy keeps listening; a new session must build a new underlay.
-	next, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
-	require.NoError(t, err)
+	//
+	// # Why this is bounded-retried instead of a single dial
+	//
+	// The SDK prunes a closed session ASYNCHRONOUSLY: for a moment after the read above returned, its
+	// AddSession can still see the dead pipe and reports "AddSession() failed: io: read/write on closed
+	// pipe". Measured on two CPUs under `-race -cpu=1`: 4 of 20 runs failed on exactly that line while
+	// the same test passed 20/20 on a 12-core host. The invariant this test pins is that the client
+	// RECOVERS, not that it recovers on the next syscall, so the wait is bounded and the outcome is
+	// still asserted.
+	//
+	// The retry does not paper over a product defect: one layer up, that error is classified
+	// dialTransportFailure (fallback.go), so a box with another member or transport re-dials instead of
+	// reporting the node dead. Retrying the dial here is that same recovery, without the group.
+	var next net.Conn
+	recoveryDeadline := time.Now().Add(5 * time.Second)
+	for {
+		next, err = outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+		if err == nil {
+			break
+		}
+		// Only the known asynchronous-prune transient is worth waiting out; anything else is a real
+		// failure and should surface immediately.
+		require.ErrorContains(t, err, "AddSession() failed: io: read/write on closed pipe",
+			"the second dial failed for a reason other than the SDK's asynchronous session prune")
+		if time.Now().After(recoveryDeadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.NoError(t, err, "the client must build a new underlay after the idle close")
 	defer next.Close()
 	_, err = next.Write([]byte("after"))
 	require.NoError(t, err)
