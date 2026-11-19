@@ -409,12 +409,21 @@
     },
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
-      "workflow": "Release contract verification",
-      "run_id": 44597652440,
-      "head_sha": "879a770fce690a24531910a2cc9bbeeffedc75b3",
+      "workflow": "Android Core ARM64",
+      "run_id": 44601679540,
+      "head_sha": "f568dfe018932301d59c4f6a1504cad12fd0a845",
       "event": "push",
       "conclusion": "success",
-      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44597652440"
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44601679540"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 44601679497,
+      "head_sha": "f568dfe018932301d59c4f6a1504cad12fd0a845",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44601679497"
     }
   ],
   "child_runs": [],
