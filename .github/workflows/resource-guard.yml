@@ -30,6 +30,8 @@ on:
       - "common/resourceguard/**"
       - "common/tls/**"
       - "protocol/anytls/**"
+      - "protocol/hysteria2/**"
+      - "protocol/tuic/**"
       - "service/oomkiller/**"
       - ".github/workflows/resource-guard.yml"
   pull_request:
@@ -37,6 +39,8 @@ on:
       - "common/resourceguard/**"
       - "common/tls/**"
       - "protocol/anytls/**"
+      - "protocol/hysteria2/**"
+      - "protocol/tuic/**"
       - "service/oomkiller/**"
       - ".github/workflows/resource-guard.yml"
   workflow_dispatch:
@@ -62,7 +66,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l ./common/resourceguard ./common/tls ./protocol/anytls ./service/oomkiller)"
+          unformatted="$(gofmt -l ./common/resourceguard ./common/tls ./protocol/anytls ./protocol/hysteria2 ./protocol/tuic ./service/oomkiller)"
           if [ -n "${unformatted}" ]; then
             echo "unformatted files:"
             echo "${unformatted}"
@@ -73,7 +77,22 @@ jobs:
         # double-charge guard, the chained-dial marker and the cancellation path are all properties
         # of that package, and a change there can break the gate without touching
         # common/resourceguard at all.
-        run: go test -count=1 -race -timeout 300s ./common/resourceguard ./common/tls ./protocol/anytls
+        #
+        # service/oomkiller, protocol/hysteria2 and protocol/tuic are here for the other half of
+        # the same contract - the pairings this gate is about, none of which are properties of a
+        # single package:
+        #
+        #   service/oomkiller          the pressure owner: guard_reaches_creation_test.go proves a
+        #                              published Critical stops a REAL TLS creation before the dial,
+        #                              and that the same seam recovers. Before that test the mapping
+        #                              and the protocol seams were each pinned separately, so
+        #                              "installed" and "acting" were indistinguishable.
+        #   protocol/hysteria2,        the two QUIC families that take a permit AND own a pooled
+        #   protocol/tuic              carrier: family_teardown_test.go pins that a carrier closed by
+        #                              the Box Scope never creates a client again (and that a network
+        #                              change still does). Both suites are ~2.5 s under -race, so the
+        #                              addition is bounded and every push to these paths runs it.
+        run: go test -count=1 -race -timeout 300s ./common/resourceguard ./common/tls ./protocol/anytls ./protocol/hysteria2 ./protocol/tuic ./service/oomkiller
       # The full-tree compile is Verify's job (it builds the whole module for the release tag set).
       # Repeating it here added a second answer to the same question; this workflow answers the two
       # questions Verify cannot: the race detector, and the burst matrix at device sizes.
