@@ -53,6 +53,10 @@ type Client struct {
 	coordinator        *runtimecoord.Coordinator
 	registration       *runtimecoord.Registration
 	removeRegistration func()
+	// closed marks a client whose Close has run. The generation predicate keeps reporting stale
+	// afterwards (a closed registration does), so the stream path has to tell "this pool is old" from
+	// "this pool is gone" before it installs anything. See retireGeneration.
+	closed atomic.Bool
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayGRPCOptions, tlsConfig tls.Config) adapter.V2RayClientTransport {
@@ -236,6 +240,8 @@ func (c *Client) Reset() error {
 }
 
 func (c *Client) Close() error {
+	// First, before anything is released: a stream that reads this client must see that it is gone.
+	c.closed.Store(true)
 	if c.pool != nil {
 		c.pool.CloseAll()
 	} else if c.transport != nil {

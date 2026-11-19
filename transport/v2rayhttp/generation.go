@@ -157,7 +157,16 @@ func (c *Client) currentGeneration() uint64 {
 // retireGeneration replaces the pooled transport with a fresh one when the current generation is no
 // longer the one the pool was built for. The previous transport is drained by `GenerationPool.Finish`,
 // not closed here.
+//
+// It is a no-op on a closed client: Close has already released every generation, so the stale
+// predicate that survives it (a closed registration reports stale forever) must not be turned into a
+// new installation. The pool refuses one anyway - see GenerationPool.Retire - but building a
+// transport only to release it is work with no purpose, and the refusal in the pool is the backstop
+// for a caller that races Close by an instruction.
 func (c *Client) retireGeneration() {
+	if c.closed.Load() {
+		return
+	}
 	if c.pool == nil || c.newTransport == nil {
 		// HTTP/1 has no pooled connection to lend: every dial opens its own socket, so there is
 		// nothing for a generation check to retire.
@@ -210,6 +219,13 @@ type GenerationPool struct {
 	draining   []*Generation
 	sequence   uint64
 	terminated uint64
+	// closed marks a pool that has already released everything it owned. It exists for the LATE
+	// generation offer: after Close, a demand that arrives anyway sees the client's registration as
+	// stale (a closed registration reports stale forever) and takes the retire path, which would
+	// install a transport into a pool nothing will ever release again. Adopting it would leak the
+	// transport and every connection it opens; the closed flag is what makes the offer a release
+	// instead of an adoption.
+	closed bool
 }
 
 // NewGenerationPool starts a pool whose first generation is transport.
@@ -240,6 +256,14 @@ func (p *GenerationPool) Retire(next *http2.Transport) {
 		return
 	}
 	p.access.Lock()
+	if p.closed {
+		p.access.Unlock()
+		// The pool has already released everything it owned and will never be asked for a
+		// generation again, so the transport it is being handed must be released HERE or by nobody.
+		// No sequence increase: this generation was never installed.
+		p.releaseGeneration(&Generation{transport: next})
+		return
+	}
 	previous := p.current
 	p.sequence++
 	p.current = &Generation{transport: next, sequence: p.sequence}
@@ -305,6 +329,7 @@ func (p *GenerationPool) CloseAll() {
 		return
 	}
 	p.access.Lock()
+	p.closed = true
 	generations := make([]*Generation, 0, 1+len(p.draining))
 	generations = append(generations, p.current)
 	generations = append(generations, p.draining...)

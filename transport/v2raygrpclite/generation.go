@@ -57,7 +57,15 @@ func (c *Client) acknowledgeGenerationIfCurrent(epoch uint64) bool {
 // retireGeneration replaces the pooled transport with a fresh one when the current generation is no
 // longer the one the pool was built for. The retired transport is drained, not closed: its last
 // request closes it.
+//
+// It is a no-op on a closed client: Close has already released every generation, so the stale
+// predicate that survives it (a closed registration reports stale forever) must not be turned into a
+// new installation. v2rayhttp.GenerationPool refuses one anyway - see its closed state - but building
+// a transport only to release it is work with no purpose.
 func (c *Client) retireGeneration() {
+	if c.closed.Load() {
+		return
+	}
 	if c.pool == nil || c.newTransport == nil {
 		return
 	}
