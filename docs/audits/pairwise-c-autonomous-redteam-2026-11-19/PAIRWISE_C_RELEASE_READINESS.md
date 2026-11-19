@@ -137,8 +137,28 @@ release-relevant effect:
 | report writing can complete a transition and run reclaim (A, R-8) | P3 — by design, pinned by a test | documented decision about who may advance the pressure state machine |
 | `e2e` (58 tests) and `protocol/` suites run by no push-time job | P2 — regressions there are not caught before a push | mounting them is a CI-cost decision: measured 35 s for `e2e`, ~15 s for `protocol/`+`dns/`; recommended, not done in a freeze |
 
-## 6. Transcripts
+## 6. The network-change listener sweep: 30 implementers, no terminal-Close-as-reset
 
+The single most dangerous shape for a release is "a network change permanently breaks an outbound"
+(a `Close()` used as a reset on a client that cannot be rebuilt). Every `InterfaceUpdated`
+implementation in the tree was enumerated and classified:
+
+| Group | Count | What it does | Verdict |
+| --- | --- | --- | --- |
+| Gated outbounds (C-1) | 7 | `gate.NetworkChanged` → the owner's reset action | correct after this round |
+| Outbounds with a reset/retire action | 8 | `Reset()`, `CloseIdleConnections()`, `RetireSuspect()`, `CloseWithError()` | correct: none of them terminates a client it cannot rebuild |
+| Outbounds that swap or re-derive state | 6 | mieru swaps the SDK client under a write lock (its SDK cannot restart after Stop); direct re-fetches local addresses and closes its ICMP port; naive resets its fallback window and closes pooled sockets, keeping the engine; openconnect/openvpn/tailscale re-derive | correct |
+| Inbounds / endpoints | 6 | rebind the listener or device under their own lock | correct |
+| DNS transports / misc | 3 | re-read the system configuration | correct |
+
+Detailed checks: `protocol/direct/outbound.go` closes only its ICMP port (recreated on demand);
+`protocol/naive/outbound.go` closes pooled connections while the Cronet engine stays alive;
+`protocol/mieru/outbound.go` holds the write lock across the client swap precisely so no dial can
+observe a half-replaced client. No implementation uses a **terminal** `Close()` on a resource it needs
+afterwards — which is the shape that turned into a permanent-staleness bug in the v2ray HTTP pools
+(B-2) and was fixed there.
+
+## 7. Transcripts
 ```
 release-freeze: PASS: every pin in the tree is the pin the lock records.
 knowledge-facts: PASS: the entry points agree on one dated target, the report index covers its
