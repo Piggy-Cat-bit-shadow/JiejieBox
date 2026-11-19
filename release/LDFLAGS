@@ -1,1 +1,1 @@
--X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0
+-X runtime.godebugDefault=multipathtcp=0,tlssha1=1,tlssecpmlkem=0,tracebacklabels=0,x509sslcertoverrideplatform=0 -checklinkname=0

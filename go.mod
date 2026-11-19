@@ -13,7 +13,10 @@ toolchain go1.27.4
 // 1.25.5 -> [4588 29 23 24 25]; 1.26.0 without this -> [4588 4587 4589 29 23 24 25]; with it ->
 // [4588 29 23 24 25]. Scope: this is the main module's build context, so the CLI, the daemon and
 // gomobile/libbox built from this module inherit it; an embedder building its own main module does
-// not, and needs the same line (or an explicit CurvePreferences) of its own.
+// not, and needs the same line (or an explicit CurvePreferences) of its own. Release binaries also
+// link with release/LDFLAGS' -X runtime.godebugDefault=..., which REPLACES this computed default
+// string instead of merging into it: that list must keep tlssecpmlkem=0 (and the other names in
+// `go version -m`'s DefaultGODEBUG), or the shipped ClientHello is the 7-group 1.26 set.
 godebug tlssecpmlkem=0
 
 require (
