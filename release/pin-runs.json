@@ -431,12 +431,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
-      "tip": "2105ebe3338298ab2908a115d6772733ff17f7aa",
-      "pin": "2105ebe33382",
+      "tip": "f23ebd654a75acb1fb3484ececdbe1d9b5fd1552",
+      "pin": "f23ebd654a75",
       "relation": "identical",
       "policy": "update",
       "observed_at": "2026-11-20",
-      "note": "dev integrates the two prepared patches and their tests: UDP NAT entries cancel the dial they launched on every close path (idle sweep, explicit Close, capacity eviction), and the Linux netlink monitor reopens its subscription with 1s->30s backoff after a read error and emits one update after recovery. Both were red before the patch and green after it on this base; linux-tun-verify runs them. The pin was moved by release-freeze.py apply and needs a run at the new lock before the release gate is satisfied."
+      "note": "dev integrates the two prepared patches and their tests: UDP NAT entries cancel the dial they launched on every close path (idle sweep, explicit Close, capacity eviction); the Linux netlink monitor reopens its subscription with 1s->30s backoff after a read error and emits one update after recovery. The follow-up commit closes the install-after-Close window: setSocket refuses under the same lock Close uses and closes the socket it opened, and a controlled test pauses recovery before the install and runs Close in that window (red before the fix, 3.5s; green after, 3.0s). The pin was moved by release-freeze.py apply and needs a run at the new lock before the release gate is satisfied."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
