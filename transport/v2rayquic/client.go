@@ -470,30 +470,46 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 	// per-offer timer/context from outliving the work even when the result is discarded.
 	pending.cancel(nil)
 
-	var lateGeneration bool
-	if err == nil && conn != nil {
-		lateGeneration = c.coordinator != nil && c.currentGeneration() != startGeneration
-		if lateGeneration {
-			// The result belongs to the generation that ended while it was being established.
-			// Released here, exactly once, instead of being published.
-			conn.closeConn()
-			err = staleGenerationError{}
-		}
+	if err == nil && conn != nil && c.coordinator != nil && c.currentGeneration() != startGeneration {
+		// The result belongs to the generation that ended while it was being established.
+		// Released here, exactly once, instead of being published.
+		conn.closeConn()
+		err = staleGenerationError{}
+	}
+
+	if testHookBeforePublish != nil {
+		// A test moves the epoch here: between the dial's own re-confirmation above and the publish
+		// decision below. Nil in production.
+		testHookBeforePublish()
 	}
 
 	c.connAccess.Lock()
 	discard := pending.discarded
-	if discard {
+	publish := !discard && err == nil
+	if publish && !c.acknowledgeGenerationIfCurrent(startGeneration) {
+		// ONE decision. The connection is published as the pool's current generation only if the
+		// network is STILL at the generation it was built for. Comparing before this lock and
+		// acknowledging after it - the previous shape, recorded as R-B2 - leaves a window in which
+		// Advance lands between the two, and Acknowledge then stamps the NEW epoch onto a connection
+		// built on the OLD network: nothing retires it afterwards and every later demand is handed
+		// it, which is audit F-15 reached through a gap a comparison cannot close.
+		err = staleGenerationError{}
+		publish = false
+	}
+	switch {
+	case discard:
 		pending.err = pending.cause
 		if pending.err == nil {
 			pending.err = net.ErrClosed
 		}
-	} else {
-		pending.conn = conn
+		pending.conn = nil
+	case !publish:
 		pending.err = err
-		if err == nil {
-			c.conn.Store(conn)
-		}
+		pending.conn = nil
+	default:
+		pending.conn = conn
+		pending.err = nil
+		c.conn.Store(conn)
 	}
 	if c.pending == pending {
 		c.pending = nil
@@ -501,15 +517,11 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 	close(pending.done)
 	c.connAccess.Unlock()
 
-	if discard && conn != nil {
+	if !publish && conn != nil {
+		// A discarded or late result is released here, before any caller can act on it. closeConn is
+		// once-guarded, so the pre-lock late-generation path having closed it already is not a double
+		// close.
 		conn.closeConn()
-	}
-	if !discard && !lateGeneration && pending.err == nil {
-		// The published generation was built after the last network change this pool observed, so
-		// the pool is current again. Recording it here - and only here - is what keeps Stale() from
-		// reporting a generation that was just replaced, and keeps the reference to this pool's
-		// epoch from drifting behind the coordinator's.
-		c.acknowledgeGeneration()
 	}
 }
 
@@ -691,6 +703,13 @@ func (c *Client) Reset() error {
 // connection is left on the path it had - and a cancelled retirement retires the generation through
 // the same "unknown" branch as any other failed switch. Both are the already-pinned failure paths.
 func (c *Client) ResetContext(ctx context.Context) error {
+	// The generation this reset acts for. The network manager claims a generation before the listener
+	// phase runs, so at entry this is the NEW one; a migration that validates a socket against it
+	// makes the pool current FOR IT, and that is the only epoch the acknowledgement below may record.
+	// A second change landing while the migration is in flight (which takes seconds) would otherwise
+	// be stamped onto a connection whose validated path belongs to the network that just ended - the
+	// same F-15 hole as the publish path, with a wider window.
+	resetGeneration := c.currentGeneration()
 	// A creation that is still in flight belongs to the generation that just ended. It is
 	// discarded and its waiters are released, exactly as before the migration existed.
 	c.connAccess.Lock()
@@ -744,8 +763,11 @@ func (c *Client) ResetContext(ctx context.Context) error {
 	case migrationMigrated:
 		// The connection now sends on a socket of the current network. That IS a rebuild against
 		// the current generation, so the pool is current again and a demand arriving after this
-		// point may join it.
-		c.acknowledgeGeneration()
+		// point may join it - but only for the generation this reset acted for. If the network moved
+		// again while the migration was validating, the acknowledgement is refused and the pool stays
+		// stale, so the next demand detaches this connection and dials a generation established after
+		// the later change.
+		c.acknowledgeGenerationIfCurrent(resetGeneration)
 		return nil
 	case migrationUnchanged:
 		// The candidate failed before any switch was requested and the connection was never

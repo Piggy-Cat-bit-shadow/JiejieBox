@@ -61,11 +61,50 @@ func (c *Client) generationStale() bool {
 // NOT switch the connection (the candidate failed before any switch was requested) deliberately does
 // not acknowledge: the connection is still on the previous path, which is why the next demand is
 // given a new generation instead of the old one.
+// acknowledgeGeneration recorded that the pool was current for WHATEVER generation the coordinator
+// reported at call time.
+//
+// It has no caller any more, and it must not get one back: that is precisely the shape that let a
+// late result stamp the newest epoch onto itself. Both sites that used it now call
+// acknowledgeGenerationIfCurrent with the epoch they actually acted for - the publish path with the
+// epoch the creation was built for, the migration path with the epoch its reset began under - and the
+// function is kept only as the record of why the unsafe form was removed. Delete it with the next
+// cleanup rather than reintroducing it.
+//
+// (Deprecated in the doc sense, not the compiler's: `go vet` does not flag an unused method.)
 func (c *Client) acknowledgeGeneration() {
 	if c.registration != nil {
 		c.registration.Acknowledge()
 	}
 }
+
+// acknowledgeGenerationIfCurrent records the pool as current for `epoch` only if the network is STILL
+// at that generation, and reports whether it did.
+//
+// # Why the compare and the acknowledgement have to be one call
+//
+// A completed creation has an epoch token (`startGeneration`) and must answer "is this result, built
+// for generation N, still publishable". Comparing first and acknowledging second leaves an
+// instruction-sized window: an Advance landing inside it makes Acknowledge() stamp the NEW epoch onto
+// a connection built on the OLD network, after which nothing retires it and every later demand is
+// handed it - audit F-15 reached through a gap a comparison cannot close.
+// `Registration.AcknowledgeIfCurrent` closes it (coordinator.go: "the check and the write are under
+// the registration lock while the coordinator lock is read, so no new epoch can slip between the
+// comparison and the store"), and this is the per-creation token it was written for.
+//
+// A pool with no registration has no generation to defend, so the answer is "yes" - the behaviour
+// every build without a coordinator had before the check existed.
+func (c *Client) acknowledgeGenerationIfCurrent(epoch uint64) bool {
+	if c.registration == nil {
+		return true
+	}
+	return c.registration.AcknowledgeIfCurrent(epoch)
+}
+
+// testHookBeforePublish is nil in production. A test sets it to move the epoch between the dial's own
+// re-confirmation and the publish decision, which is the only way to exercise that window
+// deterministically (the same technique as common/runtimecoord/generation_gate.go's hook).
+var testHookBeforePublish func()
 
 // currentGeneration is the network generation that is current NOW.
 //
