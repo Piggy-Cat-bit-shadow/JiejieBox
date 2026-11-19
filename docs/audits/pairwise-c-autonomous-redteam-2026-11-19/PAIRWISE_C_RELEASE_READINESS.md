@@ -125,6 +125,7 @@ release-relevant effect:
 | the fake-IP cursor resumes past the ledger (C) | a client's held address remapped to a different domain after a reload |
 | the QUIC pool's publish and its acknowledgement are one decision (C) | a connection built on the old network stamped as current, then handed to every later demand |
 | a replaced or removed node loses its predecessor's URL-test measurement (release windows A) | a never-probed node selected on evidence about a server that is gone |
+| a shared HTTP transport refuses to rebuild after Close (triple C) | a late provider refresh or rule-set fetch building a transport inside a released Box, which nothing would ever close |
 
 **Accepted, unfixed, and why** (each has a file:line and a settling test in the window audits):
 
@@ -132,7 +133,7 @@ release-relevant effect:
 | --- | --- | --- |
 | trusttunnel hands out a session without reserving it (A, R-1) | P2 — one wasted session during a trim | needs a reservation protocol across four call sites in the transport's most delicate path |
 | anytls has no `ReuseSuspect`; mieru no idle releaser (A, R-2/R-3) | P2 — a pre-sleep session can take new work; mieru's pool is not trim-reachable for ~5 s | requires SDK methods that do not exist at the current pins |
-| `sing-tun` UDP NAT: no admission on the path, eviction does not cancel the dial it launched, download-only flows expire, byte budget × instances (A, R-4…R-7) | P1/P2 — the 4096-entry table is the only bound, and a burst can outrun it | cross-repo fix plus a pin bump whose evidence is a CI run; needs a product decision on cancelling a UDP flow's dial |
+| `sing-tun` UDP NAT: no admission on the path, eviction does not cancel the dial it launched, download-only flows expire, byte budget × instances (A, R-4…R-7) | P1/P2 — the 4096-entry table is the only bound, and a burst can outrun it | cross-repo fix plus a pin bump whose evidence is a CI run; needs a product decision on cancelling a UDP flow's dial. **The in-repo half is identified and deliberately not applied in the freeze:** `route/conn.go`'s `NewPacketConnection` calls `this.ListenPacket` with no `resourceguard.AdmitCreation`, so the amplification's entry point is ungated. Wrapping that call the way `v2rayquic.createConnection` wraps QUIC construction would bound the creation rate at Critical — but it would also refuse **plain UDP** at Critical (DNS to a direct resolver, direct QUIC), which today still works under pressure. That is a policy change, not a bug fix, and it belongs in the next round with a decision, not in a release freeze |
 | `v2rayquic`'s publish site is not atomic (B, R-B2) | P3 — a narrow race | its acknowledgement is deliberately after the publish lock; the atomic form needs that section restructured |
 | H3→H2→HTTP/1.1 demotion is silent; naive's fallback window can stay unarmed (B, R-B3/R-B4) | P2 — diagnosability, and extra probes on short deadlines | both are observability/policy decisions (what must be visible, what "ambiguous" means) rather than bugs |
 | reload is stop-then-build (B, R-B9) | P2 — a semantic validation failure leaves nothing running until config recovery | lifecycle redesign; needs a device to judge whether a capture gap beats a failed reload |

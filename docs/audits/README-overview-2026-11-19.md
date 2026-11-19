@@ -33,6 +33,7 @@ each round's own README is the entry point for its evidence.
 | 13 | a generation offered to a closed pool is released, not adopted | triple A |
 | 14 | a replaced or removed node loses its predecessor's URL-test measurement | release windows A |
 | 15 | a publish and its generation acknowledgement are one decision, on the QUIC pool and its migration path | triple C |
+| 16 | a shared HTTP transport refuses to rebuild itself after Close (request and reset paths) | triple C |
 
 Every one has a test that fails when the fix is removed; the mutation controls are listed in each
 round's verification page (`MC-1`, `MC-B1…B6`, `MC-C1/C2`, `MC-T1a/b`).

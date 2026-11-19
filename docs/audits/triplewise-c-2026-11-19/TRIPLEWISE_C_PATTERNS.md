@@ -22,9 +22,12 @@ state installed a client nobody owned (pairwise A, A-3).
 once the owner is gone? If the answer to a stale check can be "true because destroyed", the caller needs
 a second question — "closed?" — before it acts.*
 
-**Where to look next.** Every `atomic.Bool` / `sync.Once` / registration that a `Close` does not clear;
-`transport/v2rayquic`'s publish site is the recorded outstanding member of the same family (it is a
-narrow race rather than a closed marker, but the reasoning crosses).
+**Where to look next.** Every `atomic.Bool` / `sync.Once` / registration that a `Close` does not clear.
+Two instances were found by this sweep: the QUIC pool's publish decision (C-T5) and
+`common/httpclient`'s `ManagedTransport` (a request or a Reset after Close rebuilt the inner transport
+inside a released owner). `transport/v2rayquic`'s `retireConnection` and the endpoint managers are the
+remaining candidates; the question to ask of each is unchanged - *is nil/zero distinguishable from
+"closed"?*
 
 ## P10 — Three clocks, one constraint
 
