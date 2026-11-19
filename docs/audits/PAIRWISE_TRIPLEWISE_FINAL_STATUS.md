@@ -49,21 +49,31 @@ ratchet, the dependency upgrade, and the boundary tests listed in §3.
 
 ## 3. Boundaries that are characterized, not fixed
 
-- **`/30` fake-IP ranges collide *within one generation*.** A two-address pool has one reachable address
-  (the allocator starts at +2), so every domain shares it and `Lookup` answers with the newest. `/29` has
-  six reachable addresses; its distinctness is asserted for four allocations and its **exhaustion** for
-  the fifth, which is the extent of the claim. Pinned by
-  `dns/transport/fakeip/store_boundaries_test.go`. **A reload of an exhausted `/30` is now refused at
-  start** (§3).
+- **`/30` fake-IP ranges collide *within one generation*.** The usable capacity of a range is
+  `2^(32-prefix) - 3` (the network address and the last address are never issuable, and the allocator
+  starts at +2, so the first host address is skipped too). A `/30` therefore serves **one** name: every
+  further name in a pool with no inherited issuance gets the same address and `Lookup` answers with the
+  newest. A `/29` serves **five** (`.2` - `.6`); the test asserts that capacity, asserts the same
+  addresses are not repeated for those five, and asserts the sixth **wraps and overwrites** - which is
+  the extent of the claim. When the pool inherits addresses from a previous generation, the same
+  exhaustion **refuses** instead (§ next bullet). Pinned by
+  `dns/transport/fakeip/store_boundaries_test.go` and `store_overlap_test.go`.
 - **The reload guarantee is qualified, and an overlapping range is refused.** The cursor resumes past the
   previous generation's high-water mark *for the configured range*. **A range that shrinks onto addresses
   the previous generation issued no longer resumes past them silently**: `resumeAfterLedger` now clips each
   issued interval to the new range's issuable span, resumes past the overlap when a free tail remains, and
   **refuses `Start` when the overlap reaches the pool's last address** — because the only alternative is
   the wrap that re-binds a client's held address to a new domain. A range that moves entirely away
-  inherits nothing, which is correct. `dns/transport/fakeip/store_overlap_test.go` holds the three cases;
-  the defect was found by the audit after the first version of this page explained the shrink case as
-  "correct", and it was wrong: the old endpoint check skipped an interval whose body covered the new pool.
+  inherits nothing, which is correct.
+
+  **The protection is a standing constraint, not just a cursor seed** (the re-review's second P1): the
+  clipped overlaps are stored on the store and every allocation skips past them, so when the free tail is
+  used up the wrap does **not** re-bind a previous generation's address — the allocation is refused
+  instead. The same search skips addresses this generation already issued, so skipping cannot collide with
+  a live mapping either. Tests: `store_overlap_test.go` — the free-tail case (a `/29` inheriting `.2` and
+  `.3` hands out `.4`, `.5`, `.6` and then refuses, with no mapping written for `.2`), the IPv6 twin, the
+  multiple-interval case, and the three shrink shapes; `TestAReloadOfAnExhaustedSmallPoolRefusesToStart`
+  covers the exhausted `/30`.
 - **The concurrent allocation test now actually is concurrent.** The earlier name said "concurrent"
   while the body called `Create` twice in sequence; the sequential case is renamed and a barrier-based
   sixteen-caller test runs under `-race`.
