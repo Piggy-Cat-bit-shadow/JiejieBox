@@ -57,6 +57,38 @@ named in `TRIPLEWISE_C_PATTERNS.md` §P9.
 | 跨仓库修复闭环（main line, version pin, tests, evidence） | **BLOCKED** for `sing-tun` (UDP NAT ownership) and for the Darwin/Cronet slice: the pin bump's release gate requires a CI run for the new revision, which cannot be produced here. The in-repo half is identified in `PAIRWISE_C_RELEASE_READINESS.md` §5 |
 | 正式版门禁与剩余风险（Release Blocker vs PLATFORM_PENDING） | `PAIRWISE_C_RELEASE_READINESS.md`: pin lock PASS, knowledge gate PASS, `go vet ./...` clean, four cross-builds (the Darwin slice BLOCKED), 20 touched packages green under the shipped Windows profile, `-race` on runtimecoord/dialer/route green, census 8 of 109 with a ratchet |
 
+## The expanded search's new result: a recorded risk that was already mitigated
+
+The round's one new finding is a **correction of our own record**, and it changed a release decision.
+
+Window B recorded R-B9 as "a semantic validation failure leaves nothing running until config recovery",
+which read like a reason to redesign the reload ordering before shipping. It is not. With a config
+store and `recoverToLastGood` — the desktop configuration — `buildAndStart`'s error branch calls
+`tryRecoverToLastGood`, rebuilds from the stored document, records the recovery, and reports
+`ServiceChangeStatusRecovered` rather than `Failed`. That is exactly R-B9's scenario, and the daemon
+already had a test for it:
+
+```
+go test ./daemon -run 'TestABuildFailureAfterAParseableCandidateRecoversToTheStoredDocument|...' -v
+--- PASS: TestABuildFailureAfterAParseableCandidateRecoversToTheStoredDocument  0.33s
+--- PASS: TestTheRecoverySurvivesAProcessRestart                                0.31s
+--- PASS: TestAFailedStartWithoutRecoveryReportsThatNothingRuns                 0.20s
+--- PASS: TestAFailedRecoveryReportsThatNothingRuns                             0.19s
+--- PASS: TestAFailedStartRecoversToTheLastGoodConfiguration                    0.31s
+--- PASS: TestARecoveredStartIsNotSuccessAndReturnsNoError                      0.31s
+ok  github.com/sagernet/sing-box/daemon  1.813s
+```
+
+The residual is a **capture gap and a status change**, not a dead service, and the no-store case is an
+explicit branch with its own test rather than an unexamined hole. So the reload keeps its ordering: a
+build-then-swap would hold two Boxes — registries, device claims, ports — alive at once, which is a
+larger risk than the gap it removes. `PAIRWISE_B_FINDINGS.md` §R-B9 and the release-readiness table are
+corrected accordingly.
+
+The lesson is the one this window was created to produce: **an audit record is a hypothesis too.** It
+was written from a source read that stopped one call frame short of the recovery path, and it survived
+into the release deck unchallenged until a window with "go and look wider" as its mandate checked it.
+
 ## What this window did not do
 
 It did not scan the 60 KB appendix seed by seed, and it did not produce external intelligence. Both are

@@ -333,15 +333,27 @@ Test that settles it: two Boxes sequentially without `cache_file`; resolve `X` i
 resolve `Y` in the second, then connect to `X`'s address through the second and assert the peer is
 asked for `X` (today: `Y`, or a refusal if nothing was re-allocated yet).
 
-## R-B9〔MEDIUM〕Hot reload is stop-then-build, with no preservation on a semantic validation failure
+## R-B9〔MEDIUM，后果已更正：自动恢复，不是"什么都不跑"〕Hot reload is stop-then-build
 
 `daemon/started_service.go:642-662` closes the running instance and only then builds the new one; only
 the *parse* is pre-checked (`:553-571`), while `box.New` (all semantic validation) runs after the
-close (`daemon/instance.go:242-250`). A configuration that parses but does not build leaves nothing
-running unless config recovery is enabled (`config_recovery.go:168-193`), and the TUN device plus
-every tracked connection are closed for the whole rebuild. Recorded, not fixed: changing the order is
-a lifecycle redesign, and the daemon gate that exists (`verify.yml` "daemon configuration recovery")
-was not challenged here.
+close (`daemon/instance.go:242-250`). The TUN device plus every tracked connection are closed for the
+whole rebuild.
+
+**Correction (triplewise C):** this record's stated consequence — "leaves nothing running unless config
+recovery is enabled" — understated the recovery path. With a config store and `recoverToLastGood`
+(the desktop configuration), a candidate that parses but fails to build **is recovered automatically**:
+`buildAndStart`'s error branch calls `tryRecoverToLastGood`, which rebuilds from the stored document,
+records the recovery, and reports `ServiceChangeStatusRecovered` rather than `Failed`. That is R-B9's
+exact scenario, and it has a test: `TestABuildFailureAfterAParseableCandidateRecoversToTheStoredDocument`
+(plus `TestTheRecoverySurvivesAProcessRestart`, so the failed candidate does not poison the next start,
+and `TestAFailedStartWithoutRecoveryReportsThatNothingRuns` for the no-store case, which is explicit).
+Six of those tests were run at this HEAD and pass (1.8 s).
+
+So the residual is a **capture gap and a status change**, not a dead service. The ordering remains as
+designed: a lifecycle redesign to build-then-swap was considered and is not needed for the release,
+because the failure mode it would prevent is already handled — and the honest cost of the redesign
+(holding two Boxes, with their registries and device claims, alive at once) is larger than the gap.
 
 ## R-B10〔LOW〕Two domains can share one placeholder when the cursor wraps
 
