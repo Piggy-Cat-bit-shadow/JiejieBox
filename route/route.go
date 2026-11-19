@@ -1467,15 +1467,50 @@ func (r *Router) issuedFakeIPAddress(address netip.Addr) (bool, adapter.FakeIPIs
 // version of the change, and the difference is not cosmetic - the A7b end-to-end row failed on it,
 // because a range record refuses `198.18.4.200` on a range whose cursor stopped near `198.18.0.2`.
 func (r *Router) retiredFakeIPAddress(address netip.Addr) (bool, adapter.FakeIPIssuanceInterval) {
-	if !address.IsValid() || r.dnsTransport == nil {
+	if !address.IsValid() {
 		return false, adapter.FakeIPIssuanceInterval{}
 	}
-	fakeIP := r.dnsTransport.FakeIP()
-	if fakeIP == nil || fakeIP.Store() == nil {
+	var retired []adapter.FakeIPIssuanceInterval
+	if r.dnsTransport != nil {
+		if fakeIP := r.dnsTransport.FakeIP(); fakeIP != nil && fakeIP.Store() != nil {
+			retired = fakeIP.Store().RetiredAddresses()
+		}
+	}
+	// # Why the durable record is the fallback, not a duplicate
+	//
+	// Everything above needs a LIVE fakeip transport. When the current configuration has none - the
+	// operator removed fake-IP, or moved it to a different range and dropped the server - nothing
+	// answers, and this function used to return "not ours" for an address this installation really
+	// did mint. The address was then dialled as an ordinary literal: the exact sequence the record
+	// was added for, with each such dial burning a connect timeout.
+	//
+	// The cache file's record is the only surviving statement of that history (it is written before
+	// the reset that destroys the range metadata), so it is consulted whenever the live store cannot
+	// answer. When a live store CAN answer it already includes this record (Store.RetiredAddresses
+	// reads its own storage), so the two are never added together.
+	if len(retired) == 0 {
+		retired = r.durableFakeIPRetired()
+	}
+	if len(retired) == 0 {
 		return false, adapter.FakeIPIssuanceInterval{}
 	}
-	interval, covered := adapter.FakeIPRetiredCovers(fakeIP.Store().RetiredAddresses(), address)
+	interval, covered := adapter.FakeIPRetiredCovers(retired, address)
 	return covered, interval
+}
+
+// durableFakeIPRetired reads the cache file's retirement record once.
+func (r *Router) durableFakeIPRetired() []adapter.FakeIPIssuanceInterval {
+	r.fakeIPRetiredOnce.Do(func() {
+		if r.ctx == nil {
+			return
+		}
+		cacheFile := service.FromContext[adapter.CacheFile](r.ctx)
+		if cacheFile == nil || !cacheFile.StoreFakeIP() {
+			return
+		}
+		r.fakeIPRetiredDurable = cacheFile.FakeIPRetired()
+	})
+	return r.fakeIPRetiredDurable
 }
 
 func (r *Router) matchRule(

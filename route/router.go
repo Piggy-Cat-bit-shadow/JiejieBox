@@ -43,6 +43,16 @@ type Router struct {
 	dnsTransport adapter.DNSTransportManager
 	connection   adapter.ConnectionManager
 	network      adapter.NetworkManager
+	// fakeIPRetiredOnce/fakeIPRetiredDurable carry the DURABLE retirement record (the cache file's,
+	// written by `store_fakeip`) for the configurations where no live fakeip store can answer.
+	//
+	// Resolved lazily rather than at construction: the router is built before the service manager
+	// creates the cache file (box.go builds the router at :665 and services at :800), so a
+	// construction-time lookup would always find nothing. Once is enough because the answer is the
+	// installation's history, not a per-query fact, and it is read only on the slow path - an address
+	// inside a fakeip range that no live store can map.
+	fakeIPRetiredOnce    sync.Once
+	fakeIPRetiredDurable []adapter.FakeIPIssuanceInterval
 	// powerGovernor is the fork's sleep authority, or nil when none was installed - which is what
 	// every test that builds a Router directly has, so every use of it is nil-checked.
 	powerGovernor *power.Governor
