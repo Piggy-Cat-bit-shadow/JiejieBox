@@ -6,7 +6,7 @@ Window A of the JiejieBox cross-system pairwise debug. The subject is not "does 
 | File | What it holds |
 | --- | --- |
 | [`PAIRWISE_A_MATRIX.md`](PAIRWISE_A_MATRIX.md) | owner map, the A01–A11 pair table (shared boundary, attacks executed, conclusion, evidence), and the capability table the conclusions rest on |
-| [`PAIRWISE_A_FINDINGS.md`](PAIRWISE_A_FINDINGS.md) | the three fixed defects (F-1…F-3) with trigger, why the previous judgement missed them, fix and regression; then the four confirmed-but-unfixed findings (R-1…R-7) with the test that would settle each |
+| [`PAIRWISE_A_FINDINGS.md`](PAIRWISE_A_FINDINGS.md) | the three fixed defects (F-1…F-3) with trigger, why the previous judgement missed them, fix and regression; then the seven confirmed-but-unfixed findings (R-1…R-7) with the test that would settle each |
 | [`PAIRWISE_A_EFFECTIVENESS.md`](PAIRWISE_A_EFFECTIVENESS.md) | the mechanism chain per claim — loaded → real entry → decision → action → effect → reclaim — and the four mutation controls |
 | [`PAIRWISE_A_VERIFICATION.md`](PAIRWISE_A_VERIFICATION.md) | environment, commands, per-package results, mutation controls, the pre-existing red tests, and the coverage limits that are *not* claimed |
 | `raw/` | raw command output cited by the verification page |

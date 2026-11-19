@@ -1,6 +1,6 @@
 # PAIRWISE A — Findings
 
-Three defects were confirmed by source and by execution, and fixed in this round. Four more were
+Three defects were confirmed by source and by execution, and fixed in this round. Seven more were
 confirmed **by reading only** and are recorded with their exact locations and the test that would
 settle them; they are not fixed here, and each says why. Nothing in this file is marked fixed
 without a regression that fails when the fix is removed.
