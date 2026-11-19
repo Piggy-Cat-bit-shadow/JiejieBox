@@ -1,8 +1,20 @@
 module github.com/sagernet/sing-box
 
-go 1.25.5
+go 1.26.0
 
 toolchain go1.27.4
+
+// The go line moved to 1.26 so that golang.org/x/net v0.62.0 and golang.org/x/crypto v0.58.0 - the
+// releases that cover every advisory govulncheck reported as reachable - can be required at all.
+// Moving it also moves Go's GODEBUG defaults, and one of them changes the wire: `tlssecpmlkem`
+// became on, which adds SecP256r1MLKEM768 and SecP384r1MLKEM1024 to every ClientHello. This
+// product's camouflage is built for the pre-1.26 group set, so that default is pinned back here
+// instead of trading a fingerprint for the fixes. Measured with scripts/ci/clienthello-probe:
+// 1.25.5 -> [4588 29 23 24 25]; 1.26.0 without this -> [4588 4587 4589 29 23 24 25]; with it ->
+// [4588 29 23 24 25]. Scope: this is the main module's build context, so the CLI, the daemon and
+// gomobile/libbox built from this module inherit it; an embedder building its own main module does
+// not, and needs the same line (or an explicit CurvePreferences) of its own.
+godebug tlssecpmlkem=0
 
 require (
 	filippo.io/age v1.3.1
@@ -71,14 +83,14 @@ require (
 	go.uber.org/zap v1.27.1
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
-	golang.org/x/mod v0.38.0
-	golang.org/x/net v0.58.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
-	golang.org/x/text v0.41.0
+	golang.org/x/mod v0.41.0
+	golang.org/x/net v0.62.0
+	golang.org/x/sync v0.24.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
+	golang.org/x/text v0.43.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
@@ -195,7 +207,7 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
