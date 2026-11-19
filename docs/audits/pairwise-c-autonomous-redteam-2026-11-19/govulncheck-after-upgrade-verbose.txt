@@ -1,0 +1,363 @@
+﻿Fetching vulnerabilities from the database...
+
+Checking the code against the vulnerabilities...
+
+The package pattern matched the following 187 root packages:
+  github.com/sagernet/sing-box/common/interrupt
+  github.com/sagernet/sing-box/common/netcap
+  github.com/sagernet/sing-box/common/taskmonitor
+  github.com/sagernet/sing-box/common/winmutex
+  github.com/sagernet/sing-box/common/windivert
+  github.com/sagernet/sing-box/common/tlsspoof
+  github.com/sagernet/sing-box/common/trafficclass
+  github.com/sagernet/sing-box/constant/goos
+  github.com/sagernet/sing-box/constant
+  github.com/sagernet/sing-box/common/ipset
+  github.com/sagernet/sing-box/schema
+  github.com/sagernet/sing-box/option
+  github.com/sagernet/sing-box/log
+  github.com/sagernet/sing-box/adapter
+  github.com/sagernet/sing-box/adapter/certificate
+  github.com/sagernet/sing-box/adapter/endpoint
+  github.com/sagernet/sing-box/adapter/inbound
+  github.com/sagernet/sing-box/common/physicalpath
+  github.com/sagernet/sing-box/adapter/outbound
+  github.com/sagernet/sing-box/common/urltest
+  github.com/sagernet/sing-box/adapter/provider
+  github.com/sagernet/sing-box/adapter/service
+  github.com/sagernet/sing-box/common/resourceguard
+  github.com/sagernet/sing-box/common/buildgate
+  github.com/sagernet/sing-box/common/certificate
+  github.com/sagernet/sing-box/common/redir
+  github.com/sagernet/sing-box/common/settings
+  github.com/sagernet/sing-box/common/listener
+  github.com/sagernet/sing-box/common/badversion
+  github.com/sagernet/sing-box/experimental/locale
+  github.com/sagernet/sing-box/experimental/deprecated
+  github.com/sagernet/sing-box/service/powerreport
+  github.com/sagernet/sing-box/common/dialer
+  github.com/sagernet/sing-box/common/badtls
+  github.com/sagernet/sing-box/common/ktls
+  github.com/sagernet/sing-box/common/schannel
+  github.com/sagernet/sing-box/common/tlsfragment
+  github.com/sagernet/sing-box/common/compatible
+  github.com/sagernet/sing-box/common/power
+  github.com/sagernet/sing-box/common/artifact
+  github.com/sagernet/sing-box/common/badhttp
+  github.com/sagernet/sing-box/common/ja3
+  github.com/sagernet/sing-box/common/sniff/internal/qtls
+  github.com/sagernet/sing-box/common/sniff
+  github.com/sagernet/sing-box/common/srs
+  github.com/sagernet/sing-box/experimental/clashmode
+  github.com/sagernet/sing-box/route/rule
+  github.com/sagernet/sing-box/dns
+  github.com/sagernet/sing-box/common/tls
+  github.com/sagernet/sing-box/common/httpclient
+  github.com/sagernet/sing-box/common/netns
+  github.com/sagernet/sing-box/common/netx
+  github.com/sagernet/sing-box/common/routeflow
+  github.com/sagernet/sing-box/common/runtimecoord
+  github.com/sagernet/sing-box/common/trafficcontrol
+  github.com/sagernet/sing-box/experimental
+  github.com/sagernet/sing-box/experimental/cachefile
+  github.com/sagernet/sing-box/common/iponly
+  github.com/sagernet/sing-box/protocol/direct
+  github.com/sagernet/sing-box/protocol/group
+  github.com/sagernet/sing-box/common/process
+  github.com/sagernet/sing-box/common/suspendwatch
+  github.com/sagernet/sing-box/common/trafficsched
+  github.com/sagernet/sing-box/protocol/dns
+  github.com/sagernet/sing-box/route
+  github.com/sagernet/sing-box/common/badh2
+  github.com/sagernet/sing-box/transport/v2rayhttp
+  github.com/sagernet/sing-box/transport/v2rayxhttp
+  github.com/sagernet/sing-box
+  github.com/sagernet/sing-box/cmd/ci-artifact-probe
+  github.com/sagernet/sing-box/cmd/internal/build_shared
+  github.com/sagernet/sing-box/cmd/internal/app_store_connect
+  github.com/sagernet/sing-box/cmd/internal/mobilebuildtags
+  github.com/sagernet/sing-box/cmd/internal/applebuildtags
+  github.com/sagernet/sing-box/cmd/internal/appletags
+  github.com/sagernet/sing-box/cmd/internal/build
+  github.com/sagernet/sing-box/cmd/internal/build_boxdd
+  github.com/sagernet/sing-box/cmd/internal/build_libbox
+  github.com/sagernet/sing-box/cmd/internal/format_docs
+  github.com/sagernet/sing-box/cmd/internal/merge_aar
+  github.com/sagernet/sing-box/cmd/internal/merge_apple_xcframework
+  github.com/sagernet/sing-box/cmd/internal/modlayout
+  github.com/sagernet/sing-box/cmd/internal/protogen
+  github.com/sagernet/sing-box/cmd/internal/read_tag
+  github.com/sagernet/sing-box/cmd/internal/update_android_version
+  github.com/sagernet/sing-box/cmd/internal/update_apple_version
+  github.com/sagernet/sing-box/cmd/internal/update_certificates
+  github.com/sagernet/sing-box/cmd/internal/update_desktop_version
+  github.com/sagernet/sing-box/common/convertor/adguard
+  github.com/sagernet/sing-box/common/geosite
+  github.com/sagernet/sing-box/common/networkquality
+  github.com/sagernet/sing-box/common/stun
+  github.com/sagernet/sing-box/common/configtx
+  github.com/sagernet/sing-box/provider/parser
+  github.com/sagernet/sing-box/provider/remote
+  github.com/sagernet/sing-box/service/oomkiller
+  github.com/sagernet/sing-box/daemon
+  github.com/sagernet/sing-box/dns/transport
+  github.com/sagernet/sing-box/dns/transport/fakeip
+  github.com/sagernet/sing-box/dns/transport/group
+  github.com/sagernet/sing-box/dns/transport/hosts
+  github.com/sagernet/sing-box/dns/transport/local/systemconfig
+  github.com/sagernet/sing-box/dns/transport/mdns
+  github.com/sagernet/sing-box/dns/transport/local
+  github.com/sagernet/sing-box/common/uot
+  github.com/sagernet/sing-box/protocol/anytls
+  github.com/sagernet/sing-box/protocol/block
+  github.com/sagernet/sing-box/common/kernelports
+  github.com/sagernet/sing-box/protocol/bridge
+  github.com/sagernet/sing-box/transport/http
+  github.com/sagernet/sing-box/protocol/http
+  github.com/sagernet/sing-box/transport/device
+  github.com/sagernet/sing-box/transport/masque
+  github.com/sagernet/sing-box/protocol/masque
+  github.com/sagernet/sing-box/protocol/mieru
+  github.com/sagernet/sing-box/protocol/socks
+  github.com/sagernet/sing-box/protocol/mixed
+  github.com/sagernet/sing-box/protocol/naive
+  github.com/sagernet/sing-box/protocol/redirect
+  github.com/sagernet/sing-box/common/mux
+  github.com/sagernet/sing-box/transport/simple-obfs
+  github.com/sagernet/sing-box/transport/v2raygrpclite
+  github.com/sagernet/sing-box/transport/v2rayhttpupgrade
+  github.com/sagernet/sing-box/transport/v2raywebsocket
+  github.com/sagernet/sing-box/transport/v2ray
+  github.com/sagernet/sing-box/transport/sip003
+  github.com/sagernet/sing-box/protocol/shadowsocks
+  github.com/sagernet/sing-box/protocol/shadowtls
+  github.com/sagernet/sing-box/protocol/snell
+  github.com/sagernet/sing-box/protocol/ssh
+  github.com/sagernet/sing-box/common/proxybridge
+  github.com/sagernet/sing-box/protocol/tor
+  github.com/sagernet/sing-box/transport/trojan
+  github.com/sagernet/sing-box/protocol/trojan
+  github.com/sagernet/sing-box/protocol/tun
+  github.com/sagernet/sing-box/protocol/vless/encryption
+  github.com/sagernet/sing-box/protocol/vless
+  github.com/sagernet/sing-box/protocol/vmess
+  github.com/sagernet/sing-box/provider/local
+  github.com/sagernet/sing-box/service/api
+  github.com/sagernet/sing-box/service/origin_ca
+  github.com/sagernet/sing-box/service/resolved
+  github.com/sagernet/sing-box/service/ssmapi
+  github.com/sagernet/sing-box/include
+  github.com/sagernet/sing-box/protocol/tailscale
+  github.com/sagernet/sing-box/cmd/sing-box
+  github.com/sagernet/sing-box/common/bufgeom
+  github.com/sagernet/sing-box/common/geoip
+  github.com/sagernet/sing-box/common/jni
+  github.com/sagernet/sing-box/common/pipelistener
+  github.com/sagernet/sing-box/dns/transport/dhcp
+  github.com/sagernet/sing-box/dns/transport/quic
+  github.com/sagernet/sing-box/e2e
+  github.com/sagernet/sing-box/experimental/libbox/internal/oomprofile
+  github.com/sagernet/sing-box/experimental/libbox/internal/runtimeinfo
+  github.com/sagernet/sing-box/experimental/libbox
+  github.com/sagernet/sing-box/experimental/boxdd
+  github.com/sagernet/sing-box/experimental/clashapi
+  github.com/sagernet/sing-box/experimental/libbox/internal/procfs
+  github.com/sagernet/sing-box/experimental/v2rayapi
+  github.com/sagernet/sing-box/internal/memmetrics
+  github.com/sagernet/sing-box/protocol/hysteria
+  github.com/sagernet/sing-box/protocol/hysteria2
+  github.com/sagernet/sing-box/protocol/naive/quic
+  github.com/sagernet/sing-box/transport/openconnect
+  github.com/sagernet/sing-box/protocol/openconnect
+  github.com/sagernet/sing-box/transport/openvpn
+  github.com/sagernet/sing-box/protocol/openvpn
+  github.com/sagernet/sing-box/transport/trusttunnel
+  github.com/sagernet/sing-box/protocol/trusttunnel
+  github.com/sagernet/sing-box/protocol/tuic
+  github.com/sagernet/sing-box/transport/wireguard
+  github.com/sagernet/sing-box/protocol/wireguard
+  github.com/sagernet/sing-box/release/config
+  github.com/sagernet/sing-box/scripts/bench/benchstat
+  github.com/sagernet/sing-box/scripts/bench/memmatrix
+  github.com/sagernet/sing-box/scripts/bench/memsummary
+  github.com/sagernet/sing-box/scripts/ci/clienthello-probe
+  github.com/sagernet/sing-box/scripts/mieru-bench/client
+  github.com/sagernet/sing-box/scripts/mieru-bench/server
+  github.com/sagernet/sing-box/service/acme
+  github.com/sagernet/sing-box/service/ccm
+  github.com/sagernet/sing-box/service/ocm
+  github.com/sagernet/sing-box/service/usbip
+  github.com/sagernet/sing-box/transport/v2raygrpc/credentials
+  github.com/sagernet/sing-box/transport/v2raygrpc
+  github.com/sagernet/sing-box/transport/v2rayquic
+Govulncheck scanned the following 118 modules and the go1.27.4 standard library:
+  github.com/sagernet/sing-box
+  filippo.io/age@v1.3.1
+  filippo.io/hpke@v0.4.0
+  github.com/Piggy-Cat-bit-shadow/mieru/v3@v3.39.1-0.20261116170915-04259b115daf
+  github.com/Piggy-Cat-bit-shadow/mieru/v3@v3.39.1-0.20261116170915-04259b115daf
+  github.com/Piggy-Cat-bit-shadow/quic-go@v0.61.1-0.20261116151243-d51ec71bf0dd
+  github.com/Piggy-Cat-bit-shadow/quic-go@v0.61.1-0.20261116151243-d51ec71bf0dd
+  github.com/Piggy-Cat-bit-shadow/sing@v0.9.6-0.20261110222322-4abfaed41727
+  github.com/Piggy-Cat-bit-shadow/sing@v0.9.6-0.20261110222322-4abfaed41727
+  github.com/Piggy-Cat-bit-shadow/sing-anytls@v0.0.0-20261116141833-8282e0069970
+  github.com/Piggy-Cat-bit-shadow/sing-anytls@v0.0.0-20261116141833-8282e0069970
+  github.com/Piggy-Cat-bit-shadow/sing-quic@v0.7.2-0.20261116152031-cdb57d74152e
+  github.com/Piggy-Cat-bit-shadow/sing-quic@v0.7.2-0.20261116152031-cdb57d74152e
+  github.com/Piggy-Cat-bit-shadow/sing-tun@v0.9.7-0.20261116231224-c0855e676180
+  github.com/Piggy-Cat-bit-shadow/sing-tun@v0.9.7-0.20261116231224-c0855e676180
+  github.com/Piggy-Cat-bit-shadow/utls@v1.8.8-0.20261116171412-87a09712c441
+  github.com/Piggy-Cat-bit-shadow/utls@v1.8.8-0.20261116171412-87a09712c441
+  github.com/Piggy-Cat-bit-shadow/wireguard-go@v0.8.0-awg.4.0.20261116143700-7f8be415c871
+  github.com/Piggy-Cat-bit-shadow/wireguard-go@v0.8.0-awg.4.0.20261116143700-7f8be415c871
+  github.com/RyuaNerin/go-krypto@v1.3.0
+  github.com/ajg/form@v1.5.1
+  github.com/anchore/go-lzo@v0.1.0
+  github.com/andybalholm/brotli@v1.2.7
+  github.com/anthropics/anthropic-sdk-go@v1.26.0
+  github.com/caddyserver/certmagic@v0.25.3-0.20260421143802-60d9d8b415d6
+  github.com/caddyserver/zerossl@v0.1.5
+  github.com/cenkalti/backoff/v4@v4.3.0
+  github.com/clipperhouse/uax29/v2@v2.2.0
+  github.com/coder/websocket@v1.8.14
+  github.com/cretz/bine@v0.2.0
+  github.com/database64128/tfo-go/v2@v2.3.2
+  github.com/dblohm7/wingoes@v0.0.0-20240119213807-a09d6be7affa
+  github.com/dgrijalva/jwt-go/v4@v4.0.0-preview1
+  github.com/dgryski/go-camellia@v0.0.0-20191119043421-69a8a13fb23d
+  github.com/fsnotify/fsnotify@v1.9.0
+  github.com/go-chi/chi/v5@v5.2.5
+  github.com/go-chi/render@v1.0.3
+  github.com/go-ole/go-ole@v1.3.0
+  github.com/gobwas/httphead@v0.1.0
+  github.com/gobwas/pool@v0.2.1
+  github.com/gofrs/uuid/v5@v5.5.1
+  github.com/google/btree@v1.1.3
+  github.com/google/certificate-transparency-go@v1.3.2
+  github.com/google/go-querystring@v1.1.0
+  github.com/google/gopacket@v1.1.19
+  github.com/hashicorp/yamux@v0.1.2
+  github.com/huin/goupnp@v1.3.0
+  github.com/inconshreveable/mousetrap@v1.1.0
+  github.com/insomniacslk/dhcp@v0.0.0-20260220084031-5adc3eb26f91
+  github.com/jackpal/go-nat-pmp@v1.0.2
+  github.com/klauspost/compress@v1.20.2
+  github.com/klauspost/cpuid/v2@v2.3.0
+  github.com/koron/go-ssdp@v0.0.4
+  github.com/libdns/libdns@v1.1.1
+  github.com/libp2p/go-nat@v1.0.1-0.20250821073202-01afc089f138
+  github.com/libp2p/go-netroute@v0.2.1
+  github.com/logrusorgru/aurora@v2.0.3+incompatible
+  github.com/mattn/go-runewidth@v0.0.27
+  github.com/mholt/acmez/v3@v3.1.6
+  github.com/miekg/dns@v1.1.72
+  github.com/openai/openai-go/v3@v3.26.0
+  github.com/oschwald/maxminddb-golang@v1.13.1
+  github.com/pierrec/lz4/v4@v4.1.26
+  github.com/pion/dtls/v3@v3.1.5
+  github.com/pion/logging@v0.2.4
+  github.com/pion/transport/v4@v4.0.2
+  github.com/quic-go/qpack@v0.6.0
+  github.com/sagernet/asc-go@v0.0.0-20260914163356-9e3d45a797c1
+  github.com/sagernet/bbolt@v0.0.0-20260915102804-500ee1e84832
+  github.com/sagernet/cors@v1.2.1
+  github.com/sagernet/fswatch@v0.1.2
+  github.com/sagernet/gomobile@v0.1.12
+  github.com/sagernet/sing-mux@v0.3.10-0.20261110064256-375087483ea2
+  github.com/sagernet/sing-openconnect@v0.1.1-0.20261110063215-cd35f41e8f69
+  github.com/sagernet/sing-openvpn@v0.1.1-0.20261110111939-ad7a6ce7d11b
+  github.com/sagernet/sing-shadowsocks@v0.2.9-0.20260929204512-65740e0f0e3e
+  github.com/sagernet/sing-shadowsocks2@v0.2.2-0.20261110092058-52ade8ab7e95
+  github.com/sagernet/sing-shadowtls@v0.2.2-0.20261110092247-ce8a3b8474bb
+  github.com/sagernet/sing-snell@v0.0.0-20261110094602-04667b0a321c
+  github.com/sagernet/sing-usbip@v0.0.0-20260817040617-28bd42667eca
+  github.com/sagernet/sing-vmess@v0.2.9-0.20261110093549-d800eb57f96c
+  github.com/sagernet/smux@v1.5.50-sing-box-mod.1
+  github.com/sagernet/tailscale@v1.102.1-sing-box-1.14-mod.5.0.20261028024127-670967df7dbf
+  github.com/sagernet/ws@v0.0.0-20231204124109-acfe8907c854
+  github.com/smallstep/pkcs7@v0.1.1
+  github.com/spf13/cobra@v1.10.2
+  github.com/spf13/pflag@v1.0.10
+  github.com/tailscale/go-winio@v0.0.0-20231025203758-c4f33415bf55
+  github.com/tidwall/gjson@v1.18.0
+  github.com/tidwall/match@v1.1.1
+  github.com/tidwall/pretty@v1.2.1
+  github.com/tidwall/sjson@v1.2.5
+  github.com/tjfoc/gmsm@v1.4.1
+  github.com/u-root/uio@v0.0.0-20240224005618-d2acac8f3701
+  github.com/vishvananda/netns@v0.0.5
+  github.com/youmark/pkcs8@v0.0.0-20240726163527-a2c0da244d78
+  github.com/zeebo/blake3@v0.2.4
+  go.uber.org/multierr@v1.11.0
+  go.uber.org/zap@v1.27.1
+  go.uber.org/zap/exp@v0.3.0
+  go4.org/mem@v0.0.0-20240501181205-ae6ca9944745
+  go4.org/netipx@v0.0.0-20231129151722-fdeea329fbba
+  golang.org/x/crypto@v0.58.0
+  golang.org/x/exp@v0.0.0-20260410095643-746e56fc9e2f
+  golang.org/x/mod@v0.41.0
+  golang.org/x/net@v0.62.0
+  golang.org/x/sync@v0.24.0
+  golang.org/x/sys@v0.49.0
+  golang.org/x/term@v0.47.0
+  golang.org/x/text@v0.43.0
+  golang.zx2c4.com/wintun@v0.0.0-20230126152724-0fa3db229ce2
+  golang.zx2c4.com/wireguard/wgctrl@v0.0.0-20241231184526-a9ab2273dd10
+  google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa
+  google.golang.org/grpc@v1.83.2
+  google.golang.org/protobuf@v1.36.11
+  gopkg.in/yaml.v3@v3.0.1
+  howett.net/plist@v1.0.1
+  lukechampine.com/blake3@v1.3.0
+
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+=== Package Results ===
+
+Vulnerability #1: GO-2026-5777
+    Chi's RealIP Middleware allows IP spoofing via unvalidated X-Forwarded-For
+    header in github.com/go-chi/chi
+  More info: https://pkg.go.dev/vuln/GO-2026-5777
+  Module: github.com/go-chi/chi/v5
+    Found in: github.com/go-chi/chi/v5@v5.2.5
+    Fixed in: github.com/go-chi/chi/v5@v5.3.0
+
+Vulnerability #2: GO-2026-5775
+    Chi Middleware vulnerable to IP spoofing via X-Forwarded-For header in
+    github.com/go-chi/chi
+  More info: https://pkg.go.dev/vuln/GO-2026-5775
+  Module: github.com/go-chi/chi/v5
+    Found in: github.com/go-chi/chi/v5@v5.2.5
+    Fixed in: github.com/go-chi/chi/v5@v5.3.0
+
+Vulnerability #3: GO-2026-5774
+    Chi has an IP spoofing vulnerability in middleware.RealIP in
+    github.com/go-chi/chi
+  More info: https://pkg.go.dev/vuln/GO-2026-5774
+  Module: github.com/go-chi/chi/v5
+    Found in: github.com/go-chi/chi/v5@v5.2.5
+    Fixed in: github.com/go-chi/chi/v5@v5.3.0
+
+=== Module Results ===
+
+Vulnerability #1: GO-2026-6237
+    Denial of service via malformed IPv4 packet in github.com/insomniacslk/dhcp
+  More info: https://pkg.go.dev/vuln/GO-2026-6237
+  Module: github.com/insomniacslk/dhcp
+    Found in: github.com/insomniacslk/dhcp@v0.0.0-20260220084031-5adc3eb26f91
+    Fixed in: github.com/insomniacslk/dhcp@v0.0.0-20260719225207-c76316d4aa82
+
+Vulnerability #2: GO-2026-5932
+    The golang.org/x/crypto/openpgp package is unmaintained, unsafe by design,
+    and has known security issues
+  More info: https://pkg.go.dev/vuln/GO-2026-5932
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.58.0
+    Fixed in: golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 3 vulnerabilities in packages you import and 2
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.

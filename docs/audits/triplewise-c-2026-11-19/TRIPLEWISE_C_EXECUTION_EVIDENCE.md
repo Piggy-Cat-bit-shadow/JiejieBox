@@ -53,7 +53,14 @@ test asserts the writer is refused, which is the only place that can be refused 
 
 ## 4. Mutation controls carried by this round
 
-This round adds no code, so it adds no mutation control of its own. The controls that back its claims
-belong to the rounds that made the fixes and are listed in their verification pages: `MC-1` (A),
-`MC-B1…B6` (B), `MC-C1/C2` (C), `MC-T1a/b` (triple A). Each is a "disable the mechanism, watch the test
-go red" record, which is what the brief asks for and what a doc-only round cannot manufacture.
+**This page was written before the round had finished its code work, and the sentence that used to be
+here — "this round adds no code" — is superseded.** The same round went on to make two production
+changes, each with its own mutation control:
+
+| Change | Control | Result |
+| --- | --- | --- |
+| C-T5: the QUIC pool's publish and generation acknowledgement became one decision (`transport/v2rayquic`) | restore publish-then-acknowledge | red: "a connection built for the previous generation must not be handed out" |
+| The sixteenth fix: a closed `ManagedTransport` refuses to rebuild (`common/httpclient`) | disable only the `getEpoch` closed check | red on the request test, green on the reset test — the two guards are separately load-bearing |
+
+The controls that back the *earlier* claims still belong to the rounds that made those fixes and are
+listed in their verification pages: `MC-1` (A), `MC-B1…B6` (B), `MC-C1/C2` (C), `MC-T1a/b` (triple A).

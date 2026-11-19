@@ -1,0 +1,88 @@
+package tun
+
+// The behaviour the prepared patch claims, tested rather than assumed: when a UDP NAT entry is evicted,
+// the creation its handler is still running must be cancelled.
+//
+// Run it twice - against the pinned revision and against the patched one - and the difference is the
+// evidence:
+//
+//	pinned:  the handler's context is never cancelled; the creation keeps running for a flow that no
+//	         longer exists, holding whatever it holds (socket, buffers, goroutine)
+//	patched: the entry's own cancel func runs on close, so the handler's context is cancelled with the
+//	         entry, whichever of the three close paths got there (idle timeout, explicit Close, eviction)
+//
+// This is the sing-tun half. The consumer half - JiejieBox's outbound ListenPacket returning when its
+// context is cancelled - is already the case: every outbound packet connection takes the caller's
+// context and route/conn.go passes the one it was given.
+
+import (
+	"context"
+	"net/netip"
+	"testing"
+	"time"
+
+	"github.com/sagernet/sing/common/buf"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
+)
+
+type discardPacketWriter struct{}
+
+func (discardPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
+	buffer.Release()
+	return nil
+}
+
+type blockingUDPHandler struct {
+	started chan struct{}
+	ctxDone chan struct{}
+}
+
+func (h *blockingUDPHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	close(h.started)
+	<-ctx.Done()
+	close(h.ctxDone)
+	_ = conn.Close()
+}
+
+func TestAnEvictedEntryCancelsTheDialItLaunched(t *testing.T) {
+	handler := &blockingUDPHandler{
+		started: make(chan struct{}),
+		ctxDone: make(chan struct{}),
+	}
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	t.Cleanup(cancelBase)
+	nat := NewUDPNat(UDPNatOptions{
+		Handler: handler,
+		Timeout: 50 * time.Millisecond,
+		MaxSize: 8,
+		Prepare: func(source, destination M.Socksaddr, userData any) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
+			return true, baseCtx, discardPacketWriter{}, nil
+		},
+	})
+	if err := nat.Start(); err != nil {
+		t.Fatal("start: ", err)
+	}
+	t.Cleanup(func() { _ = nat.Close() })
+
+	source := M.SocksaddrFrom(netip.MustParseAddr("10.0.0.2"), 12345)
+	destination := M.SocksaddrFrom(netip.MustParseAddr("203.0.113.9"), 443)
+	nat.NewPacket([][]byte{[]byte("hello")}, source, destination, nil)
+
+	select {
+	case <-handler.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the handler was never invoked, so there is nothing to cancel")
+	}
+
+	// Let the entry expire, then force the sweep so the test does not depend on the timer's tick.
+	time.Sleep(200 * time.Millisecond)
+	nat.PurgeExpired()
+
+	select {
+	case <-handler.ctxDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the handler's context was NOT cancelled after its entry was evicted: the creation " +
+			"keeps running for a flow that no longer exists")
+	}
+}

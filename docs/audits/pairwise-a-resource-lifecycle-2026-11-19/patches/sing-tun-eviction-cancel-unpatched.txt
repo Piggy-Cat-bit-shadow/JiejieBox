@@ -1,0 +1,17 @@
+# sing-tun v0.9.7-0.20261109145802-79ed0653fdc6, UNPATCHED
+# command: go test -run TestAnEvictedEntryCancelsTheDialItLaunched -count=1 -v -timeout 30s .
+# environment: Go 1.27.4, Windows 10.0.19044, 2026-11-19
+#
+# The test (udp_nat_eviction_cancel_test.go, beside this file) starts a UDP NAT with a 50 ms timeout,
+# sends one packet so the entry is created and the handler is running on a context derived from the
+# entry, lets the entry expire, forces the sweep, and then waits for that context to be cancelled.
+#
+# The pinned revision does not cancel it. The FAIL below is the defect the audit asked to see
+# behaviourally, not a flake: it is deterministic in both runs recorded here.
+
+=== RUN   TestAnEvictedEntryCancelsTheDialItLaunched
+    udp_nat_eviction_cancel_test.go:85: the handler's context was NOT cancelled after its entry was evicted: the creation keeps running for a flow that no longer exists
+--- FAIL: TestAnEvictedEntryCancelsTheDialItLaunched (2.20s)
+FAIL
+FAIL	github.com/sagernet/sing-tun	2.276s
+FAIL

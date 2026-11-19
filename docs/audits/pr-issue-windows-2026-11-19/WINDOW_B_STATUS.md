@@ -8,8 +8,16 @@ Base: `testing` @ `11695cbb4` plus this round's commit.
 ## Group 1 — H3 小流公平性（大下载流并行小 GET/CONNECT）
 
 `transport/trusttunnel` 52.8 s, `transport/v2rayxhttp` 21.9 s, `common/httpclient` 2.9 s —
-all green under the shipped Windows profile. **`NO_DEFECT` by coverage**; no new fairness harness was
-built (one would need a rate-limited path and per-stream latency attribution).
+all green under the shipped Windows profile.
+
+**`PARTIAL / NOT_COVERED`, corrected after the audit.** The earlier wording said "NO_DEFECT by
+coverage", which claimed more than the evidence: a passing suite is not a fairness measurement. The
+property this row names — a small GET or CONNECT is not starved while a bulk download shares the same
+H3 connection — needs a rate-limited path and per-stream latency attribution, and no fixture for that
+was built. What the suites do establish is that the three transports function and their pooling/fallback
+paths are exercised; they say nothing about P95/P99 of a small stream under a large one, its timeout
+rate, the queue bound, or recovery when the pressure is withdrawn. Those four numbers are what a future
+round should produce.
 
 ## Group 2 — QUIC 发送队列（full→writable 临界事件，对端不发新包）
 
@@ -107,7 +115,7 @@ a fallback window that can stay unarmed on short deadlines — is recorded as R-
 
 | Group | Verdict |
 | --- | --- |
-| 1 H3 small-flow fairness | `NO_DEFECT` (suite coverage) |
+| 1 H3 small-flow fairness | `PARTIAL / NOT_COVERED` (corrected after the audit: a passing suite is not a fairness measurement) |
 | 2 QUIC send queue | **new test** (2 MB filled, reader released, fresh stream writes) with a vacuous-pass guard, `NO_DEFECT` |
 | 3 PMTU black hole | **new pair of tests** (userspace 1280 path, 5 drops, transfer survives) + two controls, `NO_DEFECT` |
 | 4 connection migration | `NO_DEFECT` (suite coverage; also C-T5's positive control) |

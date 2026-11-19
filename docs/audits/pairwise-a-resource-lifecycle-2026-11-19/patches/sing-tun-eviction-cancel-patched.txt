@@ -1,0 +1,18 @@
+# sing-tun v0.9.7-0.20261109145802-79ed0653fdc6, PATCHED with sing-tun-udp-nat-cancel-dial.patch
+# command: go test -run TestAnEvictedEntryCancelsTheDialItLaunched -count=1 -v -timeout 30s .
+# environment: Go 1.27.4, Windows 10.0.19044, 2026-11-19
+#
+# Same test, same harness, same 50 ms timeout and the same forced sweep. With the patch the entry's own
+# cancel func runs on close, so the handler's context is cancelled and the creation ends:
+#
+#   pinned:  FAIL  "the handler's context was NOT cancelled after its entry was evicted"
+#   patched: PASS  (0.20 s)
+#
+# That difference is the behaviour verification the audit asked for. It is not a claim that the dial's
+# resources are settled - the test observes the cancellation, not fd/goroutine counts - and it is not a
+# claim that the consumer is pinned to this revision: both are listed as open in README.md.
+
+=== RUN   TestAnEvictedEntryCancelsTheDialItLaunched
+--- PASS: TestAnEvictedEntryCancelsTheDialItLaunched (0.20s)
+PASS
+ok  	github.com/sagernet/sing-tun	0.275s

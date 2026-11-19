@@ -1,104 +1,97 @@
-# Dependency vulnerabilities: 13 reachable at the release round, 5 fixed, 8 blocked by a measured trade-off
+# Dependency vulnerabilities: 13 reachable at the release round, **all 13 fixed**, ClientHello unchanged
 
-`govulncheck ./...` run on 2026-11-19 at `eb6f777d7` reported **13 vulnerabilities in 5 modules that this
-code calls**. This page records what was done about each and why the remainder is a decision rather than
-an oversight.
-
-## The scan
+`govulncheck ./...` on 2026-11-19 found **13 vulnerabilities in 5 modules this code calls**, reachable
+from `daemon`, `service/api`, `transport/v2raygrpc`, `transport/v2rayxhttp` and the HTTP transports. An
+audit of this bundle pointed out that the first version of this page treated "upgrade" and "keep the TLS
+fingerprint" as a choice. It is not a choice, and the audit was right: the current state is **0 reachable
+vulnerabilities with the pre-1.26 ClientHello preserved**, verified by the probe.
 
 ```
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-Your code is affected by 13 vulnerabilities from 5 modules.
-This scan also found 5 vulnerabilities in packages you import and 6 in modules you require,
-but your code doesn't appear to call these.
+No vulnerabilities found.
+Your code is affected by 0 vulnerabilities.
 ```
 
-## Fixed in this round (`eb6f777d7` → the commit after it)
+Raw outputs: `govulncheck-after-upgrade.txt` (summary) and `govulncheck-after-upgrade-verbose.txt`
+(the full per-finding list, including the 3 imported-package and 2 required-module findings this code
+does not call).
 
-Every one of these is reachable from `daemon`, `service/api`, `transport/v2raygrpc`,
-`transport/v2rayxhttp` or the HTTP transports, and every one was bumped to the fixed release **without
-moving the module's `go` line**:
+## How both halves were satisfied
 
-| # | Module | Was | Now | Advisory |
+Raising the module's `go` line is unavoidable: the fixed `x/net` (v0.62.0) and `x/crypto` (v0.58.0)
+declare `go 1.26.0` themselves, and a module cannot require one whose language version is higher than
+its own. That line also selects Go's GODEBUG defaults, and `tlssecpmlkem` became on in 1.26 — it adds
+`SecP256r1MLKEM768` and `SecP384r1MLKEM1024` to every ClientHello.
+
+The fix is to pin that one default back in the main module's build context:
+
+```
+go 1.26.0
+toolchain go1.27.4
+godebug tlssecpmlkem=0
+```
+
+Measured with the repository's own `scripts/ci/clienthello-probe`, same toolchain (go1.27.4) throughout:
+
+| `go` line / override | supported_groups | key_shares |
+| --- | --- | --- |
+| 1.25.5 (before this round) | `[4588 29 23 24 25]` | `[4588 29]` |
+| 1.26.0, no override | `[4588 4587 4589 29 23 24 25]` | `[4588 29]` |
+| **1.26.0 + `godebug tlssecpmlkem=0`** | **`[4588 29 23 24 25]`** | **`[4588 29]`** |
+
+So the upgraded dependency set emits the same `supported_groups` and `key_share` as the release did
+before. The audit's independent reproduction (environment `GODEBUG=tlssecpmlkem=0`, and `godebug` in
+`go.mod`) matched these numbers.
+
+## The thirteen
+
+| # | Advisory | Module | Was → now | What it is |
 | --- | --- | --- | --- | --- |
-| 1 | `github.com/andybalholm/brotli` | v1.1.0 | **v1.2.7** | GO-2026-6888 — excessive memory when decompressing crafted streams |
-| 2 | `github.com/klauspost/compress` | v1.19.1 | **v1.20.2** | GO-2026-6865 |
-| 9 | `google.golang.org/grpc` | v1.79.3 | **v1.83.2** | GO-2026-6443 |
-| 12 | `google.golang.org/grpc` | v1.79.3 | **v1.83.2** | GO-2026-6348 — heap OOM via HTTP/2 DATA frame fragmentation |
-| 13 | `google.golang.org/grpc` | v1.79.3 | **v1.83.2** | GO-2026-6061 — xDS RBAC and HTTP/2 server |
+| 1 | GO-2026-6888 | `github.com/andybalholm/brotli` | v1.1.0 → **v1.2.7** | excessive memory when decompressing crafted streams |
+| 2 | GO-2026-6865 | `github.com/klauspost/compress` | v1.19.1 → **v1.20.2** | decompression memory |
+| 3 | GO-2026-6860 | `golang.org/x/net` | v0.58.0 → **v0.62.0** | HTTP/2 handling |
+| 4 | GO-2026-6617 | `golang.org/x/net` | v0.58.0 → **v0.62.0** | HTTP/2 handling |
+| 5 | GO-2026-6612 | `golang.org/x/net` | v0.58.0 → **v0.62.0** | HTTP/2 handling |
+| 6 | GO-2026-6611 | `golang.org/x/net` | v0.58.0 → **v0.62.0** | excessive CPU from repeated initial-window changes — **a malicious HTTP/2 peer against client or server** |
+| 7 | GO-2026-6610 | `golang.org/x/net` | v0.58.0 → **v0.62.0** | HTTP/2 handling |
+| 8 | GO-2026-6603 | `golang.org/x/net` | v0.58.0 → **v0.62.0** | HTTP/2 handling |
+| 9 | GO-2026-6443 | `google.golang.org/grpc` | v1.79.3 → **v1.83.2** | xDS/authorization |
+| 10 | GO-2026-6355 | `golang.org/x/crypto` | v0.55.0 → **v0.58.0** | **SSH** message causes the connection to deadlock (`ssh.NewClientConn` path) |
+| 11 | GO-2026-6354 | `golang.org/x/crypto` | v0.55.0 → **v0.58.0** | **SSH** message handling |
+| 12 | GO-2026-6348 | `google.golang.org/grpc` | v1.79.3 → **v1.83.2** | heap OOM via HTTP/2 DATA-frame fragmentation |
+| 13 | GO-2026-6061 | `google.golang.org/grpc` | v1.79.3 → **v1.83.2** | xDS RBAC and HTTP/2 server |
 
-`google.golang.org/genproto/googleapis/rpc` moved as grpc's own requirement, and grpc's requirements moved
-`golang.org/x/net` 0.57.0 → 0.58.0 and `golang.org/x/crypto` 0.54.0 → 0.55.0 — still below their fixed
-releases, so those eight advisories remain (below). `release-freeze.py verify` still passes: those modules
-are not among the ten revisions the source lock pins, so no fork pin moved.
+Corrections against the earlier draft of this page, all from the audit: the two `x/crypto` advisories are
+**SSH** paths, not "crypto primitives"; `GO-2026-6611` affects a malicious peer against **client or
+server**, so the `x/net` set was not purely server-side; and the `x/net` advisories are not one issue —
+each is its own advisory, which is why they are listed individually here rather than as "#3/#4".
 
-The rescan after the bump reports **8 vulnerabilities from 2 modules**, down from 13 from 5.
+## Verification at the final state
 
-Verification: `go build ./...`, `go vet` on the grpc and compression consumers, `release-freeze.py verify`
-PASS, the shipped-profile tests over `. ./daemon ./service/api ./transport/v2raygrpc
-./transport/v2rayxhttp ./transport/v2rayhttp ./common/httpclient ./protocol/masque ./protocol/vless
-./protocol/vmess` (root 27.5 s, daemon 43.8 s, xhttp 22.4 s — all green), and the ClientHello probe run
-again after the bump:
+| Check | Result |
+| --- | --- |
+| `go build ./...` | exit 0 |
+| `go vet` on the grpc/compression consumers | exit 0 |
+| shipped-profile tests over 21 touched packages | all green — `release-profile-tests-after-upgrade.txt` (root 28.9 s, daemon 45.4 s, trusttunnel 53.5 s) |
+| `go run ./scripts/ci/clienthello-probe` | `groups=[4588 29 23 24 25] key_shares=[4588 29]` — identical to the pre-upgrade release |
+| `python scripts/ci/release-freeze.py verify --lock release/source-lock.json` | PASS — none of these modules is one of the ten pinned fork revisions |
+| `govulncheck ./...` | **0 reachable** |
+| `go test -race ./transport/trusttunnel` | ok 35.4 s (the historical hang did not reproduce; see `trusttunnel-race-full.txt`) |
 
-```
-go run ./scripts/ci/clienthello-probe
-go=go1.27.4 groups=[4588 29 23 24 25] key_shares=[4588 29]      <- unchanged by the dependency bump
-```
+## What is still not proven about the handshake
 
-## Blocked: the eight `golang.org/x/*` advisories
+The probe measures the default `crypto/tls` client's `supported_groups` and `key_share`. It does not
+measure the whole ClientHello (ALPN, extension order, GREASE), and it does not exercise the real
+outbound paths. `common/tls/client.go` selects between the Apple/Windows system engine, REALITY, uTLS
+(metacubex/utls) and stdlib TLS depending on configuration, and Naive has its own Cronet engine — a
+build tag proves the capability exists, not that a given connection uses it. The audit's point stands:
+after this upgrade, the actual handshake of each client artifact should be captured against a controlled
+server and compared structurally, with random fields excluded. That needs the device/Apple toolchain
+this environment does not have, so it is listed as an artifact-level follow-up rather than claimed.
 
-| # | Module | Was | Fixed in | Blocked because |
-| --- | --- | --- | --- | --- |
-| 3 | `golang.org/x/net` | v0.58.0 | v0.62.0 | that release's `go.mod` says **`go 1.26.0`** |
-| 4 | `golang.org/x/net` | v0.58.0 | v0.60.0 | same |
-| 5 | `golang.org/x/net` | v0.58.0 | v0.60.0 | same |
-| 6 | `golang.org/x/net` | v0.58.0 | v0.60.0 | GO-2026-6611, excessive CPU from repeated HTTP/2 initial-window changes — same |
-| 7 | `golang.org/x/net` | v0.58.0 | v0.60.0 | same |
-| 8 | `golang.org/x/net` | v0.58.0 | v0.60.0 | same |
-| 10 | `golang.org/x/crypto` | v0.55.0 | v0.56.0 | that release's `go.mod` says **`go 1.26.0`** |
-| 11 | `golang.org/x/crypto` | v0.55.0 | v0.56.0 | same |
-
-A Go module whose `go.mod` declares a higher `go` version may only be required by a module whose own `go`
-line is at least that high: `go get`/`go mod tidy` therefore **rewrites this module's `go` line to
-1.26.0**. That line is not cosmetic here. It is what selects Go's GODEBUG defaults, and two of them
-change the TLS ClientHello this product uses for camouflage.
-
-**Measured today, in this repository, with the toolchain that ships (go1.27.4)**, using
-`scripts/ci/clienthello-probe`:
-
-```
-go 1.25.5, toolchain go1.27.4:  groups=[4588 29 23 24 25]            (X25519MLKEM768, X25519, P-256/384/521)
-go 1.26.0, toolchain go1.27.4:  groups=[4588 4587 4589 29 23 24 25]   (+ SecP256r1MLKEM768, SecP384r1MLKEM1024)
-```
-
-So raising the `go` line to fix those eight advisories **adds two key-exchange groups to every TLS
-handshake the product makes** — a fingerprint change for a product whose camouflage is the point. That is
-a product decision, not a debugging step, so it is recorded here instead of taken.
-
-### What the owner needs to decide
-
-1. **Stay on `go 1.25.5`** (current): five of thirteen fixed, the eight `x/*` advisories remain. Exposure
-   depends on whether the affected code paths handle attacker-controlled input: the `x/net` HTTP/2 items
-   are server-side window/frame handling that this product exposes through `service/api`'s web bridge and
-   the clash API, and the `x/crypto` items are in primitives whose call sites would need checking.
-2. **Move the `go` line to 1.26** and accept the ClientHello change: all thirteen fixed, and the group
-   set becomes the probe's second line. If the camouflage is validated against a uTLS/forged profile
-   (which does not use the stdlib group list), the actual exposure may be limited to whatever uses the
-   stdlib `crypto/tls` — that is the question to answer before deciding, with
-   `scripts/ci/clienthello-probe` and the REALITY/utls paths as the instruments.
-3. **Vendor a targeted patch**: not recommended; the advisories are in the standard library's HTTP/2
-   implementation and its crypto primitives, where a local patch is a fork of `x/net`.
-
-The command that would perform option 2, for whoever decides it:
-
-```
-go get golang.org/x/net@v0.62.0 github.com/andybalholm/brotli@v1.2.7 \
-       github.com/klauspost/compress@v1.20.2 google.golang.org/grpc@v1.83.1
-go mod tidy        # this will raise `go 1.25.5` to `go 1.26.0`; do not revert that by hand afterwards
-go run ./scripts/ci/clienthello-probe   # confirm the new group set is the intended one
-```
-
-## Also checked
-
-`go mod verify` → *all modules verified* (412 modules in the graph). The four `x/*` modules' advisories do
-not change the source-lock gate: the lock pins ten fork revisions, none of which is an `x/*` module.
+Scope of `godebug`: it is the **main module's** build context. The CLI, the daemon and gomobile/libbox
+built from this module inherit it. An embedder that builds its own main module (or a client repository
+that vendors these packages under its own `go.mod`) does **not** — it needs the same `godebug` line, or
+an explicit `tls.Config.CurvePreferences`, of its own. That is recorded here because the audit asked for
+it to be, and because a silent fingerprint change in a client repo would be exactly the class of bug
+this session kept finding.

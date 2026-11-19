@@ -19,6 +19,14 @@ here; none of them is claimed as passed.
 
 ## 2. T1 — the 2³ control matrix
 
+**Read this table for what it is, as the audit required.** The three factors below are not the same
+three systems the round was defined around: the triple is ① the Close, ② the stale-generation predicate
+and ③ the `GenerationPool`, while this experiment's third factor is *whether the fix (a closed state) is
+present*. So the table is a **before/after control matrix with positive and negative arms**, not a proof
+that the triple is irreducible. It establishes: the defect appears exactly when A and B hold and the fix
+is absent; the fix removes it; and each half of the fix is load-bearing. The claim "the third mechanism
+is not optional" is a separate argument made below from the code path, not from this table.
+
 The three binary factors: **A** = a Close happened; **B** = a late dial arrives afterwards; **C** = the
 pool has a closed state (the fix). "Same workload" means the same local TLS+HTTP/2 server and the same
 one-request dial.
@@ -34,11 +42,19 @@ one-request dial.
 | B+C | no | yes | yes | the backstop alone releases the offered transport, but a transport is still built only to be released — the client-side guard is what removes that | reasoned from the same two tests; the client guard is the only thing that changes this cell |
 | **A+B+C** | yes | yes | **yes** | no transport is built (`created = 0`), nothing is current, nothing is draining | `TestALateDialAfterCloseInstallsNoGeneration` |
 
-Note the honest shape of this table: the cells that *changed* with the fix are A+B (the defect), B+C
-(the wasteful middle) and A+B+C (the fixed behaviour). A alone, B alone and C alone are exactly the
-paths the pairwise windows had already proven, which is why this is a genuine triple and not a pairwise
-case renamed: the failing sequence needs the stale predicate (②) to *survive* the Close (①), and only
-the pool's ledger (③) can turn it into a leak.
+Cells executed: ∅, A (asserted inside the new test), B, C, A+B (the pre-fix run), A+C, A+B+C. Cell
+**B+C is reasoned, not executed** — it is the same two tests read in the other order, and the
+client-side guard is the only thing that changes its outcome.
+
+The cells that *changed* with the fix are A+B (the defect), B+C (the wasteful middle) and A+B+C (the
+fixed behaviour). A alone, B alone and C alone are paths the pairwise windows had already proven.
+
+**The separate argument for the third mechanism** — the one this table does not carry — is a code fact:
+`Registration.Stale()` returns true for a **closed** registration forever and `Acknowledge` refuses to
+clear it, so a dial that arrives after `Close` cannot tell "this pool is old" from "this pool is gone";
+the pool's ledger is the only object that can still release a transport in that state. That is why the
+sequence needs all three, and it is why the fix had to add a closed state to the ledger rather than
+strengthen the predicate.
 
 ## 3. T2 — the coordination evidence (no defect)
 

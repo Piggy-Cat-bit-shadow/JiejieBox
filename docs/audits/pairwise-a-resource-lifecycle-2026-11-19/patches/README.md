@@ -1,9 +1,7 @@
 # Prepared patch: a TUN NAT entry's eviction cancels the dial it launched
 
-This directory holds the **prepared, unpinned** half of window A's R-4/R-5. It is committed so the next
-round applies a reviewed change instead of re-deriving it, and it is deliberately **not** applied to the
-release tree: the pin's release gate requires a CI run for the resulting `sing-tun` revision, which
-cannot be produced from this environment.
+**Behaviour is now verified in both directions**, as the audit asked. The patch is still **not pinned**:
+the pin needs a CI run for the resulting `sing-tun` revision, which this environment cannot produce.
 
 ## What it changes
 
@@ -16,37 +14,43 @@ cannot be produced from this environment.
 - `UDPNatConn.close()` calls it, so every path that ends the entry — the idle timer, an explicit
   `Close`, and `closeFromCache` eviction — cancels the outbound creation the handler is running.
 
-Before this, an evicted entry's `NewPacketConnectionEx` kept dialling. The entry was gone, its `writer`
-was closed, and the creation continued until the dial's own timeout: the exact "a resource created for a
-flow that no longer exists" shape, and the amplifier the audit recorded (STUN-shaped bursts: many NAT
-entries, each spawning a session creation that outlives its reason).
+## The behaviour evidence
 
-## Evidence attached to this patch — and what is missing
+`udp_nat_eviction_cancel_test.go.txt` (this directory; the `.txt` suffix keeps it out of the Go package
+graph — copy it into the sing-tun copy as `.go` to run) is the sing-tun-side test. It starts a `UDPNat`
+with a 50 ms timeout and a `Prepare` that returns a context it can observe, sends one packet so the entry
+exists and the handler is running on the context derived from it, lets the entry expire, forces the sweep
+with `PurgeExpired()`, and waits for that context to be cancelled.
 
-| Claim | Evidence |
-| --- | --- |
-| Applies cleanly to the pinned revision | `git apply --check -p1` exit 0 on a fresh copy of that revision |
-| Compiles | `go build ./...` exit 0 in that copy after applying, and exit 0 before (so the patch is the only difference) |
-| Formatted | `gofmt -l udp_nat.go` clean |
-| **Behaviour** | **NOT verified.** A behavioural test needs sing-tun's own harness plus a context-aware dial double, and then a JiejieBox-side integration test. Sketches below |
+| Revision | Result | Transcript |
+| --- | --- | --- |
+| pinned, unpatched | **FAIL** — "the handler's context was NOT cancelled after its entry was evicted: the creation keeps running for a flow that no longer exists" | `sing-tun-eviction-cancel-unpatched.txt` |
+| pinned + this patch | **PASS** (0.20 s) | `sing-tun-eviction-cancel-patched.txt` |
 
-## How the next round should verify it, then pin
+Run it the same way both times:
 
-1. **Fork-side test (sing-tun).** Build a `UDPNat` whose `Handler.NewPacketConnectionEx` blocks on
-   `ctx.Done()` after recording the context. Create an entry, let the idle timer (or an explicit
-   `Close`) end it, and assert the recorded context is cancelled **before** the timeout the handler
-   would otherwise wait for. A `Handler` that ignores the context must keep the old behaviour, which is
-   the control.
-2. **Consumer-side test (JiejieBox).** An outbound whose `ListenPacket` blocks on `ctx.Done()`; a flow
-   that is evicted while the dial is in flight; assert the dial returns with the cancellation and the
-   outbound recorded no session. `route/conn.go`'s `NewPacketConnection` is the seam.
-3. **Pin it.** Bump `go.mod` to the fork revision, regenerate `release/source-lock.json`,
+```
+# in a copy of the pinned module, with the test file beside udp_nat.go
+go test -run TestAnEvictedEntryCancelsTheDialItLaunched -count=1 -v -timeout 30s .
+```
+
+What the test does **not** claim: it observes the cancellation, not fd/goroutine/buffer counts after it.
+A resource-settlement measurement would need the consumer's fake outbound to report what it held, which
+is the next step below.
+
+## Still open
+
+1. **The consumer side.** JiejieBox's outbound `ListenPacket` already takes the caller's context, and
+   `route/conn.go` passes the one it was given, so a cancelled creation should return — but there is no
+   test that asserts it end to end. The shape: an outbound whose `ListenPacket` blocks on `ctx.Done()`,
+   a flow evicted while the dial is in flight, and an assertion that the dial returned and nothing was
+   recorded.
+2. **The pin.** Bump `go.mod` to the fork revision, regenerate `release/source-lock.json`, run
    `python scripts/ci/release-freeze.py verify --lock release/source-lock.json`, and let CI run the new
-   revision (the gate that blocked this during the freeze). Then delete this directory.
-4. **The other half is in-repo and still open.** `route/conn.go`'s `NewPacketConnection` calls
-   `this.ListenPacket` with no `resourceguard.AdmitCreation`. Wrapping it the way
-   `transport/v2rayquic.createConnection` wraps QUIC construction would bound the creation rate at
-   `Critical` — but it would also refuse **plain UDP** at Critical (DNS to a direct resolver, direct
-   QUIC), which today still works under pressure. That is a policy decision, not a bug fix, and it is
-   written up in `docs/audits/pairwise-c-autonomous-redteam-2026-11-19/PAIRWISE_C_RELEASE_READINESS.md`
-   §5.
+   revision — the gate that blocked this during the freeze. Then delete this directory.
+3. **The admission policy is separate.** Gating `route/conn.go`'s `ListenPacket` with
+   `resourceguard.AdmitCreation` would refuse **plain UDP** at `Critical` (DNS to a direct resolver,
+   direct QUIC), which today still works under pressure. The audit's point stands: cancelling an unowned
+   dial is a lifecycle fix and should be pinned on its own; the budget policy is a separate design that
+   must keep normal UDP usable. See
+   `docs/audits/pairwise-c-autonomous-redteam-2026-11-19/PAIRWISE_C_RELEASE_READINESS.md` §5.

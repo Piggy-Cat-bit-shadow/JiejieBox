@@ -1,7 +1,10 @@
 # Pairwise/Triplewise — index of this effort
 
-Four rounds were executed on `testing`, each continuing from the previous head. This page is the map;
-each round's own README is the entry point for its evidence.
+**Status lives in [PAIRWISE_TRIPLEWISE_FINAL_STATUS.md](PAIRWISE_TRIPLEWISE_FINAL_STATUS.md).** This page
+is the historical map: each round as it stood when it closed, with the head it left. Several rows below
+were later superseded — the final-status page names which and by what — so read it before quoting one.
+
+Nine task files were executed: three prompt directories (pairwise, three-system, PR/Issue) × A/B/C.
 
 | Round | Focus | Fixed | Recorded, not fixed | Head after the round |
 | --- | --- | --- | --- | --- |
@@ -14,14 +17,18 @@ each round's own README is the entry point for its evidence.
 | [triplewise C](triplewise-c-2026-11-19/TRIPLEWISE_C_FINDINGS.md) | autonomous three-system discovery, shapes → tree | 1 (QUIC publish/migration acknowledgement) | the cross-repo item + the device-bound rows | `e882ef559` |
 | [release windows](pr-issue-windows-2026-11-19/RELEASE_WINDOW_STATUS.md) | the PR/Issue set: core control plane, QUIC transports, expanded search | 1 (provider health history) | named per group | `29289af38` |
 
-## The fixes, in one list
+## The changes, in one list
 
-| # | Fix | Round |
+**Fifteen are production defects; #4 is a test-assertion correction.** The earlier phrasing called all
+sixteen "fixes", which overstated the defect count — the audit flagged it and the final-status page
+carries the corrected accounting.
+
+| # | Change | Round |
 | --- | --- | --- |
 | 1 | the naive outbound no longer offers a pressure hook that terminates live tunnels | A |
 | 2 | the admission gate hands recovered capacity to callers already queued | A |
 | 3 | hy2/tuic carriers have a shut-down state, so a post-teardown dial cannot install a client | A |
-| 4 | the two xhttp pool-lifecycle tests measure reuse as a delta (and the package is now gated) | A |
+| 4 | **test correction**: the two xhttp pool-lifecycle tests now measure reuse as a delta (they had asserted a cold-pool artefact) | A |
 | 5 | the TrustTunnel HTTP/2 preface is pinned to Chrome's under Go 1.27 | B |
 | 6 | a network change no longer unregisters the HTTP pool (Reset on v2rayhttp/grpclite) | B |
 | 7 | fake-IP never issues an address outside its configured range | B |
@@ -42,20 +49,30 @@ round's verification page (`MC-1`, `MC-B1…B6`, `MC-C1/C2`, `MC-T1a/b`).
 
 | Item | Risk | Why it is open |
 | --- | --- | --- |
-| `sing-tun` UDP NAT × admission (A's R-4…R-7, triple B's TB-5) | the largest remaining | cross-repo fix + a pin bump whose release gate needs a CI run for the new revision |
-| reload is stop-then-build (B's R-B9) | a validation failure leaves nothing running until config recovery | lifecycle redesign; needs a device to judge a capture gap |
+| `sing-tun` UDP NAT × admission (A's R-4…R-7, triple B's TB-5) | the largest remaining | a patch exists and builds against the pinned revision (`pairwise-a-.../patches/`), but its behaviour is unverified and it is not pinned; the pin needs a CI run for the new revision, and the admission policy is a separate product decision |
 | the H3→H2→HTTP/1.1 demotion is silent (B's R-B3) | diagnosability | a reporting decision (which field, which surface) |
 | naive's fallback window can stay unarmed (B's R-B4) | extra probes on short deadlines | changes what "ambiguous" means for a probe |
-| `v2rayquic`'s publish site is not atomic (B's R-B2) | a narrow race | its acknowledgement is deliberately after the publish lock; needs that section restructured |
 | trusttunnel hands out a session without reserving it (A's R-1) | one wasted session during a trim | a reservation protocol across four call sites |
 | anytls has no `ReuseSuspect`; mieru no idle releaser (A's R-2/R-3) | a pre-sleep session can take new work; mieru's pool is untrimmable for ~5 s | needs SDK methods that do not exist at the current pins |
 | report writing can complete a transition (A's R-8) | by design | a documented decision about who may advance the pressure state machine |
+| a `/30` fake-IP range collides (boundary) | wrong destination for every name in that pool | characterized by `store_boundaries_test.go`; fixing it is a configuration-compatibility decision |
+| H3 small-flow fairness | unmeasured | `PARTIAL / NOT_COVERED`: a passing suite is not a latency-distribution measurement |
+
+**Two rows that used to be here are closed and have moved to history:** reload is stop-then-build now
+recovers automatically (`PAIRWISE_B_FINDINGS.md` §R-B9), and `v2rayquic`'s publish decision is atomic
+(`§R-B2`, 4 of 4 sites).
 
 ## The CI gap, now guarded and closed except for device-bound packages
 
-The audit's recurring finding was a defect behind a suite nobody ran. That is measured and ratcheted:
-`scripts/ci/check-package-execution.py` found **35 of 109 packages with tests that no workflow runs**;
-the 27 pure-logic ones are now mounted in `verify.yml` (green on Windows in one batch before mounting),
+**How to read the number.** The census is a *static* scan: of the 109 packages that contain tests, it
+reports how many match no `go test` command in any workflow. **7 of 109 does not mean the other 102 ran
+in CI** — the script does not check triggers, conditions, platforms, tags, `-run` subsets, skips or
+results. It is a gap finder, and the gap it found was real (`e2e`, `protocol/*` and `service/oomkiller`
+were among the packages where this session found defects by running what nobody ran).
+
+That said, the mount is real: `scripts/ci/check-package-execution.py` found **35 of 109** packages with
+tests and no runner; the 27 pure-logic ones are now in `verify.yml` (green on Windows in one batch
+before mounting),
 **`e2e` is mounted too** after a real Linux run (Go 1.27.4, CGO off, 57 PASS / 1 gated SKIP / 0 FAIL,
 16.0 s; transcript in `pr-issue-windows-2026-11-19/e2e-linux-run.txt`), and the
 remaining **7** are in `scripts/ci/uncovered-packages.txt` with the reason each needs a device or a
@@ -73,9 +90,27 @@ ClientHello (measured with the repository's own probe: it adds `SecP256r1MLKEM76
 command that would perform the bump, is
 `pairwise-c-autonomous-redteam-2026-11-19/PAIRWISE_C_DEPENDENCY_VULNERABILITIES.md`.
 
-## Unexecuted prompt files
+## Dependencies, after the audit's correction
 
-The three windows in `JiejieBox_PR_Issue_Debug_…` (`01_窗口A_核心控制面_TUN_DNS`, `02_窗口B_协议传输_QUIC`,
-`03_窗口C_扩大搜索`) were **not read or executed**. The three-system prompts are complete: triplewise A,
-B and C were all read and executed in this effort. The PR/Issue set is recorded here so the next session
-starts from a known state rather than assuming it was covered.
+**`govulncheck` reports 0 reachable vulnerabilities.** The audit was right that "fix the CVEs or keep the
+fingerprint" was a false choice: the module's `go` line moved to 1.26.0 for the `x/net` and `x/crypto`
+releases, and one GODEBUG default was pinned back in `go.mod`:
+
+```
+go 1.26.0
+godebug tlssecpmlkem=0
+```
+
+With that line the probe reports `groups=[4588 29 23 24 25] key_shares=[4588 29]` — identical to the
+pre-upgrade ClientHello — while the scan reports no reachable vulnerabilities. The full record,
+the per-advisory table, the scope caveat for embedders and the artifact-level follow-up are in
+`pairwise-c-autonomous-redteam-2026-11-19/PAIRWISE_C_DEPENDENCY_VULNERABILITIES.md`, with the raw scans
+beside it.
+
+## Prompt inventory
+
+**Nine task files, all executed.** Three directories × A/B/C:
+`pairwise` (pairwise A/B/C), `三系统` (three-system A/B/C) and `PR_Issue` (windows A/B/C). Earlier text
+here said "12 prompt files" and listed the PR/Issue set as unread; both statements are superseded — the
+count was wrong, and windows A/B/C have their own status pages in `pr-issue-windows-2026-11-19/`.
+The three-system files' appendices were read at group level only, which each status page states.
