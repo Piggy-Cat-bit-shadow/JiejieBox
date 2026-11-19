@@ -145,14 +145,23 @@ func (s *Store) Start() error {
 		if s.inet4Range.IsValid() {
 			s.inet4Current = s.inet4Range.Addr().Next()
 			// Resume past what THIS PROCESS already handed out, when there is no durable cursor to
-			// restore (no `store_fakeip`, i.e. MemoryStorage). See resumeAfterLedger.
-			if resumed, ok := s.resumeAfterLedger(s.inet4Range); ok {
+			// restore (no `store_fakeip`, i.e. MemoryStorage). See resumeAfterLedger: an overlap that
+			// leaves no safe address refuses the start instead of re-binding a held address.
+			resumed, ok, resumeErr := s.resumeAfterLedger(s.inet4Range, s.inet4Last)
+			if resumeErr != nil {
+				return resumeErr
+			}
+			if ok {
 				s.inet4Current = resumed
 			}
 		}
 		if s.inet6Range.IsValid() {
 			s.inet6Current = s.inet6Range.Addr().Next()
-			if resumed, ok := s.resumeAfterLedger(s.inet6Range); ok {
+			resumed, ok, resumeErr := s.resumeAfterLedger(s.inet6Range, s.inet6Last)
+			if resumeErr != nil {
+				return resumeErr
+			}
+			if ok {
 				s.inet6Current = resumed
 			}
 		}
@@ -273,26 +282,76 @@ func (s *Store) recordRetiredRanges(storage adapter.FakeIPStorage, metadata *ada
 // `store_fakeip` it is empty - there is genuinely no evidence then, and the durable-record path
 // (`recordRetiredRanges`) covers the restarts where the cache file exists.
 //
-// The answer is conservative: the cursor is placed at the highest address any generation recorded in
+// The answer is conservative: the cursor is placed past the highest address any generation recorded in
 // THIS range, so the next allocation starts past it. Addresses stay inside the range, and a range that
 // is exhausted wraps exactly as it did before.
-func (s *Store) resumeAfterLedger(addressRange netip.Prefix) (netip.Addr, bool) {
+//
+// # Intersections, not endpoints
+//
+// The first version of this only considered an interval whose *endpoint* lay inside the range. The audit
+// found what that misses: shrink the range so the new pool is a SUBSET of what the previous generation
+// issued, and the interval's endpoint is outside the new range while its body covers the whole pool. The
+// interval was then skipped, allocation restarted at the pool's beginning, and a client's held address
+// was re-bound to a new domain - the wrong-destination failure this whole path exists to prevent.
+//
+// So the intersection is what matters. For each interval, clip it to the issuable span of the range:
+//
+//   - no overlap: ignore it;
+//   - overlap that does not reach the pool's last issuable address: the next safe address is just past
+//     the overlap, and this generation resumes there;
+//   - overlap that reaches the last issuable address: there is NO safe address above it, and the wrap
+//     would re-enter the overlap. That range cannot be served without risking a re-bind, so Start
+//     refuses instead of starting and silently mis-routing. Refusing is the safe failure the audit asked
+//     for; the operator gets a message naming the interval and the range.
+func (s *Store) resumeAfterLedger(addressRange netip.Prefix, last netip.Addr) (netip.Addr, bool, error) {
 	if s.ledger == nil || !addressRange.IsValid() {
-		return netip.Addr{}, false
+		return netip.Addr{}, false, nil
 	}
-	var highest netip.Addr
+	if !last.IsValid() || !addressRange.Contains(last) {
+		return netip.Addr{}, false, nil
+	}
+	issuableFirst := addressRange.Addr().Next()
+	issuableLast := last.Prev()
+	if !addressRange.Contains(issuableFirst) || !addressRange.Contains(issuableLast) ||
+		issuableFirst.Compare(issuableLast) > 0 {
+		// A range with no issuable address at all is the range guard's business, not this function's.
+		return netip.Addr{}, false, nil
+	}
+	var resume netip.Addr
 	for _, interval := range s.ledger.IssuedIntervals() {
-		if !interval.To.IsValid() || interval.To.BitLen() != addressRange.Addr().BitLen() {
+		if !interval.From.IsValid() || !interval.To.IsValid() {
 			continue
 		}
-		if !addressRange.Contains(interval.To) {
+		if interval.From.BitLen() != addressRange.Addr().BitLen() ||
+			interval.To.BitLen() != addressRange.Addr().BitLen() {
 			continue
 		}
-		if !highest.IsValid() || interval.To.Compare(highest) > 0 {
-			highest = interval.To
+		low := interval.From
+		if low.Compare(issuableFirst) < 0 {
+			low = issuableFirst
+		}
+		high := interval.To
+		if high.Compare(issuableLast) > 0 {
+			high = issuableLast
+		}
+		if low.Compare(high) > 0 {
+			// The interval lies entirely outside the issuable span.
+			continue
+		}
+		if high.Compare(issuableLast) == 0 {
+			return netip.Addr{}, false, E.New("the configured fakeip range ", addressRange,
+				" overlaps addresses issued by a previous generation (", interval.From, " - ",
+				interval.To, ") and has no free address above them; refusing to start rather than "+
+					"bind a client's held address to a new domain")
+		}
+		// The cursor is the last address of the overlap, not the one after it: Create advances the
+		// cursor before it hands the address out, so a cursor at the overlap's end yields the first
+		// safe address on the next allocation.
+		if !resume.IsValid() || high.Compare(resume) > 0 {
+			resume = high
 		}
 	}
-	return highest, highest.IsValid()
+	return resume, resume.IsValid(), nil
 }
 
 // issuedInterval is the range of addresses a generation really handed out, or an empty interval when

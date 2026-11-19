@@ -99,56 +99,71 @@ func TestADegeneratePoolCollidesAndTheNewestDomainWins(t *testing.T) {
 			"routed to c.example's destination")
 }
 
-// TestAPoolOfEightAddressesAllocatesDistinctAddresses is the other side of that boundary: /29 has six
-// reachable addresses and the allocator hands out distinct ones.
+// TestAPoolOfEightAddressesAllocatesDistinctAddresses pins the capacity of a /29 and its exhaustion
+// boundary, which is the extent of the claim the audit asked for: four allocations proving "distinct"
+// said nothing about capacity or about what happens after it.
+//
+// The usable capacity is `2^(32-prefix) - 3`, not `- 2`: the range's network address and its last
+// address are never issuable, and the allocator starts at +2, so the first host address is skipped as
+// well. A /29 therefore serves FIVE names (198.18.0.2 - .6); the sixth wraps to the start of the pool,
+// which is the recorded R-B10 boundary - observed here, not assumed.
 func TestAPoolOfEightAddressesAllocatesDistinctAddresses(t *testing.T) {
 	ledger := adapter.NewFakeIPIssuanceLedger()
 	addressRange := netip.MustParsePrefix("198.18.0.0/29")
 	store := newBoundaryStore(t, ledger, addressRange)
 	t.Cleanup(func() { _ = store.Close() })
 
+	const capacity = 5
 	seen := make(map[netip.Addr]string)
-	for _, domain := range []string{"a.example", "b.example", "c.example", "d.example"} {
+	for index := 0; index < capacity; index++ {
+		domain := "name-" + string(rune('a'+index)) + ".example"
 		address, err := store.Create(domain, false)
-		require.NoError(t, err)
+		require.NoError(t, err, "the pool has five usable addresses, so allocation %d must succeed", index)
 		require.True(t, store.issuableAddress(address, false))
 		if previous, collided := seen[address]; collided {
-			t.Fatalf("%s and %s share %v: a pool with more than one address must not collide", previous, domain, address)
+			t.Fatalf("%s and %s share %v before the pool is exhausted", previous, domain, address)
 		}
 		seen[address] = domain
 	}
+	require.Len(t, seen, capacity, "a /29 must hand out five distinct addresses")
+	require.Contains(t, seen, netip.MustParseAddr("198.18.0.6"),
+		"the last usable address must be reached before exhaustion")
+
+	// The sixth allocation has nowhere to go: the cursor wraps to the pool's start, so the new name
+	// receives an address another name already holds.
+	exhausted, err := store.Create("overflow.example", false)
+	require.NoError(t, err, "the current implementation wraps rather than refusing; a refusal would "+
+		"also be safe and this test would need to change with it")
+	require.Contains(t, seen, exhausted,
+		"the sixth allocation must wrap to an address already in the pool, got %v", exhausted)
+	domain, loaded := store.Lookup(exhausted)
+	require.True(t, loaded)
+	require.Equal(t, "overflow.example", domain,
+		"the newest name wins for a wrapped address, which is why a pool this small cannot serve more "+
+			"names than it has addresses")
 }
 
-// TestAReloadOfAnExhaustedSmallPoolRecordsWhatItDoes pins the second boundary: resumeAfterLedger can
-// only resume past an interval it can see inside the range, so an exhausted two-address pool has
-// nowhere left to go. The test records whether the next generation re-issues (the R-B10 wrap) or
-// refuses, rather than claiming the reload guarantee holds for every pool size.
-func TestAReloadOfAnExhaustedSmallPoolRecordsWhatItDoes(t *testing.T) {
+// TestAReloadOfAnExhaustedSmallPoolRefusesToStart is the exhausted-pool contract, tightened after the
+// audit: a /30 whose only reachable address the previous generation already issued has nowhere to
+// resume, and the wrap would re-enter that address. Starting is therefore refused, with a message that
+// names the overlap - it is not "records what it does" any more.
+func TestAReloadOfAnExhaustedSmallPoolRefusesToStart(t *testing.T) {
 	ledger := adapter.NewFakeIPIssuanceLedger()
 	addressRange := netip.MustParsePrefix("198.18.0.0/30")
 	first := newBoundaryStore(t, ledger, addressRange)
 	firstAddress, err := first.Create("a.example", false)
 	require.NoError(t, err)
-	secondAddress, err := first.Create("b.example", false)
-	require.NoError(t, err)
+	require.Equal(t, netip.MustParseAddr("198.18.0.2"), firstAddress)
 	require.NoError(t, first.Close())
 
-	second := newBoundaryStore(t, ledger, addressRange)
-	t.Cleanup(func() { _ = second.Close() })
-	reissued, reissueErr := second.Create("c.example", false)
-	t.Logf("reload of an exhausted /30: held=%v,%v next=%v err=%v",
-		firstAddress, secondAddress, reissued, reissueErr)
-
-	if reissueErr == nil {
-		require.True(t, addressRange.Contains(reissued))
-		// If it re-issued one of the two addresses the previous generation handed out, say so in the
-		// failure message: that is the documented boundary, not a surprise, and a future change that
-		// makes it impossible would be an improvement worth noticing.
-		if reissued == firstAddress || reissued == secondAddress {
-			t.Logf("the reload re-issued %v, which the previous generation had already handed out; "+
-				"this is the R-B10 boundary (a two-address pool has nowhere to resume past)", reissued)
-		}
-	}
+	second := NewStore(service.ContextWithPtr(t.Context(), ledger),
+		log.NewNOPFactory().NewLogger("fakeip"), addressRange, netip.Prefix{})
+	startErr := second.Start()
+	require.Error(t, startErr,
+		"an exhausted two-address pool must refuse to start: resuming is impossible and the wrap "+
+			"would re-bind %v to a new domain", firstAddress)
+	require.Contains(t, startErr.Error(), "has no free address above them")
+	_ = second.Close()
 }
 
 // TestARangeThatShrinksDoesNotInheritTheOldCursor pins the third boundary: the resume only considers
