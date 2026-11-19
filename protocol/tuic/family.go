@@ -38,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -75,6 +76,18 @@ type familyCarrier struct {
 	// started with, in the generation it started in. See retireFamily.
 	generation  uint64
 	established bool
+	// closed is set by the SHUTDOWN half of CloseWithError and is never cleared: the owner of this
+	// carrier has gone away, so no later demand may create a client on its behalf.
+	//
+	// # Why the generation counter is not enough
+	//
+	// The generation protects a race that was ALREADY RUNNING: race() records it before creating and
+	// discards (and retires) a result whose generation moved. A demand that starts AFTER the last
+	// CloseWithError reads the CURRENT generation, finds no client, creates one and installs it -
+	// and nothing bumps the generation again, so no later CloseWithError can ever reach that client.
+	// The fresh QUIC client keeps its socket and its keepalive goroutines, so what looks like "a dial
+	// during teardown" is a permanent connection no owner holds.
+	closed bool
 	// Residency accounting (audit Q15). One object is one established session; the ledger's
 	// Active/Idle distinction is the last DEMAND window, and terminated is the lifetime
 	// session-release count.
@@ -87,8 +100,23 @@ func newFamilyCarrier(newClient func(family int) (*tuic.Client, error)) *familyC
 	return &familyCarrier{newClient: newClient}
 }
 
+// closedError reports that this carrier was shut down and may not create anything again.
+func (c *familyCarrier) closedError() error {
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.closed {
+		return os.ErrClosed
+	}
+	return nil
+}
+
 // clientLocked returns the client for a family, creating it on demand. The caller holds access.
 func (c *familyCarrier) clientLocked(family int) (*tuic.Client, error) {
+	if c.closed {
+		// The creation site is where the invariant has to hold, not only the entry point: a close
+		// that lands between the entry check and this call would otherwise still build a client.
+		return nil, os.ErrClosed
+	}
 	if c.clients[family-1] != nil {
 		return c.clients[family-1], nil
 	}
@@ -108,6 +136,9 @@ func (c *familyCarrier) peek(family int) *tuic.Client {
 
 // DialConn opens a stream on the winning family, or races both families for the first creation.
 func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
+	if err := c.closedError(); err != nil {
+		return nil, err
+	}
 	c.access.Lock()
 	established := c.established
 	winner := c.winner
@@ -134,6 +165,9 @@ func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (
 
 // ListenPacket is DialConn for a UDP session.
 func (c *familyCarrier) ListenPacket(ctx context.Context) (net.PacketConn, error) {
+	if err := c.closedError(); err != nil {
+		return nil, err
+	}
 	c.access.Lock()
 	established := c.established
 	winner := c.winner
@@ -341,6 +375,12 @@ func (c *familyCarrier) retireFamily(generation uint64, family int, client *tuic
 // fresh clients and races again.
 func (c *familyCarrier) CloseWithError(err error) error {
 	c.access.Lock()
+	if errors.Is(err, os.ErrClosed) {
+		// Shutdown, not a network change: see the closed field. The outbound's Scope passes
+		// os.ErrClosed when the owner goes away, and InterfaceUpdated passes a network-change error,
+		// so the caller's own convention is the only signal that tells the two apart.
+		c.closed = true
+	}
 	clients := c.clients
 	wasEstablished := c.established
 	c.clients = [2]*tuic.Client{}

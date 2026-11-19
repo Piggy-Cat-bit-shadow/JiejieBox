@@ -38,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,6 +77,23 @@ type familyCarrier struct {
 	// started in; anything else belongs to a newer generation and must be left alone.
 	generation  uint64
 	established bool
+	// closed is set by the SHUTDOWN half of CloseWithError and is never cleared: the owner of this
+	// carrier has gone away, so no later demand may create a client on its behalf.
+	//
+	// # Why the generation counter is not enough
+	//
+	// The generation protects a race that was ALREADY RUNNING: race() records it before creating and
+	// discards (and retires) a result whose generation moved. A demand that starts AFTER the last
+	// CloseWithError reads the CURRENT generation, finds no client, creates one and installs it -
+	// and nothing bumps the generation again, so no later CloseWithError can ever reach that client.
+	// The fresh QUIC client keeps its socket, its keepalive goroutines (10 s) and its 30 s idle
+	// timer, so what looks like "a dial during teardown" is a permanent connection no owner holds.
+	//
+	// Box teardown is exactly that shape: the Scope drains the inbound (started after the outbound)
+	// before the outbound cleanup in some orders, and a relay accepted just before its listener
+	// closed still calls DialContext afterwards. The same applies to any caller that keeps a
+	// reference across a Shutdown.
+	closed bool
 	// Residency accounting (audit Q15). One object is one established session; activeFlows is
 	// the Active/Idle distinction and terminated is the lifetime session-release count.
 	creating   atomic.Int64
@@ -87,8 +105,23 @@ func newFamilyCarrier(newClient func(family int) (*hysteria2.Client, error)) *fa
 	return &familyCarrier{newClient: newClient}
 }
 
+// closedError reports that this carrier was shut down and may not create anything again.
+func (c *familyCarrier) closedError() error {
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.closed {
+		return os.ErrClosed
+	}
+	return nil
+}
+
 // clientLocked returns the client for a family, creating it on demand. The caller holds access.
 func (c *familyCarrier) clientLocked(family int) (*hysteria2.Client, error) {
+	if c.closed {
+		// The creation site is where the invariant has to hold, not only the entry point: a close
+		// that lands between the entry check and this call would otherwise still build a client.
+		return nil, os.ErrClosed
+	}
 	if c.clients[family-1] != nil {
 		return c.clients[family-1], nil
 	}
@@ -108,6 +141,9 @@ func (c *familyCarrier) peek(family int) *hysteria2.Client {
 
 // DialConn opens a stream on the winning family, or races both families for the first creation.
 func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
+	if err := c.closedError(); err != nil {
+		return nil, err
+	}
 	c.access.Lock()
 	established := c.established
 	winner := c.winner
@@ -134,6 +170,9 @@ func (c *familyCarrier) DialConn(ctx context.Context, destination M.Socksaddr) (
 
 // ListenPacket is DialConn for a UDP session.
 func (c *familyCarrier) ListenPacket(ctx context.Context) (net.PacketConn, error) {
+	if err := c.closedError(); err != nil {
+		return nil, err
+	}
 	c.access.Lock()
 	established := c.established
 	winner := c.winner
@@ -337,10 +376,22 @@ func (c *familyCarrier) retireFamily(generation uint64, family int, client *hyst
 	_ = client.CloseWithError(net.ErrClosed)
 }
 
-// CloseWithError closes both clients: the network-change and shutdown path. The next demand creates
-// fresh clients and races again.
+// CloseWithError closes both clients: the network-change and shutdown path. A network change leaves
+// the carrier reusable (the next demand creates fresh clients and races again); a SHUTDOWN closes it
+// for good.
+//
+// # Why the error value decides which one this is
+//
+// The two callers are already distinguishable by what they pass, and this is the convention the
+// outbound uses: InterfaceUpdated passes a descriptive network-change error, and the Box Scope
+// passes os.ErrClosed when the owner is going away. Nothing else in this type can tell "the network
+// moved" from "we are done", and merging them is precisely the defect that let a post-teardown dial
+// install a client no later CloseWithError could reach.
 func (c *familyCarrier) CloseWithError(err error) error {
 	c.access.Lock()
+	if errors.Is(err, os.ErrClosed) {
+		c.closed = true
+	}
 	clients := c.clients
 	wasEstablished := c.established
 	c.clients = [2]*hysteria2.Client{}
