@@ -13,10 +13,27 @@ built (one would need a rate-limited path and per-stream latency attribution).
 
 ## Group 2 — QUIC 发送队列（full→writable 临界事件，对端不发新包）
 
-**`NOT_COVERED`.** Driving a `quic.Config` send queue to `full` requires controlling the peer's
-receive window; the in-package fixtures have a real endpoint but no window control. The risk this group
-names (a stalled send blocking an unrelated stream) is structurally limited by quic-go's per-stream
-flow control, which is why it was not prioritised in a freeze.
+**Executed this round: covered by a userspace backpressure harness, `NO_DEFECT`.**
+
+The fixture's server now holds its stream readers before their first read
+(`migrationServer.readsBlocked`, nil by default so no other test changes behaviour). The test writes
+16 KB chunks until a write deadline fires — on this build the send queue filled after **2,097,152 bytes**,
+the peer's advertised window — then releases the reader and requires that a **fresh stream** on the same
+connection carries data and that the server saw one handshake (no reconnect).
+
+Two deliberate choices make it robust rather than window-size-dependent:
+
+- **The fill size is not asserted.** It is the peer's advertised window, not a contract of this
+  transport; asserting it would turn every upstream window change into a false failure. The test records
+  it in its log and asserts only that *some* write blocked and that the connection recovered.
+- **Recovery uses a new stream.** A QUIC stream whose write deadline fired is cancelled and cannot be
+  resumed — that is protocol semantics, not a transport defect, and the comment says so.
+
+**Vacuous-pass guard:** if the window never fills inside the ten-second budget the test reports `Skip`
+with the byte count instead of passing, so it cannot claim "recovered from a full queue" without one.
+The first version of this test also learned something worth writing down: opening a stream does not by
+itself drive the handshake, so the handshake needs a first write before the server has anything to
+accept — without it the test waited two seconds for a stream the server never saw.
 
 ## Group 3 — PMTU 黑洞（MTU 1280/1290、不可达 ICMP/EMSGSIZE）
 
@@ -91,7 +108,7 @@ a fallback window that can stay unarmed on short deadlines — is recorded as R-
 | Group | Verdict |
 | --- | --- |
 | 1 H3 small-flow fairness | `NO_DEFECT` (suite coverage) |
-| 2 QUIC send queue | `NOT_COVERED` (needs window control) |
+| 2 QUIC send queue | **new test** (2 MB filled, reader released, fresh stream writes) with a vacuous-pass guard, `NO_DEFECT` |
 | 3 PMTU black hole | **new pair of tests** (userspace 1280 path, 5 drops, transfer survives) + two controls, `NO_DEFECT` |
 | 4 connection migration | `NO_DEFECT` (suite coverage; also C-T5's positive control) |
 | 5 cancel / stream termination | **new regression test**, `NO_DEFECT`, mutation control red |
@@ -99,6 +116,7 @@ a fallback window that can stay unarmed on short deadlines — is recorded as R-
 | 7 XHTTP/H2 | **B-1 fixed** earlier; no slow-read harness |
 | 8 Naive/Reality | **fixed** (A + C); R-B4 recorded |
 
-No new defect was found in this window. The value of the round is group 5's regression (the multiplexing
-property every other protocol here depends on), group 3's black-hole path and its two controls, and the
-explicit statement that groups 2 and 6 were not attacked rather than passed.
+No new defect was found in this window. Six of its eight groups now have executed evidence; the two that
+do not are named with the reason (the Mieru SDK at the pin, and the xhttp slow-read harness that was not
+built). The round's products are three new test files — send-queue recovery, PMTU black hole, and stream
+isolation — each with a guard or control that would notice if the mechanism it depends on changed.

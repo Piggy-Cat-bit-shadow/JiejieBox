@@ -118,6 +118,10 @@ type migrationServer struct {
 	streamCount atomic.Int32
 	// acknowledge decides whether a received record is acknowledged. nil means every record.
 	acknowledge func(sequence uint64) bool
+	// readsBlocked, when non-nil, holds every stream reader before its first read, which is how a
+	// test fills the CLIENT's send window. nil (the default) reads immediately, so no other test
+	// changes behaviour.
+	readsBlocked chan struct{}
 
 	access  sync.Mutex
 	streams []*migrationStreamState
@@ -172,6 +176,9 @@ func (s *migrationServer) serveConnection(conn *quic.Conn) {
 }
 
 func (s *migrationServer) readStream(stream *quic.Stream, index int) {
+	if s.readsBlocked != nil {
+		<-s.readsBlocked
+	}
 	header := make([]byte, 16)
 	for {
 		if _, err := io.ReadFull(stream, header); err != nil {
