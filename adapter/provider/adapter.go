@@ -250,10 +250,23 @@ func (a *Adapter) UpdateGroups() error {
 // replaceOutbound uses the owner-aware replacement when the manager provides it, so the replaced
 // object is parked instead of closed before the groups are notified.
 func (a *Adapter) replaceOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
+	var err error
 	if owned, isOwned := a.outbound.(adapter.OwnedDynamicOutboundManager); isOwned {
-		return owned.ReplaceOwned(ctx, router, logger, tag, outboundType, options, a.providerTag)
+		err = owned.ReplaceOwned(ctx, router, logger, tag, outboundType, options, a.providerTag)
+	} else {
+		err = a.outbound.Replace(ctx, router, logger, tag, outboundType, options)
 	}
-	return a.outbound.Replace(ctx, router, logger, tag, outboundType, options)
+	if err != nil {
+		return err
+	}
+	// A measurement is a fact about ONE object, and the history is keyed by TAG. A subscription that
+	// keeps the tag and points it at a different server is the ordinary case, so the delay stored for
+	// the replaced object must go with it: otherwise the URL-test group orders its members on evidence
+	// about a server that is gone, and the dashboard shows a node that was never probed in this
+	// configuration as measured. The router clears history when a handshake FAILS (route/conn.go:190),
+	// which cannot help a node replaced while idle; this is the edge that can.
+	a.history.DeleteURLTestHistory(tag)
+	return nil
 }
 
 // markPendingReplacement records a same-tag replacement for the next publication barrier.
@@ -667,6 +680,9 @@ func (a *Adapter) removeRetiredObjects(pending []adapter.Outbound) []adapter.Out
 				lastErr = err
 				continue
 			}
+			// A removed node is not merely hidden: its tag is free to be reused by the next
+			// subscription, and a leftover delay would then be inherited by an unrelated object.
+			a.history.DeleteURLTestHistory(ob.Tag())
 		}
 		if len(remaining) == len(pending) {
 			if a.logger != nil && lastErr != nil {
