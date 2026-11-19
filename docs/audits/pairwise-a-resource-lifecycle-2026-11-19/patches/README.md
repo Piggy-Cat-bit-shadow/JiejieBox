@@ -16,27 +16,35 @@ the pin needs a CI run for the resulting `sing-tun` revision, which this environ
 
 ## The behaviour evidence
 
-`udp_nat_eviction_cancel_test.go.txt` (this directory; the `.txt` suffix keeps it out of the Go package
-graph — copy it into the sing-tun copy as `.go` to run) is the sing-tun-side test. It starts a `UDPNat`
-with a 50 ms timeout and a `Prepare` that returns a context it can observe, sends one packet so the entry
-exists and the handler is running on the context derived from it, lets the entry expire, forces the sweep
-with `PurgeExpired()`, and waits for that context to be cancelled.
+Two test files, each run against the pinned revision and against the patched one (the `.txt` suffix keeps
+them out of the Go package graph — copy them into the sing-tun copy as `.go` to run).
 
-| Revision | Result | Transcript |
+`udp_nat_eviction_cancel_test.go.txt` covers the **timeout sweep**: a `UDPNat` with a 50 ms timeout and a
+`Prepare` that returns an observable context; one packet creates the entry and the handler runs on the
+context derived from it; the entry expires, `PurgeExpired()` forces the sweep, and the context must be
+cancelled.
+
+`udp_nat_close_paths_test.go.txt` covers **all three close paths independently**, because the audit was
+right that one sweep is not the whole story: the timeout sweep, an explicit `conn.Close()`, and a capacity
+eviction (`MaxSize: 1`, a second five-tuple arrives).
+
+| Path | Pinned (unpatched) | Patched |
 | --- | --- | --- |
-| pinned, unpatched | **FAIL** — "the handler's context was NOT cancelled after its entry was evicted: the creation keeps running for a flow that no longer exists" | `sing-tun-eviction-cancel-unpatched.txt` |
-| pinned + this patch | **PASS** (0.20 s) | `sing-tun-eviction-cancel-patched.txt` |
+| timeout sweep | **FAIL** — "the handler's context was NOT cancelled after its entry was evicted" | **PASS** (0.20 s) |
+| explicit `Close()` | **FAIL** — "closing the entry did not cancel the handler's context" | **PASS** (0.00 s) |
+| capacity eviction | **FAIL** — "the capacity eviction did not cancel the evicted entry's context" | **PASS** (0.00 s) |
 
-Run it the same way both times:
+Transcripts: `sing-tun-eviction-cancel-{unpatched,patched}.txt` (the sweep) and
+`sing-tun-close-paths-{unpatched,patched}.txt` (all three). Run either the same way:
 
 ```
 # in a copy of the pinned module, with the test file beside udp_nat.go
-go test -run TestAnEvictedEntryCancelsTheDialItLaunched -count=1 -v -timeout 30s .
+go test -run 'TestAnEvictedEntryCancels|TestAnExplicitCloseCancels|TestACapacityEvictionCancels' \
+        -count=1 -v -timeout 60s .
 ```
 
-What the test does **not** claim: it observes the cancellation, not fd/goroutine/buffer counts after it.
-A resource-settlement measurement would need the consumer's fake outbound to report what it held, which
-is the next step below.
+What the tests do **not** claim: they observe the cancellation, not fd/goroutine/buffer counts after it,
+and they do not exercise the consumer's blocking `ListenPacket`. Both are the next step below.
 
 ## Still open
 

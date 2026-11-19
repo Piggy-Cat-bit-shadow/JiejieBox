@@ -126,6 +126,7 @@ release-relevant effect:
 | the publish decision is atomic (B) | a connection from the old network stamped current |
 | every gated outbound routes its listener through the gate (C) | the double transition that killed the session built a moment earlier |
 | the fake-IP cursor resumes past the ledger (C) | a client's held address remapped to a different domain after a reload |
+| a shrinking fake-IP range that overlaps held addresses is refused (re-review) | the same remap, when the new pool lies inside what the previous generation issued |
 | the QUIC pool's publish and its acknowledgement are one decision (C) | a connection built on the old network stamped as current, then handed to every later demand |
 | a replaced or removed node loses its predecessor's URL-test measurement (release windows A) | a never-probed node selected on evidence about a server that is gone |
 | a shared HTTP transport refuses to rebuild after Close (triple C) | a late provider refresh or rule-set fetch building a transport inside a released Box, which nothing would ever close |

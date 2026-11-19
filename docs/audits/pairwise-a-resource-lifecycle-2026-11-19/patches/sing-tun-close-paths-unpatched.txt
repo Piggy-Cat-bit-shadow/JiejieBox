@@ -1,0 +1,12 @@
+﻿=== RUN   TestAnEvictedEntryCancelsTheDialItLaunched
+    udp_nat_close_paths_test.go:98: the timeout sweep did not cancel the handler's context
+--- FAIL: TestAnEvictedEntryCancelsTheDialItLaunched (2.20s)
+=== RUN   TestAnExplicitCloseCancelsTheDialItLaunched
+    udp_nat_close_paths_test.go:115: closing the entry did not cancel the handler's context
+--- FAIL: TestAnExplicitCloseCancelsTheDialItLaunched (2.00s)
+=== RUN   TestACapacityEvictionCancelsTheDialItLaunched
+    udp_nat_close_paths_test.go:131: the capacity eviction did not cancel the evicted entry's context
+--- FAIL: TestACapacityEvictionCancelsTheDialItLaunched (2.00s)
+FAIL
+FAIL	github.com/sagernet/sing-tun	6.278s
+FAIL

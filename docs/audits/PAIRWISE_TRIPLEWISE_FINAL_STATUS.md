@@ -26,7 +26,7 @@ flagged it and the number is corrected here.
 | 9 | the durable fake-IP retirement record is read with no fakeip server configured | defect |
 | 10 | the generation publish decision is one atomic call (three pools) | defect |
 | 11 | every gated outbound routes its listener through the generation gate | defect |
-| 12 | a reload no longer re-issues the addresses its predecessor handed out | defect |
+| 12 | a reload no longer re-issues the addresses its predecessor handed out — **for the configured range, and now including the case where the new range overlaps the old issuance**; a range that shrinks onto addresses a client holds is refused at start rather than re-bound (§3) | defect |
 | 13 | a generation offered to a closed pool is released, not adopted | defect |
 | 14 | a replaced or removed node loses its predecessor's URL-test measurement | defect |
 | 15 | the QUIC pool's publish and acknowledgement are one decision (and its migration path) | defect |
@@ -49,21 +49,30 @@ ratchet, the dependency upgrade, and the boundary tests listed in §3.
 
 ## 3. Boundaries that are characterized, not fixed
 
-- **`/30` fake-IP ranges collide.** A two-address pool has one reachable address (the allocator starts
-  at +2), so every domain shares it and `Lookup` answers with the newest. `/29` and larger allocate
-  distinct addresses. Pinned by `dns/transport/fakeip/store_boundaries_test.go`; the alternatives are a
-  configuration decision (reject tiny ranges) and a wire-compatibility decision (change the start
-  offset), neither taken.
-- **The reload guarantee is qualified.** The cursor resumes past the previous generation's high-water
-  mark *for the configured range*; a range that shrinks or moves inherits nothing (correct, because the
-  old addresses are not in it), and an exhausted pool has nowhere to go. Three tests pin those edges.
+- **`/30` fake-IP ranges collide *within one generation*.** A two-address pool has one reachable address
+  (the allocator starts at +2), so every domain shares it and `Lookup` answers with the newest. `/29` has
+  six reachable addresses; its distinctness is asserted for four allocations and its **exhaustion** for
+  the fifth, which is the extent of the claim. Pinned by
+  `dns/transport/fakeip/store_boundaries_test.go`. **A reload of an exhausted `/30` is now refused at
+  start** (§3).
+- **The reload guarantee is qualified, and an overlapping range is refused.** The cursor resumes past the
+  previous generation's high-water mark *for the configured range*. **A range that shrinks onto addresses
+  the previous generation issued no longer resumes past them silently**: `resumeAfterLedger` now clips each
+  issued interval to the new range's issuable span, resumes past the overlap when a free tail remains, and
+  **refuses `Start` when the overlap reaches the pool's last address** — because the only alternative is
+  the wrap that re-binds a client's held address to a new domain. A range that moves entirely away
+  inherits nothing, which is correct. `dns/transport/fakeip/store_overlap_test.go` holds the three cases;
+  the defect was found by the audit after the first version of this page explained the shrink case as
+  "correct", and it was wrong: the old endpoint check skipped an interval whose body covered the new pool.
 - **The concurrent allocation test now actually is concurrent.** The earlier name said "concurrent"
   while the body called `Create` twice in sequence; the sequential case is renamed and a barrier-based
   sixteen-caller test runs under `-race`.
-- **The UDP NAT eviction gap is not closed.** An evicted entry still does not cancel the dial it
-  launched. A patch exists and builds against the exact pinned revision (`pairwise-a-.../patches/`), but
-  its behaviour is unverified and it is not pinned; the consumer-side reduction of scope is recorded in
-  `PAIRWISE_C_RELEASE_READINESS.md` §5.
+- **The UDP NAT eviction gap: the fork-side cancellation is verified for all three close paths, and the
+  consumer is still not.** A patch exists and builds against the exact pinned revision
+  (`pairwise-a-.../patches/`); its tests **fail on the pin and pass patched** for the timeout sweep, an
+  explicit `Close`, and a capacity eviction. Not done: the consumer-side end-to-end assertion (outbound
+  `ListenPacket` blocked and cancelled), resource-settlement counts, the CI run for the new revision, and
+  the pin. The admission policy is a separate decision and is not part of this fix.
 
 ## 4. Dependencies
 

@@ -1,0 +1,8 @@
+﻿=== RUN   TestAnEvictedEntryCancelsTheDialItLaunched
+--- PASS: TestAnEvictedEntryCancelsTheDialItLaunched (0.20s)
+=== RUN   TestAnExplicitCloseCancelsTheDialItLaunched
+--- PASS: TestAnExplicitCloseCancelsTheDialItLaunched (0.00s)
+=== RUN   TestACapacityEvictionCancelsTheDialItLaunched
+--- PASS: TestACapacityEvictionCancelsTheDialItLaunched (0.00s)
+PASS
+ok  	github.com/sagernet/sing-tun	0.280s

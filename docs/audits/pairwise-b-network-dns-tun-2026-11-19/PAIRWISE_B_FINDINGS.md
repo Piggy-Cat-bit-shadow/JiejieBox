@@ -355,12 +355,28 @@ designed: a lifecycle redesign to build-then-swap was considered and is not need
 because the failure mode it would prevent is already handled — and the honest cost of the redesign
 (holding two Boxes, with their registries and device claims, alive at once) is larger than the gap.
 
-## R-B10〔LOW〕Two domains can share one placeholder when the cursor wraps
+## R-B10〔LOW within one generation, now REFUSED across generations〕Two domains can share one placeholder when the cursor wraps
 
 `nextAddress` wraps to the start of the range once the cursor reaches the last address, and the mapping
 table is keyed by address, so a small range hands the same address to a later domain and `Lookup`
 returns the newer one. Upstream-compatible overwrite semantics rather than a defect of this round;
 recorded because B-3's guard now makes the *degenerate* case loud while leaving this one as designed.
+
+**Sharpened by the audit, and the cross-generation half is now refused.** The usable capacity of a range
+is `2^(32-prefix) - 3`, not `- 2`: the network address and the last address are never issuable, and the
+allocator starts at +2, so the first host address is skipped too. A `/29` therefore serves five names and
+a `/30` serves one, which is why a `/30` hands the same address to every domain. That is pinned by
+`dns/transport/fakeip/store_boundaries_test.go`.
+
+The dangerous case was not the wrap inside one generation but the wrap *across* a reload: the audit
+reproduced a shrinking range whose new pool lay inside what the previous generation had already issued.
+`resumeAfterLedger` looked only at an interval's endpoint, so an interval whose body covered the new pool
+but whose end was outside it was skipped, allocation restarted at the pool's beginning, and a client's
+held address was re-bound to a new domain. That is fixed: the overlap is now clipped to the new range's
+issuable span, allocation resumes past it when a free tail remains, and `Start` **refuses** when the
+overlap reaches the last address, because the only alternative is the wrap that re-binds. Tests:
+`store_overlap_test.go` (three cases, one of which failed before the fix) and
+`TestAReloadOfAnExhaustedSmallPoolRefusesToStart`.
 
 ## Not defects (checked with evidence)
 
