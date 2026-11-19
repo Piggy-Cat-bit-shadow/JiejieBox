@@ -241,7 +241,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	created.generation = runtimecoord.NewGenerationGate(
 		service.FromContext[*runtimecoord.Coordinator](ctx),
 		"tuic/"+options.ServerOptions.Build().String(),
-		created.InterfaceUpdated,
+		created.resetForNetworkChange,
 	)
 	return created, nil
 }
@@ -315,7 +315,21 @@ func (h *Outbound) listenPacket(ctx context.Context, destination M.Socksaddr) (n
 	}
 }
 
+// InterfaceUpdated is the listener entry. It is routed THROUGH the generation gate so the push
+// notification and a demand that arrived inside the same transition are one action instead of two
+// destructive passes. See runtimecoord.GenerationGate.NetworkChanged; with no gate the action runs
+// directly.
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	if h.generation != nil {
+		h.generation.NetworkChanged(ctx)
+		return
+	}
+	h.resetForNetworkChange(ctx)
+}
+
+// resetForNetworkChange is the action itself: what the gate runs, and what the listener runs when this
+// build has no coordinator.
+func (h *Outbound) resetForNetworkChange(ctx context.Context) {
 	_ = h.client.CloseWithError(E.New("network changed"))
 }
 

@@ -131,7 +131,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	outbound.generation = runtimecoord.NewGenerationGate(
 		service.FromContext[*runtimecoord.Coordinator](ctx),
 		"vless/"+outbound.serverAddr.String(),
-		outbound.InterfaceUpdated,
+		outbound.resetForNetworkChange,
 	)
 	return outbound, nil
 }
@@ -198,7 +198,26 @@ func (h *Outbound) MultiplexEnabled() bool {
 	return isMultiplexTransport && multiplexTransport.MultiplexEnabled()
 }
 
+// InterfaceUpdated is the listener entry: the network manager's phase calls it for a transition that
+// has already published a new generation.
+//
+// It is routed THROUGH the generation gate. A demand that arrived inside the same transition may have
+// already run this very action (the gate's BeforeDial applies it when the hand-out sees a stale
+// generation), and running it twice destroys the session that demand just built: the push
+// notification and the demand are the SAME action, so they must be one action
+// (runtimecoord.GenerationGate.NetworkChanged). Without a gate there is nothing to deduplicate and the
+// action runs directly, which is every build and test with no coordinator.
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	if h.generation != nil {
+		h.generation.NetworkChanged(ctx)
+		return
+	}
+	h.resetForNetworkChange(ctx)
+}
+
+// resetForNetworkChange is the action itself: what the gate runs, and what the listener runs when this
+// build has no coordinator.
+func (h *Outbound) resetForNetworkChange(ctx context.Context) {
 	if h.transport != nil {
 		// A physical network change is not the transport's final close: Close cancels the
 		// transport's lifetime context, so a later dial would fail forever. Reset aborts the

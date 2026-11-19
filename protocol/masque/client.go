@@ -324,7 +324,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	clientEndpoint.generation = runtimecoord.NewGenerationGate(
 		service.FromContext[*runtimecoord.Coordinator](ctx),
 		"masque/"+options.ServerOptions.Build().String(),
-		clientEndpoint.InterfaceUpdated,
+		clientEndpoint.resetForNetworkChange,
 	)
 	return clientEndpoint, nil
 }
@@ -621,7 +621,21 @@ func (c *ClientEndpoint) FrontHeadroom() int {
 	return c.device.FrontHeadroom()
 }
 
+// InterfaceUpdated is the listener entry. It is routed THROUGH the generation gate so the push
+// notification and a demand that arrived inside the same transition are one action instead of two
+// destructive passes; see runtimecoord.GenerationGate.NetworkChanged. With no gate the action runs
+// directly.
 func (c *ClientEndpoint) InterfaceUpdated(ctx context.Context) {
+	if c.generation != nil {
+		c.generation.NetworkChanged(ctx)
+		return
+	}
+	c.resetForNetworkChange(ctx)
+}
+
+// resetForNetworkChange is the action itself: what the gate runs, and what the listener runs when this
+// build has no coordinator.
+func (c *ClientEndpoint) resetForNetworkChange(ctx context.Context) {
 	c.client.RestartSession()
 }
 

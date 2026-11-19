@@ -117,7 +117,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	outbound.generation = runtimecoord.NewGenerationGate(
 		service.FromContext[*runtimecoord.Coordinator](ctx),
 		"vmess/"+outbound.serverAddr.String(),
-		outbound.InterfaceUpdated,
+		outbound.resetForNetworkChange,
 	)
 	return outbound, nil
 }
@@ -130,7 +130,21 @@ func (h *Outbound) MultiplexEnabled() bool {
 	return isMultiplexTransport && multiplexTransport.MultiplexEnabled()
 }
 
+// InterfaceUpdated is the listener entry. It is routed THROUGH the generation gate so the push
+// notification and a demand that arrived inside the same transition are one action instead of two
+// destructive passes; see runtimecoord.GenerationGate.NetworkChanged and vless's copy of this
+// comment. With no gate the action runs directly.
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	if h.generation != nil {
+		h.generation.NetworkChanged(ctx)
+		return
+	}
+	h.resetForNetworkChange(ctx)
+}
+
+// resetForNetworkChange is the action itself: what the gate runs, and what the listener runs when this
+// build has no coordinator.
+func (h *Outbound) resetForNetworkChange(ctx context.Context) {
 	if h.transport != nil {
 		// A physical network change is not the transport's final close: Close cancels the
 		// transport's lifetime context, so a later dial would fail forever. Reset aborts the
