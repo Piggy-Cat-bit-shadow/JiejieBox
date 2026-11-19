@@ -99,6 +99,27 @@ func TestADegeneratePoolCollidesAndTheNewestDomainWins(t *testing.T) {
 			"routed to c.example's destination")
 }
 
+// TestAQueryBeforeStartAnswersInsteadOfPanicking is the class the batch's Xray #6442 records: a fake-DNS
+// store queried before it started used to panic on a nil storage interface. Nothing in the shipped
+// startup order queries this early, so this is defensive, not a reachable bug - but a panic in a lookup
+// path is a bad failure mode for a future caller, and an error is what the caller can act on.
+func TestAQueryBeforeStartAnswersInsteadOfPanicking(t *testing.T) {
+	ledger := adapter.NewFakeIPIssuanceLedger()
+	ctx := service.ContextWithPtr(t.Context(), ledger)
+	store := NewStore(ctx, log.NewNOPFactory().NewLogger("fakeip"),
+		netip.MustParsePrefix("198.18.0.0/15"), netip.Prefix{})
+
+	_, err := store.Create("early.example", false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not started")
+
+	_, loaded := store.Lookup(netip.MustParseAddr("198.18.0.2"))
+	require.False(t, loaded)
+
+	require.Error(t, store.Reset())
+	require.NoError(t, store.Close())
+}
+
 // TestAnUnprotectedStoreKeepsNoAddressLedger pins the re-review's P2: the per-address set exists only
 // to keep the protected-interval search from landing on a live mapping, so a store with no inherited
 // issuance must not build it. The second half shows the set does exist where it is consulted.

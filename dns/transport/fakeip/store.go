@@ -486,6 +486,12 @@ func (s *Store) RetiredAddresses() []adapter.FakeIPIssuanceInterval {
 }
 
 func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
+	if s.storage == nil {
+		// Before Start, or after a failed one, there is no storage to allocate from. A nil interface
+		// would panic on the next line instead of returning the state error the caller can act on - the
+		// same class the batch's Xray #6442 records, where a fake-DNS store queried before Start panicked.
+		return netip.Addr{}, E.New("the fakeip store is not started")
+	}
 	if address, loaded := s.storage.FakeIPLoadDomain(domain, isIPv6); loaded {
 		return address, nil
 	}
@@ -610,6 +616,10 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 }
 
 func (s *Store) Lookup(address netip.Addr) (string, bool) {
+	if s.storage == nil {
+		// See Create: a query before Start must answer "not ours", not panic on a nil interface.
+		return "", false
+	}
 	return s.storage.FakeIPLoad(address)
 }
 
@@ -639,5 +649,8 @@ func (s *Store) issuableAddress(address netip.Addr, isIPv6 bool) bool {
 }
 
 func (s *Store) Reset() error {
+	if s.storage == nil {
+		return E.New("the fakeip store is not started")
+	}
 	return s.storage.FakeIPReset()
 }
