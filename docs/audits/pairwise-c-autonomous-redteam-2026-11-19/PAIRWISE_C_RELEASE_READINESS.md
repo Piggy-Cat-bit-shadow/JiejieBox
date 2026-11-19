@@ -174,11 +174,13 @@ continuations are joined before a package list is read (a line-based reader miss
 continuation of `go test ... \` — it reported 64 gaps before that fix, which would have been a false
 alarm).
 
-`scripts/ci/uncovered-packages.txt` freezes today's 35, grouped by what would mount them: 27 are pure
-logic (~1 s each), `e2e` needs one Linux run first, and 7 need a device, a privilege or a platform
-(WinDivert/capture, power events, schannel). `verify.yml` now runs the script with `--baseline`, so the
-step **fails only when a package gains tests and no workflow runs them** — a ratchet, not a coverage
-mandate, and not a green light for the backlog.
+`scripts/ci/uncovered-packages.txt` freezes what is left, with the reason next to each line. The 27
+pure-logic packages that were in it have since been **mounted**: they ran green on Windows in one
+27-package batch (~26 s wall) before being added to `verify.yml` as "the pure-logic packages no other
+job runs". What remains is 8 — `e2e` (needs one Linux run first) and 7 that need a device, a privilege
+or a platform (WinDivert/capture, power events, schannel). `verify.yml` runs the census script with
+`--baseline`, so the step **fails only when a package gains tests and no workflow runs them** — a
+ratchet, not a coverage mandate.
 
 The gate has a self-test with its own mutation controls: forcing `covers()` to answer true, or removing
 the continuation join, both make the self-test exit 1. That is what distinguishes it from the

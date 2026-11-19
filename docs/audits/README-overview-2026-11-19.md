@@ -49,13 +49,14 @@ round's verification page (`MC-1`, `MC-B1…B6`, `MC-C1/C2`, `MC-T1a/b`).
 | anytls has no `ReuseSuspect`; mieru no idle releaser (A's R-2/R-3) | a pre-sleep session can take new work; mieru's pool is untrimmable for ~5 s | needs SDK methods that do not exist at the current pins |
 | report writing can complete a transition (A's R-8) | by design | a documented decision about who may advance the pressure state machine |
 
-## The CI gap, now guarded
+## The CI gap, now guarded and mostly closed
 
 The audit's recurring finding was a defect behind a suite nobody ran. That is measured and ratcheted:
-`scripts/ci/check-package-execution.py` reports **35 of 109 packages with tests that no workflow runs**,
-`scripts/ci/uncovered-packages.txt` freezes today's set (grouped by what would mount each), and
-`verify.yml` fails only when a **new** package gains tests without a runner. The self-test
-(`check-package-execution.test.py`) has two mutation controls, both red.
+`scripts/ci/check-package-execution.py` found **35 of 109 packages with tests that no workflow runs**;
+the 27 pure-logic ones are now mounted in `verify.yml` (green on Windows in one batch before mounting),
+and the remaining **8** are in `scripts/ci/uncovered-packages.txt` with the reason each needs a device,
+a privilege or one Linux run. The gate fails only when a **new** package gains tests without a runner.
+Its self-test (`check-package-execution.test.py`) has two mutation controls, both red.
 
 ## Unexecuted prompt files
 

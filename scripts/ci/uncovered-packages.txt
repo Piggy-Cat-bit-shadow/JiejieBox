@@ -6,40 +6,12 @@
 # the script reports it as "no longer a gap" so the line gets pruned.
 #
 # Measured at the 0.1.53 release round: 35 of 109 packages with tests had no push-time runner. Three
-# defects in the 2026-11 audit were found by RUNNING suites in this set (`e2e`, `protocol/*`,
+# defects in the 2026-11 audit were found by RUNNING suites in that set (`e2e`, `protocol/*`,
 # `service/oomkiller` - the last one has since been mounted), which is why the gate exists.
 #
-# The categories below say WHAT would mount each group, so the next round can act on them instead of
-# re-deriving the question. A line is not a judgement that its tests are worthless.
-
-# --- mountable now: pure logic, no device, no privilege. Each ~1 s.
-./common/artifact
-./common/badh2
-./common/badversion
-./common/bufgeom
-./common/buildgate
-./common/certificate
-./common/configtx
-./common/convertor/adguard
-./common/geosite
-./common/interrupt
-./common/runtimecoord
-./common/sniff
-./common/srs
-./common/tlsfragment
-./common/trafficcontrol
-./common/urltest
-./experimental/cachefile
-./experimental/clashapi
-./experimental/deprecated
-./internal/memmetrics
-./log
-./provider/local
-./provider/parser
-./release/config
-./scripts/bench/benchstat
-./scripts/bench/memmatrix
-./scripts/bench/memsummary
+# The 27 pure-logic packages that were in this file are now mounted in verify.yml ("the pure-logic
+# packages no other job runs"), green on Windows before mounting. What remains needs something this
+# environment cannot provide, so it is listed with that reason rather than hidden.
 
 # --- needs a network or a peer: `e2e` (58 tests, 35 s green on Windows) drives real clients through
 # the router. Mounting it needs one Linux run first; see PAIRWISE_B_VERIFICATION.md.

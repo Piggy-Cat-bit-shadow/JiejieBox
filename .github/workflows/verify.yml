@@ -168,6 +168,25 @@ jobs:
           python3 scripts/ci/check-package-execution.test.py
           python3 scripts/ci/check-package-execution.py --baseline scripts/ci/uncovered-packages.txt
 
+      - name: the pure-logic packages no other job runs
+        # The census step above names the packages with tests that no workflow runs, and fails only on
+        # a NEW gap. This step closes the largest group instead of leaving it in the baseline: the 27
+        # packages below are pure logic (no device, no privilege, no network), each a second or two,
+        # and they were run green on Windows before being mounted here. The device- and
+        # privilege-bound ones stay in scripts/ci/uncovered-packages.txt with the reason next to them.
+        run: |
+          set -euo pipefail
+          go test -count=1 \
+            ./common/artifact ./common/badh2 ./common/badversion ./common/bufgeom \
+            ./common/buildgate ./common/certificate ./common/configtx \
+            ./common/convertor/adguard ./common/geosite ./common/interrupt \
+            ./common/runtimecoord ./common/sniff ./common/srs ./common/tlsfragment \
+            ./common/trafficcontrol ./common/urltest \
+            ./experimental/cachefile ./experimental/clashapi ./experimental/deprecated \
+            ./internal/memmetrics ./log ./provider/local ./provider/parser \
+            ./release/config ./scripts/bench/benchstat ./scripts/bench/memmatrix \
+            ./scripts/bench/memsummary
+
       - name: gofmt
         run: |
           set -euo pipefail
