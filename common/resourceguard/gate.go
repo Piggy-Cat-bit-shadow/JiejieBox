@@ -185,6 +185,21 @@ func (g *Gate) limitFor(class Class) int {
 // waiters already queued keep waiting, because revoking either would break the ownership rule
 // the permit represents. A queue longer than the new bound drains at its own pace and accepts
 // no new arrivals meanwhile.
+//
+// # Why a raise has to hand the capacity to the queue
+//
+// A raise is the recovery edge: pressure fell, so the plan that replaced the tight one has room the
+// tight one did not. That room is only usable if the callers already parked in the queue are woken,
+// and nothing else in this type wakes them - a waiter is handed a slot by grantLocked, which runs on
+// release, or by withdraw. So without the grant below, a demote from Critical to Normal left every
+// queued caller waiting for a release that a quiet gate has no reason to produce: the limit said 32,
+// in-flight was below it, and the callers who arrived during the crisis still failed on their wait
+// budget. That is the recovery path failing exactly where the whole point of a level is that the
+// process comes back.
+//
+// The grant is looped because a raise can expose more than one slot (Critical's limit is a quarter
+// of Normal's), and each pass grants at most one waiter. A shrink passes through the same call and
+// grants nothing: no waiter fits under a limit that just went down.
 func (g *Gate) setPlan(next plan) {
 	if next.limit < 1 {
 		next.limit = 1
@@ -197,6 +212,7 @@ func (g *Gate) setPlan(next plan) {
 	}
 	g.access.Lock()
 	g.plan = next
+	g.grantAllLocked()
 	g.access.Unlock()
 }
 
@@ -335,7 +351,10 @@ func (g *Gate) release() {
 // A waiter that has been passed over for `aging` may therefore use the reserve, up to the
 // absolute cap of limit+reserve. That bounds the starvation instead of eliminating the priority:
 // the interactive class still goes first, it just cannot go first forever.
-func (g *Gate) grantLocked() {
+//
+// It reports whether it handed a slot over, so a caller that has just exposed several slots at once
+// (setPlan on the recovery edge) can keep going until the queue or the room runs out.
+func (g *Gate) grantLocked() bool {
 	for element := g.waiters.Front(); element != nil; element = element.Next() {
 		created := element.Value.(*waiter)
 		if created.state != waiterPending {
@@ -359,7 +378,15 @@ func (g *Gate) grantLocked() {
 			g.maxInflight = g.inflight
 		}
 		created.channel <- struct{}{}
-		return
+		return true
+	}
+	return false
+}
+
+// grantAllLocked hands over every slot the current plan allows. It must be called with the lock
+// held, and it terminates because each pass that keeps going also increases in-flight.
+func (g *Gate) grantAllLocked() {
+	for g.grantLocked() {
 	}
 }
 
