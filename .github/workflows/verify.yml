@@ -456,6 +456,34 @@ jobs:
           fi
           echo "PASS: running toolchain $got matches go.mod's toolchain directive"
 
+      - name: the toolchain's HTTP/2 defaults have not moved a wire preface
+        # The toolchain is part of the wire, and this is the second time a Go move changed what a
+        # transport sends. TrustTunnel's HTTP/2 session is built to present Chrome's connection
+        # preface, and part of that preface comes from net/http's defaults rather than from this
+        # repository: Go 1.27 sets defaultMaxReadFrameSize = 1 MiB where the earlier implementation
+        # carried the 16 KiB protocol default, so MAX_FRAME_SIZE in the preface changed from 16384
+        # to 1048576 with no line of our code edited. The camouflage this transport exists for is
+        # exactly that fingerprint.
+        #
+        # The pin was already correct and already failed: transport/trusttunnel's
+        # TestHTTP2Preface reported `[MAX_FRAME_SIZE = 1048576]` against an expected `16384` while
+        # this gate stayed green, because linux-kernel-verify.yml runs that package only when a path
+        # under transport/trusttunnel/** changes and a toolchain bump changes none of them. The fix
+        # is a line in the transport (chromeMaxFrameSize); this step is the runner it was missing.
+        #
+        # Two tests, ~0.1 s, untagged, no network - cheap enough for the repository-wide gate, and
+        # it belongs beside the toolchain step above because the toolchain is what it guards
+        # against. require-executed-coverage.sh keeps a run that skipped every test from passing.
+        #
+        # The same step runs the other two properties the toolchain decides for this session: that an
+        # idle session sends no PING (with a positive control, so a zero cannot be the detector
+        # failing), and that the strictness setting still keeps one connection. ~1.3 s in total.
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          go test -count=1 -v -run 'TestHTTP2Preface|TestAnIdleSessionSendsNoPing|TestTheSessionPrefersOneConnection' ./transport/trusttunnel 2>&1 | tee build/preface-gate.log
+          ./scripts/ci/require-executed-coverage.sh build/preface-gate.log "TrustTunnel HTTP/2 preface"
+
       - name: generated schema matches its source
         # `docs/schema.json` is a tracked product artifact consumed outside this repository -
         # the documentation site and an editor schema URL - and no gate compared it with
