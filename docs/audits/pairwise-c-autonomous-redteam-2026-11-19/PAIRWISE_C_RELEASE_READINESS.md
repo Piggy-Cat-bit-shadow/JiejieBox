@@ -135,7 +135,7 @@ release-relevant effect:
 | H3→H2→HTTP/1.1 demotion is silent; naive's fallback window can stay unarmed (B, R-B3/R-B4) | P2 — diagnosability, and extra probes on short deadlines | both are observability/policy decisions (what must be visible, what "ambiguous" means) rather than bugs |
 | reload is stop-then-build (B, R-B9) | P2 — a semantic validation failure leaves nothing running until config recovery | lifecycle redesign; needs a device to judge whether a capture gap beats a failed reload |
 | report writing can complete a transition and run reclaim (A, R-8) | P3 — by design, pinned by a test | documented decision about who may advance the pressure state machine |
-| `e2e` (58 tests) and `protocol/` suites run by no push-time job | P2 — regressions there are not caught before a push | mounting them is a CI-cost decision: measured 35 s for `e2e`, ~15 s for `protocol/`+`dns/`; recommended, not done in a freeze |
+| `e2e` (58 tests) and `protocol/` suites run by no push-time job | P2 — regressions there are not caught before a push | **measured and now guarded** (§7): a script reports the exact set and a ratchet fails only when a new gap appears; mounting the 35 known gaps is a CI-cost decision, measured 35 s for `e2e` |
 
 ## 6. The network-change listener sweep: 30 implementers, no terminal-Close-as-reset
 
@@ -158,7 +158,33 @@ observe a half-replaced client. No implementation uses a **terminal** `Close()` 
 afterwards — which is the shape that turned into a permanent-staleness bug in the v2ray HTTP pools
 (B-2) and was fixed there.
 
-## 7. Transcripts
+## 7. The package-execution gate: the gap, measured, and a ratchet
+
+The audit's most repeated finding was that a defect hid behind a suite **nobody ran**. That is now
+measured instead of suspected:
+
+```
+python3 scripts/ci/check-package-execution.py --list
+packages with tests that no workflow runs: 35 of 109
+```
+
+The count is honest about its own method in two ways that matter: `go test -run '^$' ./...` is compile
+only and does **not** count as execution (that is the line that made the gap invisible), and shell
+continuations are joined before a package list is read (a line-based reader misses every package on the
+continuation of `go test ... \` — it reported 64 gaps before that fix, which would have been a false
+alarm).
+
+`scripts/ci/uncovered-packages.txt` freezes today's 35, grouped by what would mount them: 27 are pure
+logic (~1 s each), `e2e` needs one Linux run first, and 7 need a device, a privilege or a platform
+(WinDivert/capture, power events, schannel). `verify.yml` now runs the script with `--baseline`, so the
+step **fails only when a package gains tests and no workflow runs them** — a ratchet, not a coverage
+mandate, and not a green light for the backlog.
+
+The gate has a self-test with its own mutation controls: forcing `covers()` to answer true, or removing
+the continuation join, both make the self-test exit 1. That is what distinguishes it from the
+`-run '^$'` line it replaces.
+
+## 8. Transcripts
 ```
 release-freeze: PASS: every pin in the tree is the pin the lock records.
 knowledge-facts: PASS: the entry points agree on one dated target, the report index covers its

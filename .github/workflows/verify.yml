@@ -158,6 +158,16 @@ jobs:
             go.sum
             test/go.sum
 
+      - name: no package gains tests without a workflow that runs them
+        # A ratchet, not a coverage mandate: `scripts/ci/uncovered-packages.txt` records the gaps that
+        # are known today (35 of 109 packages with tests at the 0.1.53 round, each grouped by what
+        # would mount it). The step fails only when a package appears with tests and no runner, which
+        # is the failure mode that hid three defects in the 2026-11 audit behind a green tree.
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-package-execution.test.py
+          python3 scripts/ci/check-package-execution.py --baseline scripts/ci/uncovered-packages.txt
+
       - name: gofmt
         run: |
           set -euo pipefail

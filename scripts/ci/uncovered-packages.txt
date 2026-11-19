@@ -1,0 +1,56 @@
+# Packages that have tests and are executed by no workflow.
+#
+# This file is a RATCHET, not an approval list. `scripts/ci/check-package-execution.py` fails when a
+# package with tests appears that is not listed here, so a suite can no longer become silent by
+# accident. Removing a line is the desired direction: it means a workflow now runs that package, and
+# the script reports it as "no longer a gap" so the line gets pruned.
+#
+# Measured at the 0.1.53 release round: 35 of 109 packages with tests had no push-time runner. Three
+# defects in the 2026-11 audit were found by RUNNING suites in this set (`e2e`, `protocol/*`,
+# `service/oomkiller` - the last one has since been mounted), which is why the gate exists.
+#
+# The categories below say WHAT would mount each group, so the next round can act on them instead of
+# re-deriving the question. A line is not a judgement that its tests are worthless.
+
+# --- mountable now: pure logic, no device, no privilege. Each ~1 s.
+./common/artifact
+./common/badh2
+./common/badversion
+./common/bufgeom
+./common/buildgate
+./common/certificate
+./common/configtx
+./common/convertor/adguard
+./common/geosite
+./common/interrupt
+./common/runtimecoord
+./common/sniff
+./common/srs
+./common/tlsfragment
+./common/trafficcontrol
+./common/urltest
+./experimental/cachefile
+./experimental/clashapi
+./experimental/deprecated
+./internal/memmetrics
+./log
+./provider/local
+./provider/parser
+./release/config
+./scripts/bench/benchstat
+./scripts/bench/memmatrix
+./scripts/bench/memsummary
+
+# --- needs a network or a peer: `e2e` (58 tests, 35 s green on Windows) drives real clients through
+# the router. Mounting it needs one Linux run first; see PAIRWISE_B_VERIFICATION.md.
+./e2e
+
+# --- needs a device or privilege: WinDivert/capture (Administrator), power/suspend events, platform
+# path reporting, Windows schannel. NOT_OBSERVABLE in CI; listed so the gate does not lie about them.
+./common/netcap
+./common/physicalpath
+./common/power
+./common/schannel
+./common/suspendwatch
+./common/tlsspoof
+./common/windivert

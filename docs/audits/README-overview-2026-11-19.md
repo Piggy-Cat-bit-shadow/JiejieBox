@@ -47,6 +47,14 @@ round's verification page (`MC-1`, `MC-B1…B6`, `MC-C1/C2`, `MC-T1a/b`).
 | anytls has no `ReuseSuspect`; mieru no idle releaser (A's R-2/R-3) | a pre-sleep session can take new work; mieru's pool is untrimmable for ~5 s | needs SDK methods that do not exist at the current pins |
 | report writing can complete a transition (A's R-8) | by design | a documented decision about who may advance the pressure state machine |
 
+## The CI gap, now guarded
+
+The audit's recurring finding was a defect behind a suite nobody ran. That is measured and ratcheted:
+`scripts/ci/check-package-execution.py` reports **35 of 109 packages with tests that no workflow runs**,
+`scripts/ci/uncovered-packages.txt` freezes today's set (grouped by what would mount each), and
+`verify.yml` fails only when a **new** package gains tests without a runner. The self-test
+(`check-package-execution.test.py`) has two mutation controls, both red.
+
 ## Unexecuted prompt files
 
 The three windows in `JiejieBox_PR_Issue_Debug_…` (`01_窗口A_核心控制面_TUN_DNS`, `02_窗口B_协议传输_QUIC`,
