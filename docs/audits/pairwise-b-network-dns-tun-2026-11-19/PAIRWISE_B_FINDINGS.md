@@ -251,16 +251,33 @@ Not fixed here: making the six owners route through the gate is a contract chang
 and doing it without device coverage of reconnect behaviour after a Wi-Fi→cellular switch is the kind
 of change that should not be made at the end of a session.
 
-## R-B2〔MEDIUM〕Check-then-acknowledge is not atomic at the four pool publish points
+## R-B2〔MEDIUM，3 of 4 sites fixed〕The generation publish decision was a compare followed by an acknowledgement
 
-`transport/v2rayquic/client.go:475` → `:512`, `transport/v2rayhttp/client.go:240` → `:247`,
-`transport/v2rayxhttp/client.go:357` → `:363`, `transport/v2raygrpclite/client.go:185` → `:192` all
-compare the epoch and then call `Acknowledge()` (which re-reads the epoch at store time). A generation
-change landing in that window stamps the new generation on a connection built on the old network, so
-it is never retired. The atomic form exists (`AcknowledgeIfCurrent`, `coordinator.go:579`) and only
-the gate uses it. CONFIRMED-BY-READING; `-race` cannot see it (no data race). Test: a hook between
-compare and acknowledge (precedent: `generation_gate.go:95`) that advances the epoch; assert the
-registration is still stale and the next hand-out detaches the connection.
+The dial path holds the generation it was built for and must decide whether the result may be
+published. Three pools did that in two steps — compare `currentGeneration() != startGeneration`, then
+`acknowledgeGeneration()` — which leaves the instructions between them open: an `Advance` landing there
+makes the acknowledgement stamp the NEW epoch on a connection built on the OLD network, after which
+nothing retires it and every later demand is handed it.
+
+**Fixed** in `transport/v2rayhttp`, `transport/v2rayxhttp` and `transport/v2raygrpclite`: the decision
+is now the single atomic call `Registration.AcknowledgeIfCurrent(epoch)`, which exists for exactly this
+(coordinator.go §AcknowledgeIfCurrent: "the check and the write are under the registration lock while
+the coordinator lock is read, so no new epoch can slip between the comparison and the store").
+
+**Regression.** `transport/v2rayhttp/publish_decision_test.go`:
+`TestAnEpochChangeDuringThePublishDecisionDiscardsTheConnection` uses a test hook
+(`testHookAfterGenerationCompare`, the same technique as `generation_gate.go`'s) to move the epoch inside
+the window; the dial's late-bound conn must then fail with the retryable generation error and the pool
+must still report itself stale. `TestThePublishDecisionIsAPlainAcknowledgementWithoutANetworkChange` is
+the guard-rail that the atomic form does not turn a healthy publish into a discard.
+**Mutation control MC-B6:** restoring the compare-then-acknowledge shape (with the hook between the two)
+turns the first test red — the connection is published with the new epoch stamped on it.
+
+**Not fixed at the fourth site:** `transport/v2rayquic` acknowledges *after* the publish lock, on
+purpose (`if !discard && !lateGeneration && pending.err == nil`), because a publish discarded by the
+lock must not have stamped the epoch. Making it atomic means moving the decision inside `connAccess`
+and re-deriving the double-close paths around `conn.closeConn()`, which is a restructure of that pool's
+publish section rather than a one-line change; recorded with this reasoning instead of guessed at.
 
 ## R-B3〔MEDIUM〕A silent fallback is invisible: `common/httpclient`'s H3→H2→HTTP/1.1 demotion
 

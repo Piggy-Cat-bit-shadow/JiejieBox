@@ -60,6 +60,8 @@ Per-package result of the first broad run (all `ok` unless noted): `dns`, `dns/t
 | `TestARetiredPlaceholderIsRecognizedWithoutAFakeIPTransport` | `protocol/tun` | B-4/B-5: the durable record alone recognises a placeholder when no store exists |
 | `TestARetiredPlaceholderIsRefusedWithoutAFakeIPStore` | `route` | B-5: the refusal works with no fakeip server configured, and stays proof-based |
 | `TestNoFakeIPHistoryMeansNoRefusal` | `route` | B-5: a machine that never configured fake-IP refuses nothing |
+| `TestAnEpochChangeDuringThePublishDecisionDiscardsTheConnection` | `transport/v2rayhttp` | R-B2: an epoch change inside the publish decision discards the connection and leaves the pool stale |
+| `TestThePublishDecisionIsAPlainAcknowledgementWithoutANetworkChange` | `transport/v2rayhttp` | R-B2 guard-rail: a healthy publish still publishes and reuses |
 
 ## 4. Mutation controls
 
@@ -70,6 +72,7 @@ Per-package result of the first broad run (all `ok` unless noted): `dns`, `dns/t
 | MC-B3 | disable the `issuableAddress` guard | the range tests FAILED with `must refuse instead of issuing 198.18.0.9` (`/32`) and `198.18.0.2` (`/31`) |
 | MC-B4 | restore the range-only expression in `JudgeFlow` | `TestARetiredPlaceholderIsNotBypassedByTheRouteSet` FAILED with `router preMatchCalls = 0` |
 | MC-B5 | remove the durable fallback in `retiredFakeIPAddress` | `TestARetiredPlaceholderIsRefusedWithoutAFakeIPStore` FAILED (`Should be true`) |
+| MC-B6 | restore compare-then-acknowledge (hook between the two) | `TestAnEpochChangeDuringThePublishDecisionDiscardsTheConnection` FAILED — the connection was published with the new epoch stamped on it |
 
 The idle-PING test carries its own in-test control: a transport configured to ping must be seen to
 ping (it is), and only then is the production transport's zero meaningful.

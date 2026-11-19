@@ -46,7 +46,7 @@ attacked either, so this pair is `未覆盖` rather than "checked".
 | --- | --- |
 | Shared boundary | the epoch and the pooled physical connections of four transports |
 | Executed | the `transport/...` suites; **B-2 fixed and pinned**; two further defects recorded from reading |
-| Conclusion | **B-2 `已确认` + fixed**: after one network change, vless/vmess/trojan over HTTP/2 or gRPC-lite paid a fresh TCP+TLS+H2 handshake per stream because the outbound's reset fell back to `Close`, which permanently marks the pool stale. Also recorded, not fixed: **R-B1** (only 1 of 7 owners routes the listener half through the generation gate, so the boundary runs twice and the second run kills the session the first one built) and **R-B2** (check-then-acknowledge is not atomic at four publish points) |
+| Conclusion | **B-2 `已确认` + fixed**: after one network change, vless/vmess/trojan over HTTP/2 or gRPC-lite paid a fresh TCP+TLS+H2 handshake per stream because the outbound's reset fell back to `Close`, which permanently marks the pool stale. Also **fixed (R-B2, 3 of 4 pool sites)**: the publish decision compared the epoch and then acknowledged it in two steps, so an `Advance` landing between them stamped the new generation on a connection built on the old network. Still recorded, not fixed: **R-B1** (only 1 of 7 owners routes the listener half through the generation gate, so the boundary runs twice and the second run kills the session the first one built) and the fourth pool site (`transport/v2rayquic`, whose acknowledgement is deliberately separated by its publish lock) |
 | Evidence | `PAIRWISE_B_FINDINGS.md` B-2, R-B1, R-B2 |
 
 ### B05〔P1〕Protocol fallback × timeout / error class / ALPN
