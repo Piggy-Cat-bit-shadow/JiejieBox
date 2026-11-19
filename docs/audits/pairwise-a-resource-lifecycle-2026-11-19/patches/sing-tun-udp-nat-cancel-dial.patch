@@ -1,0 +1,62 @@
+# Prepared, NOT pinned: this patch is for the sing-tun fork and must not be applied to the
+# release tree until a CI run exists for the resulting revision (release/source-lock.json).
+#
+# Base: github.com/sagernet/sing-tun v0.9.7-0.20261109145802-79ed0653fdc6
+# Apply from the sing-tun module root:  git apply -p1 < sing-tun-udp-nat-cancel-dial.patch
+# Verified here: `go build ./...` passes in a scratch copy of that exact revision, with and
+# without the patch, and gofmt is clean. NOT verified: behaviour - that needs sing-tun's own
+# test harness plus the JiejieBox-side assertion described in README.md beside this file.
+#
+diff --git a/udp_nat.go b/udp_nat.go
+index 3f19b38..19be188 100644
+--- a/udp_nat.go
++++ b/udp_nat.go
+@@ -393,7 +393,9 @@ func (s *UDPNat) getOrCreate(key udpNatSessionKey, source M.Socksaddr, destinati
+ 			newConn.interfaceIndex = interfaceIndex
+ 			s.registerClass(newConn)
+ 		}
+-		newContext = ctx
++		// The handler runs the outbound creation for this entry. Deriving its context from the
++		// entry means an evicted entry cancels a dial nobody is waiting for any more.
++		newContext, newConn.cancelContext = context.WithCancel(ctx)
+ 		newOnClose = onClose
+ 		return newConn, true
+ 	})
+@@ -486,14 +488,19 @@ var (
+ )
+ 
+ type UDPNatConn struct {
+-	service         *UDPNat
+-	key             udpNatSessionKey
+-	interfaceIndex  uint32
+-	writer          N.PacketWriter
+-	localAddr       M.Socksaddr
+-	packetChan      chan *N.PacketBuffer
+-	packetAccess    sync.RWMutex
+-	closeOnce       sync.Once
++	service        *UDPNat
++	key            udpNatSessionKey
++	interfaceIndex uint32
++	writer         N.PacketWriter
++	localAddr      M.Socksaddr
++	packetChan     chan *N.PacketBuffer
++	packetAccess   sync.RWMutex
++	closeOnce      sync.Once
++	// cancelContext ends the per-entry lifetime: the handler's NewPacketConnectionEx runs on a
++	// context derived from this entry, so closing the entry cancels the dial it launched. The
++	// entry is closed by the idle timer, by an explicit Close, and by eviction from the cache;
++	// before this existed the dial kept running after every one of them.
++	cancelContext   context.CancelFunc
+ 	doneChan        chan struct{}
+ 	readDeadline    pipe.Deadline
+ 	writeDeadline   pipe.Deadline
+@@ -797,6 +804,9 @@ func (c *UDPNatConn) close() {
+ 		if c.interfaceIndex != 0 {
+ 			c.service.unregisterClass(c)
+ 		}
++		if c.cancelContext != nil {
++			c.cancelContext()
++		}
+ 		common.Close(c.writer)
+ 	})
+ }
