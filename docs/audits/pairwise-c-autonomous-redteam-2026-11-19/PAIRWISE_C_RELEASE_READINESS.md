@@ -123,6 +123,8 @@ release-relevant effect:
 | the publish decision is atomic (B) | a connection from the old network stamped current |
 | every gated outbound routes its listener through the gate (C) | the double transition that killed the session built a moment earlier |
 | the fake-IP cursor resumes past the ledger (C) | a client's held address remapped to a different domain after a reload |
+| the QUIC pool's publish and its acknowledgement are one decision (C) | a connection built on the old network stamped as current, then handed to every later demand |
+| a replaced or removed node loses its predecessor's URL-test measurement (release windows A) | a never-probed node selected on evidence about a server that is gone |
 
 **Accepted, unfixed, and why** (each has a file:line and a settling test in the window audits):
 

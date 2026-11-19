@@ -1,9 +1,39 @@
 # TRIPLEWISE C — New combinations, and the findings
 
-This round found **no new defect**. What it did find is the shape of the answer: the three-system
-combinations that *were* real and broken in this tree have all been found and fixed by this effort, and
-the ones that remain are blocked by a dependency pin or a device. The list below is the honest state, with
-the fix that closed each.
+**C-T5 is this round's confirmed defect** (added after the first draft, which reported no new defect;
+the finding came from applying P9 to the one pool with no atomic publish). Beyond it, the round's other
+result is the shape of the answer: the three-system combinations that *were* real and broken in this
+tree have all been found and fixed by this effort, and the ones that remain are blocked by a dependency
+pin or a device.
+
+## C-T5〔CONFIRMED → FIXED〕A publish and its generation acknowledgement were two steps
+
+| | System | What it owns here |
+| --- | --- | --- |
+| ① | the completed creation's epoch token (`startGeneration`, read before the handshake) | "the generation this connection was built for" |
+| ② | `Registration.Acknowledge` | records the pool as current for **whatever epoch the coordinator reports at call time** |
+| ③ | the pool's publish decision (`connAccess`) | decides whether the connection is handed to later demands |
+
+The dial's own re-confirmation closed the wide window (a change *during* the handshake), but the
+acknowledgement ran **after** the publish lock. An `Advance` landing between the re-confirmation and the
+acknowledgement made `Acknowledge()` stamp the **new** epoch onto a connection built on the **old**
+network. After that `Stale()` is false, nothing retires the connection, and every later demand is handed
+a session from the network that just ended — audit F-15, reached through a gap a comparison cannot
+close. The same shape existed on the migration path, where the window is *wider* (a migration validates
+a candidate for seconds).
+
+Fix: the publish decision and the acknowledgement are one call inside `connAccess`
+(`AcknowledgeIfCurrent(startGeneration)`); a refused acknowledgement becomes the retryable
+stale-generation error and the connection is released instead of published, so the offer's waiters are
+told rather than handed the stale session. The migration path acknowledges `AcknowledgeIfCurrent`
+against the epoch its reset began under.
+
+Evidence: `transport/v2rayquic/client_publish_generation_test.go` (the package's first test for this
+path, driven with `testHookBeforePublish` inside the exact window). Mutation control: restoring
+publish-then-acknowledge turns it red — "a connection built for the previous generation must not be
+handed out". The existing migration suite is the positive control for the migration guard.
+
+This closes R-B2's fourth site; `PAIRWISE_B_FINDINGS.md` §R-B2 now reads "4 of 4".
 
 ## The four genuine three-system defects this effort found and fixed
 

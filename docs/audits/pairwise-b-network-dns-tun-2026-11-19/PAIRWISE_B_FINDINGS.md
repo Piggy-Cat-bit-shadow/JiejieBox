@@ -251,7 +251,7 @@ Not fixed here: making the six owners route through the gate is a contract chang
 and doing it without device coverage of reconnect behaviour after a Wi-Fi→cellular switch is the kind
 of change that should not be made at the end of a session.
 
-## R-B2〔MEDIUM，3 of 4 sites fixed〕The generation publish decision was a compare followed by an acknowledgement
+## R-B2〔MEDIUM，4 of 4 sites fixed〕The generation publish decision was a compare followed by an acknowledgement
 
 The dial path holds the generation it was built for and must decide whether the result may be
 published. Three pools did that in two steps — compare `currentGeneration() != startGeneration`, then
@@ -273,11 +273,21 @@ the guard-rail that the atomic form does not turn a healthy publish into a disca
 **Mutation control MC-B6:** restoring the compare-then-acknowledge shape (with the hook between the two)
 turns the first test red — the connection is published with the new epoch stamped on it.
 
-**Not fixed at the fourth site:** `transport/v2rayquic` acknowledges *after* the publish lock, on
-purpose (`if !discard && !lateGeneration && pending.err == nil`), because a publish discarded by the
-lock must not have stamped the epoch. Making it atomic means moving the decision inside `connAccess`
-and re-deriving the double-close paths around `conn.closeConn()`, which is a restructure of that pool's
-publish section rather than a one-line change; recorded with this reasoning instead of guessed at.
+**Fixed at the fourth site too** (`transport/v2rayquic`, triplewise C): the publish decision moved
+inside `connAccess` and the acknowledgement became `AcknowledgeIfCurrent(startGeneration)`, which is
+what makes "publish" and "the pool is current for this generation" one step. A refused acknowledgement
+now sets the retryable stale-generation error and releases the connection instead of publishing it, so
+the waiters of that offer are told rather than handed a session from the network that just ended. The
+migration path got the same treatment with the epoch its reset began under (`resetGeneration`): a
+migration takes seconds, so the window there was wider than the publish path's, and a second change
+landing during it must leave the pool stale. Regression:
+`transport/v2rayquic/client_publish_generation_test.go` moves the epoch with `testHookBeforePublish`
+and asserts the dial returns the stale error, publishes nothing, and leaves `generationStale()` true,
+then that the next demand dials instead of reusing it. **Mutation control:** restoring the
+publish-then-acknowledge shape turns it red with the connection handed to the caller ("a connection
+built for the previous generation must not be handed out"). The existing migration suite is the
+positive control for the migration guard: a wrong `resetGeneration` capture would refuse the
+acknowledgement and those tests would stop seeing the migrated connection reused.
 
 ## R-B3〔MEDIUM〕A silent fallback is invisible: `common/httpclient`'s H3→H2→HTTP/1.1 demotion
 
