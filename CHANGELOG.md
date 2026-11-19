@@ -4,6 +4,72 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.54](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.54) — 2026-11-20
+
+### 本次更新
+
+v0.1.54 是 **依赖安全与 fake-IP/传输代际缺陷的集中修复版**。0.1.53 收口了控制通道；本版在上游情报与独立红队复审窗口内，关闭了 `govulncheck` 报告的全部 13 个可达 CVE（并通过固定 GODEBUG 保住 0.1.53 的 ClientHello），同时修复了 fake-IP 地址代际、传输代际的发布与回收、网络切换后的重连风暴，以及 TrustTunnel 的 HTTP/2 指纹。没有新增功能。
+
+### 一、依赖安全：13 个可达 CVE 全部关闭
+
+- **先修的五个**：`grpc` 1.79.3 → 1.83.2（GO-2026-6443、GO-2026-6348 HTTP/2 DATA 帧 OOM、GO-2026-6061）、`brotli` 1.1.0 → 1.2.7（GO-2026-6888 解压内存）、`klauspost/compress` 1.19.1 → 1.20.2（GO-2026-6865）。
+- **其余八个（x/net 6 个、x/crypto 2 个）**的修复版本要求 `go 1.26.0`。本版把 `go` 行升到 1.26.0，并用 `godebug tlssecpmlkem=0` 把 ClientHello 固定回 0.1.53 的 5 组 `[4588 29 23 24 25]`；新增的 SecP256r1MLKEM768 / SecP384r1MLKEM1024 不进入默认握手。`govulncheck ./...` 在候选上报告 **0 个可达漏洞**。
+- **发布二进制的 GODEBUG 覆盖修正**：`release/LDFLAGS` 用 `-X runtime.godebugDefault=...` **替换**（而不是合并）go 行计算出的默认串。旧的二项列表会让 CLI/daemon/Windows/Linux/macOS CLI 丢掉 `tlssecpmlkem=0`，实测发布参数构建的探针发出 7 组握手。现在列表携带完整默认集与两个兼容项：`multipathtcp=0,tlssha1=1,tlssecpmlkem=0,tracebacklabels=0,x509sslcertoverrideplatform=0`；用 `release/LDFLAGS` 重新构建的 `scripts/ci/clienthello-probe` 回到 5 组。Apple/Android libbox 不消费该文件，其固定来自 `go.mod` 指令。
+- 范围说明：`godebug` 是主模块构建上下文，只覆盖本仓库构建的 CLI、daemon 与 libbox；嵌入方自己的 module 不继承，需要同样声明。探针覆盖默认客户端，不覆盖 system 引擎、REALITY、uTLS、Cronet 的每条真实握手。
+
+### 二、fake-IP 生成与地址生命周期
+
+- **不再发出范围外地址**：/31、/32（v6 的 /127、/128）等退化前缀曾让分配器回绕到范围外地址；这类地址不被 `Contains` 识别，会被当作普通字面量真实拨号。现在 Create 只接受本范围的 host 地址，退化范围在首次查询即报错。
+- **缩容重叠拒绝而不是重绑**：当新范围被上一代已发放区间覆盖且没有安全空位时，Start 拒绝启动并指出重叠区间与范围；有空间时从重叠末尾之后继续。这样不会把客户端仍在使用的地址发给新域名（否则该客户端连接会被导向错误目的地）。
+- **继承地址在每次分配时都受保护**：不再只在 Start 播种一次；Create 每次跳过所有受保护区间与本代已发放地址，耗尽时拒绝，绝不回绕覆盖。可用容量按 `2^(32-prefix)-3` 计（/29 可用五个）。
+- **重载不重发上一代地址**：没有 `cache_file` 的 `MemoryStorage` 曾从头开始分配，重载后把客户端仍持有的地址发给新域名；现在从进程内 issuance ledger 恢复游标（保守地越过上一代最高地址）。
+- **退役占位地址仍被识别**：TUN 快路径与路由判定现在同时询问当前范围与退役快照；移除 fake-IP 或跨代后，旧占位地址会走路由判定并被拒绝，而不是作为字面量直连；没有 fakeip 服务时回读 cache 文件里的 durable retirement record。
+- **未 Start 的调用不再 panic**：Create/Lookup/Reset 在 Start 之前返回状态错误（Lookup 回答“不是本店的地址”），而不是对 nil 接口解引用。
+
+### 三、传输代际与网络切换
+
+- **网络变化只执行一次 reset**：所有受 generation gate 管控的出站此前把 `InterfaceUpdated` 直接暴露为 listener，listener 阶段会绕过 ledger 再执行一次 owner reset——窗口内到达的新会话会被自己刚触发的 reset 掐掉（hysteria2/tuic/masque 直接断，vless/vmess/trojan 重建传输），表现为“重连很慢”。现在所有 owner 都经 `GenerationGate.NetworkChanged`。
+- **v2rayhttp / grpclite 新增 Reset**：网络变化不再走 Close（Close 会注销 pool，之后每个流都要新 TCP+TLS+HTTP/2 握手）。Reset 替换池中的代际并保持注册有效，后续 demand 复用连接；已被使用的流不被切断。
+- **发布决策原子化**：v2rayhttp、v2rayxhttp、grpclite 用 `Registration.AcknowledgeIfCurrent` 把“比较 epoch”和“写入 ack”合并为一次锁内决策，避免旧网络的连接被打上新 epoch 后永不退役。
+- **关闭后的池不再安装新传输**：Close 与迟到 dial 的三方交错会让 `pool.CloseAll` 之后仍装入新的 http2.Transport（无人再消费，连接全部泄漏）；客户端与池都记录 closed，迟到 dial 不建传输，池的拒绝仍是最后防线。
+- **v2rayquic** 的 publish 与 generation ack 合并为一个决策；**httpclient** 已关闭的 transport 不再自建；**quic** 已 shutdown 的 carrier 拒绝新 dial。
+- **naive** 不再向进程提供会切断活隧道的 reclaim hook；**resourceguard** 把恢复的容量交给已等待的调用方；**provider** 被替换/移除的节点不再把测量值留给继任者。
+- **sing-tun：UDP NAT 条目取消**（依赖修订 `2105ebe`）：`UDPNatConn` 为每个条目派生 cancel context 并传给 `NewPacketConnectionEx`，超时清扫、显式 `Close`、容量淘汰三条路径都会取消 handler 正在执行的 dial；此前 dial 会在条目已消失后继续运行并持有 socket/缓冲区。三条路径各有独立测试，未打补丁时全部失败。
+- **sing-tun：netlink monitor 恢复**（同一修订）：`loopRead` 不再在非 `ENOBUFS` 读错误后直接返回，而是关闭死 socket 并以 1s→30s 退避重建，成功恢复后补发一次更新；socket 句柄加锁，`Close` 之后不会被并发恢复复活。未打补丁时订阅死亡后不再产生任何网络变化事件（测试 7.5s 失败），打补丁后 3.5s 内恢复并上报。后续提交还堵上了恢复与 `Close` 的并发窗口：`setSocket` 在与 `Close` 相同的锁下检查关闭状态，输掉竞争的安装会关闭自己打开的 socket，`Close` 改为 `sync.Once`，关闭后不再排入恢复更新；受控并发测试在安装前暂停恢复线程并执行 `Close`（修复前 3.5s 失败，修复后 3.0s 通过）。
+
+### 四、TrustTunnel 与协议契约
+
+- TrustTunnel 的 HTTP/2 preface 在 Go 1.27 下保持 Chrome 形状，连接前言逐字节对齐；补充 idle-session 与 one-connection 的 wire 契约测试，并纳入 push 门禁。
+
+### 五、门禁与证据
+
+- Verify 新增/强化：Linux 全栈 e2e、27 个纯逻辑包的实际运行、`check-package-execution.py` 防止“新增测试但没有工作流运行”、TrustTunnel wire pins，以及受门控路径的 race 覆盖。
+- 维护账本重新生成（166 个 marker、28 个 logical patch）；生成器优先展示代码消费者，避免截断后的 HOLD 行被误读为纯文档足迹。
+
+### 六、依赖与客户端
+
+- 本版**只移动一个 pin**：`sing-tun` 从 `c0855e67` 前移到 `f23ebd654a75`（`v0.9.7-0.20261119194153-f23ebd654a75`），其余 9 个 Go 模块与 3 个客户端 gitlink 全部等于各自跟踪分支头。
+- sing-tun 新修订包含两个已备好、双向验证过的补丁及其测试：UDP NAT 条目取消（超时/显式关闭/容量淘汰）与 netlink monitor 恢复（含恢复/Close 并发窗口的受控测试）；`linux-tun-verify` 现在运行这些测试（UDP 三条非 root，monitor 恢复与并发窗口在 root 步骤）。
+- Apple 客户端 `2e5b71fa59809b17faff1e24ab2e56caee52612e`，Android `9816e0068c82397e0ae48966cec982c0fd3dee18`，Desktop `1bd68313caaca2986983a93d6dae18d11af80541`（内嵌 dashboard `b6e3193`）。
+- 版本 `0.1.54`；候选提交 `894de2062dfa25b96367e974116c1ad287fadfee`；tag `v0.1.54`。
+
+### 七、验证与发布
+
+- **同一候选 SHA 的门禁**：[Verify](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44620291244)（含 race checks）、[Release contract verification](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44622051206)、[Android Core ARM64](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44620291161) 在 `894de206` 上全部成功；pin-runs 记录覆盖新锁（sing-tun `f23ebd6`），Verify 内的 pin-runs 与知识库事实门禁通过。
+- [Apple 客户端构建](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44610681999)：Libbox、iOS、macOS、iOS self-sign 全部成功，产出 unsigned IPA、arm64 DMG、自签 IPA 与 Libbox 归档；解析的 Apple SHA 为 `2e5b71fa5980`（与 gitlink、main tip 一致）。该构建在 `295dfc94e` 上完成；`894de206` 只改了一个不参与产品编译的测试文件，正式发布的 Apple 产物在 `894de206` 上重新构建并通过。
+- [Release preparation](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44623743277)（`dry_run=false`、`create_tag=false`）：pin 无需前移，`CHANGED: false`，并在回读 exact-SHA evidence 后放行。
+- [Kernel release 44625107876](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44625107876)：freeze、Linux、macOS CLI、Windows core、Desktop 安装器、Android AAR、Apple（Libbox + iOS + macOS + self-sign）、stage、publish 全部成功，2026-11-19T22:29:19Z 公开 `v0.1.54`。
+  - attempt 1 仅在 macOS CLI 的 `transport/v2rayquic` 单测失败：`TestAPathThatDropsOversizedDatagramsStillCarriesTraffic` 在 Darwin 上要求“模拟路径丢弃过大于 1280 的包”，但本产品在 Darwin 明确关闭 PMTUD（`DisablePathMTUDiscovery: !C.IsLinux && !C.IsWindows`），探针不会发出该尺寸的包。`894de2062` 把该断言限定到 Linux/Windows（Darwin 记录跳过理由），未改生产代码；整轮重跑后一次通过。
+- 公开附件（7 项 + 校验和）：Linux amd64、macOS arm64 CLI、Windows amd64 core、Android ARM64 AAR、Apple Libbox、Windows x64 安装器、自签 unsigned IPA、`SHA256SUMS`；tag `v0.1.54` 剥离后指向 `894de206`。
+- 本地：`release-freeze.py verify --strict`、`check-pin-runs.py`、`check-knowledge-facts.py`、`check-upstream-retirement.py`、`check-libbox-abi.sh --pin-only`、module integrity、root build 与测试编译全部通过。
+
+### 八、已知边界
+
+- 未在本环境执行 iPhone NetworkExtension 真机、TestFlight 上传或真实服务端矩阵；按独立设备/TF 流程验收。
+- macOS 13+ 为最低部署目标（Go 1.27 链接器默认 `minos=13.0`），与 0.1.53 相同。
+- `godebug` 固定值只覆盖本仓库构建上下文；嵌入方需自行声明（见上）。
+- 上游第二批 triage 的 8 个 open sing-box P0，以及 sing-tun monitor recovery 补丁，不在本版：补丁已验证但未进入 pin，需单独的子仓修订。
+
 ## [v0.1.53](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.53) — 2026-11-18
 
 ### 本次更新
