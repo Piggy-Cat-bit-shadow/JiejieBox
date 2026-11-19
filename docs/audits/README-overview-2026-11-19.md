@@ -62,6 +62,17 @@ remaining **7** are in `scripts/ci/uncovered-packages.txt` with the reason each 
 privilege. The gate fails only when a **new** package gains tests without a runner. Its self-test
 (`check-package-execution.test.py`) has two mutation controls, both red.
 
+## Dependencies, after the network returned
+
+`govulncheck ./...` found **13 vulnerabilities in 5 modules this code calls**. Five were bumped away
+without touching the module's `go` line — `grpc v1.79.3 → v1.83.2`, `brotli → v1.2.7`,
+`klauspost/compress → v1.20.2` — and the rescan reports **8 remaining** (six in `golang.org/x/net`, two in
+`golang.org/x/crypto`), whose fixed releases require **`go ≥ 1.26`**. Raising that line changes the TLS
+ClientHello (measured with the repository's own probe: it adds `SecP256r1MLKEM768` and
+`SecP384r1MLKEM1024`), so it is a product decision, not a debugging step. The full record, with the
+command that would perform the bump, is
+`pairwise-c-autonomous-redteam-2026-11-19/PAIRWISE_C_DEPENDENCY_VULNERABILITIES.md`.
+
 ## Unexecuted prompt files
 
 The three windows in `JiejieBox_PR_Issue_Debug_…` (`01_窗口A_核心控制面_TUN_DNS`, `02_窗口B_协议传输_QUIC`,

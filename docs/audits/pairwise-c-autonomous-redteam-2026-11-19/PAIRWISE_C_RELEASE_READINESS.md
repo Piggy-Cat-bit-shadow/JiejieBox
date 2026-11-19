@@ -14,6 +14,9 @@ Everything below was executed; nothing is inferred from a CI declaration.
 | Knowledge entry points | `python scripts/ci/check-knowledge-facts.py` | **PASS** — entry points agree on one dated target, report index covers its directories, 55-item matrix intact |
 | Static vet | `go vet ./...` | **exit 0**, whole module |
 | Formatting | `gofmt -l .` | 4 files, all **pre-existing and outside the CI gate** (§4) |
+| Dependency integrity | `go mod verify` | **all modules verified** (412 modules) |
+| Known vulnerabilities | `govulncheck ./...` | **13 reachable → 8 after a targeted bump**, the difference recorded with the measured reason it stopped there: `PAIRWISE_C_DEPENDENCY_VULNERABILITIES.md` |
+| ClientHello after the bump | `go run ./scripts/ci/clienthello-probe` | **unchanged**: `groups=[4588 29 23 24 25]` under `go 1.25.5` + toolchain go1.27.4 |
 
 ## 2. Build matrix (the profiles the release actually ships)
 
