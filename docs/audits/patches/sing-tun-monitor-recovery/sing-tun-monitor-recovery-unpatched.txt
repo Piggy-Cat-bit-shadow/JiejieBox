@@ -1,0 +1,16 @@
+# sing-tun v0.9.7-0.20261109145802-79ed0653fdc6, UNPATCHED
+# command: wsl -u root -- bash -lc 'cd /mnt/c/Deepseek/.tmp-singtun-monitor && go test -run TestNetworkUpdateMonitorRecovers -count=1 -v -timeout 90s .'
+# environment: Go 1.27.4 linux/amd64 (WSL Ubuntu-24.04, root for netlink), 2026-11-19
+#
+# The test (monitor_recovery_test.go.txt, beside this file) starts the monitor, closes the subscription
+# the way an unrecoverable read error leaves it, waits long enough for a recovery loop to reopen it, and
+# then makes a link change. On the pinned revision the monitor never reopens, so the link change is
+# invisible and the test fails - which is the batch's F1 (upstream sing-tun #110, the fork traded the
+# 100% CPU spin for a monitor that goes silent).
+
+=== RUN   TestNetworkUpdateMonitorRecoversAfterTheSubscriptionDies
+    monitor_recovery_test.go:73: no update after the subscription died: the monitor never reopened its netlink socket, so every later network change is invisible until the process restarts
+--- FAIL: TestNetworkUpdateMonitorRecoversAfterTheSubscriptionDies (7.55s)
+FAIL
+FAIL	github.com/sagernet/sing-tun	7.552s
+FAIL

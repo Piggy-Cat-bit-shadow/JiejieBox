@@ -1,0 +1,15 @@
+# sing-tun v0.9.7-0.20261109145802-79ed0653fdc6, PATCHED with sing-tun-monitor-recovery.patch
+# command: wsl -u root -- bash -lc 'cd /mnt/c/Deepseek/.tmp-singtun-monitor && go test -run "TestNetworkUpdateMonitor" -count=1 -v -timeout 180s .'
+# environment: Go 1.27.4 linux/amd64 (WSL Ubuntu-24.04, root for netlink), 2026-11-19
+#
+# Same test, same harness. With the patch the read loop closes the dead socket, reopens the subscription
+# with exponential backoff, emits one update so the layer above re-syncs, and the later link change is
+# reported. The existing overrun test (4096 routes, CPU budget) still passes, so the debounce and the
+# CPU behaviour the fork already had are untouched.
+
+=== RUN   TestNetworkUpdateMonitorReceiveOverrun
+--- PASS: TestNetworkUpdateMonitorReceiveOverrun (4.52s)
+=== RUN   TestNetworkUpdateMonitorRecoversAfterTheSubscriptionDies
+--- PASS: TestNetworkUpdateMonitorRecoversAfterTheSubscriptionDies (3.52s)
+PASS
+ok  	github.com/sagernet/sing-tun	8.053s

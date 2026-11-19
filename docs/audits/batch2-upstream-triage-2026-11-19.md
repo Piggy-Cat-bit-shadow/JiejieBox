@@ -81,7 +81,7 @@ mieru 的 4 条 P0 全部关在 2026-04–08。Xray/mihomo 的开着项属于别
 | 上游 | 机制锚点（当前源码） | 判定 |
 | --- | --- | --- |
 | #4515 / #4686 Tailscale endpoint/listener 不随默认网络恢复 | `protocol/tailscale/` 存在；接口事件消费见 `adapter/lifecycle.go:170` | 适用候选；Android 特定，但"适配器切换后 endpoint 恢复"可在 Windows 上先做 |
-| #4678 仅 DNS 变更重置已建 TCP | `route/network.go`、`adapter/network.go:308`（search domain）、`common/networkmanager` | 适用候选；**测试设计**：只改 DNS 服务器顺序，断言现有 TCP 不被重置 |
+| #4678 仅 DNS 变更重置已建 TCP | `route/network_environment.go:186` 的 `recomputeNetworkEnvironment`：转换指纹只由 **gateway 地址、Wi-Fi SSID、gateway MAC** 组成（`options` 三项），DNS 服务器不在其中；`updateNetworkEnvironment` 只 `FlushSystemDNSCache`，不重置出站 | **已按设计处理（有证据）**：DNS-only 变更不移动环境 token，因此不触发 `ResetNetwork`/出站重建。缺一个把这个契约钉住的测试（当前 `network_transition_dns_cache_test.go` 钉的是"转换是 barrier 而不是清缓存"），未新增 |
 | #4665 WireGuard endpoint 经 OpenVPN detour 不恢复 | `adapter/endpoint/`、`adapter/outbound/cross_kind_cycle.go` | 适用候选；跨 kind 依赖已有环检测，恢复路径需单独测 |
 | #4386 TFO 在域名经 route action 解析时破坏 direct | `common/dialer/default.go:288`（tfo.Dialer）、`:151`（与 bind/network_strategy 的冲突校验） | 适用候选；TFO 与解析后的地址、路由动作三者组合 |
 | #3878 Linux TUN + hijack-dns 回环到 127.0.0.1:53 | `adapter/router.go:21` 的 hijack 选项、`protocol/dns/` | 适用候选；需要 netns（可在 WSL 里做） |
@@ -220,19 +220,25 @@ Mux/XUDP/XDNS/balancerTag/WireGuard-gVisor/gRPC API 等条目（#6870/#6850/#712
   诚实标注：**上线路径不会在 Start 前查询**，这是防御性（panic → error），不是可达缺陷；
   它对应本批 Xray #227 的同一失败模式。
 
-## 5. 本轮发现（F1）
+## 5. 本轮发现（F1）——已做成前后对照的补丁
 
-**F1（跨仓，未修）：sing-tun 的 netlink monitor 在订阅出错后不会恢复。**
+**F1（跨仓，补丁就绪、未 pin）：sing-tun 的 netlink monitor 在订阅出错后不会恢复。**
 `monitor_linux.go` 的 `loopRead` 对 `ENOBUFS` 容忍，对其它读错误记录一行日志后 `return`；
 `Start` 只有一次 `unix.Socket`/`Bind`，没有重开路径，`Close` 之外没有任何代码能让 monitor 复活。
 后果不是 CPU 100%（上游 #110 的症状），而是**此后所有网络变化事件静默消失**：TUN/路由/出站接口
 不再跟随系统变化，直到进程重启。上游 #110 仍开着，我们的重写把"自旋"换成了"静默死亡"，两种都
 不满足"事件源要能自愈"。
 
-**证据边界**：这里核对的是 `sing-tun` 这个类型本身（`monitor_linux.go` 的读循环与 `Start`）。
-消费者（JiejieBox 的 `common/networkmanager`）是否在别处重建 monitor 没有核对；即使有，重建点也
-不在这个类型里，且没有任何日志能把"订阅已死"暴露给上层。这条按"机制缺口"记录，不按"已证实的
-现网故障"记录。
+**这一项已经不止是阅读**：`docs/audits/patches/sing-tun-monitor-recovery/` 里是补丁、
+行为测试与两份 transcript。测试在 pinned 版本上 **FAIL**（"the monitor never reopened its netlink
+socket"），打上补丁后 **PASS**（3.52s），且原有的 4096 条路由 CPU 预算用例仍 **PASS**（4.52s）。
+补丁内容：抽出 `openSocket()`、读错误后退避重开（1s→30s 上限）、恢复后 `emit()` 一次让上层重新
+同步、socket 句柄加锁并在 `Close` 里清空。未 pin：需要 sing-tun revision + `source-lock.json` +
+该 revision 的 CI。
+
+**证据边界**：这里核对的是 `sing-tun` 这个类型本身。消费者（JiejieBox 的
+`common/networkmanager`）不会重建 monitor，恢复后上层是否重新读取接口与路由，靠的是补丁里那次
+`emit`，**没有做端到端验证**；这一条按"补丁已就绪"记录，不按"现网故障已修"记录。
 
 建议补丁（未实施，需单独的 sing-tun revision + pin + CI）：
 
@@ -245,7 +251,7 @@ Mux/XUDP/XDNS/balancerTag/WireGuard-gVisor/gRPC API 等条目（#6870/#6850/#712
 
 | 序 | 条目 | 测试设计（可观察判定） |
 | --- | --- | --- |
-| 1 | #4678 DNS-only 变更重置 TCP | 只改 DNS 顺序，长连接维持；断言已建 TCP 不被重置、无新拨号 |
+| 1 | #4678 DNS-only 变更重置 TCP | 指纹已排除 DNS（§3.1）；缺的是把"DNS-only 变更不移动环境 token"钉住的测试，先补测试再谈修复 |
 | 2 | #4410 search-domain NXDOMAIN 抢答 | 多 search domain + 受控时序；断言 QNAME 还原、答案归属正确 |
 | 3 | #4444 拨号侧解析与 DNS 规则 | 节点域名/目标域名不同规则；断言拨号解析确实走规则 |
 | 4 | #4386 TFO × route-action 解析 | 域名经 route action 得地址 + TFO 开；断言首包与连接建立 |
