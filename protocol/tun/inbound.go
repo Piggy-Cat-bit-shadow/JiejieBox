@@ -91,7 +91,24 @@ type Inbound struct {
 	// The route-set bypass below hands a destination to the platform's routing table, which is
 	// correct for a real address and meaningless for a synthetic one. This is how JudgeFlow knows
 	// the difference without asking the router, which the route sets exist to avoid.
-	fakeIPStore                 adapter.FakeIPStore
+	fakeIPStore adapter.FakeIPStore
+	// fakeIPRetired is the second half of the same question, resolved once for the same reason the
+	// store is: the intervals this INSTALLATION minted placeholders from and has since retired.
+	//
+	// # Why the current range is not enough
+	//
+	// `Store().Contains` answers "is this address inside the range I am configured with NOW". A
+	// placeholder a client is still holding from an earlier generation - a range move, or fake-IP
+	// removed from the configuration - fails that test, so the guard above used to let the route set
+	// bypass it: the address went to the platform as a literal, and the router's refusal (which needs
+	// the issuance history, route/route.go's `retiredFakeIPAddress`) never ran because the router was
+	// never asked. That is the opposite of what this guard exists for.
+	//
+	// The snapshot is resolved at Start, and the durable record covers the case where this
+	// configuration has no fakeip transport at all. It is a slice read without a lock on the per-flow
+	// path; everything it can miss was issued after Start, i.e. inside the CURRENT range, which
+	// `Contains` already answers.
+	fakeIPRetired               []adapter.FakeIPIssuanceInterval
 	stack                       string
 	tunIf                       tun.Tun
 	tunStack                    tun.Stack
@@ -595,6 +612,16 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 					}
 				}
 			}
+		}
+		// The retirement snapshot, resolved here for the same reason: it is a property of the
+		// installation, not of a flow. A live store carries it (store + ledger + the durable record
+		// when `store_fakeip` is on). With NO fakeip transport there is no store, and the durable
+		// record in the cache file is the only surviving statement of a range this installation
+		// issued from - see fakeIPPlaceholder.
+		if t.fakeIPStore != nil {
+			t.fakeIPRetired = adapter.FakeIPNormalizeRetiredIntervals(t.fakeIPStore.RetiredAddresses())
+		} else if cacheFile := service.FromContext[adapter.CacheFile](t.ctx); cacheFile != nil {
+			t.fakeIPRetired = adapter.FakeIPNormalizeRetiredIntervals(cacheFile.FakeIPRetired())
 		}
 	case adapter.StartStateStart:
 		// The entry decision is taken FIRST, before any of the option-derived work below builds on
@@ -1245,7 +1272,7 @@ func (t *Inbound) judgeFlow(network uint8, source netip.AddrPort, destination ne
 	//
 	// It is two prefix comparisons on a path that already does radix lookups, runs once per flow
 	// rather than per packet, and is skipped entirely when no FakeIP transport is configured.
-	routeSetsApply := t.fakeIPStore == nil || !t.fakeIPStore.Contains(destinationAddress)
+	routeSetsApply := !t.fakeIPPlaceholder(destinationAddress)
 	if routeSetsApply {
 		if len(routeAddressSet) > 0 && !slices.ContainsFunc(routeAddressSet, func(it *netipx.IPSet) bool {
 			return it.Contains(destinationAddress)
@@ -1265,8 +1292,26 @@ func (t *Inbound) judgeFlow(network uint8, source netip.AddrPort, destination ne
 	}, network, source, destination, firstPacket)
 }
 
-// canonicalAddrPort rewrites a v4-mapped IPv6 address to its four-byte form.
+// fakeIPPlaceholder reports whether a destination is a placeholder THIS installation minted, in the
+// current generation or in a retired one.
 //
+// It is the question the route-set guard has to ask. "Inside the current fake-IP range" is only the
+// first half: an address from a retired range is still synthetic, still has no route on the platform,
+// and its domain is still recoverable only by the router - which is where the refusal for an
+// unattributable placeholder lives (route/route.go's retiredFakeIPAddress). Answering the narrow
+// question made the guard bypass exactly those addresses, so the refusal never ran.
+func (t *Inbound) fakeIPPlaceholder(address netip.Addr) bool {
+	if t.fakeIPStore != nil && t.fakeIPStore.Contains(address) {
+		return true
+	}
+	if len(t.fakeIPRetired) == 0 {
+		return false
+	}
+	_, covered := adapter.FakeIPRetiredCovers(t.fakeIPRetired, address)
+	return covered
+}
+
+// canonicalAddrPort rewrites a v4-mapped IPv6 address to its four-byte form.
 // A no-op for every other address. It exists so the reason above is written once: an address that
 // arrives in sixteen bytes and is compared against four-byte policy is the shape of every bug in this
 // family.
