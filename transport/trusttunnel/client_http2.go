@@ -76,6 +76,16 @@ const (
 	chromeStreamWindow      = 6291456
 	chromeConnectionWindow  = 15663105
 	chromeMaxHeaderListSize = 262144
+	// chromeMaxFrameSize is Chrome's MAX_FRAME_SIZE, which is the protocol default (RFC 9113 §6.5.2
+	// minimum). It is set EXPLICITLY because the toolchain no longer defaults to it: Go 1.27's
+	// net/http carries `defaultMaxReadFrameSize = 1 << 20` and advertises it on every HTTP/2
+	// connection, so an unset MaxReadFrameSize put 1048576 in this preface and the session stopped
+	// looking like Chrome's - the one property this transport's camouflage depends on.
+	//
+	// MEASURED when the toolchain moved: the pin test in client_http2_test.go failed with
+	// `[MAX_FRAME_SIZE = 1048576]` against an expected `16384`, and nothing on a push path ran it,
+	// because a toolchain bump changes no path under transport/trusttunnel/**.
+	chromeMaxFrameSize = 16384
 )
 
 // newHTTP2Transport returns the transport whose ClientConn is the session.
@@ -84,9 +94,10 @@ const (
 // values are Chrome's: HEADER_TABLE_SIZE 65536, ENABLE_PUSH 0,
 // INITIAL_WINDOW_SIZE 6291456, MAX_HEADER_LIST_SIZE 262144, connection
 // WINDOW_UPDATE 15663105. What stays Go's: the order of the settings
-// (2,4,5,6,1 instead of 1,2,4,6) and MAX_FRAME_SIZE, which x/net always sends;
-// it carries 16384, the spec default, because an unset MaxReadFrameSize clips
-// to the minimum. The windows are reachable only through net/http's HTTP2Config, hence
+// (2,4,5,6,1 instead of 1,2,4,6) and the HEADER_TABLE_SIZE defaulting path.
+// MAX_FRAME_SIZE is Chrome's too, but only because it is pinned below since
+// Go 1.27 defaulted it to 1 MiB (see chromeMaxFrameSize). The windows are
+// reachable only through net/http's HTTP2Config, hence
 // ConfigureTransports; the http.Transport itself never dials. With Go 1.27
 // x/net/http2 wraps net/http's implementation; TestHTTP2Preface pins the
 // result.
@@ -95,6 +106,9 @@ func newHTTP2Transport() (*http2.Transport, error) {
 		HTTP2: &http.HTTP2Config{
 			MaxReceiveBufferPerStream:     chromeStreamWindow,
 			MaxReceiveBufferPerConnection: chromeConnectionWindow,
+			// The preface is the camouflage, so every parameter in it is part of the contract,
+			// including the one the toolchain would otherwise choose for us.
+			MaxReadFrameSize: chromeMaxFrameSize,
 		},
 	})
 	if err != nil {
