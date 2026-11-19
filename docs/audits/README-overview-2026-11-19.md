@@ -12,6 +12,7 @@ each round's own README is the entry point for its evidence.
 | [triplewise A](triplewise-a-2026-11-19/TRIPLEWISE_A_MATRIX.md) | three-system chains: teardown × generation × pool | 1 | — | `649e29021` |
 | [triplewise B](triplewise-b-2026-11-19/TRIPLEWISE_B_MATRIX.md) | three-system chains: DNS/TUN/generation wiring | 0 (no new defect) | 1 cross-repo (TB-5) | `7346eacb0` |
 | [triplewise C](triplewise-c-2026-11-19/TRIPLEWISE_C_FINDINGS.md) | autonomous three-system discovery, shapes → tree | 0 (no new defect) | the same cross-repo item + the device-bound rows | `70b35c8ce` |
+| [release windows](pr-issue-windows-2026-11-19/RELEASE_WINDOW_STATUS.md) | the PR/Issue set: core control plane, QUIC transports, expanded search | 1 (provider health history) | named per group | `29289af38` |
 
 ## The fixes, in one list
 
@@ -30,6 +31,7 @@ each round's own README is the entry point for its evidence.
 | 11 | every gated outbound routes its listener through the generation gate | C |
 | 12 | a reload no longer re-issues the addresses its predecessor handed out | C |
 | 13 | a generation offered to a closed pool is released, not adopted | triple A |
+| 14 | a replaced or removed node loses its predecessor's URL-test measurement | release windows A |
 
 Every one has a test that fails when the fix is removed; the mutation controls are listed in each
 round's verification page (`MC-1`, `MC-B1…B6`, `MC-C1/C2`, `MC-T1a/b`).
