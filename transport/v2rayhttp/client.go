@@ -270,6 +270,37 @@ func (c *Client) CloseIdleConnections() {
 	CloseIdleConnections(c.transport.Load())
 }
 
+// Reset is the network-change action, and it is deliberately NOT Close.
+//
+// # Why the difference is load-bearing
+//
+// Close unregisters the pool's generation registration (`c.removeRegistration`: "a torn-down pool
+// must never be reached by a later generation sweep"). That is right for teardown and fatal for a
+// reset, because runtimecoord's Registration reports a CLOSED registration as stale forever and
+// refuses to acknowledge it afterwards (`common/runtimecoord/coordinator.go:544-546,:564-567`). A
+// caller that resets by closing therefore makes every later dial take the "previous generation"
+// branch of dialHTTP2: the pool is replaced on every dial, so each stream pays a fresh TCP + TLS +
+// HTTP/2 handshake for the life of the process and the replaced transports accumulate in the pool's
+// terminated count.
+//
+// Reset replaces the pooled generation and keeps the registration valid, so the first successful
+// demand on the new network acknowledges it and every later demand reuses that connection - which is
+// what the listener-phase contract and `protocol/{vless,vmess,trojan}`'s `InterfaceUpdated` (it
+// prefers ResetContext, then Reset, and falls back to Close) already assume.
+func (c *Client) Reset() error {
+	if c.pool == nil {
+		// HTTP/1 has no pooled connection to retire: every dial opens its own socket, so closing
+		// idle ones is the whole reset.
+		c.transport.Store(ResetTransport(c.transport.Load()))
+		return nil
+	}
+	if c.newTransport == nil {
+		return nil
+	}
+	c.pool.Retire(c.newTransport())
+	return nil
+}
+
 func (c *Client) Close() error {
 	if c.pool != nil {
 		c.pool.CloseAll()

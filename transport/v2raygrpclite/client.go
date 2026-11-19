@@ -217,6 +217,24 @@ func (c *Client) CloseIdleConnections() {
 	}
 }
 
+// Reset is the network-change action, and it is deliberately NOT Close: Close unregisters the
+// generation, and a closed registration reads as stale forever, so every later dial would replace
+// the pool again (see v2rayhttp.Client.Reset for the full reasoning and the coordinator lines). The
+// gRPC-lite pool is v2rayhttp's GenerationPool, so the reset is the same one call.
+func (c *Client) Reset() error {
+	if c.pool == nil {
+		if c.transport != nil {
+			v2rayhttp.ResetTransport(c.transport)
+		}
+		return nil
+	}
+	if c.newTransport == nil {
+		return nil
+	}
+	c.pool.Retire(c.newTransport())
+	return nil
+}
+
 func (c *Client) Close() error {
 	if c.pool != nil {
 		c.pool.CloseAll()
