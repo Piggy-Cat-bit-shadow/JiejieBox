@@ -27,6 +27,27 @@ The three places that could produce one — out-of-range allocation (fixed), a r
 bypassed by the route set (fixed), a placeholder with no live store to refuse it (fixed) — are the three
 controls above.
 
+## 1b. TB-6 — the app-side NAT wrapper's contract, now measured
+
+`route/fakeip_conn.go` (221 lines) rewrote the destination of every packet of a fake-IP UDP flow in
+both directions and had **no test of its own** before this round. Five new tests
+(`route/fakeip_conn_test.go`) pin the contract, and writing them corrected the model the source read
+had produced:
+
+| Direction | Method | Contract (measured) |
+| --- | --- | --- |
+| upload (app → manager) | `ReadPacket` | a packet addressed to the fake placeholder is reported as the **domain**, and as the **resolved address** once `UpdateDestination` has run; a packet the app addressed to any *other* address is reported unchanged and that address is remembered |
+| download (manager → app) | `WritePacket` | a packet whose source is not a remembered address is delivered to the app as coming **from the fake address** (the app believes it has one peer), preserving the reply's port |
+| the direct exception | both | it is **app-driven**, not reply-driven: only an address the app itself addressed becomes direct, and only then are replies from it passed through. A reply from a stranger does *not* make that stranger direct — the app never learns the stranger's address, which is exactly what a full-cone UDP NAT needs: one mapping, several peers, all shown to the app as its own peer unless the app chose them |
+
+That last row is the non-obvious part and the reason the tests were worth writing: the wrapper is not a
+general "pass through unknown sources" NAT, it is a **fake-address-preserving** NAT whose exception
+exists for `udp_mapping: endpoint_independent`, where one NAT entry carries several destinations.
+
+**What a bug here would have looked like:** a reply delivered from the server's real address to an app
+whose socket is connected to the placeholder (the kernel/OS would drop it), or an upload reported as the
+placeholder to a manager that must dial a real destination. Both directions are now pinned.
+
 ## 2. TB-2/TB-3 — network transition → shared clients → fallback state
 
 This is the row window B could only read. The chain is now verified end to end:
