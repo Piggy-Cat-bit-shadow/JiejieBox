@@ -345,6 +345,24 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 		s.inet6Current = nextAddress(s.inet6Range, s.inet6Last, s.inet6Current)
 		address = s.inet6Current
 	}
+	// An issued address MUST be inside the configured range, and must not be the range's network or
+	// broadcast address: `Contains` is what route/route.go uses to decide "this is a placeholder" and
+	// to restore its domain, so an address outside it is handed on as a LITERAL destination and
+	// dialled for real.
+	//
+	// It is reachable with a degenerate prefix. `nextAddress` wraps to `range.Addr().Next().Next()`,
+	// which assumes at least two addresses above the network address: for a /31 or /32 (or a /127 or
+	// /128) the wrap target itself is outside the range, so every allocation would return it. A
+	// caller that configures such a range gets an error on the first query instead of a stream of
+	// synthetic addresses that the router will treat as real ones.
+	if !s.issuableAddress(address, isIPv6) {
+		if isIPv6 {
+			return netip.Addr{}, E.New("the IPv6 fakeip range ", s.inet6Range,
+				" has no issuable address; it must contain more than one address")
+		}
+		return netip.Addr{}, E.New("the IPv4 fakeip range ", s.inet4Range,
+			" has no issuable address; it must contain more than one address")
+	}
 	s.storage.FakeIPStoreAsync(address, domain, s.logger)
 	if s.ledger != nil {
 		// The exact record: this is one address the store really handed out, so the ledger narrows
@@ -357,6 +375,31 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 
 func (s *Store) Lookup(address netip.Addr) (string, bool) {
 	return s.storage.FakeIPLoad(address)
+}
+
+// issuableAddress reports whether an allocated address may be handed to a client at all.
+//
+// Two things are required, and both are about the address being USABLE as a placeholder rather than
+// merely present in the arithmetic: it must be inside its configured range (route/route.go's
+// `Contains` is the only thing that makes the address recognizable as one of ours), and it must be a
+// host address rather than the range's network or broadcast address.
+func (s *Store) issuableAddress(address netip.Addr, isIPv6 bool) bool {
+	addressRange := s.inet4Range
+	last := s.inet4Last
+	if isIPv6 {
+		addressRange = s.inet6Range
+		last = s.inet6Last
+	}
+	if !addressRange.IsValid() || !address.IsValid() {
+		return false
+	}
+	if !addressRange.Contains(address) {
+		return false
+	}
+	if address == addressRange.Addr() || address == last {
+		return false
+	}
+	return true
 }
 
 func (s *Store) Reset() error {
