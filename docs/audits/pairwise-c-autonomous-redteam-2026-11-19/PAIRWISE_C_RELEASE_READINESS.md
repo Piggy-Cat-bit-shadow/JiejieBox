@@ -180,10 +180,28 @@ alarm).
 `scripts/ci/uncovered-packages.txt` freezes what is left, with the reason next to each line. The 27
 pure-logic packages that were in it have since been **mounted**: they ran green on Windows in one
 27-package batch (~26 s wall) before being added to `verify.yml` as "the pure-logic packages no other
-job runs". What remains is 8 — `e2e` (needs one Linux run first) and 7 that need a device, a privilege
-or a platform (WinDivert/capture, power events, schannel). `verify.yml` runs the census script with
-`--baseline`, so the step **fails only when a package gains tests and no workflow runs them** — a
-ratchet, not a coverage mandate.
+job runs". What remains is 8 — `e2e` and 7 that need a device, a privilege or a platform
+(WinDivert/capture, power events, schannel). `verify.yml` runs the census script with `--baseline`, so
+the step **fails only when a package gains tests and no workflow runs them** — a ratchet, not a
+coverage mandate.
+
+**The `e2e` row is now `BLOCKED_BY_ENVIRONMENT` with evidence, not "needs a run".** WSL Ubuntu-24.04
+exists and starts (`uname -m` = x86_64, `curl`/`wget`/`python3` present), but it has no Go toolchain,
+the host has no Linux Go tarball, and WSL has no network (`curl https://go.dev/dl/` returns `000`), so a
+toolchain cannot be fetched. The commands that prove it:
+
+```
+wsl.exe -l -v                       -> Ubuntu-24.04, Stopped, 2
+wsl.exe -d Ubuntu-24.04 -e bash -lc 'uname -m; command -v go curl wget python3'
+                                    -> x86_64; /usr/bin/curl /usr/bin/wget /usr/bin/python3; no go
+wsl.exe -e bash -lc 'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://go.dev/dl/'
+                                    -> 000
+Get-ChildItem C:\Deepseek\.tools,D:\Go -Recurse -Depth 2 | ? Name -match 'linux'
+                                    -> nothing
+```
+
+Until a Linux runner is available, `e2e`'s 58 tests are green on Windows only and are not claimed as
+CI-covered.
 
 The gate has a self-test with its own mutation controls: forcing `covers()` to answer true, or removing
 the continuation join, both make the self-test exit 1. That is what distinguishes it from the
