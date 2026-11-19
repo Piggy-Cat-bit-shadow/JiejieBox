@@ -134,11 +134,29 @@ and takes the client's own lock, and it is the same call the walk makes; the har
 the one hook that was not idle-only (F-1, now removed). No change was made to the layering in this
 round: routing hooks through the OOMKiller's executor is a design decision, not a debug finding.
 
-## EC-7 What is *not* effective, and is now recorded rather than assumed
+## EC-7 Does a test that nobody runs still protect anything?
+
+Contract in this repository's own terms (`AGENTS.md` §evidence): "a CI job declaration is not evidence
+that the job ran". This round found the other half of that rule: a **test** that runs nowhere is not
+evidence of anything either.
+
+| Package | Executed by, before this round | What that proved |
+| --- | --- | --- |
+| `transport/v2rayxhttp` | **nothing** — `server-linux-amd64.yml` only runs `go list -deps` on it, which proves it is COMPILED into the binary | its two pool-lifecycle tests were red at `7654f1a77` and every gate stayed green (F-4) |
+| `protocol/hysteria2`, `protocol/tuic` | only `go list -deps`; the SPEC 104-style tests exist but no push-time job ran them | F-3's teardown defect was untested and unseen |
+| `common/resourceguard`, `common/tls`, `protocol/anytls` | `resource-guard.yml` race leg + `verify.yml` | already the best-covered part of this window |
+
+Actions taken: `transport/v2rayxhttp/...` joined the push-gate race step in `verify.yml` (measured
+~23 s under `-race` with the Darwin tag profile), and `protocol/hysteria2`, `protocol/tuic` and
+`service/oomkiller` joined `resource-guard.yml`, with path filters so a change to those files runs the
+job that proves the fix. `protocol/naive` is built only under `with_naive_outbound`, which the Linux
+push gate does not link; its new tests run in the Darwin-tag legs.
+
+## EC-8 What is *not* effective, and is now recorded rather than assumed
 
 | Claim that reads as "covered" | Reality | Where recorded |
 | --- | --- | --- |
 | "The OOMKiller protects the process from UDP flow bursts" | The only bound on TUN UDP flows is the NAT entry cap; nothing admits before the per-flow objects exist, and eviction does not cancel the dial it launched | R-4, R-5 |
 | "Idle pools are released under pressure" | naive (no idle-only primitive) and mieru (no releaser) are outside both walks | F-1 limitation, R-3 |
 | "A pre-sleep session never takes new work" | anytls/hy2/tuic expose no `ReuseSuspect`, so the boundary degrades to idle-only | R-2 |
-| "The xhttp pool reuses an idle connection" | Two tests at HEAD say the pool re-dialled; unexplained by this round | `PAIRWISE_A_VERIFICATION.md` §5 |
+| "The xhttp pool reuses an idle connection" | It does; the two tests that said otherwise were measuring the transport's cold start, where the un-ordered downlink GET and first upload POST can take a connection each | F-4 |

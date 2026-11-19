@@ -26,17 +26,22 @@ go test ./common/resourceguard ./common/buildgate ./common/tls \
         ./common/trafficclass ./common/httpclient \
         ./protocol/anytls ./protocol/trusttunnel ./protocol/hysteria2 \
         ./protocol/tuic ./protocol/mieru ./service/oomkiller \
-        ./transport/v2rayxhttp ./transport/v2rayquic ./route       # see §3-§5
+        ./transport/v2rayxhttp ./transport/v2rayquic ./route       # see §3, §5
 go test -v ./common/resourceguard ./protocol/hysteria2 ./protocol/tuic ./service/oomkiller
                                                                   # 231 PASS, 1 SKIP, 0 FAIL
 go test -v -tags "with_naive_outbound,with_purego" ./protocol/naive
                                                                   # 211 PASS, 5 SKIP, 0 FAIL
 go test -v ./protocol/anytls ./protocol/trusttunnel ./common/tls ./common/httpclient ./common/buildgate
                                                                   # 184 PASS, 0 SKIP, 0 FAIL
+go test -count=1 ./transport/v2rayxhttp                            # ok, 21.9s (was FAIL at HEAD)
 go test -race ./common/resourceguard ./protocol/hysteria2 ./protocol/tuic ./service/oomkiller
                                                                   # OK, 2.165s / 2.446s / 2.271s / 1.970s
+go test -race -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./transport/v2rayxhttp
+                                                                  # ok, 23.9s — the CI shape this package now runs under
+go test ./transport/v2rayxhttp -run 'TestIdlePooledConnectionIsReusedWithoutANewDial|TestTransportRedialIsInvisibleToXMUX' -count=1
+                                                                  # 3 consecutive runs ok (1.52s each) — the corrected tests are stable
 go vet -tags "with_naive_outbound,with_purego" ./protocol/naive     # OK
-gofmt -l common/resourceguard protocol/naive protocol/hysteria2 protocol/tuic   # no output
+gofmt -l common/resourceguard protocol/naive protocol/hysteria2 protocol/tuic transport/v2rayxhttp   # no output
 ```
 
 Evidence files: `raw/tests_changed_packages.txt`, `raw/tests_naive.txt`, `raw/tests_neighbours.txt`,
@@ -53,6 +58,7 @@ Evidence files: `raw/tests_changed_packages.txt`, `raw/tests_naive.txt`, `raw/te
 | `TestAShutdownCarrierNeverCreatesAClientAgain` (hy2, tuic) | `protocol/hysteria2`, `protocol/tuic` | F-3: no client after teardown |
 | `TestANetworkChangeLeavesTheCarrierReusable` (hy2, tuic) | same | F-3 guard-rail: a network change must stay reusable |
 | `TestPublishedCriticalPressureStopsARealExpensiveCreation` | `service/oomkiller` | A01: published pressure → gate → a real TLS creation is refused before the dial, and recovers |
+| `settledAccepts` + the two corrected pool tests | `transport/v2rayxhttp` | F-4: existing connections are reused, and a re-dial is detected only when it happens |
 
 ## 3. Per-package results
 
@@ -71,8 +77,8 @@ Evidence files: `raw/tests_changed_packages.txt`, `raw/tests_naive.txt`, `raw/te
 | `protocol/mieru` | ok |
 | `service/oomkiller` | ok |
 | `route` | ok |
+| `transport/v2rayxhttp` | ok (21.9 s; 23.9 s under `-race` with the Darwin tag profile). Was **FAIL** at HEAD — see §5 |
 | `transport/v2rayquic` | no test files |
-| `transport/v2rayxhttp` | **FAIL — 2 tests, pre-existing at HEAD, see §5** |
 
 ## 4. Mutation (negative) controls
 
@@ -86,8 +92,9 @@ mutations were never committed; the tree after each control was confirmed byte-i
 | MC-2 | remove `g.grantAllLocked()` from `Gate.setPlan` | `TestAPlanRaiseHandsRecoveredCapacityToTheQueue` FAILED (`limit=4 inflight=1 waiters=3`) |
 | MC-3 | re-add `guard.RegisterShed(client.CloseAllConnections)` | `TestNaiveShedHookNeverCutsALiveTunnel` FAILED (`expected 0, actual 1`) |
 | MC-4 | `hysteria2/family.go`: never set `closed` on `os.ErrClosed` | `TestAShutdownCarrierNeverCreatesAClientAgain` FAILED (`in chain: "hysteria2: no per-family client could be created"`) |
+| MC-5 | kill the pooled connection before the idle period (`server.listener.killAll()`) | `TestIdlePooledConnectionIsReusedWithoutANewDial` FAILED (`saw 4 TCP connections across an idle period, want the 2 the first session left open`) — so the corrected delta assertion still detects a re-dial |
 
-## 5. Pre-existing failure at HEAD (not caused by this round, not fixed here)
+## 5. Two tests that were red at HEAD, and are now green for the right reason
 
 `transport/v2rayxhttp`:
 
@@ -98,15 +105,19 @@ mutations were never committed; the tree after each control was confirmed byte-i
     packetup_uplink_debug_test.go:914: server saw 2 TCP connections for the first session, want 1
 ```
 
-Verified **on a clean tree** (`git checkout -- common/resourceguard/gate.go protocol/naive/outbound.go`
-with only the new untracked test files present) — both fail with the same message, so neither is a
-consequence of this round's changes. Raw output: `raw/preexisting_xhttp_failure.txt`.
+Verified on a clean tree first (with only the new untracked test files present), so they were not
+caused by this round; the failing output is kept in `raw/preexisting_xhttp_failure.txt`. They were
+then diagnosed rather than adjusted: the cause is a cold HTTP/2
+transport giving the un-ordered downlink GET and first upload POST a connection each (2 back-to-back,
+1 with a ≥5 ms gap, reproduced in plain Go on the pinned `x/net`), so the assertions were measuring a
+property Go does not guarantee. They now assert the **delta** — existing connections are reused, and a
+new one appears only after the old one is dead — with the measurement recorded in `settledAccepts`,
+and MC-5 proves the delta still catches a re-dial. Full write-up: `PAIRWISE_A_FINDINGS.md` F-4.
 
-They are a starting point for A09 (long-lived connection / body lifetime): "the pooled connection was
-re-dialed" is exactly the "reuse is claimed but not achieved" shape this window is about, and it is
-**unexplained** by the A02 reading, which found no defect in the borrow/release path. Not
-investigated further in this round because the failure is outside the A01/A02/A05 evidence chain and
-a fix without a root cause would be a guess.
+The underlying cost is real and is **not** hidden by that change: a first packet-up session on a cold
+pool can cost two TCP connections (two handshakes) because SPEC 061 deliberately does not order the
+two halves. Removing it needs either an ordered start or a connection-level wait, both of which are
+transport design changes; recorded here rather than done at the end of a debug round.
 
 ## 6. Coverage limits — stated, not glossed
 
@@ -124,9 +135,13 @@ a fix without a root cause would be a guess.
 4. **No performance comparison was produced.** Nothing in this round changes a data-path hot path
    (the naive change *removes* a hook registration; the gate changes only run on a plan change), so
    there is no before/after number to report — and none is claimed.
-5. **CI was not executed.** The new tests are plain `go test`s in packages that existing workflows
-   already run, so no workflow entry was needed for them; whether this tree's CI is green is not
-   established here, and a workflow declaration would not be evidence that it ran.
+5. **CI was not executed.** The new tests are plain `go test`s, and the CI mounts were chosen from
+   what the repository already runs: `verify.yml`'s push-gate race step now includes
+   `./transport/v2rayxhttp/...` (local reproduction of that exact invocation: `ok 23.9s`), and
+   `resource-guard.yml` now races `service/oomkiller`, `protocol/hysteria2` and `protocol/tuic` with
+   matching path filters. Workflow YAML was parsed after editing and the run lines asserted from the
+   parsed document. What is **not** established is the result of those jobs on GitHub: no run was
+   triggered from this environment, and a workflow edit is not evidence that a job ran.
 6. **Child repositories were read, not modified.** `sing-tun` (`c0855e6`), `sing-anytls`
    (`8282e00`), `cronet-go` (`d3ba128`) were inspected for the evidence quoted above; no pin was
    changed.

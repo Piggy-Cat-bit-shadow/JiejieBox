@@ -60,8 +60,8 @@ duplicate authority.
 | Shared boundary | per-protocol pooled physical objects and the two walks that may close them (`ReferenceManager.retireIdleResources`, `Guard.runShed`), plus Box `Scope` teardown |
 | Attacked | borrow-after-close, exactly-once close, trim-vs-inflight, post-teardown creation, quiet-lie (a pool that claims a releaser it cannot honour) |
 | Executed | full `go test` for `protocol/anytls`, `protocol/trusttunnel`, `protocol/hysteria2`, `protocol/tuic`, `protocol/mieru`, `transport/v2rayxhttp`, `route`; plus two new pins |
-| Conclusion | **F-1 `已确认` + fixed** (naive's only close primitive terminates live CONNECT streams and was registered as an idle reclaim hook). **F-3 `已确认` + fixed** (hy2/tuic had no closed state: a dial after teardown installed a client no later close could reach). Recorded, not fixed: trusttunnel `getSession` does not reserve the session it hands out (P2); anytls has no `ReuseSuspect` so the post-sleep boundary degrades to idle-only (P2); mieru implements no `IdleConnectionReleaser` (P2 gap). Ruled out: xhttp pool borrow/release (no defect by reading) — but see the pre-existing red tests in `PAIRWISE_A_VERIFICATION.md` §5, which contradict the reading and are **not** explained by this round. |
-| Evidence | `PAIRWISE_A_FINDINGS.md` F-1, F-3, R-1..R-3 |
+| Conclusion | **F-1 `已确认` + fixed** (naive's only close primitive terminates live CONNECT streams and was registered as an idle reclaim hook). **F-3 `已确认` + fixed** (hy2/tuic had no closed state: a dial after teardown installed a client no later close could reach). Recorded, not fixed: trusttunnel `getSession` does not reserve the session it hands out (P2); anytls has no `ReuseSuspect` so the post-sleep boundary degrades to idle-only (P2); mieru implements no `IdleConnectionReleaser` (P2 gap). Ruled out: xhttp pool borrow/release — the two red tests that disagreed were measuring the transport's cold start, not the pool (F-4). |
+| Evidence | `PAIRWISE_A_FINDINGS.md` F-1, F-3, F-4, R-1..R-3 |
 
 ### A03〔P0〕Physical admission × protocol reuse / expensive init
 
@@ -111,16 +111,21 @@ records what a device run must measure. No device numbers are claimed anywhere i
 
 ### A08〔P1〕Diagnostics / metrics × memory crisis
 
-`未覆盖`. `service/oomkiller/recorder*` and the extra-metadata producers were read only far enough to
-confirm they do not change governance state (`guardMetadata`/`reclaimMetadata` are read-only
-renderers, `service.go:143-426`). Re-entrancy, low-memory profiling cost and interrupted report IO
-were **not** attacked.
+`部分覆盖`. The report producers were read far enough to answer the A08 question "can a probe change
+governance state": `guardMetadata`/`GuardStats` call `Guard.Stats()`, which observes and applies and
+can therefore run the shed hooks — a documented decision with a stated reason (a read-only snapshot
+could mix two transitions) and a test that requires it
+(`service/oomkiller/guard_wiring_test.go:65-69`). Recorded as R-8 and **not** changed. Re-entrancy,
+the cost of profiling inside a low-memory callback, interrupted report IO and late callbacks after
+process shutdown were **not** attacked.
 
 ### A09〔P1〕Long-lived connection / HTTP body × cancel / Close
 
-`未覆盖` in this round. Two pre-existing failures in `transport/v2rayxhttp` at HEAD are recorded as a
-starting point for it (`PAIRWISE_A_VERIFICATION.md` §5), and the A02 audit ruled out the xhttp pool's
-borrow/release path by reading — which those failures disagree with, so they need their own round.
+`部分覆盖` (this round): the two pool-lifecycle tests in `transport/v2rayxhttp` were red at HEAD and
+are fixed (F-4) — the package had no runner anywhere, and the failures turned out to be a cold-pool
+property of Go's HTTP/2 client rather than a pool defect. Long-lived body/stream cancellation
+(`body + Close`, half-close, server-abort, never-EOF) was **not** attacked in this round, and the
+package is now gated so the next attempt starts from a suite that actually runs.
 
 ### A10〔P2〕Go runtime / GC × native caches / platform budget
 

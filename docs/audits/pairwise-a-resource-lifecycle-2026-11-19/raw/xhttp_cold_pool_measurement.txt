@@ -1,0 +1,35 @@
+# Cold-pool measurement for F-4 (transcribed from the runs described below)
+#
+# Produced with a throwaway program (no sing-box code) and with throwaway diagnostics inside
+# transport/v2rayxhttp that were deleted before the commit; the numbers are what those runs printed,
+# and the same experiments are reproducible from the description in PAIRWISE_A_FINDINGS.md F-4.
+#
+# Shape being measured: one long-lived downlink GET (server holds the stream open) plus one upload
+# POST that carries a bounded payload, against an h2c server whose listener counts accepts, through
+# golang.org/x/net/http2.Transport{AllowHTTP: true, DialTLSContext: <plain dial>}.
+
+# 1. plain Go, x/net v0.63.0, the two requests issued together (sing-box's SPEC 061 shape)
+concurrent GET+POST on a cold pool: accepts=1
+staggered GET then POST on a cold pool: accepts=1      # 50 ms gap
+
+# 2. same program, with the gap parameterised to the production shape
+gap 0: held downlink + unknown-length POST                 accepts=2
+held downlink + known-length POST                          accepts=2
+short downlink + unknown-length POST                       accepts=2
+short downlink + known-length POST                         accepts=2
+
+# 3. the same gap-0 program re-run after pinning x/net to the version this repository uses
+go list -m golang.org/x/net -> v0.57.0
+gap 0 (held downlink, unknown length)                      accepts=2
+gap 0 (held downlink, known length)                        accepts=2
+gap 0 (short downlink, unknown length)                     accepts=2
+gap 0 (short downlink, known length)                       accepts=2
+
+# 4. inside transport/v2rayxhttp, logging which transport each half reaches
+RT pool #1 method=GET  url=http://127.0.0.1:55359/upload/      host="127.0.0.1:55359" close=false transport=0x166b06138800
+RT pool #2 method=POST url=http://127.0.0.1:55359/upload/?chunk_id=0 host="127.0.0.1:55359" close=false transport=0x166b06138800
+accepts=2 requests=1
+
+# 5. inside transport/v2rayxhttp, the same session with the two halves staggered
+stagger=0s    accepts(after dial)=0 accepts(before write)=0 accepts(final)=2 requests=1
+stagger=300ms accepts(after dial)=0 accepts(before write)=1 accepts(final)=1 requests=1

@@ -1,6 +1,6 @@
 # PAIRWISE A — Findings
 
-Three defects were confirmed by source and by execution, and fixed in this round. Seven more were
+Four defects were confirmed by source and by execution, and fixed in this round. Seven more were
 confirmed **by reading only** and are recorded with their exact locations and the test that would
 settle them; they are not fixed here, and each says why. Nothing in this file is marked fixed
 without a regression that fails when the fix is removed.
@@ -176,6 +176,64 @@ be created"`, i.e. the creation path was entered).
 
 ---
 
+## F-4〔已确认，已修复〕Two lifecycle tests asserted a property Go does not guarantee, and no job executed them
+
+**Pair:** A02/A07 (pool reuse and the reuse boundary) × the test suite as a mechanism.
+
+**Trigger.** Running `go test ./transport/v2rayxhttp`, which nothing in this repository did.
+
+**What happened.** Two pool-lifecycle tests were **red at `7654f1a77`**:
+
+```
+--- FAIL: TestIdlePooledConnectionIsReusedWithoutANewDial
+    http2_test.go:145: server saw 2 TCP connections across an idle period, want 1 (the pooled connection was re-dialed)
+--- FAIL: TestTransportRedialIsInvisibleToXMUX
+    packetup_uplink_debug_test.go:914: server saw 2 TCP connections for the first session, want 1
+```
+
+**Root cause (measured, not inferred).** Neither failure is a pool defect. A packet-up session
+issues its downlink GET and its first upload POST without ordering them — deliberately, because
+awaiting the downlink response deadlocks against a server that holds it until the upload delivers
+bytes (SPEC 061, `conn.go:330-336`). On a **cold** HTTP/2 transport pool both requests reach Go's
+client at the same instant, and it can give each its own TCP connection:
+
+| Experiment | Result |
+| --- | --- |
+| the two requests back-to-back (production shape) | **2** accepts for one session |
+| the same two requests ≥5 ms apart | **1** accept |
+| plain Go, `x/net/http2.Transport`, no sing-box code, same two-request shape | **2** back-to-back, **1** with the gap |
+| plain Go on the pinned `golang.org/x/net v0.57.0` and on `v0.63.0` | identical |
+
+So the extra connection is a property of the transport's cold start, not of XMUX, and not an
+x/net-version regression. That also resolves the contradiction recorded in the A02 reading: the
+xhttp borrow/release path is sound, and what these tests were seeing was the cold start. The raw
+measurements are in `raw/xhttp_cold_pool_measurement.txt` and the pre-fix failure output in
+`raw/preexisting_xhttp_failure.txt`.
+
+**Why the previous judgement did not catch it.** The package was **executed by nothing**. `go list
+-deps` in `server-linux-amd64.yml` proves the package is *compiled into the binary*, which is a
+different question from whether its tests run; the push-gate race step lists eight packages and this
+was not one of them. A red test that never runs is indistinguishable from a green one, which is the
+inverse of the failure this window was sent to look for and the same mechanism: the gate reported on
+a suite it never executed.
+
+**Fix.** The two tests now assert the property the design does guarantee — the **delta**: once the
+pool has a connection, a later session must not create another, and a new connection may appear only
+after the old one is dead. The baseline is taken by `settledAccepts`, whose doc comment records the
+measurement above so the absolute count is not "restored" later by someone reading the test name.
+No production behaviour changed.
+
+**Regression + mutation control.** `transport/v2rayxhttp` is green (21.9 s; ~23 s under `-race` with
+the Darwin tag profile). **Mutation control MC-5:** killing the pooled connection
+(`server.listener.killAll()`) before the idle period turns the assertion red —
+`saw 4 TCP connections across an idle period, want the 2 the first session left open` — so the
+delta still detects a re-dial and is not a weakened assertion.
+
+**CI.** `verify.yml`'s push-gate race step now includes `./transport/v2rayxhttp/...`, with the reason
+and the measured cost recorded next to the list.
+
+---
+
 # Recorded, not fixed
 
 Each of these is confirmed by reading with a file:line, and each is deliberately left for the next
@@ -254,6 +312,31 @@ divides only `MaxSize`; `MaxBytes` is never propagated from `StackOptions` (`:73
 instance takes the 8 MiB default (`udp_nat.go:169-173`). 8 queues → 64 MiB of permitted queued
 datagrams against a documented 8 MiB aggregate.
 
+## R-8〔P3, observed, deliberately not changed〕Writing an OOM report can complete a transition and run reclaim
+
+`Service.guardMetadata` (`service.go:153-185`) and `Service.GuardStats` (`:136-141`) both call
+`guard.Stats()`, and `Stats()` observes and **applies** — it can advance the level, publish a plan and
+run the shed hooks (`common/resourceguard/guard.go:432-468`). So a diagnostics write is, in the strict
+sense, able to change governance state and trigger reclamation, which is the thing an A08 probe is not
+supposed to do.
+
+It is not changed here, for two reasons that are both evidence rather than caution:
+
+- It is a **documented decision with a stated reason**: `Stats()` explains that a read-only snapshot
+  would be able to report "level critical, limit 32" — a self-contradicting snapshot taken from two
+  different transitions — and chooses to observe+apply so the level and the plan always describe one
+  transition. The pair read under the lock (`applied` + `gate.Stats()`) has exactly the consistency
+  property the report needs.
+- It is **pinned on purpose**: `service/oomkiller/guard_wiring_test.go:65-69` sets the pressure to
+  Critical and then asserts that `guardMetadata()` reports `critical` with limit 8 — i.e. the test
+  requires the report to observe. Reversing it is a policy change about who is allowed to advance the
+  pressure state machine, not a debug fix.
+
+What removes the residual concern without touching that policy: the reclaim the report can trigger is
+the same one the next dial would trigger, the hooks are idle-only or (for naive) absent, and the
+transition is versioned so it happens once. Recorded so the next A08 round starts from the fact
+instead of re-deriving it.
+
 ---
 
 ## Not defects (checked with evidence)
@@ -267,8 +350,9 @@ datagrams against a documented 8 MiB aggregate.
 - **xhttp pool borrow/release.** `acquireUsage` under the client lock plus `discardRetired` closes the
   borrow window (`xmux.go:145-163`, `client.go:332-346`, `:725-734`); release is exactly once
   (`xmux.go:266-289`); `Close`/`RetireSuspect` detach before teardown (`:554-569`, `:613-638`). No
-  lock inversion found. (This reading is contradicted by two pre-existing red tests — see
-  `PAIRWISE_A_VERIFICATION.md` §5 — so treat it as "not proven by reading alone".)
+  lock inversion found. This reading is now supported by execution instead of contradicted by it:
+  the two tests that used to disagree were measuring the transport's cold start (F-4), and the
+  package is green under `-race`.
 - **AnyTLS pool mechanics.** `takeIdleSession` removes the session under `c.access` before handing it
   out, so a concurrent trim cannot close a borrowed session (`sing-anytls client.go:354-367`);
   creation waiters are bounded by the creation context (`:260-287`).
