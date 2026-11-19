@@ -1,0 +1,850 @@
+# filtered from `go test -v`: only RUN/results/summary lines are kept (log noise removed)
+# command and date: see PAIRWISE_A_VERIFICATION.md
+=== RUN   TestAuditTCPALPNNeverAdvertisesH3
+--- PASS: TestAuditTCPALPNNeverAdvertisesH3 (0.00s)
+=== RUN   TestAuditQUICALPNIsH3Only
+--- PASS: TestAuditQUICALPNIsH3Only (0.00s)
+=== RUN   TestAuditUDPALPNIncludesH3
+--- PASS: TestAuditUDPALPNIncludesH3 (0.00s)
+=== RUN   TestAuditALPNResolutionIsIdempotent
+--- PASS: TestAuditALPNResolutionIsIdempotent (0.00s)
+=== RUN   TestAuditALPNPreservesOperatorConfiguration
+--- PASS: TestAuditALPNPreservesOperatorConfiguration (0.00s)
+=== RUN   TestAuditHTTP3ALPNConstantMatchesTheLibrary
+--- PASS: TestAuditHTTP3ALPNConstantMatchesTheLibrary (0.00s)
+=== RUN   TestAuditHTTP2ConnectPseudoHeadersAreRejected
+=== RUN   TestAuditHTTP2ConnectPseudoHeadersAreRejected/scheme/h2
+=== RUN   TestAuditHTTP2ConnectPseudoHeadersAreRejected/scheme/h3
+=== RUN   TestAuditHTTP2ConnectPseudoHeadersAreRejected/path/h2
+=== RUN   TestAuditHTTP2ConnectPseudoHeadersAreRejected/path/h3
+=== RUN   TestAuditHTTP2ConnectPseudoHeadersAreRejected/both/h2
+=== RUN   TestAuditHTTP2ConnectPseudoHeadersAreRejected/both/h3
+--- PASS: TestAuditHTTP2ConnectPseudoHeadersAreRejected (0.00s)
+=== RUN   TestAuditHTTP2ConnectWithoutPseudoHeadersStillChallenges
+--- PASS: TestAuditHTTP2ConnectWithoutPseudoHeadersStillChallenges (0.00s)
+=== RUN   TestAuditFlushFailureIsReported
+--- PASS: TestAuditFlushFailureIsReported (0.00s)
+=== RUN   TestAuditFlushSuccessIsNotAnError
+--- PASS: TestAuditFlushSuccessIsNotAnError (0.00s)
+=== RUN   TestAuditControllerUnwrapsWrappedFlusher
+--- PASS: TestAuditControllerUnwrapsWrappedFlusher (0.00s)
+=== RUN   TestAuditHTTP2ServerUsesRealFields
+--- PASS: TestAuditHTTP2ServerUsesRealFields (0.00s)
+=== RUN   TestAuditHTTP2DefaultsAreUpstream
+--- PASS: TestAuditHTTP2DefaultsAreUpstream (0.00s)
+=== RUN   TestAuditHTTP2ZeroAndNegativeAreIgnored
+--- PASS: TestAuditHTTP2ZeroAndNegativeAreIgnored (0.00s)
+=== RUN   TestAuditMemoryBudgetForOneGiBHost
+--- PASS: TestAuditMemoryBudgetForOneGiBHost (0.00s)
+=== RUN   TestAuditIdleTimeoutDoesNotKillActiveTunnels
+--- PASS: TestAuditIdleTimeoutDoesNotKillActiveTunnels (0.00s)
+=== RUN   TestAuditPaddingZeroLengthFrames
+=== RUN   TestAuditPaddingZeroLengthFrames/zero_data,_zero_padding
+=== RUN   TestAuditPaddingZeroLengthFrames/zero_data,_some_padding
+=== RUN   TestAuditPaddingZeroLengthFrames/some_data,_zero_padding
+=== RUN   TestAuditPaddingZeroLengthFrames/zero_data,_max_padding
+--- PASS: TestAuditPaddingZeroLengthFrames (0.00s)
+=== RUN   TestAuditPaddingEOFAtEveryOffset
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_0
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_1
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_2
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_3
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_4
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_5
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_6
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_7
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_8
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_9
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_10
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_11
+=== RUN   TestAuditPaddingEOFAtEveryOffset/cut_at_12
+--- PASS: TestAuditPaddingEOFAtEveryOffset (0.00s)
+=== RUN   TestAuditPaddingOneByteAtATime
+--- PASS: TestAuditPaddingOneByteAtATime (0.00s)
+=== RUN   TestAuditPaddingShortWriteIsDetected
+--- PASS: TestAuditPaddingShortWriteIsDetected (0.00s)
+=== RUN   TestAuditPaddingWriteErrorPropagates
+--- PASS: TestAuditPaddingWriteErrorPropagates (0.00s)
+=== RUN   TestAuditPaddingCountersTrackFrames
+--- PASS: TestAuditPaddingCountersTrackFrames (0.00s)
+=== RUN   TestAuditUnpaddedNeverInsertsFrames
+--- PASS: TestAuditUnpaddedNeverInsertsFrames (0.00s)
+=== RUN   TestAuditLargeWriteIsNotTruncated
+--- PASS: TestAuditLargeWriteIsNotTruncated (0.00s)
+=== RUN   TestAuditWriteContractMatrix
+=== RUN   TestAuditWriteContractMatrix/full_write_and_nil_error
+=== RUN   TestAuditWriteContractMatrix/partial_write_and_nil_error
+=== RUN   TestAuditWriteContractMatrix/zero_write_and_nil_error
+=== RUN   TestAuditWriteContractMatrix/partial_write_with_error
+=== RUN   TestAuditWriteContractMatrix/zero_write_with_error
+--- PASS: TestAuditWriteContractMatrix (0.00s)
+=== RUN   TestAuditUnpaddedWriteContract
+--- PASS: TestAuditUnpaddedWriteContract (0.00s)
+=== RUN   TestAuditBufferWriteContract
+=== RUN   TestAuditBufferWriteContract/full_write_advances_the_counter_once
+=== RUN   TestAuditBufferWriteContract/short_write_fails_and_does_not_advance_the_counter
+=== RUN   TestAuditBufferWriteContract/unpadded_short_write_fails
+--- PASS: TestAuditBufferWriteContract (0.00s)
+=== RUN   TestAuditChunkedWriteStopsOnShortWrite
+--- PASS: TestAuditChunkedWriteStopsOnShortWrite (0.00s)
+=== RUN   TestAuditWriterThatLiesAboutLengthIsStillCaught
+--- PASS: TestAuditWriterThatLiesAboutLengthIsStillCaught (0.00s)
+=== RUN   TestAuditPaddingCoversFullRange
+=== RUN   TestAuditPaddingCoversFullRange/0
+=== RUN   TestAuditPaddingCoversFullRange/1
+=== RUN   TestAuditPaddingCoversFullRange/2
+=== RUN   TestAuditPaddingCoversFullRange/3
+=== RUN   TestAuditPaddingCoversFullRange/4
+=== RUN   TestAuditPaddingCoversFullRange/5
+=== RUN   TestAuditPaddingCoversFullRange/6
+=== RUN   TestAuditPaddingCoversFullRange/7
+=== RUN   TestAuditPaddingCoversFullRange/8
+=== RUN   TestAuditPaddingCoversFullRange/9
+=== RUN   TestAuditPaddingCoversFullRange/10
+=== RUN   TestAuditPaddingCoversFullRange/11
+=== RUN   TestAuditPaddingCoversFullRange/12
+=== RUN   TestAuditPaddingCoversFullRange/13
+=== RUN   TestAuditPaddingCoversFullRange/14
+=== RUN   TestAuditPaddingCoversFullRange/15
+=== RUN   TestAuditPaddingCoversFullRange/16
+=== RUN   TestAuditPaddingCoversFullRange/17
+=== RUN   TestAuditPaddingCoversFullRange/18
+=== RUN   TestAuditPaddingCoversFullRange/19
+=== RUN   TestAuditPaddingCoversFullRange/20
+=== RUN   TestAuditPaddingCoversFullRange/21
+=== RUN   TestAuditPaddingCoversFullRange/22
+=== RUN   TestAuditPaddingCoversFullRange/23
+=== RUN   TestAuditPaddingCoversFullRange/24
+=== RUN   TestAuditPaddingCoversFullRange/25
+=== RUN   TestAuditPaddingCoversFullRange/26
+=== RUN   TestAuditPaddingCoversFullRange/27
+=== RUN   TestAuditPaddingCoversFullRange/28
+=== RUN   TestAuditPaddingCoversFullRange/29
+=== RUN   TestAuditPaddingCoversFullRange/30
+=== RUN   TestAuditPaddingCoversFullRange/31
+=== RUN   TestAuditPaddingCoversFullRange/32
+=== RUN   TestAuditPaddingCoversFullRange/33
+=== RUN   TestAuditPaddingCoversFullRange/34
+=== RUN   TestAuditPaddingCoversFullRange/35
+=== RUN   TestAuditPaddingCoversFullRange/36
+=== RUN   TestAuditPaddingCoversFullRange/37
+=== RUN   TestAuditPaddingCoversFullRange/38
+=== RUN   TestAuditPaddingCoversFullRange/39
+=== RUN   TestAuditPaddingCoversFullRange/40
+=== RUN   TestAuditPaddingCoversFullRange/41
+=== RUN   TestAuditPaddingCoversFullRange/42
+=== RUN   TestAuditPaddingCoversFullRange/43
+=== RUN   TestAuditPaddingCoversFullRange/44
+=== RUN   TestAuditPaddingCoversFullRange/45
+=== RUN   TestAuditPaddingCoversFullRange/46
+=== RUN   TestAuditPaddingCoversFullRange/47
+=== RUN   TestAuditPaddingCoversFullRange/48
+=== RUN   TestAuditPaddingCoversFullRange/49
+=== RUN   TestAuditPaddingCoversFullRange/50
+=== RUN   TestAuditPaddingCoversFullRange/51
+=== RUN   TestAuditPaddingCoversFullRange/52
+=== RUN   TestAuditPaddingCoversFullRange/53
+=== RUN   TestAuditPaddingCoversFullRange/54
+=== RUN   TestAuditPaddingCoversFullRange/55
+=== RUN   TestAuditPaddingCoversFullRange/56
+=== RUN   TestAuditPaddingCoversFullRange/57
+=== RUN   TestAuditPaddingCoversFullRange/58
+=== RUN   TestAuditPaddingCoversFullRange/59
+=== RUN   TestAuditPaddingCoversFullRange/60
+=== RUN   TestAuditPaddingCoversFullRange/61
+=== RUN   TestAuditPaddingCoversFullRange/62
+=== RUN   TestAuditPaddingCoversFullRange/63
+=== RUN   TestAuditPaddingCoversFullRange/64
+=== RUN   TestAuditPaddingCoversFullRange/65
+=== RUN   TestAuditPaddingCoversFullRange/66
+=== RUN   TestAuditPaddingCoversFullRange/67
+=== RUN   TestAuditPaddingCoversFullRange/68
+=== RUN   TestAuditPaddingCoversFullRange/69
+=== RUN   TestAuditPaddingCoversFullRange/70
+=== RUN   TestAuditPaddingCoversFullRange/71
+=== RUN   TestAuditPaddingCoversFullRange/72
+=== RUN   TestAuditPaddingCoversFullRange/73
+=== RUN   TestAuditPaddingCoversFullRange/74
+=== RUN   TestAuditPaddingCoversFullRange/75
+=== RUN   TestAuditPaddingCoversFullRange/76
+=== RUN   TestAuditPaddingCoversFullRange/77
+=== RUN   TestAuditPaddingCoversFullRange/78
+=== RUN   TestAuditPaddingCoversFullRange/79
+=== RUN   TestAuditPaddingCoversFullRange/80
+=== RUN   TestAuditPaddingCoversFullRange/81
+=== RUN   TestAuditPaddingCoversFullRange/82
+=== RUN   TestAuditPaddingCoversFullRange/83
+=== RUN   TestAuditPaddingCoversFullRange/84
+=== RUN   TestAuditPaddingCoversFullRange/85
+=== RUN   TestAuditPaddingCoversFullRange/86
+=== RUN   TestAuditPaddingCoversFullRange/87
+=== RUN   TestAuditPaddingCoversFullRange/88
+=== RUN   TestAuditPaddingCoversFullRange/89
+=== RUN   TestAuditPaddingCoversFullRange/90
+=== RUN   TestAuditPaddingCoversFullRange/91
+=== RUN   TestAuditPaddingCoversFullRange/92
+=== RUN   TestAuditPaddingCoversFullRange/93
+=== RUN   TestAuditPaddingCoversFullRange/94
+=== RUN   TestAuditPaddingCoversFullRange/95
+=== RUN   TestAuditPaddingCoversFullRange/96
+=== RUN   TestAuditPaddingCoversFullRange/97
+=== RUN   TestAuditPaddingCoversFullRange/98
+=== RUN   TestAuditPaddingCoversFullRange/99
+=== RUN   TestAuditPaddingCoversFullRange/100
+=== RUN   TestAuditPaddingCoversFullRange/101
+=== RUN   TestAuditPaddingCoversFullRange/102
+=== RUN   TestAuditPaddingCoversFullRange/103
+=== RUN   TestAuditPaddingCoversFullRange/104
+=== RUN   TestAuditPaddingCoversFullRange/105
+=== RUN   TestAuditPaddingCoversFullRange/106
+=== RUN   TestAuditPaddingCoversFullRange/107
+=== RUN   TestAuditPaddingCoversFullRange/108
+=== RUN   TestAuditPaddingCoversFullRange/109
+=== RUN   TestAuditPaddingCoversFullRange/110
+=== RUN   TestAuditPaddingCoversFullRange/111
+=== RUN   TestAuditPaddingCoversFullRange/112
+=== RUN   TestAuditPaddingCoversFullRange/113
+=== RUN   TestAuditPaddingCoversFullRange/114
+=== RUN   TestAuditPaddingCoversFullRange/115
+=== RUN   TestAuditPaddingCoversFullRange/116
+=== RUN   TestAuditPaddingCoversFullRange/117
+=== RUN   TestAuditPaddingCoversFullRange/118
+=== RUN   TestAuditPaddingCoversFullRange/119
+=== RUN   TestAuditPaddingCoversFullRange/120
+=== RUN   TestAuditPaddingCoversFullRange/121
+=== RUN   TestAuditPaddingCoversFullRange/122
+=== RUN   TestAuditPaddingCoversFullRange/123
+=== RUN   TestAuditPaddingCoversFullRange/124
+=== RUN   TestAuditPaddingCoversFullRange/125
+=== RUN   TestAuditPaddingCoversFullRange/126
+=== RUN   TestAuditPaddingCoversFullRange/127
+=== RUN   TestAuditPaddingCoversFullRange/128
+=== RUN   TestAuditPaddingCoversFullRange/129
+=== RUN   TestAuditPaddingCoversFullRange/130
+=== RUN   TestAuditPaddingCoversFullRange/131
+=== RUN   TestAuditPaddingCoversFullRange/132
+=== RUN   TestAuditPaddingCoversFullRange/133
+=== RUN   TestAuditPaddingCoversFullRange/134
+=== RUN   TestAuditPaddingCoversFullRange/135
+=== RUN   TestAuditPaddingCoversFullRange/136
+=== RUN   TestAuditPaddingCoversFullRange/137
+=== RUN   TestAuditPaddingCoversFullRange/138
+=== RUN   TestAuditPaddingCoversFullRange/139
+=== RUN   TestAuditPaddingCoversFullRange/140
+=== RUN   TestAuditPaddingCoversFullRange/141
+=== RUN   TestAuditPaddingCoversFullRange/142
+=== RUN   TestAuditPaddingCoversFullRange/143
+=== RUN   TestAuditPaddingCoversFullRange/144
+=== RUN   TestAuditPaddingCoversFullRange/145
+=== RUN   TestAuditPaddingCoversFullRange/146
+=== RUN   TestAuditPaddingCoversFullRange/147
+=== RUN   TestAuditPaddingCoversFullRange/148
+=== RUN   TestAuditPaddingCoversFullRange/149
+=== RUN   TestAuditPaddingCoversFullRange/150
+=== RUN   TestAuditPaddingCoversFullRange/151
+=== RUN   TestAuditPaddingCoversFullRange/152
+=== RUN   TestAuditPaddingCoversFullRange/153
+=== RUN   TestAuditPaddingCoversFullRange/154
+=== RUN   TestAuditPaddingCoversFullRange/155
+=== RUN   TestAuditPaddingCoversFullRange/156
+=== RUN   TestAuditPaddingCoversFullRange/157
+=== RUN   TestAuditPaddingCoversFullRange/158
+=== RUN   TestAuditPaddingCoversFullRange/159
+=== RUN   TestAuditPaddingCoversFullRange/160
+=== RUN   TestAuditPaddingCoversFullRange/161
+=== RUN   TestAuditPaddingCoversFullRange/162
+=== RUN   TestAuditPaddingCoversFullRange/163
+=== RUN   TestAuditPaddingCoversFullRange/164
+=== RUN   TestAuditPaddingCoversFullRange/165
+=== RUN   TestAuditPaddingCoversFullRange/166
+=== RUN   TestAuditPaddingCoversFullRange/167
+=== RUN   TestAuditPaddingCoversFullRange/168
+=== RUN   TestAuditPaddingCoversFullRange/169
+=== RUN   TestAuditPaddingCoversFullRange/170
+=== RUN   TestAuditPaddingCoversFullRange/171
+=== RUN   TestAuditPaddingCoversFullRange/172
+=== RUN   TestAuditPaddingCoversFullRange/173
+=== RUN   TestAuditPaddingCoversFullRange/174
+=== RUN   TestAuditPaddingCoversFullRange/175
+=== RUN   TestAuditPaddingCoversFullRange/176
+=== RUN   TestAuditPaddingCoversFullRange/177
+=== RUN   TestAuditPaddingCoversFullRange/178
+=== RUN   TestAuditPaddingCoversFullRange/179
+=== RUN   TestAuditPaddingCoversFullRange/180
+=== RUN   TestAuditPaddingCoversFullRange/181
+=== RUN   TestAuditPaddingCoversFullRange/182
+=== RUN   TestAuditPaddingCoversFullRange/183
+=== RUN   TestAuditPaddingCoversFullRange/184
+=== RUN   TestAuditPaddingCoversFullRange/185
+=== RUN   TestAuditPaddingCoversFullRange/186
+=== RUN   TestAuditPaddingCoversFullRange/187
+=== RUN   TestAuditPaddingCoversFullRange/188
+=== RUN   TestAuditPaddingCoversFullRange/189
+=== RUN   TestAuditPaddingCoversFullRange/190
+=== RUN   TestAuditPaddingCoversFullRange/191
+=== RUN   TestAuditPaddingCoversFullRange/192
+=== RUN   TestAuditPaddingCoversFullRange/193
+=== RUN   TestAuditPaddingCoversFullRange/194
+=== RUN   TestAuditPaddingCoversFullRange/195
+=== RUN   TestAuditPaddingCoversFullRange/196
+=== RUN   TestAuditPaddingCoversFullRange/197
+=== RUN   TestAuditPaddingCoversFullRange/198
+=== RUN   TestAuditPaddingCoversFullRange/199
+=== RUN   TestAuditPaddingCoversFullRange/200
+=== RUN   TestAuditPaddingCoversFullRange/201
+=== RUN   TestAuditPaddingCoversFullRange/202
+=== RUN   TestAuditPaddingCoversFullRange/203
+=== RUN   TestAuditPaddingCoversFullRange/204
+=== RUN   TestAuditPaddingCoversFullRange/205
+=== RUN   TestAuditPaddingCoversFullRange/206
+=== RUN   TestAuditPaddingCoversFullRange/207
+=== RUN   TestAuditPaddingCoversFullRange/208
+=== RUN   TestAuditPaddingCoversFullRange/209
+=== RUN   TestAuditPaddingCoversFullRange/210
+=== RUN   TestAuditPaddingCoversFullRange/211
+=== RUN   TestAuditPaddingCoversFullRange/212
+=== RUN   TestAuditPaddingCoversFullRange/213
+=== RUN   TestAuditPaddingCoversFullRange/214
+=== RUN   TestAuditPaddingCoversFullRange/215
+=== RUN   TestAuditPaddingCoversFullRange/216
+=== RUN   TestAuditPaddingCoversFullRange/217
+=== RUN   TestAuditPaddingCoversFullRange/218
+=== RUN   TestAuditPaddingCoversFullRange/219
+=== RUN   TestAuditPaddingCoversFullRange/220
+=== RUN   TestAuditPaddingCoversFullRange/221
+=== RUN   TestAuditPaddingCoversFullRange/222
+=== RUN   TestAuditPaddingCoversFullRange/223
+=== RUN   TestAuditPaddingCoversFullRange/224
+=== RUN   TestAuditPaddingCoversFullRange/225
+=== RUN   TestAuditPaddingCoversFullRange/226
+=== RUN   TestAuditPaddingCoversFullRange/227
+=== RUN   TestAuditPaddingCoversFullRange/228
+=== RUN   TestAuditPaddingCoversFullRange/229
+=== RUN   TestAuditPaddingCoversFullRange/230
+=== RUN   TestAuditPaddingCoversFullRange/231
+=== RUN   TestAuditPaddingCoversFullRange/232
+=== RUN   TestAuditPaddingCoversFullRange/233
+=== RUN   TestAuditPaddingCoversFullRange/234
+=== RUN   TestAuditPaddingCoversFullRange/235
+=== RUN   TestAuditPaddingCoversFullRange/236
+=== RUN   TestAuditPaddingCoversFullRange/237
+=== RUN   TestAuditPaddingCoversFullRange/238
+=== RUN   TestAuditPaddingCoversFullRange/239
+=== RUN   TestAuditPaddingCoversFullRange/240
+=== RUN   TestAuditPaddingCoversFullRange/241
+=== RUN   TestAuditPaddingCoversFullRange/242
+=== RUN   TestAuditPaddingCoversFullRange/243
+=== RUN   TestAuditPaddingCoversFullRange/244
+=== RUN   TestAuditPaddingCoversFullRange/245
+=== RUN   TestAuditPaddingCoversFullRange/246
+=== RUN   TestAuditPaddingCoversFullRange/247
+=== RUN   TestAuditPaddingCoversFullRange/248
+=== RUN   TestAuditPaddingCoversFullRange/249
+=== RUN   TestAuditPaddingCoversFullRange/250
+=== RUN   TestAuditPaddingCoversFullRange/251
+=== RUN   TestAuditPaddingCoversFullRange/252
+=== RUN   TestAuditPaddingCoversFullRange/253
+=== RUN   TestAuditPaddingCoversFullRange/254
+=== RUN   TestAuditPaddingCoversFullRange/255
+--- PASS: TestAuditPaddingCoversFullRange (0.01s)
+=== RUN   TestAuditPaddingShortWriteDoesNotAdvanceCounter
+--- PASS: TestAuditPaddingShortWriteDoesNotAdvanceCounter (0.00s)
+=== RUN   TestAuditInsufficientHeadroomIsAnErrorNotAPanic
+=== RUN   TestAuditInsufficientHeadroomIsAnErrorNotAPanic/insufficient_rear_headroom
+=== RUN   TestAuditInsufficientHeadroomIsAnErrorNotAPanic/insufficient_front_headroom
+--- PASS: TestAuditInsufficientHeadroomIsAnErrorNotAPanic (0.00s)
+=== RUN   TestNaiveAuthenticatorAcceptsCorrectCredential
+--- PASS: TestNaiveAuthenticatorAcceptsCorrectCredential (0.00s)
+=== RUN   TestNaiveAuthenticatorRejectsWrongPassword
+--- PASS: TestNaiveAuthenticatorRejectsWrongPassword (0.00s)
+=== RUN   TestNaiveAuthenticatorRejectsUnknownUser
+--- PASS: TestNaiveAuthenticatorRejectsUnknownUser (0.00s)
+=== RUN   TestNaiveAuthenticatorSupportsRepeatedUsername
+--- PASS: TestNaiveAuthenticatorSupportsRepeatedUsername (0.00s)
+=== RUN   TestNaiveAuthenticatorChecksEveryPasswordDigest
+--- PASS: TestNaiveAuthenticatorChecksEveryPasswordDigest (0.00s)
+=== RUN   TestNaiveAuthenticatorRejectsMalformedCredential
+--- PASS: TestNaiveAuthenticatorRejectsMalformedCredential (0.00s)
+=== RUN   TestNaiveAuthenticatorNilIsSafe
+--- PASS: TestNaiveAuthenticatorNilIsSafe (0.00s)
+=== RUN   TestNaiveAuthenticatorStoresDigestsNotPlaintext
+--- PASS: TestNaiveAuthenticatorStoresDigestsNotPlaintext (0.00s)
+=== RUN   TestNaiveAuthenticatorWalksEveryEntry
+--- PASS: TestNaiveAuthenticatorWalksEveryEntry (0.00s)
+=== RUN   TestBenchH2WriterDrivesTheRealFlushPath
+--- PASS: TestBenchH2WriterDrivesTheRealFlushPath (0.00s)
+=== RUN   TestBenchH2SourceReachesTheLargeBuffer
+--- PASS: TestBenchH2SourceReachesTheLargeBuffer (0.00s)
+=== RUN   TestBenchH2RecorderSeesFramedWrites
+--- PASS: TestBenchH2RecorderSeesFramedWrites (0.00s)
+=== RUN   TestShouldWarnUnsetCongestionControl
+=== RUN   TestShouldWarnUnsetCongestionControl/quic_unset_warns
+=== RUN   TestShouldWarnUnsetCongestionControl/quic_explicit_bbr_is_quiet
+=== RUN   TestShouldWarnUnsetCongestionControl/quic_explicit_cubic_is_quiet
+=== RUN   TestShouldWarnUnsetCongestionControl/h2_unset_is_quiet
+=== RUN   TestShouldWarnUnsetCongestionControl/h2_explicit_is_quiet
+--- PASS: TestShouldWarnUnsetCongestionControl (0.00s)
+=== RUN   TestCronetModuleGraphHasNoSplitPin
+--- PASS: TestCronetModuleGraphHasNoSplitPin (0.00s)
+=== RUN   TestSourceLockAgreesWithTheModuleGraph
+--- PASS: TestSourceLockAgreesWithTheModuleGraph (0.00s)
+=== RUN   TestProvenanceManifestsDescribeTheirPlatform
+=== RUN   TestProvenanceManifestsDescribeTheirPlatform/cronet-provenance.txt
+=== RUN   TestProvenanceManifestsDescribeTheirPlatform/cronet-provenance-windows.txt
+--- PASS: TestProvenanceManifestsDescribeTheirPlatform (0.00s)
+=== RUN   TestNativeContractReportsTheResolvedBindingGeneration
+--- PASS: TestNativeContractReportsTheResolvedBindingGeneration (0.00s)
+=== RUN   TestModuleVersionFromBuildInfo
+--- PASS: TestModuleVersionFromBuildInfo (0.00s)
+=== RUN   TestPinnedCronetCodecHasSafeFrameGeometry
+=== RUN   TestReservedHeaderPolicyIsTheSameInBothDirections
+=== RUN   TestDNSBridgeWithoutARouterIsAbsent
+--- PASS: TestDNSBridgeWithoutARouterIsAbsent (0.00s)
+=== RUN   TestDNSBridgeAnswersFailuresWithSERVFAIL
+--- PASS: TestDNSBridgeAnswersFailuresWithSERVFAIL (0.00s)
+=== RUN   TestDNSBridgeReturnsTheSuccessUnchanged
+--- PASS: TestDNSBridgeReturnsTheSuccessUnchanged (0.00s)
+=== RUN   TestDNSBridgePassesTheDialersQueryOptions
+--- PASS: TestDNSBridgePassesTheDialersQueryOptions (0.00s)
+=== RUN   TestDNSBridgeKeepsTheQueryContext
+--- PASS: TestDNSBridgeKeepsTheQueryContext (0.00s)
+=== RUN   TestDNSBridgeIgnoresANilQuery
+--- PASS: TestDNSBridgeIgnoresANilQuery (0.00s)
+=== RUN   TestNaiveHandshakeFacts
+=== RUN   TestNaiveHandshakeFacts/407_is_a_proxy_authentication_failure
+=== RUN   TestNaiveHandshakeFacts/any_other_status_stays_unknown
+=== RUN   TestNaiveHandshakeFacts/connection_refused_is_a_path_failure
+=== RUN   TestNaiveHandshakeFacts/address_unreachable_is_a_path_failure
+=== RUN   TestNaiveHandshakeFacts/name_resolution_is_local,_never_a_member_penalty
+=== RUN   TestNaiveHandshakeFacts/certificate_failure_belongs_to_the_endpoint
+=== RUN   TestNaiveHandshakeFacts/a_QUIC_failure_is_not_proof_against_the_member
+=== RUN   TestNaiveHandshakeFacts/a_QUIC_handshake_failure_is_not_proof_either
+=== RUN   TestNaiveHandshakeFacts/a_timeout_is_not_proof_the_path_is_gone
+=== RUN   TestNaiveHandshakeFacts/reset_means_something_answered
+=== RUN   TestNaiveHandshakeFacts/EOF_means_something_answered
+=== RUN   TestNaiveHandshakeFacts/a_caller_cancellation_is_the_caller's
+=== RUN   TestNaiveHandshakeFacts/this_process_closing_the_client_is_not_a_member_failure
+=== RUN   TestNaiveHandshakeFacts/an_unknown_error_stays_unknown
+--- PASS: TestNaiveHandshakeFacts (0.00s)
+=== RUN   TestNaiveHandshakeFactsCallerContextWins
+--- PASS: TestNaiveHandshakeFactsCallerContextWins (0.00s)
+=== RUN   TestNaiveResponseStatusParsing
+--- PASS: TestNaiveResponseStatusParsing (0.00s)
+=== RUN   TestDialNaiveTunnelWaitsForTheHandshake
+--- PASS: TestDialNaiveTunnelWaitsForTheHandshake (0.00s)
+=== RUN   TestDialNaiveTunnelReturnsAHandshakedConnection
+--- PASS: TestDialNaiveTunnelReturnsAHandshakedConnection (0.00s)
+=== RUN   TestDialNaiveTunnelDialErrorIsNotFacted
+--- PASS: TestDialNaiveTunnelDialErrorIsNotFacted (0.00s)
+=== RUN   TestNaiveHandshakeFactKeepsTheErrorChain
+--- PASS: TestNaiveHandshakeFactKeepsTheErrorChain (0.00s)
+=== RUN   TestH2FallbackClientCreatesOneEngineUnderConcurrency
+--- PASS: TestH2FallbackClientCreatesOneEngineUnderConcurrency (0.00s)
+=== RUN   TestH2FallbackClientCreationFailureIsRetried
+--- PASS: TestH2FallbackClientCreationFailureIsRetried (0.00s)
+=== RUN   TestH2FallbackClientClose
+--- PASS: TestH2FallbackClientClose (0.00s)
+=== RUN   TestDialNaiveH2PrefersTheEngineLevelClient
+--- PASS: TestDialNaiveH2PrefersTheEngineLevelClient (0.00s)
+=== RUN   TestDialNaiveH2FallsBackToThePerRequestChoice
+--- PASS: TestDialNaiveH2FallsBackToThePerRequestChoice (0.00s)
+=== RUN   TestFallbackPathUsesTheEngineLevelH2Client
+--- PASS: TestFallbackPathUsesTheEngineLevelH2Client (0.00s)
+=== RUN   TestFallbackPathWithoutEngineKeepsThePerRequestChoice
+--- PASS: TestFallbackPathWithoutEngineKeepsThePerRequestChoice (0.00s)
+=== RUN   TestDialNaiveH2ClosedFallbackTerminatesWithoutPrimary
+--- PASS: TestDialNaiveH2ClosedFallbackTerminatesWithoutPrimary (0.00s)
+=== RUN   TestCanceledWaiterLeavesTheCreationWait
+--- PASS: TestCanceledWaiterLeavesTheCreationWait (0.00s)
+=== RUN   TestCloseDuringCreationReleasesTheLateEngine
+--- PASS: TestCloseDuringCreationReleasesTheLateEngine (0.00s)
+=== RUN   TestH3FallbackTransportFailureMatrix
+=== RUN   TestH3FallbackTransportFailureMatrix/QUIC_protocol_error
+=== RUN   TestH3FallbackTransportFailureMatrix/QUIC_handshake_failed
+=== RUN   TestH3FallbackTransportFailureMatrix/connection_refused
+=== RUN   TestH3FallbackTransportFailureMatrix/address_unreachable
+=== RUN   TestH3FallbackTransportFailureMatrix/timeout
+=== RUN   TestH3FallbackTransportFailureMatrix/chromium's_own_connection_timer
+=== RUN   TestH3FallbackTransportFailureMatrix/connection_closed
+=== RUN   TestH3FallbackTransportFailureMatrix/connection_reset
+=== RUN   TestH3FallbackTransportFailureMatrix/407_is_the_proxy_answering
+=== RUN   TestH3FallbackTransportFailureMatrix/name_not_resolved_is_local
+=== RUN   TestH3FallbackTransportFailureMatrix/a_caller_cancellation_is_not_evidence
+=== RUN   TestH3FallbackTransportFailureMatrix/this_process_closing_is_not_evidence
+=== RUN   TestH3FallbackTransportFailureMatrix/nil_is_nothing
+--- PASS: TestH3FallbackTransportFailureMatrix (0.00s)
+=== RUN   TestH3FallbackSuccess
+--- PASS: TestH3FallbackSuccess (0.00s)
+=== RUN   TestH3FallbackRetriesOnceOverH2
+--- PASS: TestH3FallbackRetriesOnceOverH2 (0.00s)
+=== RUN   TestH3FallbackDoesNotRetryAProxyRejection
+--- PASS: TestH3FallbackDoesNotRetryAProxyRejection (0.00s)
+=== RUN   TestH3FallbackDoesNotRetryACallerCancellation
+--- PASS: TestH3FallbackDoesNotRetryACallerCancellation (0.00s)
+=== RUN   TestH3FallbackArmedWindowSkipsH3
+--- PASS: TestH3FallbackArmedWindowSkipsH3 (0.00s)
+=== RUN   TestH3FallbackWindowExpires
+--- PASS: TestH3FallbackWindowExpires (0.03s)
+=== RUN   TestH3FallbackDoesNotExtendOnASecondFailure
+--- PASS: TestH3FallbackDoesNotExtendOnASecondFailure (0.00s)
+=== RUN   TestH3FallbackIgnoresOutOfOrderOutcomes
+--- PASS: TestH3FallbackIgnoresOutOfOrderOutcomes (0.00s)
+=== RUN   TestH3FallbackResetOnNetworkChange
+--- PASS: TestH3FallbackResetOnNetworkChange (0.00s)
+=== RUN   TestH3FallbackBothTransportsFail
+--- PASS: TestH3FallbackBothTransportsFail (0.00s)
+=== RUN   TestH3FallbackDialErrorIsNotRetriedAtDialStage
+--- PASS: TestH3FallbackDialErrorIsNotRetriedAtDialStage (0.00s)
+=== RUN   TestH3ProbeContextCapsTheBudget
+--- PASS: TestH3ProbeContextCapsTheBudget (0.00s)
+=== RUN   TestH3ProbeContextSplitsTheCallersBudget
+--- PASS: TestH3ProbeContextSplitsTheCallersBudget (0.02s)
+=== RUN   TestH3FallbackProbeExpiryIsAmbiguous
+--- PASS: TestH3FallbackProbeExpiryIsAmbiguous (0.02s)
+=== RUN   TestH3FallbackRetriesOnChromiumConnectionTimeout
+--- PASS: TestH3FallbackRetriesOnChromiumConnectionTimeout (0.00s)
+=== RUN   TestH3FallbackProxyAnswerOutranksProbeExpiry
+--- PASS: TestH3FallbackProxyAnswerOutranksProbeExpiry (0.02s)
+=== RUN   TestH3FallbackCallerCancelDuringProbeDoesNotRetry
+--- PASS: TestH3FallbackCallerCancelDuringProbeDoesNotRetry (0.01s)
+=== RUN   TestH3FallbackNeverWritesBeforeHandshake
+--- PASS: TestH3FallbackNeverWritesBeforeHandshake (0.00s)
+=== RUN   TestH3FallbackConcurrentFailuresArmOnce
+--- PASS: TestH3FallbackConcurrentFailuresArmOnce (0.00s)
+=== RUN   TestH3FallbackConcurrentMixedAccess
+--- PASS: TestH3FallbackConcurrentMixedAccess (0.00s)
+=== RUN   TestH3FallbackMarkBrokenArmsOncePerWindow
+--- PASS: TestH3FallbackMarkBrokenArmsOncePerWindow (0.00s)
+=== RUN   TestHijackedConnDoesNotHideTheSocketsCloseWrite
+--- PASS: TestHijackedConnDoesNotHideTheSocketsCloseWrite (0.00s)
+=== RUN   TestNaiveConnOverHijackedConnKeepsHalfClose
+--- PASS: TestNaiveConnOverHijackedConnKeepsHalfClose (0.00s)
+=== RUN   TestHijackedConnReadSideIsNotReportedReplaceable
+--- PASS: TestHijackedConnReadSideIsNotReportedReplaceable (0.00s)
+=== RUN   TestHijackedConnForwardsTheHalfClose
+--- PASS: TestHijackedConnForwardsTheHalfClose (0.00s)
+=== RUN   TestHijackedConnCloseReadForwards
+--- PASS: TestHijackedConnCloseReadForwards (0.00s)
+=== RUN   TestHTTP2OptionsDefaultToUpstream
+--- PASS: TestHTTP2OptionsDefaultToUpstream (0.00s)
+=== RUN   TestHTTP2OptionsReachTheServer
+--- PASS: TestHTTP2OptionsReachTheServer (0.00s)
+=== RUN   TestHTTP2OptionsDecodeFromJSON
+--- PASS: TestHTTP2OptionsDecodeFromJSON (0.00s)
+=== RUN   TestMasqueradeDecodesFromJSON
+--- PASS: TestMasqueradeDecodesFromJSON (0.00s)
+=== RUN   TestUnknownHTTP2OptionIsRejected
+--- PASS: TestUnknownHTTP2OptionIsRejected (0.00s)
+=== RUN   TestDocumentedInboundExampleDecodes
+--- PASS: TestDocumentedInboundExampleDecodes (0.00s)
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues/max_concurrent_streams
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues/stream_receive_window
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues/connection_receive_window
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues/zero_and_one_are_accepted
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues/one_below_the_limit_is_accepted
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues/just_above_the_connection_floor_is_accepted
+=== RUN   TestHTTP2OptionsRejectOutOfRangeValues/unset_stays_unset
+--- PASS: TestHTTP2OptionsRejectOutOfRangeValues (0.00s)
+=== RUN   TestProductionReceiveWindowsReachTheServer
+--- PASS: TestProductionReceiveWindowsReachTheServer (0.00s)
+=== RUN   TestProductionReceiveWindowsExceedUpstreamDefaults
+--- PASS: TestProductionReceiveWindowsExceedUpstreamDefaults (0.00s)
+=== RUN   TestHTTP2WindowBoundsMatchXNet
+--- PASS: TestHTTP2WindowBoundsMatchXNet (0.00s)
+=== RUN   TestConnectionReceiveWindowBelowXNetFloorIsRejected
+=== RUN   TestConnectionReceiveWindowBelowXNetFloorIsRejected/connection_receive_window=1
+=== RUN   TestConnectionReceiveWindowBelowXNetFloorIsRejected/connection_receive_window=2
+=== RUN   TestConnectionReceiveWindowBelowXNetFloorIsRejected/connection_receive_window=32768
+=== RUN   TestConnectionReceiveWindowBelowXNetFloorIsRejected/connection_receive_window=65534
+--- PASS: TestConnectionReceiveWindowBelowXNetFloorIsRejected (0.00s)
+=== RUN   TestConnectionReceiveWindowAtBoundaries
+--- PASS: TestConnectionReceiveWindowAtBoundaries (0.00s)
+=== RUN   TestStreamReceiveWindowKeepsItsOwnLowerBound
+=== RUN   TestStreamReceiveWindowKeepsItsOwnLowerBound/stream_receive_window=1
+=== RUN   TestStreamReceiveWindowKeepsItsOwnLowerBound/stream_receive_window=65534
+=== RUN   TestStreamReceiveWindowKeepsItsOwnLowerBound/stream_receive_window=65535
+--- PASS: TestStreamReceiveWindowKeepsItsOwnLowerBound (0.00s)
+=== RUN   TestZeroWindowMeansUnset
+=== RUN   TestZeroWindowMeansUnset/omitted
+=== RUN   TestZeroWindowMeansUnset/explicit_0
+--- PASS: TestZeroWindowMeansUnset (0.00s)
+=== RUN   TestConnectionReceiveWindowReachesServer
+--- PASS: TestConnectionReceiveWindowReachesServer (0.00s)
+=== RUN   TestQuicTLSConfigScopesALPNToH3
+=== RUN   TestQuicTLSConfigScopesALPNToH3/h2_before_h3_is_the_defect
+=== RUN   TestQuicTLSConfigScopesALPNToH3/h3_first_still_gets_a_scoped_list
+=== RUN   TestQuicTLSConfigScopesALPNToH3/operator_list_without_h3_still_serves_h3
+=== RUN   TestQuicTLSConfigScopesALPNToH3/unset_still_serves_h3
+--- PASS: TestQuicTLSConfigScopesALPNToH3 (0.00s)
+=== RUN   TestQuicTLSConfigWithoutTLS
+--- PASS: TestQuicTLSConfigWithoutTLS (0.00s)
+=== RUN   TestNaiveH2ConnWritePropagatesFlushFailure
+=== RUN   TestNaiveH2ConnWritePropagatesFlushFailure/raw
+=== RUN   TestNaiveH2ConnWritePropagatesFlushFailure/padded
+--- PASS: TestNaiveH2ConnWritePropagatesFlushFailure (0.00s)
+=== RUN   TestNaiveH2ConnWriteBufferPropagatesFlushFailure
+=== RUN   TestNaiveH2ConnWriteBufferPropagatesFlushFailure/raw
+=== RUN   TestNaiveH2ConnWriteBufferPropagatesFlushFailure/padded
+--- PASS: TestNaiveH2ConnWriteBufferPropagatesFlushFailure (0.00s)
+=== RUN   TestNaiveH2ConnWriteSucceedsWhenFlushSucceeds
+=== RUN   TestNaiveH2ConnWriteSucceedsWhenFlushSucceeds/raw
+=== RUN   TestNaiveH2ConnWriteSucceedsWhenFlushSucceeds/padded
+--- PASS: TestNaiveH2ConnWriteSucceedsWhenFlushSucceeds (0.00s)
+=== RUN   TestNaiveH2ConnWriteStopsAfterFlushFailure
+--- PASS: TestNaiveH2ConnWriteStopsAfterFlushFailure (0.00s)
+=== RUN   TestEarlyGrowthThresholdMirrorsRoute
+--- PASS: TestEarlyGrowthThresholdMirrorsRoute (0.00s)
+=== RUN   TestNaiveCopyBufferUpgradesAfterTheFirstTransfer
+--- PASS: TestNaiveCopyBufferUpgradesAfterTheFirstTransfer (0.00s)
+=== RUN   TestNaiveCopyGeometryNeverExceedsTheFrameBudget
+--- PASS: TestNaiveCopyGeometryNeverExceedsTheFrameBudget (0.00s)
+=== RUN   TestNaiveThresholdDoesNotChangePaddingSchedule
+--- PASS: TestNaiveThresholdDoesNotChangePaddingSchedule (0.00s)
+=== RUN   TestNewInboundRejectsUnknownCongestionControl
+--- PASS: TestNewInboundRejectsUnknownCongestionControl (0.00s)
+=== RUN   TestNewInboundAcceptsValidCongestionControl
+=== RUN   TestNewInboundAcceptsValidCongestionControl/value=
+=== RUN   TestNewInboundAcceptsValidCongestionControl/value=default
+=== RUN   TestNewInboundAcceptsValidCongestionControl/value=bbr
+=== RUN   TestNewInboundAcceptsValidCongestionControl/value=cubic
+=== RUN   TestNewInboundAcceptsValidCongestionControl/value=reno
+--- PASS: TestNewInboundAcceptsValidCongestionControl (0.00s)
+=== RUN   TestNewInboundWarnsWhenQUICCongestionControlIsUnset
+=== RUN   TestNewInboundWarnsWhenQUICCongestionControlIsUnset/udp_unset_warns
+=== RUN   TestNewInboundWarnsWhenQUICCongestionControlIsUnset/udp_explicit_is_quiet
+=== RUN   TestNewInboundWarnsWhenQUICCongestionControlIsUnset/tcp_never_reads_the_field
+--- PASS: TestNewInboundWarnsWhenQUICCongestionControlIsUnset (0.00s)
+=== RUN   TestNewInboundDoesNotWarnAboutCongestionControlWithoutQUIC
+--- PASS: TestNewInboundDoesNotWarnAboutCongestionControlWithoutQUIC (0.00s)
+=== RUN   TestARealTCPFlowAndARealUoTSessionBothCarryBytes
+--- SKIP: TestARealTCPFlowAndARealUoTSessionBothCarryBytes (0.12s)
+=== RUN   TestNativeCreationCountsTheRealEnginesSockets
+--- SKIP: TestNativeCreationCountsTheRealEnginesSockets (0.04s)
+=== RUN   TestNativeCreationGoesThroughTheProcessAdmissionGate
+--- SKIP: TestNativeCreationGoesThroughTheProcessAdmissionGate (0.12s)
+=== RUN   TestARealH3AttemptFallsBackToH2
+--- SKIP: TestARealH3AttemptFallsBackToH2 (0.06s)
+=== RUN   TestNativeCreationCountsOnePerPhysicalConnection
+--- PASS: TestNativeCreationCountsOnePerPhysicalConnection (0.00s)
+=== RUN   TestNativeCreationFailureAndAdmissionAreDifferentFacts
+--- PASS: TestNativeCreationFailureAndAdmissionAreDifferentFacts (0.00s)
+=== RUN   TestAdmissionBoundsConcurrentNativeCreations
+--- PASS: TestAdmissionBoundsConcurrentNativeCreations (0.00s)
+=== RUN   TestAdmissionRefusalIsCountedAndShortCircuits
+--- PASS: TestAdmissionRefusalIsCountedAndShortCircuits (0.00s)
+=== RUN   TestCancelledCallerIsCountedAsCancellation
+--- PASS: TestCancelledCallerIsCountedAsCancellation (0.00s)
+=== RUN   TestLateCreationIsRecorded
+--- PASS: TestLateCreationIsRecorded (0.00s)
+=== RUN   TestHeldPermitIsNotAdmittedTwice
+--- PASS: TestHeldPermitIsNotAdmittedTwice (0.00s)
+=== RUN   TestTunnelReuseIsDerivedConservatively
+--- PASS: TestTunnelReuseIsDerivedConservatively (0.00s)
+=== RUN   TestTunnelCountingIsAbsentWithoutTheSeam
+--- PASS: TestTunnelCountingIsAbsentWithoutTheSeam (0.00s)
+=== RUN   TestResidencyLedgerNamesTheBoundary
+--- PASS: TestResidencyLedgerNamesTheBoundary (0.00s)
+=== RUN   TestOutboundWithoutNativeCreationAnswersUnknown
+--- PASS: TestOutboundWithoutNativeCreationAnswersUnknown (0.00s)
+=== RUN   TestConcurrentCreationsConserveAttempts
+--- PASS: TestConcurrentCreationsConserveAttempts (0.00s)
+=== RUN   TestPacketSocketCreationIsOneCreation
+--- PASS: TestPacketSocketCreationIsOneCreation (0.00s)
+=== RUN   TestARealNaiveFlowSurvivesANetworkChangeByReconnecting
+--- SKIP: TestARealNaiveFlowSurvivesANetworkChangeByReconnecting (0.15s)
+=== RUN   TestResolveCronetCongestionControl
+=== RUN   TestResolveCronetCongestionControl/value=
+=== RUN   TestResolveCronetCongestionControl/value=cubic
+=== RUN   TestResolveCronetCongestionControl/value=bbr
+=== RUN   TestResolveCronetCongestionControl/value=bbr2
+=== RUN   TestResolveCronetCongestionControl/value=reno
+--- PASS: TestResolveCronetCongestionControl (0.00s)
+=== RUN   TestResolveCronetCongestionControlRejectsUnknown
+--- PASS: TestResolveCronetCongestionControlRejectsUnknown (0.00s)
+=== RUN   TestSingleEngineSwitchReachesCronetOptions
+=== RUN   TestNaiveRejectsCertificatePinning
+=== RUN   TestSingleEngineDefaultsToFalseInCronetOptions
+=== RUN   TestConcurrencyAndSingleEngineAreIndependentThroughTheBuilder
+=== RUN   TestBuilderCarriesEveryMappedField
+=== RUN   TestReservedExtraHeadersAreRejectedAtConfigurationTime
+=== RUN   TestEmptyPaddingHeaderIsRejectedAtConfigurationTime
+=== RUN   TestOrdinaryExtraHeadersAreAcceptedThroughTheBuilder
+=== RUN   TestReservedHeaderPolicyIsSharedWithCronet
+=== RUN   TestReservedValidationErrorIsNotASentinel
+=== RUN   TestNewOutboundRejectsReservedExtraHeaders
+=== RUN   TestOrdinaryExtraHeadersSurviveCanonicalisation
+=== RUN   TestNewOutboundWarnsOnlyWhenQUICUsesUnsetCongestionControl
+=== RUN   TestNewOutboundWarnsOnlyWhenQUICUsesUnsetCongestionControl/quic_warns
+=== RUN   TestNewOutboundWarnsOnlyWhenQUICUsesUnsetCongestionControl/h2_is_quiet
+--- PASS: TestNewOutboundWarnsOnlyWhenQUICUsesUnsetCongestionControl (0.00s)
+=== RUN   TestPaddedSegmentationNeverExceedsTheReferenceCeiling
+--- PASS: TestPaddedSegmentationNeverExceedsTheReferenceCeiling (0.00s)
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/0
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/1
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/2
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/7
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/31
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/127
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/254
+=== RUN   TestPaddedSegmentationPayloadBudgetTracksTheDraw/255
+--- PASS: TestPaddedSegmentationPayloadBudgetTracksTheDraw (0.00s)
+=== RUN   TestPaddedSegmentationStopsAfterTheWindow
+--- PASS: TestPaddedSegmentationStopsAfterTheWindow (0.00s)
+=== RUN   TestAdvertisedMTUIsSafeForEveryDraw
+--- PASS: TestAdvertisedMTUIsSafeForEveryDraw (0.00s)
+=== RUN   TestPaddingFrameRoundTrips
+--- PASS: TestPaddingFrameRoundTrips (0.00s)
+=== RUN   TestPaddingIsOptional
+--- PASS: TestPaddingIsOptional (0.00s)
+=== RUN   TestPaddingAppliesOnlyToTheFirstFrames
+--- PASS: TestPaddingAppliesOnlyToTheFirstFrames (0.00s)
+=== RUN   TestUnpaddedConnectionIsImmediatelyReplaceable
+--- PASS: TestUnpaddedConnectionIsImmediatelyReplaceable (0.00s)
+=== RUN   TestPaddedConnectionReservesHeadroom
+--- PASS: TestPaddedConnectionReservesHeadroom (0.00s)
+=== RUN   TestPaddingFrameFieldsAreBounded
+--- PASS: TestPaddingFrameFieldsAreBounded (0.00s)
+=== RUN   TestPaddingReadReturnsErrorOnTruncatedFrame
+--- PASS: TestPaddingReadReturnsErrorOnTruncatedFrame (0.00s)
+=== RUN   TestPaddingWriteChunksOversizedBuffers
+--- PASS: TestPaddingWriteChunksOversizedBuffers (0.00s)
+=== RUN   TestUnpaddedWriteIsNotChunked
+--- PASS: TestUnpaddedWriteIsNotChunked (0.00s)
+=== RUN   TestPaddingHeaderLooksLikeTheReference
+--- PASS: TestPaddingHeaderLooksLikeTheReference (0.00s)
+=== RUN   TestPaddingConnReadIsFullRead
+--- PASS: TestPaddingConnReadIsFullRead (0.00s)
+=== RUN   TestAuditPaddingBytesAreAlwaysZeroWriteFrame
+--- PASS: TestAuditPaddingBytesAreAlwaysZeroWriteFrame (0.02s)
+=== RUN   TestAuditPaddingBytesAreAlwaysZeroInPlace
+--- PASS: TestAuditPaddingBytesAreAlwaysZeroInPlace (0.03s)
+=== RUN   TestAuditPaddingBytesAreAlwaysZeroChunked
+--- PASS: TestAuditPaddingBytesAreAlwaysZeroChunked (0.01s)
+=== RUN   TestAuditPaddingZeroIsTheEmptyCase
+--- PASS: TestAuditPaddingZeroIsTheEmptyCase (0.00s)
+=== RUN   TestZeroDataFrameWithPaddingMakesProgress
+--- PASS: TestZeroDataFrameWithPaddingMakesProgress (0.00s)
+=== RUN   TestZeroDataFrameWithZeroPaddingMakesProgress
+--- PASS: TestZeroDataFrameWithZeroPaddingMakesProgress (0.00s)
+=== RUN   TestConsecutiveZeroFramesMakeProgress
+--- PASS: TestConsecutiveZeroFramesMakeProgress (0.00s)
+=== RUN   TestOnlyZeroFramesReportsEOF
+--- PASS: TestOnlyZeroFramesReportsEOF (0.00s)
+=== RUN   TestTruncatedZeroFrameReportsError
+--- PASS: TestTruncatedZeroFrameReportsError (0.00s)
+=== RUN   TestReceiveWindowOverflowIsRejectedBeforeItBecomesZero
+=== RUN   TestOrdinaryReceiveWindowsStillParse
+=== RUN   TestZeroIsStillTheUnsetSentinel
+=== RUN   TestServerLimiterIsNilWhenUnconfigured
+--- PASS: TestServerLimiterIsNilWhenUnconfigured (0.00s)
+=== RUN   TestServerLimiterEnforcesPerIPLimit
+--- PASS: TestServerLimiterEnforcesPerIPLimit (0.00s)
+=== RUN   TestServerLimiterEnforcesGlobalLimit
+--- PASS: TestServerLimiterEnforcesGlobalLimit (0.00s)
+=== RUN   TestServerLimiterIPv4MappedAddressesShareOneBudget
+--- PASS: TestServerLimiterIPv4MappedAddressesShareOneBudget (0.00s)
+=== RUN   TestServerLimiterReleaseIsIdempotent
+--- PASS: TestServerLimiterReleaseIsIdempotent (0.00s)
+=== RUN   TestServerLimiterCounterNeverGoesNegative
+--- PASS: TestServerLimiterCounterNeverGoesNegative (0.00s)
+=== RUN   TestServerLimiterExpiresIdleEntries
+--- PASS: TestServerLimiterExpiresIdleEntries (0.00s)
+=== RUN   TestServerLimiterTrackedMapIsBounded
+--- PASS: TestServerLimiterTrackedMapIsBounded (0.00s)
+=== RUN   TestServerLimiterUnparseableSourceStillCountsGlobally
+--- PASS: TestServerLimiterUnparseableSourceStillCountsGlobally (0.00s)
+=== RUN   TestNaiveServerLimitsDefaultToDisabled
+--- PASS: TestNaiveServerLimitsDefaultToDisabled (0.00s)
+=== RUN   TestNaiveServerLimitsBuildResolvesTimers
+--- PASS: TestNaiveServerLimitsBuildResolvesTimers (0.00s)
+=== RUN   TestNaiveServerLimitsRejectInvalidValues
+=== RUN   TestNaiveServerLimitsRejectInvalidValues/negative_per-ip
+=== RUN   TestNaiveServerLimitsRejectInvalidValues/negative_header_timeout
+=== RUN   TestNaiveServerLimitsRejectInvalidValues/negative_max_tracked_ips
+=== RUN   TestNaiveServerLimitsRejectInvalidValues/per-ip_above_global
+=== RUN   TestNaiveServerLimitsRejectInvalidValues/negative_max_connections
+--- PASS: TestNaiveServerLimitsRejectInvalidValues (0.00s)
+=== RUN   TestNaiveServerLimitsRoundTripThroughJSON
+--- PASS: TestNaiveServerLimitsRoundTripThroughJSON (0.00s)
+=== RUN   TestNaiveInboundUnconfiguredLimitsLeaveAcceptPathUntouched
+--- PASS: TestNaiveInboundUnconfiguredLimitsLeaveAcceptPathUntouched (0.00s)
+=== RUN   TestLimitedListenerRefusesAndClosesOverLimitConnections
+--- PASS: TestLimitedListenerRefusesAndClosesOverLimitConnections (0.20s)
+=== RUN   TestServerLimiterIsRaceFreeUnderConcurrentAcquireRelease
+--- PASS: TestServerLimiterIsRaceFreeUnderConcurrentAcquireRelease (0.02s)
+=== RUN   TestNaiveShedHookNeverCutsALiveTunnel
+--- PASS: TestNaiveShedHookNeverCutsALiveTunnel (0.00s)
+=== RUN   TestNaiveDoesNotClaimAnIdleOnlyReclaimAction
+--- PASS: TestNaiveDoesNotClaimAnIdleOnlyReclaimAction (0.00s)
+=== RUN   TestSingleEngineOptionDefaultsToFalse
+=== RUN   TestSingleEngineOptionIsIndependentOfConcurrency
+=== RUN   TestSingleEngineOptionIsExposedInConfigSchema
+--- PASS: TestPinnedCronetCodecHasSafeFrameGeometry (0.00s)
+--- PASS: TestOrdinaryExtraHeadersAreAcceptedThroughTheBuilder (0.00s)
+--- PASS: TestOrdinaryReceiveWindowsStillParse (0.00s)
+--- PASS: TestConcurrencyAndSingleEngineAreIndependentThroughTheBuilder (0.00s)
+--- PASS: TestNewOutboundRejectsReservedExtraHeaders (0.00s)
+--- PASS: TestSingleEngineOptionIsIndependentOfConcurrency (0.00s)
+--- PASS: TestSingleEngineDefaultsToFalseInCronetOptions (0.00s)
+--- PASS: TestSingleEngineSwitchReachesCronetOptions (0.00s)
+--- PASS: TestReservedValidationErrorIsNotASentinel (0.00s)
+=== RUN   TestNaiveRejectsCertificatePinning/certificate_sha256
+--- PASS: TestSingleEngineOptionDefaultsToFalse (0.00s)
+--- PASS: TestZeroIsStillTheUnsetSentinel (0.00s)
+--- PASS: TestSingleEngineOptionIsExposedInConfigSchema (0.00s)
+--- PASS: TestReservedHeaderPolicyIsTheSameInBothDirections (0.00s)
+--- PASS: TestEmptyPaddingHeaderIsRejectedAtConfigurationTime (0.00s)
+--- PASS: TestReservedExtraHeadersAreRejectedAtConfigurationTime (0.00s)
+--- PASS: TestBuilderCarriesEveryMappedField (0.00s)
+--- PASS: TestOrdinaryExtraHeadersSurviveCanonicalisation (0.00s)
+--- PASS: TestReceiveWindowOverflowIsRejectedBeforeItBecomesZero (0.00s)
+--- PASS: TestReservedHeaderPolicyIsSharedWithCronet (0.00s)
+=== RUN   TestNaiveRejectsCertificatePinning/certificate_public_key_sha256
+--- PASS: TestNaiveRejectsCertificatePinning (0.00s)
+=== RUN   FuzzNaiveConnectAuthority
+=== RUN   FuzzNaiveConnectAuthority/seed#0
+=== RUN   FuzzNaiveConnectAuthority/seed#1
+=== RUN   FuzzNaiveConnectAuthority/seed#2
+=== RUN   FuzzNaiveConnectAuthority/seed#3
+=== RUN   FuzzNaiveConnectAuthority/seed#4
+=== RUN   FuzzNaiveConnectAuthority/seed#5
+=== RUN   FuzzNaiveConnectAuthority/seed#6
+=== RUN   FuzzNaiveConnectAuthority/seed#7
+=== RUN   FuzzNaiveConnectAuthority/seed#8
+=== RUN   FuzzNaiveConnectAuthority/seed#9
+=== RUN   FuzzNaiveConnectAuthority/seed#10
+=== RUN   FuzzNaiveConnectAuthority/seed#11
+=== RUN   FuzzNaiveConnectAuthority/seed#12
+=== RUN   FuzzNaiveConnectAuthority/seed#13
+=== RUN   FuzzNaiveConnectAuthority/seed#14
+=== RUN   FuzzNaiveConnectAuthority/seed#15
+--- PASS: FuzzNaiveConnectAuthority (0.00s)
+=== RUN   FuzzNaiveConnectAuthorityNoHeaderFallback
+=== RUN   FuzzNaiveConnectAuthorityNoHeaderFallback/seed#0
+=== RUN   FuzzNaiveConnectAuthorityNoHeaderFallback/seed#1
+=== RUN   FuzzNaiveConnectAuthorityNoHeaderFallback/seed#2
+=== RUN   FuzzNaiveConnectAuthorityNoHeaderFallback/seed#3
+=== RUN   FuzzNaiveConnectAuthorityNoHeaderFallback/seed#4
+--- PASS: FuzzNaiveConnectAuthorityNoHeaderFallback (0.00s)
+=== RUN   FuzzNaivePaddingFrame
+=== RUN   FuzzNaivePaddingFrame/seed#0
+=== RUN   FuzzNaivePaddingFrame/seed#1
+=== RUN   FuzzNaivePaddingFrame/seed#2
+=== RUN   FuzzNaivePaddingFrame/seed#3
+=== RUN   FuzzNaivePaddingFrame/seed#4
+=== RUN   FuzzNaivePaddingFrame/seed#5
+=== RUN   FuzzNaivePaddingFrame/seed#6
+=== RUN   FuzzNaivePaddingFrame/seed#7
+=== RUN   FuzzNaivePaddingFrame/seed#8
+=== RUN   FuzzNaivePaddingFrame/seed#9
+--- PASS: FuzzNaivePaddingFrame (0.00s)
+=== RUN   FuzzNaivePaddingFrameRoundTrip
+=== RUN   FuzzNaivePaddingFrameRoundTrip/seed#0
+=== RUN   FuzzNaivePaddingFrameRoundTrip/seed#1
+=== RUN   FuzzNaivePaddingFrameRoundTrip/seed#2
+=== RUN   FuzzNaivePaddingFrameRoundTrip/seed#3
+--- PASS: FuzzNaivePaddingFrameRoundTrip (0.00s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/naive	1.022s

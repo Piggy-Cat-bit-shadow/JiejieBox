@@ -1,0 +1,542 @@
+# filtered from `go test -v`: only RUN/results/summary lines are kept (log noise removed)
+# command and date: see PAIRWISE_A_VERIFICATION.md
+=== RUN   TestAdmitCreationReleasesThePermitWhenTheCreatePanics
+--- PASS: TestAdmitCreationReleasesThePermitWhenTheCreatePanics (0.00s)
+=== RUN   TestAdmitCreationRefusalDoesNotRunTheConstructor
+--- PASS: TestAdmitCreationRefusalDoesNotRunTheConstructor (0.00s)
+=== RUN   TestAdmitCreationDoubleReleaseIsInert
+--- PASS: TestAdmitCreationDoubleReleaseIsInert (0.00s)
+=== RUN   TestAdmitCreationCarriesTheCallersClass
+--- PASS: TestAdmitCreationCarriesTheCallersClass (0.00s)
+=== RUN   TestConcurrentSnapshotsKeepLevelAndLimitInStep
+--- PASS: TestConcurrentSnapshotsKeepLevelAndLimitInStep (0.00s)
+=== RUN   TestShedIsNotRunByAConcurrentSnapshotAfterTheFirst
+--- PASS: TestShedIsNotRunByAConcurrentSnapshotAfterTheFirst (0.00s)
+=== RUN   TestAttackCancelledCallerNeverTakesASlot
+--- PASS: TestAttackCancelledCallerNeverTakesASlot (0.00s)
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#01
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#02
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#03
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#04
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#05
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#06
+=== RUN   TestAttackMixedOutcomesKeepTheAccountingExact/burst#07
+--- PASS: TestAttackMixedOutcomesKeepTheAccountingExact (0.03s)
+=== RUN   TestAttackShedIsEdgeTriggeredFromTheMetricsPath
+--- PASS: TestAttackShedIsEdgeTriggeredFromTheMetricsPath (0.00s)
+=== RUN   TestAttackPinnedGateRefusesFastRatherThanQueueing
+--- PASS: TestAttackPinnedGateRefusesFastRatherThanQueueing (0.10s)
+=== RUN   TestAttackContextErrorIsNotSwallowed
+--- PASS: TestAttackContextErrorIsNotSwallowed (0.00s)
+=== RUN   TestAttackDerivedPlansNeverExceedTheBasePlan
+--- PASS: TestAttackDerivedPlansNeverExceedTheBasePlan (0.00s)
+=== RUN   TestAttackInteractiveTrafficCannotStarveBackgroundForever
+--- PASS: TestAttackInteractiveTrafficCannotStarveBackgroundForever (0.04s)
+=== RUN   TestAttackQueuedWaitersDoNotOwnGoroutines
+--- PASS: TestAttackQueuedWaitersDoNotOwnGoroutines (0.00s)
+=== RUN   TestAttackShedDoesNotRunPerDial
+--- PASS: TestAttackShedDoesNotRunPerDial (0.00s)
+=== RUN   TestAttackOscillatingPressureDoesNotAmplifyReclaim
+--- PASS: TestAttackOscillatingPressureDoesNotAmplifyReclaim (0.11s)
+=== RUN   TestAttackQueueBoundaries
+=== RUN   TestAttackQueueBoundaries/burst
+=== RUN   TestAttackQueueBoundaries/burst#01
+=== RUN   TestAttackQueueBoundaries/burst#02
+=== RUN   TestAttackQueueBoundaries/burst#03
+=== RUN   TestAttackQueueBoundaries/burst#04
+=== RUN   TestAttackQueueBoundaries/burst#05
+=== RUN   TestAttackQueueBoundaries/burst#06
+=== RUN   TestAttackQueueBoundaries/burst#07
+--- PASS: TestAttackQueueBoundaries (0.02s)
+=== RUN   TestBackgroundAllowedSuppressesOnlyCritical
+--- PASS: TestBackgroundAllowedSuppressesOnlyCritical (0.00s)
+=== RUN   TestGateStatsReportTheWaiterHighWaterMark
+--- PASS: TestGateStatsReportTheWaiterHighWaterMark (0.00s)
+=== RUN   TestAPlanRaiseHandsRecoveredCapacityToTheQueue
+--- PASS: TestAPlanRaiseHandsRecoveredCapacityToTheQueue (0.00s)
+=== RUN   TestAPlanShrinkDoesNotDisturbTheQueueOrTheInFlightWork
+--- PASS: TestAPlanShrinkDoesNotDisturbTheQueueOrTheInFlightWork (0.10s)
+=== RUN   TestGateReserveIsNotConsumedByNormalWaiters
+--- PASS: TestGateReserveIsNotConsumedByNormalWaiters (0.02s)
+=== RUN   TestGateReserveFreesForInteractiveWhileQueueIsBusy
+--- PASS: TestGateReserveFreesForInteractiveWhileQueueIsBusy (0.02s)
+=== RUN   TestGateAdmitsUpToLimit
+--- PASS: TestGateAdmitsUpToLimit (0.00s)
+=== RUN   TestGateRefusesWhenQueueIsFull
+--- PASS: TestGateRefusesWhenQueueIsFull (0.00s)
+=== RUN   TestGateTimedOutWaiterIsNotGrantedLater
+--- PASS: TestGateTimedOutWaiterIsNotGrantedLater (0.02s)
+=== RUN   TestGateCancellationWithdrawsWaiter
+--- PASS: TestGateCancellationWithdrawsWaiter (0.00s)
+=== RUN   TestGateFairnessUnderChurn
+--- PASS: TestGateFairnessUnderChurn (0.00s)
+=== RUN   TestGateReleaseWakesOldestWaiter
+--- PASS: TestGateReleaseWakesOldestWaiter (0.00s)
+=== RUN   TestGateInteractiveReserve
+--- PASS: TestGateInteractiveReserve (0.02s)
+=== RUN   TestGateShrinkDoesNotRevokeInflight
+--- PASS: TestGateShrinkDoesNotRevokeInflight (0.00s)
+=== RUN   TestPermitNilSafety
+--- PASS: TestPermitNilSafety (0.00s)
+=== RUN   TestCopyGrowthNeverKeepsTheSmallBuffer
+--- PASS: TestCopyGrowthNeverKeepsTheSmallBuffer (0.00s)
+=== RUN   TestCopyGrowthDefaultGrowsOnlyAfterTheThreshold
+--- PASS: TestCopyGrowthDefaultGrowsOnlyAfterTheThreshold (0.00s)
+=== RUN   TestCopyGrowthImmediateGrowsAfterTheFirstRead
+--- PASS: TestCopyGrowthImmediateGrowsAfterTheFirstRead (0.00s)
+=== RUN   TestGrowthBudgetGrantedThresholdMatchesTheOldCopy
+--- PASS: TestGrowthBudgetGrantedThresholdMatchesTheOldCopy (0.00s)
+=== RUN   TestRelayDirectionsHoldTheirPermitsForTheCopy
+=== RUN   TestRelayCancelledDirectionReleasesOnTheCopyReturn
+=== RUN   TestRelayPressureRecoveryAdmitsAfterTheLevelDrops
+=== RUN   TestRelayGeometryDirectionGrowsWithoutAPermit
+=== RUN   TestNilGrowthBudgetKeepsTodaysThresholds
+--- PASS: TestNilGrowthBudgetKeepsTodaysThresholds (0.00s)
+=== RUN   TestGrowthBudgetCapsGrownDirections
+--- PASS: TestGrowthBudgetCapsGrownDirections (0.00s)
+=== RUN   TestGrowthBudgetReserveIsForHighPriorityOnly
+--- PASS: TestGrowthBudgetReserveIsForHighPriorityOnly (0.00s)
+=== RUN   TestGrowthBudgetTightensWithPressure
+--- PASS: TestGrowthBudgetTightensWithPressure (0.00s)
+=== RUN   TestGrowthBudgetDerivationNeverInverts
+--- PASS: TestGrowthBudgetDerivationNeverInverts (0.00s)
+=== RUN   TestGrowthBudgetGeometryDirectionsAreAlwaysAdmitted
+--- PASS: TestGrowthBudgetGeometryDirectionsAreAlwaysAdmitted (0.00s)
+=== RUN   TestGrowthBudgetNeverGrantsAboveTheArmedTotal
+--- PASS: TestGrowthBudgetNeverGrantsAboveTheArmedTotal (0.00s)
+=== RUN   TestGrowthBudgetConservesUnderConcurrency
+--- PASS: TestGrowthBudgetConservesUnderConcurrency (0.05s)
+=== RUN   TestGuardRepeatedPressureCycles
+--- PASS: TestGuardRepeatedPressureCycles (0.03s)
+=== RUN   TestAStaleObservationCannotReopenTheGate
+=== RUN   TestAStaleCriticalObservationCannotShedAgain
+=== RUN   TestConcurrentPublicationsKeepTheGateAndTheLevelInStep
+=== RUN   TestPublicationIsIdempotentAndOrdered
+=== RUN   TestAttackStatsSnapshotCannotPairAStaleLevelWithANewerPlan
+--- PASS: TestAttackStatsSnapshotCannotPairAStaleLevelWithANewerPlan (0.00s)
+=== RUN   TestGuardStatsReportsThePlanTheLevelImplies
+--- PASS: TestGuardStatsReportsThePlanTheLevelImplies (0.01s)
+=== RUN   TestGuardMetadataMapIsNilWithoutGuard
+--- PASS: TestGuardMetadataMapIsNilWithoutGuard (0.00s)
+=== RUN   TestNilGuardAdmitsEverything
+--- PASS: TestNilGuardAdmitsEverything (0.00s)
+=== RUN   TestGuardLevelRisesImmediatelyAndFallsAfterDwell
+--- PASS: TestGuardLevelRisesImmediatelyAndFallsAfterDwell (0.06s)
+=== RUN   TestGuardShedRunsOnCriticalEntryOnly
+--- PASS: TestGuardShedRunsOnCriticalEntryOnly (0.01s)
+=== RUN   TestGuardShedFiresOnceWhenBuiltInsideCritical
+--- PASS: TestGuardShedFiresOnceWhenBuiltInsideCritical (0.00s)
+=== RUN   TestGuardBurstIsBoundedButAbsorbed
+--- PASS: TestGuardBurstIsBoundedButAbsorbed (0.07s)
+=== RUN   TestGuardCriticalRefusesTheExcess
+--- PASS: TestGuardCriticalRefusesTheExcess (0.10s)
+=== RUN   TestGuardStatsSnapshotIsConsistent
+--- PASS: TestGuardStatsSnapshotIsConsistent (0.00s)
+=== RUN   TestAdmissionLoadDefinition
+--- PASS: TestAdmissionLoadDefinition (0.02s)
+=== RUN   TestAdmissionOverloadLoadDefinition
+--- PASS: TestAdmissionOverloadLoadDefinition (0.00s)
+=== RUN   TestPermitWaitReportsAdmissionNotHolding
+--- PASS: TestPermitWaitReportsAdmissionNotHolding (0.03s)
+=== RUN   TestPermitWaitCountsAQueuedWaiter
+--- PASS: TestPermitWaitCountsAQueuedWaiter (0.02s)
+=== RUN   TestQueueBoundRefusesBeyondItsLimit
+--- PASS: TestQueueBoundRefusesBeyondItsLimit (0.00s)
+=== RUN   TestQueuedCancellationLeavesNoWaiter
+--- PASS: TestQueuedCancellationLeavesNoWaiter (0.00s)
+=== RUN   TestFastFailWindowIsIsolatedByDestination
+--- PASS: TestFastFailWindowIsIsolatedByDestination (0.00s)
+=== RUN   TestSuccessForOneDestinationDoesNotClearAnother
+--- PASS: TestSuccessForOneDestinationDoesNotClearAnother (0.00s)
+=== RUN   TestABadNodeStormDoesNotDelayAGoodDestination
+--- PASS: TestABadNodeStormDoesNotDelayAGoodDestination (0.00s)
+=== RUN   TestRateBucketsAreBounded
+--- PASS: TestRateBucketsAreBounded (0.00s)
+=== RUN   TestFastFailuresArmARateWindowForNonInteractiveWork
+--- PASS: TestFastFailuresArmARateWindowForNonInteractiveWork (0.00s)
+=== RUN   TestLocalRejectionsDoNotArmTheRateWindow
+--- PASS: TestLocalRejectionsDoNotArmTheRateWindow (0.00s)
+=== RUN   TestSlowFailuresDoNotCountAsFast
+--- PASS: TestSlowFailuresDoNotCountAsFast (0.00s)
+=== RUN   TestSuccessClearsTheWindow
+--- PASS: TestSuccessClearsTheWindow (0.00s)
+=== RUN   TestBackoffGrowsAndCaps
+--- PASS: TestBackoffGrowsAndCaps (0.00s)
+=== RUN   TestWindowLongerThanTheCallerBudgetRefusesLocally
+--- PASS: TestWindowLongerThanTheCallerBudgetRefusesLocally (0.00s)
+=== RUN   TestNilGuardRatePolicyIsSafe
+--- PASS: TestNilGuardRatePolicyIsSafe (0.00s)
+=== RUN   TestLocalRejectionClassification
+--- PASS: TestLocalRejectionClassification (0.00s)
+=== RUN   TestReclaimRateUnderSustainedCriticalIsBounded
+--- PASS: TestReclaimRateUnderSustainedCriticalIsBounded (0.00s)
+=== RUN   TestReclaimRateUnderJitterIsZero
+--- PASS: TestReclaimRateUnderJitterIsZero (0.00s)
+=== RUN   TestReclaimRateBoundWithRealDwell
+--- PASS: TestReclaimRateBoundWithRealDwell (0.00s)
+=== RUN   TestAgingUsesTheInjectedClock
+--- PASS: TestAgingUsesTheInjectedClock (0.02s)
+=== RUN   TestRelayGrowthShapedAB
+--- SKIP: TestRelayGrowthShapedAB (0.00s)
+--- PASS: TestPublicationIsIdempotentAndOrdered (0.00s)
+--- PASS: TestAStaleObservationCannotReopenTheGate (0.00s)
+--- PASS: TestAStaleCriticalObservationCannotShedAgain (0.00s)
+--- PASS: TestRelayGeometryDirectionGrowsWithoutAPermit (0.00s)
+--- PASS: TestRelayDirectionsHoldTheirPermitsForTheCopy (0.00s)
+--- PASS: TestRelayCancelledDirectionReleasesOnTheCopyReturn (0.00s)
+--- PASS: TestRelayPressureRecoveryAdmitsAfterTheLevelDrops (0.00s)
+--- PASS: TestConcurrentPublicationsKeepTheGateAndTheLevelInStep (0.00s)
+=== RUN   FuzzGateSlotAccounting
+=== RUN   FuzzGateSlotAccounting/seed#0
+=== RUN   FuzzGateSlotAccounting/seed#1
+=== RUN   FuzzGateSlotAccounting/seed#2
+--- PASS: FuzzGateSlotAccounting (0.03s)
+PASS
+ok  	github.com/sagernet/sing-box/common/resourceguard	1.049s
+=== RUN   TestHysteria2CreationIsAdmittedAndStreamsAreNot
+--- PASS: TestHysteria2CreationIsAdmittedAndStreamsAreNot (0.36s)
+=== RUN   TestHysteria2AdmissionIsOnlyWiredWithAGuard
+--- PASS: TestHysteria2AdmissionIsOnlyWiredWithAGuard (0.00s)
+=== RUN   TestPinnedCarrierCapabilitySurface
+--- PASS: TestPinnedCarrierCapabilitySurface (0.07s)
+=== RUN   TestTheCeilingSupplyAndClampCasesAreDistinguishable
+=== RUN   TestTheCeilingSupplyAndClampCasesAreDistinguishable/nothing_configured,_a_ceiling_is_proven
+=== RUN   TestTheCeilingSupplyAndClampCasesAreDistinguishable/the_operator_asked_for_more_than_the_path_carries
+=== RUN   TestTheCeilingSupplyAndClampCasesAreDistinguishable/the_operator_asked_for_less_than_the_ceiling
+=== RUN   TestTheCeilingSupplyAndClampCasesAreDistinguishable/exactly_the_ceiling
+=== RUN   TestTheCeilingSupplyAndClampCasesAreDistinguishable/no_ceiling_at_all
+--- PASS: TestTheCeilingSupplyAndClampCasesAreDistinguishable (0.00s)
+=== RUN   TestTheSupplyBranchMustBeTestedBeforeTheClampBranch
+--- PASS: TestTheSupplyBranchMustBeTestedBeforeTheClampBranch (0.00s)
+=== RUN   TestChromeParrotOnOffFirstDatagramSize
+--- PASS: TestChromeParrotOnOffFirstDatagramSize (0.00s)
+=== RUN   TestConfiguredInitialPacketSizeIsDiscardedUnderChromeParrot
+--- PASS: TestConfiguredInitialPacketSizeIsDiscardedUnderChromeParrot (0.00s)
+=== RUN   TestChromeParrotOffHonoursConfiguredValues
+--- PASS: TestChromeParrotOffHonoursConfiguredValues (0.00s)
+=== RUN   TestFirstDatagramIsObservedWhileDialEarlyStillRunning
+--- PASS: TestFirstDatagramIsObservedWhileDialEarlyStillRunning (0.00s)
+=== RUN   TestTheSilentFirstFamilyFailsOverToTheSecond
+--- PASS: TestTheSilentFirstFamilyFailsOverToTheSecond (0.03s)
+=== RUN   TestADualStackDomainBuildsTheFamilyCarrier
+--- PASS: TestADualStackDomainBuildsTheFamilyCarrier (0.00s)
+=== RUN   TestBothFamiliesFailingRetireTheirClients
+--- PASS: TestBothFamiliesFailingRetireTheirClients (0.00s)
+=== RUN   TestConcurrentFirstCreationRacesShareOneCreation
+--- PASS: TestConcurrentFirstCreationRacesShareOneCreation (0.00s)
+=== RUN   TestLateFamilyCleanupMustNotCloseANewGeneration
+=== RUN   TestFirstFailedFamilyMustAlsoBeRetired
+=== RUN   TestALateWinnerAfterTheNetworkChangeIsDiscarded
+=== RUN   TestAShutdownCarrierNeverCreatesAClientAgain
+--- PASS: TestAShutdownCarrierNeverCreatesAClientAgain (0.00s)
+=== RUN   TestANetworkChangeLeavesTheCarrierReusable
+--- PASS: TestANetworkChangeLeavesTheCarrierReusable (0.00s)
+=== RUN   TestHardCeilingWireMatrix
+=== RUN   TestHardCeilingWireMatrix/A:_ChromeParrot_off_keeps_the_configured_size
+=== RUN   TestHardCeilingWireMatrix/B:_ChromeParrot_on_with_no_ceiling_still_emits_the_fingerprint_size
+=== RUN   TestHardCeilingWireMatrix/C:_a_1232_ceiling_clamps_the_fingerprint_size
+=== RUN   TestHardCeilingWireMatrix/D:_a_1232_ceiling_supplies_the_size_when_nothing_was_configured
+=== RUN   TestHardCeilingWireMatrix/E:_a_ceiling_above_the_fingerprint_size_does_not_raise_it
+=== RUN   TestHardCeilingWireMatrix/F:_a_1200_ceiling_clamps_down_to_the_QUIC_minimum
+=== RUN   TestHardCeilingWireMatrix/G:_a_direct_dial_with_the_user's_own_PMTUD_policy_keeps_the_fingerprint_size
+--- PASS: TestHardCeilingWireMatrix (0.01s)
+=== RUN   TestHardCeilingDoesNotCostTheChromeFingerprint
+--- PASS: TestHardCeilingDoesNotCostTheChromeFingerprint (0.00s)
+=== RUN   TestARealHysteria2FlowSurvivesANetworkChangeByReconnecting
+--- PASS: TestARealHysteria2FlowSurvivesANetworkChangeByReconnecting (0.07s)
+=== RUN   TestThePathCeilingIsComputedFromTheDetour
+=== RUN   TestThePathCeilingIsComputedFromTheDetour/no_detour:_the_configured_value_is_untouched
+=== RUN   TestThePathCeilingIsComputedFromTheDetour/a_1280-byte_tunnel,_nothing_configured
+=== RUN   TestThePathCeilingIsComputedFromTheDetour/a_1280-byte_tunnel,_the_operator_asked_for_more
+=== RUN   TestThePathCeilingIsComputedFromTheDetour/a_1280-byte_tunnel,_the_operator_asked_for_less
+=== RUN   TestThePathCeilingIsComputedFromTheDetour/a_1500-byte_tunnel
+=== RUN   TestThePathCeilingIsComputedFromTheDetour/an_endpoint_with_no_fixed_capacity
+=== RUN   TestThePathCeilingIsComputedFromTheDetour/a_tunnel_too_small_for_a_QUIC_Initial
+--- PASS: TestThePathCeilingIsComputedFromTheDetour (0.00s)
+=== RUN   TestATunnelTooSmallForAQUICInitialIsRefused
+--- PASS: TestATunnelTooSmallForAQUICInitialIsRefused (0.00s)
+=== RUN   TestPathCeilingReachesTheWireOnlyWithoutChromeParrot
+--- PASS: TestPathCeilingReachesTheWireOnlyWithoutChromeParrot (0.00s)
+=== RUN   TestTheCeilingDoesNotChangeADirectDial
+--- PASS: TestTheCeilingDoesNotChangeADirectDial (0.00s)
+=== RUN   TestTheCeilingAndThePMTUDPolicyStayIndependent
+=== RUN   TestTheCeilingAndThePMTUDPolicyStayIndependent/a_direct_dial,_nothing_set
+=== RUN   TestTheCeilingAndThePMTUDPolicyStayIndependent/a_direct_dial_where_the_operator_turned_PMTUD_off
+=== RUN   TestTheCeilingAndThePMTUDPolicyStayIndependent/a_proven_ceiling,_no_policy
+=== RUN   TestTheCeilingAndThePMTUDPolicyStayIndependent/both,_which_is_what_a_proven_ceiling's_caller_sends
+--- PASS: TestTheCeilingAndThePMTUDPolicyStayIndependent (0.00s)
+=== RUN   TestTheSizingReachesQuicConfigThroughThePassThroughLayer
+=== RUN   TestTheSizingReachesQuicConfigThroughThePassThroughLayer/direct,_nothing_set
+=== RUN   TestTheSizingReachesQuicConfigThroughThePassThroughLayer/direct,_operator_policy
+=== RUN   TestTheSizingReachesQuicConfigThroughThePassThroughLayer/ceiling
+=== RUN   TestTheSizingReachesQuicConfigThroughThePassThroughLayer/ceiling_and_policy
+--- PASS: TestTheSizingReachesQuicConfigThroughThePassThroughLayer (0.00s)
+--- PASS: TestALateWinnerAfterTheNetworkChangeIsDiscarded (0.00s)
+--- PASS: TestFirstFailedFamilyMustAlsoBeRetired (0.00s)
+--- PASS: TestLateFamilyCleanupMustNotCloseANewGeneration (0.30s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/hysteria2	0.971s
+=== RUN   TestTUICCreationIsAdmittedAndStreamsAreNot
+--- PASS: TestTUICCreationIsAdmittedAndStreamsAreNot (0.36s)
+=== RUN   TestTUICAdmissionIsOnlyWiredWithAGuard
+--- PASS: TestTUICAdmissionIsOnlyWiredWithAGuard (0.00s)
+=== RUN   TestTheSilentFirstFamilyFailsOverToTheSecond
+--- PASS: TestTheSilentFirstFamilyFailsOverToTheSecond (0.07s)
+=== RUN   TestADualStackDomainBuildsTheFamilyCarrier
+--- PASS: TestADualStackDomainBuildsTheFamilyCarrier (0.00s)
+=== RUN   TestBothFamiliesFailingRetireTheirClients
+--- PASS: TestBothFamiliesFailingRetireTheirClients (0.00s)
+=== RUN   TestConcurrentFirstCreationRacesShareOneCreation
+--- PASS: TestConcurrentFirstCreationRacesShareOneCreation (0.00s)
+=== RUN   TestLateFamilyCleanupMustNotCloseANewGeneration
+=== RUN   TestFirstFailedFamilyMustAlsoBeRetired
+=== RUN   TestALateWinnerAfterTheNetworkChangeIsDiscarded
+=== RUN   TestAShutdownCarrierNeverCreatesAClientAgain
+--- PASS: TestAShutdownCarrierNeverCreatesAClientAgain (0.00s)
+=== RUN   TestANetworkChangeLeavesTheCarrierReusable
+--- PASS: TestANetworkChangeLeavesTheCarrierReusable (0.00s)
+=== RUN   TestARealTUICFlowSurvivesANetworkChangeByReconnecting
+--- PASS: TestARealTUICFlowSurvivesANetworkChangeByReconnecting (0.06s)
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/no_detour:_the_configured_value_is_untouched
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/no_detour_and_nothing_configured
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/a_1280-byte_tunnel,_nothing_configured
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/a_1280-byte_tunnel,_the_operator_asked_for_more
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/a_1280-byte_tunnel,_the_operator_asked_for_less
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/a_WireGuard_tunnel,_which_encapsulates_inside_the_inner_IP_packet
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/an_endpoint_with_no_fixed_capacity
+=== RUN   TestThePathCeilingIsComputedFromTheTUICDetour/a_tag_that_resolves_to_nothing
+--- PASS: TestThePathCeilingIsComputedFromTheTUICDetour (0.00s)
+=== RUN   TestATunnelTooSmallForAQUICInitialIsRefused
+--- PASS: TestATunnelTooSmallForAQUICInitialIsRefused (0.00s)
+=== RUN   TestTUICNeverAsksForChromeParrot
+--- PASS: TestTUICNeverAsksForChromeParrot (0.00s)
+=== RUN   TestTheCeilingReachesTheTUICFirstDatagram
+--- PASS: TestTheCeilingReachesTheTUICFirstDatagram (0.01s)
+=== RUN   TestTheFloorRefusalIsReachableFromARealComposition
+--- PASS: TestTheFloorRefusalIsReachableFromARealComposition (0.00s)
+=== RUN   TestUnknownUDPRelayModeIsRejected
+=== RUN   TestKnownUDPRelayModesAreAccepted
+=== RUN   TestUDPOverStreamConflictWinsOverATypo
+--- PASS: TestUDPOverStreamConflictWinsOverATypo (0.00s)
+--- PASS: TestUnknownUDPRelayModeIsRejected (0.00s)
+=== RUN   TestKnownUDPRelayModesAreAccepted/mode=
+--- PASS: TestALateWinnerAfterTheNetworkChangeIsDiscarded (0.00s)
+=== RUN   TestKnownUDPRelayModesAreAccepted/mode=native
+--- PASS: TestFirstFailedFamilyMustAlsoBeRetired (0.00s)
+=== RUN   TestKnownUDPRelayModesAreAccepted/mode=quic
+--- PASS: TestKnownUDPRelayModesAreAccepted (0.00s)
+--- PASS: TestLateFamilyCleanupMustNotCloseANewGeneration (0.30s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/tuic	0.905s
+=== RUN   TestAppleNetworkExtensionDefaults
+--- PASS: TestAppleNetworkExtensionDefaults (0.00s)
+=== RUN   TestAppleRuntimeMemoryLimit
+--- PASS: TestAppleRuntimeMemoryLimit (0.00s)
+=== RUN   TestApplePressureThresholds
+--- PASS: TestApplePressureThresholds (0.00s)
+=== RUN   TestComputeLimitThresholds_MarginIsClampedToTheLimit
+--- PASS: TestComputeLimitThresholds_MarginIsClampedToTheLimit (0.00s)
+=== RUN   TestRuntimeMemoryLimit_Scales
+--- PASS: TestRuntimeMemoryLimit_Scales (0.00s)
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/no_profile
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/safety_margin_shrunk_to_1_MiB
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/safety_margin_widened_to_10_MiB
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/tiny_min_interval
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/huge_max_interval
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/both_intervals
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/custom_memory_limit
+=== RUN   TestNetworkExtensionPolicyIgnoresProfileOverrides/everything_at_once
+--- PASS: TestNetworkExtensionPolicyIgnoresProfileOverrides (0.00s)
+=== RUN   TestNetworkExtensionPolicyIgnoresAnExistingServiceBlock
+--- PASS: TestNetworkExtensionPolicyIgnoresAnExistingServiceBlock (0.00s)
+=== RUN   TestNetworkExtensionPolicyIsUnchangedByRepeatedBuilds
+--- PASS: TestNetworkExtensionPolicyIsUnchangedByRepeatedBuilds (0.00s)
+=== RUN   TestProfileStillTunableOutsideNetworkExtension
+--- PASS: TestProfileStillTunableOutsideNetworkExtension (0.00s)
+=== RUN   TestReadMemorySampleUsesThePlatformsOwnSupportAnswer
+--- PASS: TestReadMemorySampleUsesThePlatformsOwnSupportAnswer (0.00s)
+=== RUN   TestReadMemorySampleDoesNotReportUnknownAsZero
+--- PASS: TestReadMemorySampleDoesNotReportUnknownAsZero (0.00s)
+=== RUN   TestReadMemorySampleIgnoresAvailableForOtherModes
+--- PASS: TestReadMemorySampleIgnoresAvailableForOtherModes (0.00s)
+=== RUN   TestObjectResidencyMetadataReportsStatesCoverageAndTermination
+--- PASS: TestObjectResidencyMetadataReportsStatesCoverageAndTermination (0.00s)
+=== RUN   TestObjectResidencyMetadataIsAbsentWithoutTheCapability
+--- PASS: TestObjectResidencyMetadataIsAbsentWithoutTheCapability (0.00s)
+=== RUN   TestBuildGateMetadataReportsTheBudgetAndItsBoundary
+--- PASS: TestBuildGateMetadataReportsTheBudgetAndItsBoundary (0.00s)
+=== RUN   TestBuildGateMetadataIsAbsentWithoutAGate
+--- PASS: TestBuildGateMetadataIsAbsentWithoutAGate (0.00s)
+=== RUN   TestBuildGateMetadataSeparatesTheAdmissionLimitFromTheOverlap
+--- PASS: TestBuildGateMetadataSeparatesTheAdmissionLimitFromTheOverlap (0.00s)
+=== RUN   TestQueueMetadataStatesTheRoundQueueBound
+--- PASS: TestQueueMetadataStatesTheRoundQueueBound (0.00s)
+=== RUN   TestQueueMetadataIsAbsentWithoutACoordinator
+--- PASS: TestQueueMetadataIsAbsentWithoutACoordinator (0.00s)
+=== RUN   TestUnmeasurableFootprintDoesNotPublishAllClear
+--- PASS: TestUnmeasurableFootprintDoesNotPublishAllClear (0.00s)
+=== RUN   TestUnmeasurableFootprintKeepsCrisis
+--- PASS: TestUnmeasurableFootprintKeepsCrisis (0.00s)
+=== RUN   TestUnmeasurableFootprintHoldsArmed
+--- PASS: TestUnmeasurableFootprintHoldsArmed (0.00s)
+=== RUN   TestFootprintZeroIsUnavailable
+--- PASS: TestFootprintZeroIsUnavailable (0.00s)
+=== RUN   TestTimelineReportsUnavailableFootprint
+--- PASS: TestTimelineReportsUnavailableFootprint (0.00s)
+=== RUN   TestPublishedCriticalPressureStopsARealExpensiveCreation
+--- PASS: TestPublishedCriticalPressureStopsARealExpensiveCreation (0.01s)
+=== RUN   TestGuardLevelMapsEveryPublishedPressure
+--- PASS: TestGuardLevelMapsEveryPublishedPressure (0.00s)
+=== RUN   TestGuardSurfacesAreNilSafeWithoutAGuard
+--- PASS: TestGuardSurfacesAreNilSafeWithoutAGuard (0.00s)
+=== RUN   TestGuardMetadataDescribesTheLevelAndPlan
+--- PASS: TestGuardMetadataDescribesTheLevelAndPlan (0.00s)
+=== RUN   TestIdleReleaseDoesNotRepeatAtAStableFootprint
+--- PASS: TestIdleReleaseDoesNotRepeatAtAStableFootprint (0.00s)
+=== RUN   TestIdleReleaseRunsOnceForARealDropThenCoolsDown
+--- PASS: TestIdleReleaseRunsOnceForARealDropThenCoolsDown (0.00s)
+=== RUN   TestIdleReleaseDoesNotThrashAtArmedFootprint
+--- PASS: TestIdleReleaseDoesNotThrashAtArmedFootprint (0.00s)
+=== RUN   TestIdleReleaseIsSingleFlight
+--- PASS: TestIdleReleaseIsSingleFlight (0.05s)
+=== RUN   TestStopWaitsForAnInFlightIdleRelease
+--- PASS: TestStopWaitsForAnInFlightIdleRelease (0.05s)
+=== RUN   TestIdleReclaimStopsAtTheCacheLayer
+--- PASS: TestIdleReclaimStopsAtTheCacheLayer (0.00s)
+=== RUN   TestIdleReclaimEscalatesToPoolsWhenCacheGainIsSmall
+--- PASS: TestIdleReclaimEscalatesToPoolsWhenCacheGainIsSmall (0.00s)
+=== RUN   TestIdleReclaimForcesGCOnlyWhenEarlierLayersAreInsufficient
+--- PASS: TestIdleReclaimForcesGCOnlyWhenEarlierLayersAreInsufficient (0.00s)
+=== RUN   TestIdleReclaimSkipsGCWhenTheRuntimeHasNothingToReturn
+--- PASS: TestIdleReclaimSkipsGCWhenTheRuntimeHasNothingToReturn (0.00s)
+=== RUN   TestIdleReclaimForcesGCAtArmedEvenWhenRuntimeIsQuiet
+--- PASS: TestIdleReclaimForcesGCAtArmedEvenWhenRuntimeIsQuiet (0.00s)
+=== RUN   TestIdleReclaimDoesNotStartAtAStableArmedFootprint
+--- PASS: TestIdleReclaimDoesNotStartAtAStableArmedFootprint (0.00s)
+=== RUN   TestObservedBudgetComesFromOneInstant
+--- PASS: TestObservedBudgetComesFromOneInstant (0.00s)
+=== RUN   TestObservedBudgetUnknownWhenAvailableIsNeverKnown
+--- PASS: TestObservedBudgetUnknownWhenAvailableIsNeverKnown (0.00s)
+=== RUN   TestTimelineJSONDistinguishesKnownZeroFromUnknown
+--- PASS: TestTimelineJSONDistinguishesKnownZeroFromUnknown (0.00s)
+=== RUN   TestEventJSONDistinguishesKnownZeroFromUnknown
+--- PASS: TestEventJSONDistinguishesKnownZeroFromUnknown (0.00s)
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS/default
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS/explicit-memory-limit
+=== RUN   TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS/override
+--- PASS: TestResolvePolicyModeCannotSelectTheNetworkExtensionBudgetOffIOS (0.00s)
+=== RUN   TestUnavailableFootprintRuleIsScopedToFootprintModes
+--- PASS: TestUnavailableFootprintRuleIsScopedToFootprintModes (0.00s)
+=== RUN   TestAvailableMemoryModeStillUsesTheAvailableFigure
+--- PASS: TestAvailableMemoryModeStillUsesTheAvailableFigure (0.00s)
+=== RUN   TestStalePollCannotPublishAnOlderObservation
+--- PASS: TestStalePollCannotPublishAnOlderObservation (0.00s)
+=== RUN   TestCriticalPublicationFromReclaimIsCorrectedByTheNextMeasuredPoll
+--- PASS: TestCriticalPublicationFromReclaimIsCorrectedByTheNextMeasuredPoll (0.00s)
+=== RUN   TestCriticalPressureTightensTheRealGate
+--- PASS: TestCriticalPressureTightensTheRealGate (0.10s)
+=== RUN   TestNonTriggeredPollCannotPublishPressureAfterStop
+--- PASS: TestNonTriggeredPollCannotPublishPressureAfterStop (0.10s)
+=== RUN   TestLatePressureCallbackDoesNotRunCleanupAfterClose
+--- PASS: TestLatePressureCallbackDoesNotRunCleanupAfterClose (0.00s)
+=== RUN   TestLatePressureCallbackDoesNotReArmTheTimer
+--- PASS: TestLatePressureCallbackDoesNotReArmTheTimer (0.00s)
+=== RUN   TestPressureCallbackOnALiveTimerStillWorks
+--- PASS: TestPressureCallbackOnALiveTimerStillWorks (0.01s)
+=== RUN   TestLatePressureCallbackRacingClose
+--- PASS: TestLatePressureCallbackRacingClose (0.00s)
+=== RUN   TestCloseWaitsForInFlightPressureCallback
+--- PASS: TestCloseWaitsForInFlightPressureCallback (0.20s)
+=== RUN   TestLateCallbackAfterCloseHasNoEffect
+--- PASS: TestLateCallbackAfterCloseHasNoEffect (0.00s)
+=== RUN   TestStopIsNotBlockedWhenNoCallbackIsInFlight
+--- PASS: TestStopIsNotBlockedWhenNoCallbackIsInFlight (0.00s)
+=== RUN   TestPressureStateExitsTriggeredAtArmedNotResume
+--- PASS: TestPressureStateExitsTriggeredAtArmedNotResume (0.00s)
+=== RUN   TestPressureStateEntersAndArms
+--- PASS: TestPressureStateEntersAndArms (0.00s)
+=== RUN   TestStopDropsAPendingCrisisInsteadOfResettingDuringClose
+--- PASS: TestStopDropsAPendingCrisisInsteadOfResettingDuringClose (0.00s)
+=== RUN   TestQueuedCrisisIsRecheckedBeforeResetting
+--- PASS: TestQueuedCrisisIsRecheckedBeforeResetting (0.00s)
+=== RUN   TestRepeatedTriggeredPollsResetOnce
+--- PASS: TestRepeatedTriggeredPollsResetOnce (0.00s)
+=== RUN   TestRateTriggerDoesNotResetAgainWhileTriggered
+--- PASS: TestRateTriggerDoesNotResetAgainWhileTriggered (0.00s)
+=== RUN   TestStaleObservationCannotMoveTheStateBackwards
+--- PASS: TestStaleObservationCannotMoveTheStateBackwards (0.00s)
+=== RUN   TestCrisisCoolsDownTheFollowingIdleDrop
+--- PASS: TestCrisisCoolsDownTheFollowingIdleDrop (0.00s)
+=== RUN   TestPressureCallbacksCoalesceWhileOneIsRunning
+--- PASS: TestPressureCallbacksCoalesceWhileOneIsRunning (0.00s)
+=== RUN   TestReloadDoesNotCarryAPendingPressureIntent
+--- PASS: TestReloadDoesNotCarryAPendingPressureIntent (0.00s)
+=== RUN   TestStopIsIdempotentAndReleasesTheExecutor
+--- PASS: TestStopIsIdempotentAndReleasesTheExecutor (0.00s)
+=== RUN   TestReclaimCycleLoadDefinition
+--- PASS: TestReclaimCycleLoadDefinition (0.00s)
+=== RUN   TestReclaimObservationRecordsTheCacheLayerWithItsEntryCount
+--- PASS: TestReclaimObservationRecordsTheCacheLayerWithItsEntryCount (0.00s)
+=== RUN   TestReclaimObservationMarksLayersWithoutACount
+--- PASS: TestReclaimObservationMarksLayersWithoutACount (0.00s)
+=== RUN   TestReclaimObservationRecordsTheLowYieldCooldownAndSuppressesTheNextPass
+--- PASS: TestReclaimObservationRecordsTheLowYieldCooldownAndSuppressesTheNextPass (0.00s)
+=== RUN   TestReclaimObservationRingIsBoundedAndTheTotalsAreNot
+--- PASS: TestReclaimObservationRingIsBoundedAndTheTotalsAreNot (0.00s)
+=== RUN   TestReclaimObservationRecordsPressureAndCrisisBranches
+--- PASS: TestReclaimObservationRecordsPressureAndCrisisBranches (0.00s)
+=== RUN   TestReportMetadataCarriesTheReclaimRecordNextToTheClientDocument
+--- PASS: TestReportMetadataCarriesTheReclaimRecordNextToTheClientDocument (0.00s)
+=== RUN   TestReclaimMetadataIsAdditiveAndBounded
+--- PASS: TestReclaimMetadataIsAdditiveAndBounded (0.00s)
+=== RUN   TestCrisisReclaimWaitsForAnInFlightIdleTrim
+--- PASS: TestCrisisReclaimWaitsForAnInFlightIdleTrim (0.15s)
+=== RUN   TestCrisisAbortsAnIdlePassBetweenLayers
+--- PASS: TestCrisisAbortsAnIdlePassBetweenLayers (0.00s)
+=== RUN   TestStableThirtyThreeMiBOverAThousandTicks
+--- PASS: TestStableThirtyThreeMiBOverAThousandTicks (0.00s)
+=== RUN   TestArmedFortyOneMiBRemainsQuietAcrossCooldownBoundaries
+--- PASS: TestArmedFortyOneMiBRemainsQuietAcrossCooldownBoundaries (0.00s)
+=== RUN   TestThirtyNineToFortyOneOscillationCoolsDown
+--- PASS: TestThirtyNineToFortyOneOscillationCoolsDown (0.00s)
+=== RUN   TestOpportunityAfterTheCooldownIsAllowedAgain
+--- PASS: TestOpportunityAfterTheCooldownIsAllowedAgain (0.00s)
+=== RUN   TestCrisisIsNotBlockedByTheIdleCooldown
+--- PASS: TestCrisisIsNotBlockedByTheIdleCooldown (0.00s)
+=== RUN   TestMergeExtraMetadataKeepsExistingKeys
+--- PASS: TestMergeExtraMetadataKeepsExistingKeys (0.00s)
+=== RUN   TestMergeExtraMetadataLeavesUnparsableDocumentsAlone
+--- PASS: TestMergeExtraMetadataLeavesUnparsableDocumentsAlone (0.00s)
+=== RUN   TestMergeExtraMetadataSkipsNilValues
+--- PASS: TestMergeExtraMetadataSkipsNilValues (0.00s)
+=== RUN   TestMergeExtraMetadataWithoutRegistrationIsANoOp
+--- PASS: TestMergeExtraMetadataWithoutRegistrationIsANoOp (0.00s)
+=== RUN   TestSetExtraMetadataIsNilSafe
+--- PASS: TestSetExtraMetadataIsNilSafe (0.00s)
+=== RUN   TestResidencyMetadataReportsOwnerReachPerKind
+--- PASS: TestResidencyMetadataReportsOwnerReachPerKind (0.00s)
+=== RUN   TestResidencyMetadataIsAbsentWithoutAReporter
+--- PASS: TestResidencyMetadataIsAbsentWithoutAReporter (0.00s)
+=== RUN   TestReportMetadataCarriesTheResidencyInventoryNextToTheClientDocument
+--- PASS: TestReportMetadataCarriesTheResidencyInventoryNextToTheClientDocument (0.00s)
+=== RUN   TestRuntimeManagedAccounting
+--- PASS: TestRuntimeManagedAccounting (0.00s)
+=== RUN   TestSubtractFloorDoesNotUnderflow
+--- PASS: TestSubtractFloorDoesNotUnderflow (0.00s)
+=== RUN   TestObservedBudgetIsAdvisoryAndAbsentWithoutSupport
+--- PASS: TestObservedBudgetIsAdvisoryAndAbsentWithoutSupport (0.00s)
+=== RUN   TestFreshStartRampsInsteadOfJumpingToMax
+--- PASS: TestFreshStartRampsInsteadOfJumpingToMax (0.00s)
+=== RUN   TestPressureReturnsToMinInterval
+--- PASS: TestPressureReturnsToMinInterval (0.00s)
+=== RUN   TestRampCostIsBounded
+--- PASS: TestRampCostIsBounded (0.00s)
+=== RUN   TestStopWaitsForTriggeredPollCleanup
+--- PASS: TestStopWaitsForTriggeredPollCleanup (0.05s)
+PASS
+ok  	github.com/sagernet/sing-box/service/oomkiller	0.848s

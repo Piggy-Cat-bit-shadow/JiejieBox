@@ -1,0 +1,12 @@
+date: 2026-11-19T17:22:55.8400820+08:00
+host: Windows (Microsoft Windows NT 10.0.19044.0)
+go: go version go1.27.4 windows/amd64
+GOOS: windows
+GOARCH: amd64
+CGO_ENABLED (default): 1
+CGO_ENABLED (for -race): 1 with CC=C:\Deepseek\.tools\mingw64\bin\gcc.exe
+gcc: gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0
+head: 7654f1a779fa671a7075a347f64a4b23cbed434a
+branch: testing
+remote head: 7654f1a779fa671a7075a347f64a4b23cbed434a
+go.mod go/toolchain: go 1.25.5; toolchain go1.27.4
