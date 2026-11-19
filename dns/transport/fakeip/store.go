@@ -144,9 +144,17 @@ func (s *Store) Start() error {
 		s.recordRetiredRanges(storage, metadata)
 		if s.inet4Range.IsValid() {
 			s.inet4Current = s.inet4Range.Addr().Next()
+			// Resume past what THIS PROCESS already handed out, when there is no durable cursor to
+			// restore (no `store_fakeip`, i.e. MemoryStorage). See resumeAfterLedger.
+			if resumed, ok := s.resumeAfterLedger(s.inet4Range); ok {
+				s.inet4Current = resumed
+			}
 		}
 		if s.inet6Range.IsValid() {
 			s.inet6Current = s.inet6Range.Addr().Next()
+			if resumed, ok := s.resumeAfterLedger(s.inet6Range); ok {
+				s.inet6Current = resumed
+			}
 		}
 		_ = storage.FakeIPReset()
 	}
@@ -244,6 +252,47 @@ func (s *Store) recordRetiredRanges(storage adapter.FakeIPStorage, metadata *ada
 	}
 	_ = storage.FakeIPRetireInterval(issuedInterval(metadata.Inet4Range, metadata.Inet4Current))
 	_ = storage.FakeIPRetireInterval(issuedInterval(metadata.Inet6Range, metadata.Inet6Current))
+}
+
+// resumeAfterLedger answers where a NEW generation may start issuing without handing out an address
+// this process already used for something else.
+//
+// # The failure it prevents
+//
+// With no `experimental.cache_file` (the default), the storage is MemoryStorage, whose metadata is
+// nil, so Start has no cursor to restore and begins at the first address of the range. A reload then
+// re-issues 198.18.0.2 to whichever domain asks first, while a client may still be holding that
+// address for the domain the PREVIOUS generation resolved. `route/route.go` looks the address up and
+// finds the new domain, so the client's connection is delivered to the wrong destination - not
+// refused, silently wrong, which is worse than the placeholder leak the refusal exists for.
+//
+// # Why the ledger is the right evidence, and what it cannot see
+//
+// The ledger is owned by whoever owns the sequence of Boxes, so it survives a reload: it is the only
+// in-process statement of what the retiring generation issued. After a process RESTART without
+// `store_fakeip` it is empty - there is genuinely no evidence then, and the durable-record path
+// (`recordRetiredRanges`) covers the restarts where the cache file exists.
+//
+// The answer is conservative: the cursor is placed at the highest address any generation recorded in
+// THIS range, so the next allocation starts past it. Addresses stay inside the range, and a range that
+// is exhausted wraps exactly as it did before.
+func (s *Store) resumeAfterLedger(addressRange netip.Prefix) (netip.Addr, bool) {
+	if s.ledger == nil || !addressRange.IsValid() {
+		return netip.Addr{}, false
+	}
+	var highest netip.Addr
+	for _, interval := range s.ledger.IssuedIntervals() {
+		if !interval.To.IsValid() || interval.To.BitLen() != addressRange.Addr().BitLen() {
+			continue
+		}
+		if !addressRange.Contains(interval.To) {
+			continue
+		}
+		if !highest.IsValid() || interval.To.Compare(highest) > 0 {
+			highest = interval.To
+		}
+	}
+	return highest, highest.IsValid()
 }
 
 // issuedInterval is the range of addresses a generation really handed out, or an empty interval when
