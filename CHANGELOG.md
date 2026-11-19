@@ -35,7 +35,7 @@ v0.1.54 是 **依赖安全与 fake-IP/传输代际缺陷的集中修复版**。0
 - **v2rayquic** 的 publish 与 generation ack 合并为一个决策；**httpclient** 已关闭的 transport 不再自建；**quic** 已 shutdown 的 carrier 拒绝新 dial。
 - **naive** 不再向进程提供会切断活隧道的 reclaim hook；**resourceguard** 把恢复的容量交给已等待的调用方；**provider** 被替换/移除的节点不再把测量值留给继任者。
 - **sing-tun：UDP NAT 条目取消**（依赖修订 `2105ebe`）：`UDPNatConn` 为每个条目派生 cancel context 并传给 `NewPacketConnectionEx`，超时清扫、显式 `Close`、容量淘汰三条路径都会取消 handler 正在执行的 dial；此前 dial 会在条目已消失后继续运行并持有 socket/缓冲区。三条路径各有独立测试，未打补丁时全部失败。
-- **sing-tun：netlink monitor 恢复**（同一修订）：`loopRead` 不再在非 `ENOBUFS` 读错误后直接返回，而是关闭死 socket 并以 1s→30s 退避重建，成功恢复后补发一次更新；socket 句柄加锁，`Close` 之后不会被并发恢复复活。未打补丁时订阅死亡后不再产生任何网络变化事件（测试 7.5s 失败），打补丁后 3.5s 内恢复并上报。后续提交还堵上了恢复与 `Close` 的并发窗口：`setSocket` 在与 `Close` 相同的锁下检查关闭状态，输掉竞争的安装会关闭自己打开的 socket，`Close` 改为 `sync.Once`，关闭后不再排入恢复更新；受控并发测试在安装前暂停恢复线程并执行 `Close`（修复前 3.5s 失败，修复后 3.0s 通过）。
+- **sing-tun：netlink monitor 恢复**（`2105ebe`，并发修复 `f23ebd6`）：`loopRead` 不再在非 `ENOBUFS` 读错误后直接返回，而是关闭死 socket 并以 1s→30s 退避重建，成功恢复后补发一次更新；socket 句柄加锁，`Close` 之后不会被并发恢复复活。未打补丁时订阅死亡后不再产生任何网络变化事件（测试 7.5s 失败），打补丁后 3.5s 内恢复并上报。后续提交还堵上了恢复与 `Close` 的并发窗口：`setSocket` 在与 `Close` 相同的锁下检查关闭状态，输掉竞争的安装会关闭自己打开的 socket，`Close` 改为 `sync.Once`，关闭后不再排入恢复更新；受控并发测试在安装前暂停恢复线程并执行 `Close`（修复前 3.5s 失败，修复后 3.0s 通过）。
 
 ### 四、TrustTunnel 与协议契约
 
@@ -68,7 +68,7 @@ v0.1.54 是 **依赖安全与 fake-IP/传输代际缺陷的集中修复版**。0
 - 未在本环境执行 iPhone NetworkExtension 真机、TestFlight 上传或真实服务端矩阵；按独立设备/TF 流程验收。
 - macOS 13+ 为最低部署目标（Go 1.27 链接器默认 `minos=13.0`），与 0.1.53 相同。
 - `godebug` 固定值只覆盖本仓库构建上下文；嵌入方需自行声明（见上）。
-- 上游第二批 triage 的 8 个 open sing-box P0，以及 sing-tun monitor recovery 补丁，不在本版：补丁已验证但未进入 pin，需单独的子仓修订。
+- 上游第二批 triage 的 8 个 open sing-box P0 不在本版；sing-tun 的两个补丁已随 `f23ebd6` 进入本版 pin，消费者侧的端到端断言（阻塞 `ListenPacket` 的端到端取消、TUN 改址后上层重读）仍作为后续项记录。
 
 ## [v0.1.53](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.53) — 2026-11-18
 
