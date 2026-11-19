@@ -20,9 +20,27 @@ flow control, which is why it was not prioritised in a freeze.
 
 ## Group 3 — PMTU 黑洞（MTU 1280/1290、不可达 ICMP/EMSGSIZE）
 
-**`NOT_OBSERVABLE`.** `NewClient` enables path-MTU discovery on Linux/Windows
-(`DisablePathMTUDiscovery: !C.IsLinux && !C.IsWindows`), and a black hole needs a path that drops
-oversized datagrams; no netem/namespace here. Nothing is claimed.
+**Executed this round: covered by a userspace black-hole path, `NO_DEFECT`.**
+
+`client_pmtu_blackhole_test.go` wraps the client's UDP socket in a `net.Conn` that accepts datagrams up
+to 1280 and **silently drops** everything larger, reporting success to the sender exactly as a path with
+a smaller MTU and no ICMP does. No netem, no namespace, no privilege. The workload is 256 KB of channel
+records, which is what makes the discovery actually probe: the run reports **5 dropped datagrams** and
+the transfer completes, then a second stream still works. Larger datagrams being dropped mid-connection
+is therefore survivable, and the connection falls back to a size the path carries.
+
+Two controls:
+
+- **The path really swallows traffic:** `TestAPathThatDropsEverythingFailsForTheCaller` makes every
+  datagram vanish and requires the dial to fail when the caller's two-second deadline expires. It also
+  records the ownership contract: the transport adds no timeout of its own (`offerNew` dials under a
+  context derived from the client's lifetime), so a caller that never gives up waits - the earlier
+  version of this control used `context.Background()` and hung past ten seconds, which is not a defect.
+- **The scenario is reachable only through the production switch:** inverting the client's
+  `DisablePathMTUDiscovery: !C.IsLinux && !C.IsWindows` line (so discovery is off on Windows) makes the
+  run report **0 dropped** datagrams and the test fails on its own guard: *"the simulated path dropped
+  nothing: the workload never grew a datagram past 1280, so this test did not exercise a black hole at
+  all"*. That guard exists so the test can never pass vacuously. Reverted; the package is green (11.6 s).
 
 ## Group 4 — 连接迁移（多次 NAT rebinding、接口切换）
 
@@ -74,13 +92,13 @@ a fallback window that can stay unarmed on short deadlines — is recorded as R-
 | --- | --- |
 | 1 H3 small-flow fairness | `NO_DEFECT` (suite coverage) |
 | 2 QUIC send queue | `NOT_COVERED` (needs window control) |
-| 3 PMTU black hole | `NOT_OBSERVABLE` (needs netem) |
+| 3 PMTU black hole | **new pair of tests** (userspace 1280 path, 5 drops, transfer survives) + two controls, `NO_DEFECT` |
 | 4 connection migration | `NO_DEFECT` (suite coverage; also C-T5's positive control) |
 | 5 cancel / stream termination | **new regression test**, `NO_DEFECT`, mutation control red |
 | 6 Mieru UDP | `NOT_COVERED` (SDK limitation at the pin) |
 | 7 XHTTP/H2 | **B-1 fixed** earlier; no slow-read harness |
 | 8 Naive/Reality | **fixed** (A + C); R-B4 recorded |
 
-No new defect was found in this window. The value of the round is group 5's regression, which pins the
-multiplexing property that every other protocol in this window depends on, and the explicit statement
-that groups 2 and 3 were not attacked rather than passed.
+No new defect was found in this window. The value of the round is group 5's regression (the multiplexing
+property every other protocol here depends on), group 3's black-hole path and its two controls, and the
+explicit statement that groups 2 and 6 were not attacked rather than passed.
