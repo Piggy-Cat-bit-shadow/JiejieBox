@@ -411,7 +411,7 @@ def main():
     rows = []
     for spec in sorted(groups, key=lambda value: (len(value), value)):
         group = groups[spec]
-        files = sorted(group["files"])
+        files = sorted(group["files"], key=lambda path: (path.endswith(".md"), path))
         commits = sorted(group["commits"])
         dates = sorted(group["dates"])
         tests = tests_in_packages(files)
