@@ -53,10 +53,12 @@ func TestAReloadWithoutACacheFileDoesNotReissueAddresses(t *testing.T) {
 	require.True(t, ledger.Issued(held))
 }
 
-// TestConcurrentQueriesForOneDomainShareOneAddress pins the double-checked allocation: two callers
-// asking for the same name get one address, not two, because the second checks the store again under
-// the address lock.
-func TestConcurrentQueriesForOneDomainShareOneAddress(t *testing.T) {
+// TestTwoSequentialCreatesForOneDomainShareOneAddress pins the reuse check: two SEQUENTIAL callers
+// asking for the same name get one address. It is not a concurrency test - the audit pointed out that
+// the earlier name said "concurrent" while the body called Create twice in a row - so the concurrent
+// case now lives in store_boundaries_test.go's TestConcurrentCreatesForOneDomainShareOneAddress, which
+// releases sixteen callers through a barrier and runs under -race.
+func TestTwoSequentialCreatesForOneDomainShareOneAddress(t *testing.T) {
 	ledger := adapter.NewFakeIPIssuanceLedger()
 	ctx := service.ContextWithPtr(t.Context(), ledger)
 	addressRange := netip.MustParsePrefix("198.18.0.0/15")
