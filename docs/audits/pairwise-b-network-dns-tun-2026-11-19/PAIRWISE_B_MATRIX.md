@@ -10,7 +10,7 @@ defect; `无法观测` = needs a platform this environment does not have; `未�
 | --- | --- |
 | `go test ./dns/... ./common/dialer ./transport/... ./protocol/masque ./protocol/vless ./protocol/tun` | all ok except the one failure below |
 | `go test ./transport/trusttunnel` | **FAIL** at HEAD (`TestHTTP2Preface`) → fixed → ok (32.1 s) |
-| `go test ./e2e -count=1` | ok (35.4 s) — 58 tests, executed by **no workflow** (see `PAIRWISE_B_VERIFICATION.md` §5) |
+| `go test ./e2e -count=1` | ok (35.4 s) — 58 tests. No workflow ran them at the time of this round; **since mounted** after a Linux run passed 58/58 (release readiness §7) |
 | `go test ./transport/v2rayhttp ./transport/v2raygrpclite ./protocol/vless ./protocol/vmess ./protocol/trojan` | ok, after B-2 |
 | `go test -race ./transport/v2rayhttp ./transport/trusttunnel` | ok (see §4 of the verification page) |
 

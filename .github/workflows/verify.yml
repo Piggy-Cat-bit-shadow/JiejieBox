@@ -168,6 +168,18 @@ jobs:
           python3 scripts/ci/check-package-execution.test.py
           python3 scripts/ci/check-package-execution.py --baseline scripts/ci/uncovered-packages.txt
 
+      - name: "e2e: the whole-stack suite on Linux"
+        # 58 tests that drive real clients through the router. They used to be run by no workflow at
+        # all (the census below counted them among the gaps) because nobody had a Linux run to vouch
+        # for them: they were green on Windows only, and "green on the maintainer's machine" is not a
+        # gate. That run now exists - Go 1.27.4 linux/amd64, CGO disabled, 57 PASS / 1 SKIP / 0 FAIL,
+        # 16.0 s of test time (35 s wall including the build) - so they are mounted here rather than
+        # trusted. The one skip is TestTunRealDeviceNarrowMTUSniffedUDPDetour, which declines without
+        # SINGBOX_REAL_TUN_DEVICE=1 and a real /dev/net/tun; it stays gated.
+        run: |
+          set -euo pipefail
+          go test -count=1 -timeout 10m ./e2e
+
       - name: the pure-logic packages no other job runs
         # The census step above names the packages with tests that no workflow runs, and fails only on
         # a NEW gap. This step closes the largest group instead of leaving it in the baseline: the 27

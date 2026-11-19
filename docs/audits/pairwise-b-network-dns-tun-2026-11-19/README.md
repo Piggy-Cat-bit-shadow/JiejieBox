@@ -38,7 +38,8 @@ go test -run 'TestHTTP2Preface|TestAnIdleSessionSendsNoPing|TestTheSessionPrefer
 go test ./transport/v2rayhttp ./transport/v2raygrpclite ./protocol/vless ./protocol/trojan
 go test ./dns/transport/fakeip ./protocol/tun
 go test ./route -run 'FakeIP|ARetiredPlaceholder|NoFakeIPHistory'
-go test ./e2e -count=1          # 58 tests; executed by no workflow, see the verification page §5
+go test ./e2e -count=1          # 58 tests; no workflow ran them in this round — since mounted after a
+                                # Linux run passed 58/58 (release readiness §7)
 ```
 
 CI mount: `verify.yml` gained a push-gate step that runs the three TrustTunnel wire pins beside the

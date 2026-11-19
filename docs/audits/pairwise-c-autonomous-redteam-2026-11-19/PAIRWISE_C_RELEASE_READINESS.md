@@ -168,8 +168,11 @@ measured instead of suspected:
 
 ```
 python3 scripts/ci/check-package-execution.py --list
-packages with tests that no workflow runs: 35 of 109
+packages with tests that no workflow runs: 7 of 109
 ```
+
+(The number was 35 before the 27 pure-logic packages and `e2e` were mounted; §7's last paragraph has the
+`e2e` run that made the difference.)
 
 The count is honest about its own method in two ways that matter: `go test -run '^$' ./...` is compile
 only and does **not** count as execution (that is the line that made the gap invisible), and shell
@@ -185,23 +188,26 @@ job runs". What remains is 8 — `e2e` and 7 that need a device, a privilege or 
 the step **fails only when a package gains tests and no workflow runs them** — a ratchet, not a
 coverage mandate.
 
-**The `e2e` row is now `BLOCKED_BY_ENVIRONMENT` with evidence, not "needs a run".** WSL Ubuntu-24.04
-exists and starts (`uname -m` = x86_64, `curl`/`wget`/`python3` present), but it has no Go toolchain,
-the host has no Linux Go tarball, and WSL has no network (`curl https://go.dev/dl/` returns `000`), so a
-toolchain cannot be fetched. The commands that prove it:
+**The `e2e` row is no longer blocked, and it is no longer uncovered.** The network came back, so the
+Linux run that "needs one Linux run first" was waiting for was performed: WSL Ubuntu-24.04, Go 1.27.4
+linux/amd64 (fetched from go.dev/dl), `CGO_ENABLED=0`, the Windows module cache reused, against the
+Windows checkout at `/mnt/c`. The preserved verbose transcript is
+`pr-issue-windows-2026-11-19/e2e-linux-run.txt` and its exact count is:
 
 ```
-wsl.exe -l -v                       -> Ubuntu-24.04, Stopped, 2
-wsl.exe -d Ubuntu-24.04 -e bash -lc 'uname -m; command -v go curl wget python3'
-                                    -> x86_64; /usr/bin/curl /usr/bin/wget /usr/bin/python3; no go
-wsl.exe -e bash -lc 'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://go.dev/dl/'
-                                    -> 000
-Get-ChildItem C:\Deepseek\.tools,D:\Go -Recurse -Depth 2 | ? Name -match 'linux'
-                                    -> nothing
+58 tests reported:  57 PASS · 1 SKIP · 0 FAIL     ok  .../e2e  16.010s
 ```
 
-Until a Linux runner is available, `e2e`'s 58 tests are green on Windows only and are not claimed as
-CI-covered.
+The skip is `TestTunRealDeviceNarrowMTUSniffedUDPDetour`, which requires `SINGBOX_REAL_TUN_DEVICE=1` and
+a real `/dev/net/tun` through `scripts/ci/tun-netns.sh`; it declines by design, and it is not counted as
+a pass. (An earlier count in this session said "58 PASS"; that was a `grep -c` over a run whose verbose
+log was not preserved, and this preserved transcript supersedes it.)
+
+`verify.yml` now runs `go test -count=1 -timeout 10m ./e2e`, and the census drops to **7 of 109** with
+the baseline matching exactly.
+
+What remains in the census is the seven packages that need a device, a privilege or a platform
+(WinDivert/capture, power/suspend events, schannel, platform path reporting) — not a runner.
 
 The gate has a self-test with its own mutation controls: forcing `covers()` to answer true, or removing
 the continuation join, both make the self-test exit 1. That is what distinguishes it from the

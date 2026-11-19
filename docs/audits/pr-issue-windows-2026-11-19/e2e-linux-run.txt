@@ -1,0 +1,434 @@
+=== RUN   TestTrafficTrackerReleasesOnCleanFIN
+--- PASS: TestTrafficTrackerReleasesOnCleanFIN (0.02s)
+=== RUN   TestTrafficTrackerReleasesOnReset
+--- PASS: TestTrafficTrackerReleasesOnReset (0.01s)
+=== RUN   TestTrafficTrackerReleasesOnCloseAll
+--- PASS: TestTrafficTrackerReleasesOnCloseAll (0.31s)
+=== RUN   TestTrafficTrackerReleasesOnShutdown
+--- PASS: TestTrafficTrackerReleasesOnShutdown (0.01s)
+=== RUN   TestTrafficTrackerHalfClosedKernelPeerIsNotObservable
+--- PASS: TestTrafficTrackerHalfClosedKernelPeerIsNotObservable (0.51s)
+=== RUN   TestDestinationDNSOwnershipSendsAnAddressToTheHop
+=== PAUSE TestDestinationDNSOwnershipSendsAnAddressToTheHop
+=== RUN   TestWithoutDestinationDNSOwnershipTheNameStillTravels
+=== PAUSE TestWithoutDestinationDNSOwnershipTheNameStillTravels
+=== RUN   TestDestinationDNSOwnershipFailsClosedWhenItCannotResolve
+=== PAUSE TestDestinationDNSOwnershipFailsClosedWhenItCannotResolve
+=== RUN   TestTheEntryHopIsAskedForTheExitServersAddress
+=== PAUSE TestTheEntryHopIsAskedForTheExitServersAddress
+=== RUN   TestWithoutADetourTheEntryIsNotContacted
+=== PAUSE TestWithoutADetourTheEntryIsNotContacted
+=== RUN   TestDNSSplitRouting
+=== RUN   TestDNSSplitRouting/split_rule_selects_secondary
+=== RUN   TestDNSSplitRouting/final_uses_primary
+=== RUN   TestDNSSplitRouting/cached_answer_does_not_requery
+=== RUN   TestDNSSplitRouting/network_reset_keeps_the_response_cache
+=== RUN   TestDNSSplitRouting/reverse_mapping_names_a_literal_destination
+=== RUN   TestDNSSplitRouting/network_reset_purges_the_reverse_mapping
+=== RUN   TestDNSSplitRouting/fakeip_maps_and_unmaps
+=== RUN   TestDNSSplitRouting/connection_to_domain_uses_secondary_server
+--- PASS: TestDNSSplitRouting (0.01s)
+    --- PASS: TestDNSSplitRouting/split_rule_selects_secondary (0.00s)
+    --- PASS: TestDNSSplitRouting/final_uses_primary (0.00s)
+    --- PASS: TestDNSSplitRouting/cached_answer_does_not_requery (0.00s)
+    --- PASS: TestDNSSplitRouting/network_reset_keeps_the_response_cache (0.00s)
+    --- PASS: TestDNSSplitRouting/reverse_mapping_names_a_literal_destination (0.00s)
+    --- PASS: TestDNSSplitRouting/network_reset_purges_the_reverse_mapping (0.00s)
+    --- PASS: TestDNSSplitRouting/fakeip_maps_and_unmaps (0.00s)
+    --- PASS: TestDNSSplitRouting/connection_to_domain_uses_secondary_server (0.00s)
+=== RUN   TestAFakeIPDomainResolverNeverPutsASyntheticAddressOnTheWire
+    fakeip_resolver_wire_test.go:62: domain "fakeip-resolver-leak.test" -> reply code 0x01, hop recorded []
+--- PASS: TestAFakeIPDomainResolverNeverPutsASyntheticAddressOnTheWire (0.21s)
+=== RUN   TestLifecycleUnderLoad
+=== RUN   TestLifecycleUnderLoad/network_reset_during_traffic
+    lifecycle_chain_test.go:73: network reset returned after 469.558µs
+=== RUN   TestLifecycleUnderLoad/repeated_resets_do_not_accumulate
+=== RUN   TestLifecycleUnderLoad/trim_idle_resources_keeps_active_flow
+=== RUN   TestLifecycleUnderLoad/close_under_load
+=== RUN   TestLifecycleUnderLoad/repeated_start_stop_leaves_no_goroutines
+    lifecycle_chain_test.go:230: goroutines: baseline=10 after each cycle=[10 10 10 10 10]
+--- PASS: TestLifecycleUnderLoad (0.38s)
+    --- PASS: TestLifecycleUnderLoad/network_reset_during_traffic (0.01s)
+    --- PASS: TestLifecycleUnderLoad/repeated_resets_do_not_accumulate (0.01s)
+    --- PASS: TestLifecycleUnderLoad/trim_idle_resources_keeps_active_flow (0.00s)
+    --- PASS: TestLifecycleUnderLoad/close_under_load (0.09s)
+    --- PASS: TestLifecycleUnderLoad/repeated_start_stop_leaves_no_goroutines (0.27s)
+=== RUN   TestFirstDialAfterStartIsNotCancelled
+--- PASS: TestFirstDialAfterStartIsNotCancelled (0.05s)
+=== RUN   TestFirstDialAfterStartIsNotCancelledByTheStartupObservation
+--- PASS: TestFirstDialAfterStartIsNotCancelledByTheStartupObservation (2.03s)
+=== RUN   TestRepeatedStartDialCycles
+    lifecycle_chain_test.go:486: goroutines: baseline=9 after 120 start/close cycles=9
+--- PASS: TestRepeatedStartDialCycles (0.98s)
+=== RUN   TestResolveMatchOnlyPrivateAnswerSelectsTheRule
+=== RUN   TestResolveMatchOnlyPrivateAnswerSelectsTheRule/match_only_keeps_the_name
+=== RUN   TestResolveMatchOnlyPrivateAnswerSelectsTheRule/default_mode_dials_the_answer
+--- PASS: TestResolveMatchOnlyPrivateAnswerSelectsTheRule (0.01s)
+    --- PASS: TestResolveMatchOnlyPrivateAnswerSelectsTheRule/match_only_keeps_the_name (0.01s)
+    --- PASS: TestResolveMatchOnlyPrivateAnswerSelectsTheRule/default_mode_dials_the_answer (0.01s)
+=== RUN   TestResolveMatchOnlyLookupFailureIsNotAnAllow
+=== RUN   TestResolveMatchOnlyLookupFailureIsNotAnAllow/match_only
+[31mERROR[0m[0000] [[38;5;33m3689957393[0m 0ms] dns: lookup failed for broken.test: empty result
+[31mERROR[0m[0000] [[38;5;33m3689957393[0m 0ms] router: lookup broken.test: empty result
+=== RUN   TestResolveMatchOnlyLookupFailureIsNotAnAllow/default_mode
+[31mERROR[0m[0000] [[38;5;231m642038231[0m 0ms] dns: lookup failed for broken.test: empty result
+[31mERROR[0m[0000] [[38;5;231m642038231[0m 0ms] router: lookup broken.test: empty result
+--- PASS: TestResolveMatchOnlyLookupFailureIsNotAnAllow (0.04s)
+    --- PASS: TestResolveMatchOnlyLookupFailureIsNotAnAllow/match_only (0.02s)
+    --- PASS: TestResolveMatchOnlyLookupFailureIsNotAnAllow/default_mode (0.02s)
+=== RUN   TestResolveMatchOnlyHonoursTheActionsOwnResolver
+--- PASS: TestResolveMatchOnlyHonoursTheActionsOwnResolver (0.01s)
+=== RUN   TestResolveMatchOnlyConcurrentFlowsStayIsolated
+--- PASS: TestResolveMatchOnlyConcurrentFlowsStayIsolated (0.01s)
+=== RUN   TestResolveMatchOnlyKeepsTheNameOnTheWire
+=== RUN   TestResolveMatchOnlyKeepsTheNameOnTheWire/matching_answer_selects_the_proxy_and_the_name_reaches_it
+=== RUN   TestResolveMatchOnlyKeepsTheNameOnTheWire/non_matching_answer_falls_through_without_touching_the_proxy
+=== RUN   TestResolveMatchOnlyKeepsTheNameOnTheWire/pre-match_does_not_bypass_a_named_destination
+--- PASS: TestResolveMatchOnlyKeepsTheNameOnTheWire (0.01s)
+    --- PASS: TestResolveMatchOnlyKeepsTheNameOnTheWire/matching_answer_selects_the_proxy_and_the_name_reaches_it (0.00s)
+    --- PASS: TestResolveMatchOnlyKeepsTheNameOnTheWire/non_matching_answer_falls_through_without_touching_the_proxy (0.00s)
+    --- PASS: TestResolveMatchOnlyKeepsTheNameOnTheWire/pre-match_does_not_bypass_a_named_destination (0.00s)
+=== RUN   TestResolveWithoutMatchOnlyStillDialsCandidates
+--- PASS: TestResolveWithoutMatchOnlyStillDialsCandidates (0.01s)
+=== RUN   TestResolveMatchOnlyFakeIPFlowKeepsTheMappedDomain
+[36mINFO[0m[0000] network: updated default interface eth0, index 2
+[36mINFO[0m[0000] network: updated network environment: gateway 172.21.192.1, gateway_mac 00:15:5d:d5:b5:48
+[36mINFO[0m[0000] sing-box started (0.01s)
+[37mDEBUG[0m[0000] dns: exchange fake-match.test. IN A
+[37mDEBUG[0m[0000] dns: match[0] domain=fake-match.test => route(fakeip)
+[37mDEBUG[0m[0000] dns: exchanged fake-match.test NOERROR 600
+[36mINFO[0m[0000] dns: exchanged A fake-match.test. 600 IN A 198.19.0.2
+[37mDEBUG[0m[0000] [[38;5;155m2027210891[0m 0ms] router: found fakeip domain: fake-match.test
+[37mDEBUG[0m[0000] [[38;5;155m2027210891[0m 0ms] router: pre-match[0] domain=fake-match.test => resolve(match_only)
+[37mDEBUG[0m[0000] [[38;5;155m2027210891[0m 0ms] dns: lookup domain fake-match.test
+[37mDEBUG[0m[0000] [[38;5;155m2027210891[0m 0ms] dns: match[0] domain=fake-match.test => route(fakeip)
+[37mDEBUG[0m[0000] [[38;5;155m2027210891[0m 0ms] dns: exchanged fake-match.test NOERROR 60
+[36mINFO[0m[0000] [[38;5;155m2027210891[0m 0ms] dns: exchanged A fake-match.test. 60 IN A 198.51.100.10
+[36mINFO[0m[0000] [[38;5;155m2027210891[0m 0ms] dns: lookup succeed for fake-match.test: 198.51.100.10
+[37mDEBUG[0m[0000] [[38;5;155m2027210891[0m 0ms] router: resolved [198.51.100.10] for matching only
+[37mDEBUG[0m[0000] [[38;5;155m2027210891[0m 0ms] router: pre-match[1] ip_cidr=198.51.100.0/24 => route(remote)
+[37mDEBUG[0m[0000] router: found fakeip domain: fake-match.test
+[37mDEBUG[0m[0000] router: match[0] domain=fake-match.test => resolve(match_only)
+[37mDEBUG[0m[0000] dns: lookup domain fake-match.test
+[37mDEBUG[0m[0000] dns: match[0] domain=fake-match.test => route(fakeip)
+[37mDEBUG[0m[0000] dns: cached fake-match.test NOERROR 59
+[36mINFO[0m[0000] dns: cached A fake-match.test. 59 IN A 198.51.100.10
+[36mINFO[0m[0000] dns: lookup succeed for fake-match.test: 198.51.100.10
+[37mDEBUG[0m[0000] router: resolved [198.51.100.10] for matching only
+[37mDEBUG[0m[0000] router: match[1] ip_cidr=198.51.100.0/24 => route(remote)
+[36mINFO[0m[0000] outbound/socks[remote]: outbound connection to fake-match.test:34539
+[37mDEBUG[0m[0000] close: status-view 0s, pause-callback 0s, power-governor 0s, scope 1ms (total 1ms)
+--- PASS: TestResolveMatchOnlyFakeIPFlowKeepsTheMappedDomain (0.02s)
+=== RUN   TestResolveMatchOnlyUoTSessionDoesNotJudgeOneDatagramByAnother
+[36mINFO[0m[0000] inbound/mixed[mixed-in]: tcp server started at 127.0.0.1:37139
+[36mINFO[0m[0000] network: updated default interface eth0, index 2
+[36mINFO[0m[0000] network: updated network environment: gateway 172.21.192.1, gateway_mac 00:15:5d:d5:b5:48
+[36mINFO[0m[0000] sing-box started (0.01s)
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 0ms] inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:50314
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 0ms] inbound/mixed[mixed-in]: inbound connection to sp.v2.udp-over-tcp.arpa:443
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 0ms] inbound/mixed[mixed-in]: inbound UoT connection to a.test:40614
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 0ms] router: match[0] => resolve(match_only)
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 0ms] dns: lookup domain a.test
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 1ms] dns: exchanged a.test NOERROR 60
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 1ms] dns: exchanged A a.test. 60 IN A 127.0.0.1
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 1ms] dns: lookup succeed for a.test: 127.0.0.1
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 1ms] router: resolved [127.0.0.1] for matching only
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 1ms] router: match[1] ip_cidr=127.0.0.1/32 => route(direct)
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 1ms] outbound/direct[direct]: outbound packet connection to a.test:40614
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 1ms] dns: lookup domain a.test
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 1ms] dns: lookup succeed for a.test: 127.0.0.1
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 5ms] dns: lookup domain b.test
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 6ms] dns: exchanged b.test NOERROR 60
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 6ms] dns: exchanged A b.test. 60 IN A 127.0.0.2
+[36mINFO[0m[0000] [[38;5;75m2407980603[0m 6ms] dns: lookup succeed for b.test: 127.0.0.2
+[37mDEBUG[0m[0000] [[38;5;75m2407980603[0m 6ms] router: drop datagram to b.test:40614: destination rejected by route rule: b.test:40614
+[37mDEBUG[0m[0000] close: status-view 0s, pause-callback 0s, power-governor 0s, scope 1ms (total 1ms)
+--- PASS: TestResolveMatchOnlyUoTSessionDoesNotJudgeOneDatagramByAnother (0.04s)
+=== RUN   TestRouteSelectionMetadata
+=== RUN   TestRouteSelectionMetadata/authenticated_user_selects_group
+=== RUN   TestRouteSelectionMetadata/second_user_takes_the_other_rule
+=== RUN   TestRouteSelectionMetadata/wrong_password_is_refused
+[31mERROR[0m[0000] [[38;5;137m1864711545[0m 0ms] inbound/mixed[auth-in]: process connection from 127.0.0.1:41736: socks5: authentication failed, username=alice, password=wrong
+=== RUN   TestRouteSelectionMetadata/loadbalance_group_chain
+=== RUN   TestRouteSelectionMetadata/traffic_class_automatic_from_tag
+=== RUN   TestRouteSelectionMetadata/traffic_class_explicit_from_configuration
+=== RUN   TestRouteSelectionMetadata/client_rule_has_no_http_source
+=== RUN   TestRouteSelectionMetadata/bypass_verdict_has_no_port
+=== RUN   TestRouteSelectionMetadata/a_destination_no_rule_matches_is_accepted
+--- PASS: TestRouteSelectionMetadata (0.02s)
+    --- PASS: TestRouteSelectionMetadata/authenticated_user_selects_group (0.00s)
+    --- PASS: TestRouteSelectionMetadata/second_user_takes_the_other_rule (0.00s)
+    --- PASS: TestRouteSelectionMetadata/wrong_password_is_refused (0.00s)
+    --- PASS: TestRouteSelectionMetadata/loadbalance_group_chain (0.00s)
+    --- PASS: TestRouteSelectionMetadata/traffic_class_automatic_from_tag (0.00s)
+    --- PASS: TestRouteSelectionMetadata/traffic_class_explicit_from_configuration (0.00s)
+    --- PASS: TestRouteSelectionMetadata/client_rule_has_no_http_source (0.00s)
+    --- PASS: TestRouteSelectionMetadata/bypass_verdict_has_no_port (0.00s)
+    --- PASS: TestRouteSelectionMetadata/a_destination_no_rule_matches_is_accepted (0.00s)
+=== RUN   TestSystemProxyChain
+=== RUN   TestSystemProxyChain/socks5_ipv4_literal_direct
+=== RUN   TestSystemProxyChain/socks5_domain_forwarded_to_remote
+=== RUN   TestSystemProxyChain/rule_order_first_match_wins
+=== RUN   TestSystemProxyChain/cidr_rule_does_not_overmatch
+=== RUN   TestSystemProxyChain/http_connect_ipv4
+=== RUN   TestSystemProxyChain/http_connect_sniffed_tls_long_lived
+=== RUN   TestSystemProxyChain/socks5_ipv6_literal
+=== RUN   TestSystemProxyChain/http_connect_ipv6
+=== RUN   TestSystemProxyChain/resolve_action_feeds_ip_rule
+=== RUN   TestSystemProxyChain/outbound_domain_resolver_scope
+=== RUN   TestSystemProxyChain/direct_outbound_resolves_request_domain
+=== RUN   TestSystemProxyChain/reject_action_blocks
+    system_proxy_chain_test.go:344: SOCKS5 reply code for a rejected destination: 0x00
+=== RUN   TestSystemProxyChain/http_forward_proxy_get
+=== RUN   TestSystemProxyChain/http_forward_proxy_websocket_upgrade
+=== RUN   TestSystemProxyChain/socks5_udp_associate_direct
+=== RUN   TestSystemProxyChain/concurrent_connects
+=== RUN   TestSystemProxyChain/repeat_after_all_of_the_above
+--- PASS: TestSystemProxyChain (3.04s)
+    --- PASS: TestSystemProxyChain/socks5_ipv4_literal_direct (0.00s)
+    --- PASS: TestSystemProxyChain/socks5_domain_forwarded_to_remote (0.00s)
+    --- PASS: TestSystemProxyChain/rule_order_first_match_wins (0.00s)
+    --- PASS: TestSystemProxyChain/cidr_rule_does_not_overmatch (0.00s)
+    --- PASS: TestSystemProxyChain/http_connect_ipv4 (0.00s)
+    --- PASS: TestSystemProxyChain/http_connect_sniffed_tls_long_lived (3.00s)
+    --- PASS: TestSystemProxyChain/socks5_ipv6_literal (0.00s)
+    --- PASS: TestSystemProxyChain/http_connect_ipv6 (0.00s)
+    --- PASS: TestSystemProxyChain/resolve_action_feeds_ip_rule (0.00s)
+    --- PASS: TestSystemProxyChain/outbound_domain_resolver_scope (0.00s)
+    --- PASS: TestSystemProxyChain/direct_outbound_resolves_request_domain (0.00s)
+    --- PASS: TestSystemProxyChain/reject_action_blocks (0.00s)
+    --- PASS: TestSystemProxyChain/http_forward_proxy_get (0.00s)
+    --- PASS: TestSystemProxyChain/http_forward_proxy_websocket_upgrade (0.00s)
+    --- PASS: TestSystemProxyChain/socks5_udp_associate_direct (0.00s)
+    --- PASS: TestSystemProxyChain/concurrent_connects (0.00s)
+    --- PASS: TestSystemProxyChain/repeat_after_all_of_the_above (0.00s)
+=== RUN   TestRejectReplyCode
+=== RUN   TestRejectReplyCode/without_sniff_rule
+=== RUN   TestRejectReplyCode/with_sniff_rule
+--- PASS: TestRejectReplyCode (0.02s)
+    --- PASS: TestRejectReplyCode/without_sniff_rule (0.01s)
+    --- PASS: TestRejectReplyCode/with_sniff_rule (0.01s)
+=== RUN   TestTunChain
+=== RUN   TestTunChain/tcp_routed_to_outbound
+=== RUN   TestTunChain/tcp_direct_final_outbound
+=== RUN   TestTunChain/udp_through_device
+=== RUN   TestTunChain/dns_through_device
+=== RUN   TestTunChain/fakeip_over_device
+=== RUN   TestTunChain/tcp_refused_produces_reset
+[31mERROR[0m[0000] connection: open connection to 127.0.0.1:42935 using outbound/direct[direct]: dial 127.0.0.1: dial tcp 127.0.0.1:42935: connect: connection refused
+--- PASS: TestTunChain (0.01s)
+    --- PASS: TestTunChain/tcp_routed_to_outbound (0.00s)
+    --- PASS: TestTunChain/tcp_direct_final_outbound (0.00s)
+    --- PASS: TestTunChain/udp_through_device (0.00s)
+    --- PASS: TestTunChain/dns_through_device (0.00s)
+    --- PASS: TestTunChain/fakeip_over_device (0.00s)
+    --- PASS: TestTunChain/tcp_refused_produces_reset (0.00s)
+=== RUN   TestFastPathVerdictDoesNotChangeTheTUNDataPath
+=== RUN   TestFastPathVerdictDoesNotChangeTheTUNDataPath/absent
+=== RUN   TestFastPathVerdictDoesNotChangeTheTUNDataPath/true
+=== RUN   TestFastPathVerdictDoesNotChangeTheTUNDataPath/false
+=== RUN   TestFastPathVerdictDoesNotChangeTheTUNDataPath/tracker-attached
+--- PASS: TestFastPathVerdictDoesNotChangeTheTUNDataPath (0.03s)
+    --- PASS: TestFastPathVerdictDoesNotChangeTheTUNDataPath/absent (0.01s)
+    --- PASS: TestFastPathVerdictDoesNotChangeTheTUNDataPath/true (0.01s)
+    --- PASS: TestFastPathVerdictDoesNotChangeTheTUNDataPath/false (0.01s)
+    --- PASS: TestFastPathVerdictDoesNotChangeTheTUNDataPath/tracker-attached (0.01s)
+=== RUN   TestBypassVerdictStillDeliversUDP
+--- PASS: TestBypassVerdictStillDeliversUDP (0.01s)
+=== RUN   TestFastPathMultiSegmentPayloadIsIntact
+--- PASS: TestFastPathMultiSegmentPayloadIsIntact (0.01s)
+=== RUN   TestTunNarrowMTUOversizedInboundDatagramIsCarriedInFragments
+    tun_mtu_boundary_test.go:204: the 2008-byte IP payload crossed the 1280-byte tunnel as 2 fragments
+--- PASS: TestTunNarrowMTUOversizedInboundDatagramIsCarriedInFragments (0.02s)
+=== RUN   TestTunNarrowMTUOversizedReplyIsFragmented
+    tun_mtu_boundary_test.go:230: the 2008-byte IP payload crossed the 1280-byte tunnel as 2 fragments
+    tun_mtu_boundary_test.go:237: the 2008-byte IP payload crossed the 1280-byte tunnel as 2 fragments
+--- PASS: TestTunNarrowMTUOversizedReplyIsFragmented (0.02s)
+=== RUN   TestTunRealDeviceNarrowMTUSniffedUDPDetour
+    tun_real_device_narrow_mtu_test.go:238: set SINGBOX_REAL_TUN_DEVICE=1 and run through scripts/ci/tun-netns.sh, so the device is a real /dev/net/tun interface this process may create
+--- SKIP: TestTunRealDeviceNarrowMTUSniffedUDPDetour (0.00s)
+=== RUN   TestDirectTUNFlowTakesTheSpliceDecisionAndFallsBack
+--- PASS: TestDirectTUNFlowTakesTheSpliceDecisionAndFallsBack (0.01s)
+=== RUN   TestProxiedTUNFlowStillHasAGoConnSource
+--- PASS: TestProxiedTUNFlowStillHasAGoConnSource (0.01s)
+=== RUN   TestProxiedSpliceRejectionDeliversAMultiSegmentPayload
+--- PASS: TestProxiedSpliceRejectionDeliversAMultiSegmentPayload (0.01s)
+=== RUN   TestSpliceAttemptIsIndependentOfFastPath
+=== RUN   TestSpliceAttemptIsIndependentOfFastPath/unset
+=== RUN   TestSpliceAttemptIsIndependentOfFastPath/true
+=== RUN   TestSpliceAttemptIsIndependentOfFastPath/false
+--- PASS: TestSpliceAttemptIsIndependentOfFastPath (0.03s)
+    --- PASS: TestSpliceAttemptIsIndependentOfFastPath/unset (0.01s)
+    --- PASS: TestSpliceAttemptIsIndependentOfFastPath/true (0.01s)
+    --- PASS: TestSpliceAttemptIsIndependentOfFastPath/false (0.01s)
+=== RUN   TestSystemProxyTCPSpliceIsRefusedAtTheSource
+--- PASS: TestSystemProxyTCPSpliceIsRefusedAtTheSource (0.01s)
+=== RUN   TestTunUDPDetourChain
+=== RUN   TestTunUDPDetourChain/with_detour
+=== RUN   TestTunUDPDetourChain/narrow_mtu_1280
+=== RUN   TestTunUDPDetourChain/without_detour
+--- PASS: TestTunUDPDetourChain (0.34s)
+    --- PASS: TestTunUDPDetourChain/with_detour (0.01s)
+    --- PASS: TestTunUDPDetourChain/narrow_mtu_1280 (0.01s)
+    --- PASS: TestTunUDPDetourChain/without_detour (0.31s)
+=== RUN   TestFIPMappedAddressIsForwardedAsItsDomain
+    zz_fip_placeholder_escape_test.go:474: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:486: EGRESS-A1 domain=fip-owned.test code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:488: FLOW destination=fip-owned.test:443 origin=198.18.0.2:443 domain="" fakeip=true routeRule=""
+--- PASS: TestFIPMappedAddressIsForwardedAsItsDomain (0.01s)
+=== RUN   TestFIPInRangeUnissuedIsRefusedBothSpellings
+=== RUN   TestFIPInRangeUnissuedIsRefusedBothSpellings/plain
+[31mERROR[0m[0000] [[38;5;105m2088579161[0m 0ms] router: missing fakeip record, try enable `experimental.cache_file`
+    zz_fip_placeholder_escape_test.go:525: EGRESS-A2-plain host=198.18.0.5 code=0x01 accepts=0->0 requests=none
+=== RUN   TestFIPInRangeUnissuedIsRefusedBothSpellings/4in6
+[31mERROR[0m[0000] [[38;5;223m1117041887[0m 0ms] router: missing fakeip record, try enable `experimental.cache_file`
+    zz_fip_placeholder_escape_test.go:525: EGRESS-A2-4in6 host=::ffff:198.18.0.5 code=0x01 accepts=0->0 requests=none
+--- PASS: TestFIPInRangeUnissuedIsRefusedBothSpellings (0.81s)
+    --- PASS: TestFIPInRangeUnissuedIsRefusedBothSpellings/plain (0.40s)
+    --- PASS: TestFIPInRangeUnissuedIsRefusedBothSpellings/4in6 (0.40s)
+=== RUN   TestFIPMappedAddressInFourInSixSpellingIsForwardedAsItsDomain
+    zz_fip_placeholder_escape_test.go:546: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:557: EGRESS-A8-4in6 mapped=::ffff:198.18.0.2 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:560: FLOW-A8-4in6 destination=fip-owned.test:443 origin=198.18.0.2:443 fakeip=true
+--- PASS: TestFIPMappedAddressInFourInSixSpellingIsForwardedAsItsDomain (0.01s)
+=== RUN   TestFIPAddressFromADeadProcessDoesNotEscape
+    zz_fip_placeholder_escape_test.go:631: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:632: A3x generation 1 range=198.18.0.0/16 issued=198.18.0.2
+[31mERROR[0m[0000] [[38;5;104m2226679640[0m 0ms] router: refusing destination 198.18.0.2: this instance issued fakeip placeholders from 198.18.0.1..198.18.0.2 in an earlier generation and has no record of this address. Forwarding it would ask the peer to reach a synthetic address that exists only inside this process
+    zz_fip_placeholder_escape_test.go:660: EGRESS-A3x deadProcessIssued=198.18.0.2 oldRange=198.18.0.0/16 newRange=198.20.0.0/16 code=0x01 accepts=0->0 requests=none
+    zz_fip_placeholder_escape_test.go:662: A3x retired ranges this second Box reports: [198.18.0.1..198.18.0.2]
+    zz_fip_placeholder_escape_test.go:684: CONTROL-A3x never-configured-literal=198.24.0.200 code=0x00 accepts=0->1 requests={atyp=1 target=198.24.0.200 port=443}
+--- PASS: TestFIPAddressFromADeadProcessDoesNotEscape (0.70s)
+=== RUN   TestFIPAddressFromThePreviousGenerationDoesNotEscape
+    zz_fip_placeholder_escape_test.go:704: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:705: A3 generation 1 range=198.18.0.0/16 issued=198.18.0.2
+[31mERROR[0m[0000] [[38;5;68m1197502004[0m 0ms] router: refusing destination 198.18.0.2: this instance issued it as a fakeip placeholder in 198.18.0.1..198.18.0.2, and no fakeip server currently maps it back to a domain. Forwarding it would ask the peer to reach a synthetic address that exists only inside this process
+    zz_fip_placeholder_escape_test.go:734: EGRESS-A3 issued=198.18.0.2 oldRange=198.18.0.0/16 newRange=198.20.0.0/16 code=0x01 accepts=0->0 requests=none
+[31mERROR[0m[0000] [[38;5;64m2614364208[0m 0ms] router: missing fakeip record, try enable `experimental.cache_file`
+    zz_fip_placeholder_escape_test.go:750: CONTROL-A3 own-range-unissued=198.20.0.2 code=0x01 accepts=0->0 requests=none
+--- PASS: TestFIPAddressFromThePreviousGenerationDoesNotEscape (1.11s)
+=== RUN   TestFIPLiteralBeyondTheCursorStaysReachableAfterARangeMove
+    zz_fip_placeholder_escape_test.go:780: DNS fip-owned.test/1 -> 198.18.0.2
+[31mERROR[0m[0000] [[38;5;178m4245499810[0m 0ms] router: refusing destination 198.18.0.2: this instance issued it as a fakeip placeholder in 198.18.0.1..198.18.0.2, and no fakeip server currently maps it back to a domain. Forwarding it would ask the peer to reach a synthetic address that exists only inside this process
+    zz_fip_placeholder_escape_test.go:798: EGRESS-A7b-retired issued=198.18.0.2 code=0x01 accepts=0->0 requests=none
+    zz_fip_placeholder_escape_test.go:809: A7b recorded intervals: 198.18.0.1..198.18.0.2 198.18.0.1..198.18.0.2 198.20.0.1
+    zz_fip_placeholder_escape_test.go:817: EGRESS-A7b-literal literal=198.18.4.200 code=0x00 accepts=0->1 requests={atyp=1 target=198.18.4.200 port=443}
+    zz_fip_placeholder_escape_test.go:817: EGRESS-A7b-literal literal=198.24.0.200 code=0x00 accepts=0->2 requests={atyp=1 target=198.24.0.200 port=443}
+[31mERROR[0m[0000] [[38;5;217m1086921161[0m 0ms] router: missing fakeip record, try enable `experimental.cache_file`
+    zz_fip_placeholder_escape_test.go:844: EGRESS-A7b-inrange literal=198.20.0.200 code=0x01 accepts=2->2 requests=none
+--- PASS: TestFIPLiteralBeyondTheCursorStaysReachableAfterARangeMove (0.90s)
+=== RUN   TestFIPRangeMoveNewGenerationStillIssuesCorrectly
+    zz_fip_placeholder_escape_test.go:861: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:868: DNS fip-owned.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:869: A3-control firstIssued=198.18.0.2 firstRange=198.18.0.0/16 secondIssued=198.20.0.2 secondRange=198.20.0.0/16
+    zz_fip_placeholder_escape_test.go:879: EGRESS-A3-control newIssued=198.20.0.2 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:885: FLOW destination=fip-owned.test:443 origin=198.20.0.2:443 domain="" fakeip=true routeRule=""
+--- PASS: TestFIPRangeMoveNewGenerationStillIssuesCorrectly (0.01s)
+=== RUN   TestFIPAddressIssuedBeforeTheFakeIPServerWasRemovedDoesNotEscape
+    zz_fip_placeholder_escape_test.go:901: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:902: A4 generation 1 range=198.18.0.0/16 issued=198.18.0.2
+[31mERROR[0m[0000] [[38;5;218m2484729034[0m 0ms] router: refusing destination 198.18.0.2: this instance issued it as a fakeip placeholder in 198.18.0.1..198.18.0.2, and no fakeip server currently maps it back to a domain. Forwarding it would ask the peer to reach a synthetic address that exists only inside this process
+    zz_fip_placeholder_escape_test.go:930: EGRESS-A4 issued=198.18.0.2 fakeipRemoved code=0x01 accepts=0->0 requests=none
+    zz_fip_placeholder_escape_test.go:939: CONTROL-A4 literal=127.0.0.1 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+--- PASS: TestFIPAddressIssuedBeforeTheFakeIPServerWasRemovedDoesNotEscape (0.80s)
+=== RUN   TestFIPClearedMappingIsNotReused
+    zz_fip_placeholder_escape_test.go:962: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:966: PRECONDITION-A6 issued=198.18.0.2 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:973: FLOW destination=fip-owned.test:443 origin=198.18.0.2:443 domain="" fakeip=true routeRule=""
+[31mERROR[0m[0000] [[38;5;42m3133109530[0m 0ms] router: missing fakeip record, try enable `experimental.cache_file`
+    zz_fip_placeholder_escape_test.go:985: EGRESS-A6 issued=198.18.0.2 mappingCleared code=0x01 accepts=1->1 requests=none
+--- PASS: TestFIPClearedMappingIsNotReused (0.61s)
+=== RUN   TestFIPLiteralWithoutIssuanceStaysReachable
+=== RUN   TestFIPLiteralWithoutIssuanceStaysReachable/127.0.0.1
+    zz_fip_placeholder_escape_test.go:1024: EGRESS-A7 literal=127.0.0.1 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+=== RUN   TestFIPLiteralWithoutIssuanceStaysReachable/198.18.0.9
+    zz_fip_placeholder_escape_test.go:1024: EGRESS-A7 literal=198.18.0.9 code=0x00 accepts=0->2 requests={atyp=1 target=198.18.0.9 port=443}
+=== RUN   TestFIPLiteralWithoutIssuanceStaysReachable/198.20.0.9
+    zz_fip_placeholder_escape_test.go:1024: EGRESS-A7 literal=198.20.0.9 code=0x00 accepts=0->3 requests={atyp=1 target=198.20.0.9 port=443}
+--- PASS: TestFIPLiteralWithoutIssuanceStaysReachable (0.01s)
+    --- PASS: TestFIPLiteralWithoutIssuanceStaysReachable/127.0.0.1 (0.00s)
+    --- PASS: TestFIPLiteralWithoutIssuanceStaysReachable/198.18.0.9 (0.00s)
+    --- PASS: TestFIPLiteralWithoutIssuanceStaysReachable/198.20.0.9 (0.00s)
+=== RUN   TestFIPLiteralIsReachableWithNoFakeIPServerAtAll
+    zz_fip_placeholder_escape_test.go:1056: EGRESS-A7-nofakeip literal=127.0.0.1 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:1056: EGRESS-A7-nofakeip literal=198.18.0.2 code=0x00 accepts=0->2 requests={atyp=1 target=198.18.0.2 port=443}
+--- PASS: TestFIPLiteralIsReachableWithNoFakeIPServerAtAll (0.01s)
+=== RUN   TestFIPCustomRangeOwnAddressesAreIndependentOfTheDefaultRange
+    zz_fip_placeholder_escape_test.go:1076: DNS fip-owned.test/1 -> 10.7.0.2
+    zz_fip_placeholder_escape_test.go:1083: EGRESS-A7-custom customIssued=10.7.0.2 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:1089: FLOW destination=fip-owned.test:443 origin=10.7.0.2:443 domain="" fakeip=true routeRule=""
+--- PASS: TestFIPCustomRangeOwnAddressesAreIndependentOfTheDefaultRange (0.01s)
+=== RUN   TestFIPIPv6RangeIsConfiguredAndDoesNotDisturbIPv4
+    zz_fip_placeholder_escape_test.go:1108: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:1115: EGRESS-A8-v6range v4issued=198.18.0.2 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:1121: FLOW destination=fip-owned.test:443 origin=198.18.0.2:443 domain="" fakeip=true routeRule=""
+[31mERROR[0m[0000] [[38;5;199m3204088759[0m 0ms] router: missing fakeip record, try enable `experimental.cache_file`
+    zz_fip_placeholder_escape_test.go:1134: EGRESS-A8-v6unissued v6=fdfe:dcba:9876::3 code=0x01 accepts=1->1 requests=none
+--- PASS: TestFIPIPv6RangeIsConfiguredAndDoesNotDisturbIPv4 (0.41s)
+=== RUN   TestFIPDefaultDomainResolverNamingAFakeIPServerIsRefusedBeforeAnyExchange
+    zz_fip_placeholder_escape_test.go:1193: EGRESS-A9-default name=fip-owned.test code=0x01 accepts=0->0 requests=none questionsBefore=0 questionsAfter=0 questions=[]
+--- PASS: TestFIPDefaultDomainResolverNamingAFakeIPServerIsRefusedBeforeAnyExchange (0.61s)
+=== RUN   TestFIPOutboundDomainResolverNamingAFakeIPServerIsRefusedBeforeAnyExchange
+    zz_fip_placeholder_escape_test.go:1243: EGRESS-A9-outbound name=fip-owned.test code=0x01 accepts=0->0 requests=none questionsBefore=0 questionsAfter=0 questions=[]
+--- PASS: TestFIPOutboundDomainResolverNamingAFakeIPServerIsRefusedBeforeAnyExchange (0.61s)
+=== RUN   TestFIPRefusalIsTheSameOverHTTPConnect
+    zz_fip_placeholder_escape_test.go:1280: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:1281: A10 issued=198.18.0.2
+[31mERROR[0m[0000] [[38;5;210m1277008322[0m 0ms] router: refusing destination 198.18.0.2: this instance issued it as a fakeip placeholder in 198.18.0.1..198.18.0.2, and no fakeip server currently maps it back to a domain. Forwarding it would ask the peer to reach a synthetic address that exists only inside this process
+    zz_fip_placeholder_escape_test.go:1312: HTTP-CONNECT-A10 target=198.18.0.2:443 head="HTTP/1.1 200 Connection established\r\n\r\n" readErr=<nil> payloadAfterHead=""
+    zz_fip_placeholder_escape_test.go:1316: EGRESS-A10 http-connect target=198.18.0.2:443 code=0x00 accepts=0->0 requests=none flowsBefore=0 flowsAfter=0
+--- PASS: TestFIPRefusalIsTheSameOverHTTPConnect (0.70s)
+=== RUN   TestFIPConcurrentLookupsAfterARangeMoveNeverReturnTheOldRange
+    zz_fip_placeholder_escape_test.go:1358: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:1359: A11 generation 1 issued=198.18.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-owned.test/1 -> 198.20.0.4
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-third.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1380: DNS fip-second.test/1 -> 198.20.0.3
+    zz_fip_placeholder_escape_test.go:1398: A11 answers=[198.20.0.4 198.20.0.3 198.20.0.2 198.20.0.4 198.20.0.3 198.20.0.2 198.20.0.4 198.20.0.3 198.20.0.2 198.20.0.4 198.20.0.3 198.20.0.2 198.20.0.4 198.20.0.3 198.20.0.2 198.20.0.4 198.20.0.3 198.20.0.2 198.20.0.4 198.20.0.3 198.20.0.2 198.20.0.4 198.20.0.3 198.20.0.2] newRange=24 oldRange=0 other=0
+--- PASS: TestFIPConcurrentLookupsAfterARangeMoveNeverReturnTheOldRange (0.10s)
+=== RUN   TestFIPRepeatedGenerationCyclesDoNotAccumulate
+    zz_fip_placeholder_escape_test.go:1431: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:1431: DNS fip-owned.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1431: DNS fip-owned.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1431: DNS fip-owned.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1431: DNS fip-owned.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1431: DNS fip-owned.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1431: DNS fip-owned.test/1 -> 198.20.0.2
+    zz_fip_placeholder_escape_test.go:1459: A12 cycles=12 heapObjects first=10551 last=16672 delta=6121 perCycle=510.1 heapAlloc=2270560->3402280
+    zz_fip_placeholder_escape_test.go:1477: DNS fip-owned.test/1 -> 198.18.0.2
+    zz_fip_placeholder_escape_test.go:1484: EGRESS-A12 finalIssued=198.18.0.2 code=0x00 accepts=0->1 requests={atyp=1 target=127.0.0.1 port=443}
+    zz_fip_placeholder_escape_test.go:1490: FLOW destination=fip-owned.test:443 origin=198.18.0.2:443 domain="" fakeip=true routeRule=""
+--- PASS: TestFIPRepeatedGenerationCyclesDoNotAccumulate (0.35s)
+=== CONT  TestDestinationDNSOwnershipSendsAnAddressToTheHop
+=== CONT  TestTheEntryHopIsAskedForTheExitServersAddress
+=== CONT  TestDestinationDNSOwnershipFailsClosedWhenItCannotResolve
+=== CONT  TestWithoutDestinationDNSOwnershipTheNameStillTravels
+=== CONT  TestWithoutADetourTheEntryIsNotContacted
+--- PASS: TestDestinationDNSOwnershipFailsClosedWhenItCannotResolve (0.01s)
+--- PASS: TestWithoutDestinationDNSOwnershipTheNameStillTravels (0.01s)
+--- PASS: TestWithoutADetourTheEntryIsNotContacted (0.01s)
+--- PASS: TestDestinationDNSOwnershipSendsAnAddressToTheHop (0.01s)
+--- PASS: TestTheEntryHopIsAskedForTheExitServersAddress (0.01s)
+PASS
+ok  	github.com/sagernet/sing-box/e2e	16.010s

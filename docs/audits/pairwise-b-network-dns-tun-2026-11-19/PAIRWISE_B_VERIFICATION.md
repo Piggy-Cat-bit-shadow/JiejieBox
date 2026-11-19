@@ -21,7 +21,9 @@ go test ./dns/...                                                        # all o
 go test ./common/dialer                                                  # ok (22.2s) — the dual-stack suite
 go test ./transport/...                                                  # one FAIL: transport/trusttunnel TestHTTP2Preface (B-1)
 go test ./protocol/masque ./protocol/vless ./protocol/tun                # ok
-go test ./e2e -count=1                                                   # ok (35.4s) — 58 tests, executed by NO workflow (§5)
+go test ./e2e -count=1                                                   # ok (35.4s) — 58 tests; no workflow ran them AT THAT TIME.
+                                                                         # Since mounted: a Linux run (Go 1.27.4, CGO off) passed 58/58,
+                                                                         # and verify.yml now runs ./e2e — see the release readiness page §7.
 go test ./transport/v2rayhttp ./transport/v2raygrpclite ./protocol/vless ./protocol/vmess ./protocol/trojan
                                                                           # ok after B-2 (vmess has no test files)
 go test ./dns/transport/fakeip ./dns/...                                  # ok after B-3

@@ -9,13 +9,10 @@
 # defects in the 2026-11 audit were found by RUNNING suites in that set (`e2e`, `protocol/*`,
 # `service/oomkiller` - the last one has since been mounted), which is why the gate exists.
 #
-# The 27 pure-logic packages that were in this file are now mounted in verify.yml ("the pure-logic
-# packages no other job runs"), green on Windows before mounting. What remains needs something this
-# environment cannot provide, so it is listed with that reason rather than hidden.
-
-# --- needs a network or a peer: `e2e` (58 tests, 35 s green on Windows) drives real clients through
-# the router. Mounting it needs one Linux run first; see PAIRWISE_B_VERIFICATION.md.
-./e2e
+# The 27 pure-logic packages and `e2e` have since been mounted: the former in one batch, the latter
+# after a real Linux run (Go 1.27.4, CGO off, 58 PASS / 0 FAIL), which is what "needs one Linux run
+# first" was waiting for. What remains needs something this environment cannot provide, so it is
+# listed with that reason rather than hidden.
 
 # --- needs a device or privilege: WinDivert/capture (Administrator), power/suspend events, platform
 # path reporting, Windows schannel. NOT_OBSERVABLE in CI; listed so the gate does not lie about them.
