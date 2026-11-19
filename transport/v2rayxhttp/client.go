@@ -354,13 +354,15 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		release.release()
 		return nil, err
 	}
-	if c.currentGeneration() != startGeneration {
+	// One call, not a compare followed by an acknowledgement: the compare alone leaves the
+	// instructions between the two open, and an Advance landing there stamps the NEW epoch on a
+	// connection built on the OLD network (v2rayhttp's publishIfCurrent carries the measured case).
+	if !c.acknowledgeGenerationIfCurrent(startGeneration) {
 		// The connection belongs to a generation that ended while the dial was running. Discard it
 		// rather than publish it: acknowledging would claim the pool is current on evidence from the
 		// old network. The conn's own release returns the pool slot, so nothing is leaked.
 		return c.settleCompletedGeneration(conn, startGeneration)
 	}
-	c.acknowledgeGeneration()
 	return conn, nil
 }
 

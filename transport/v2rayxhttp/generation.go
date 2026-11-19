@@ -49,6 +49,22 @@ func (c *Client) acknowledgeGeneration() {
 	v2rayhttp.AcknowledgeGeneration(c.registration)
 }
 
+// acknowledgeGenerationIfCurrent records the pool as current for epoch only if the network is STILL at
+// that generation, and reports whether it did.
+//
+// The dial path holds the generation it was built for and must decide whether the result may be
+// published. Comparing first and acknowledging second leaves the instructions between them open: an
+// Advance landing there stamps the NEW epoch on a connection built on the OLD network, after which
+// nothing retires it and every later demand is handed it. Registration.AcknowledgeIfCurrent closes
+// that window - its check and its write are under one lock while the coordinator lock is read - and
+// v2rayhttp's publishIfCurrent carries the measured case and the deterministic test.
+func (c *Client) acknowledgeGenerationIfCurrent(epoch uint64) bool {
+	if c.registration == nil {
+		return true
+	}
+	return c.registration.AcknowledgeIfCurrent(epoch)
+}
+
 // retireGeneration runs the pool's own reuse boundary because the network generation moved. It is the
 // same action Reset takes, taken earlier: the pool starts a new generation, idle connections are
 // closed and busy ones are drained so a stream that is already running is never cut.

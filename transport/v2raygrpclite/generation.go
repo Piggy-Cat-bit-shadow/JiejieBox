@@ -44,6 +44,16 @@ func (c *Client) acknowledgeGeneration() {
 	v2rayhttp.AcknowledgeGeneration(c.registration)
 }
 
+// acknowledgeGenerationIfCurrent records the pool as current for epoch only if the network is STILL at
+// that generation, and reports whether it did. See v2rayhttp's counterpart for why the comparison and
+// the acknowledgement have to be one call rather than two steps.
+func (c *Client) acknowledgeGenerationIfCurrent(epoch uint64) bool {
+	if c.registration == nil {
+		return true
+	}
+	return c.registration.AcknowledgeIfCurrent(epoch)
+}
+
 // retireGeneration replaces the pooled transport with a fresh one when the current generation is no
 // longer the one the pool was built for. The retired transport is drained, not closed: its last
 // request closes it.

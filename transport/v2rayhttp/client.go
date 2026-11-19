@@ -237,14 +237,14 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 			response.Body.Close()
 			c.pool.Finish(generation)
 			conn.Setup(nil, E.New("v2ray-http: unexpected status: ", response.Status))
-		} else if c.currentGeneration() != startGeneration {
-			// The result belongs to a generation that ended while it was in flight. Discard it:
-			// acknowledging it would claim the pool is current on evidence from the old network.
+		} else if !c.publishIfCurrent(startGeneration) {
+			// The result belongs to a generation that ended while it was in flight, or the network
+			// moved between the check and the acknowledgement. Discard it: acknowledging it would
+			// claim the pool is current on evidence from the old network.
 			response.Body.Close()
 			c.pool.Finish(generation)
 			conn.Setup(nil, staleGenerationError{})
 		} else {
-			c.acknowledgeGeneration()
 			conn.Setup(&generationBody{ReadCloser: response.Body, release: func() { c.pool.Finish(generation) }}, nil)
 		}
 	}()

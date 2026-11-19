@@ -111,6 +111,44 @@ func (c *Client) acknowledgeGeneration() {
 	AcknowledgeGeneration(c.registration)
 }
 
+// acknowledgeGenerationIfCurrent records the pool as current for `epoch` only if the network is STILL
+// at that generation, and reports whether it did.
+//
+// # Why the compare and the acknowledgement have to be one call
+//
+// The dial path has an epoch token (`startGeneration`) and must answer "is this child of generation N
+// still publishable". Comparing first and acknowledging second leaves an instruction-sized window: an
+// Advance landing inside it makes Acknowledge() stamp the NEW epoch on a connection built on the old
+// network, after which nothing retires it and every later demand is handed it - audit F-15 again,
+// through a gap a comparison cannot close. `Registration.AcknowledgeIfCurrent` closes it (coordinator.go
+// §AcknowledgeIfCurrent: "the check and the write are under the registration lock while the coordinator
+// lock is read, so no new epoch can slip between the comparison and the store"), and this is the
+// per-dial token it was written for.
+//
+// A pool with no registration has no generation to defend, so the answer is "yes" - which is the
+// behaviour every build without a coordinator had before the check existed.
+func (c *Client) acknowledgeGenerationIfCurrent(epoch uint64) bool {
+	if c.registration == nil {
+		return true
+	}
+	return c.registration.AcknowledgeIfCurrent(epoch)
+}
+
+// testHookAfterGenerationCompare is nil in production. A test sets it to move the epoch inside the
+// window between the dial's own re-confirmation and its acknowledgement, which is the only way to
+// exercise that window deterministically (the same technique as
+// common/runtimecoord/generation_gate.go's test hook).
+var testHookAfterGenerationCompare func()
+
+// publishIfCurrent is the one decision a completed creation makes before it is published: is the
+// generation it was built for still current, and if so record the pool as current for it.
+func (c *Client) publishIfCurrent(epoch uint64) bool {
+	if testHookAfterGenerationCompare != nil {
+		testHookAfterGenerationCompare()
+	}
+	return c.acknowledgeGenerationIfCurrent(epoch)
+}
+
 // currentGeneration is the network generation that is current NOW.
 func (c *Client) currentGeneration() uint64 {
 	return CurrentGeneration(c.coordinator)

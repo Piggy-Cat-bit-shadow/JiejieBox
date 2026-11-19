@@ -182,14 +182,14 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 			response.Body.Close()
 			releaseGeneration()
 			conn.setup(nil, E.New("v2ray-grpc: unexpected status: ", response.Status))
-		} else if c.currentGeneration() != startGeneration {
-			// The result belongs to a generation that ended while it was in flight. Discard it:
-			// acknowledging it would claim the pool is current on evidence from the old network.
+		} else if !c.acknowledgeGenerationIfCurrent(startGeneration) {
+			// The result belongs to a generation that ended while it was in flight, or the network
+			// moved between the check and the acknowledgement. Discard it: acknowledging it would
+			// claim the pool is current on evidence from the old network.
 			response.Body.Close()
 			releaseGeneration()
 			conn.setup(nil, staleGenerationError{})
 		} else {
-			c.acknowledgeGeneration()
 			conn.setup(response.Body, nil)
 		}
 	}()
