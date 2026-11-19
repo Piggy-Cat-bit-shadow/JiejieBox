@@ -330,12 +330,9 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		// A no-op when the lazy engine was never created.
 		scope.Add(h.h2Fallback.Close)
 	}
-	// Idle connections are the only reclaim action this outbound can offer a process under
-	// pressure: a busy CONNECT cannot be closed without cutting the user's flow, and the
-	// engine's pool is idle-only by definition.
-	if guard := resourceguard.FromContext(h.ctx); guard != nil {
-		guard.RegisterShed(h.client.CloseAllConnections)
-	}
+	// The process admission guard owns one reclaim hook slot per outbound. See
+	// registerNaiveShedHook for why this outbound contributes none, and what it cost when it did.
+	registerNaiveShedHook(resourceguard.FromContext(h.ctx), h.client)
 	// Record WHICH native artifact and WHICH binding generation this process is running. The two
 	// are separate facts (see native_contract.go): the module version names the Go binding, the
 	// engine version comes from the loaded library, and the archive bytes those resolve to are in
@@ -346,6 +343,63 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		" (fork=", contract.ModuleReplaced, "), engine=", contract.EngineVersion,
 		", native creation callback=", contract.CreationCallback)
 	return nil
+}
+
+// poolCloser is the engine's connection-pool surface, as the pressure wiring sees it.
+//
+// It is an interface rather than *cronet.NaiveClient so the shed contract below can be exercised
+// without a native engine; the production value is the client the outbound already owns, and no
+// wrapper is added to the data path.
+type poolCloser interface {
+	CloseAllConnections()
+}
+
+// registerNaiveShedHook is where this outbound would hand a reclaim action to the process
+// admission guard. It hands over none, and that is the fix rather than a missing line.
+//
+// # What the guard's hook contract allows
+//
+// resourceguard.RegisterShed is for CHEAP reclamation of resources that are not carrying traffic.
+// Its contract names the forbidden action directly: a hook "must not close a connection that is
+// serving a flow: the guard exists so that a working connection survives pressure" (guard.go §
+// RegisterShed). The hook runs on the goroutine that observed the transition into LevelCritical,
+// which on this path is a dial.
+//
+// # What the only close primitive at this pin actually does
+//
+// The pinned engine exposes Engine.CloseAllConnections and nothing narrower — there is no idle-only
+// close in the cronet API. What it closes is every connection in the engine's network session,
+// including CONNECT streams that are actively carrying data; the dependency pins that behaviour in
+// its own test, which writes and reads through an established tunnel, calls CloseAllConnections, and
+// then requires the connection to die: cronet-go `test/integration_test.go`
+// TestCloseAllConnectionsThenClientClose, "connection should auto-close after CloseAllConnections()".
+//
+// # What that cost, and why it was worse than a redundant trim
+//
+// Registering this as a shed hook therefore terminated every live Naive tunnel on the transition
+// into Critical. The transition happens on a dial, and one of the two things that publishes Critical
+// is the Darwin system-pressure pass (service/oomkiller timer.go runPressureReclaim), which
+// deliberately does NOT reset the network because a system-wide memory notification says nothing
+// about whether this process's paths broke. So the paths that pass decided to keep were closed by
+// the guard anyway; every closed flow redialled, and every redial is a creation that the gate admits
+// at a quarter of the normal limit — a creation storm, on the pressure path, at the worst moment.
+//
+// The aggressive action a real crisis earns already belongs to the OOMKiller, which decides it from
+// its own thresholds with hysteresis and runs it as a serialised pass. This outbound must not hold a
+// second one that fires on a different event.
+//
+// # Where idle pool release stays
+//
+// On the paths that are ALLOWED to terminate flows, because they invalidate the pool for a reason
+// that is not memory: InterfaceUpdated (a network change really does strand every socket) and Close
+// (shutdown). This outbound additionally does not implement adapter.IdleConnectionReleaser, so the
+// trim walk cannot reach the engine pool either; that gap is recorded and pinned by
+// shed_contract_test.go rather than papered over with an action that cuts the flows the trim exists
+// to protect.
+func registerNaiveShedHook(guard *resourceguard.Guard, client poolCloser) {
+	if guard == nil || client == nil {
+		return
+	}
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
