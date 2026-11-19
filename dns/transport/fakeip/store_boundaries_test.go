@@ -99,6 +99,29 @@ func TestADegeneratePoolCollidesAndTheNewestDomainWins(t *testing.T) {
 			"routed to c.example's destination")
 }
 
+// TestAnUnprotectedStoreKeepsNoAddressLedger pins the re-review's P2: the per-address set exists only
+// to keep the protected-interval search from landing on a live mapping, so a store with no inherited
+// issuance must not build it. The second half shows the set does exist where it is consulted.
+func TestAnUnprotectedStoreKeepsNoAddressLedger(t *testing.T) {
+	fresh := newBoundaryStore(t, adapter.NewFakeIPIssuanceLedger(), netip.MustParsePrefix("198.18.0.0/24"))
+	t.Cleanup(func() { _ = fresh.Close() })
+	_, err := fresh.Create("plain.example", false)
+	require.NoError(t, err)
+	require.Nil(t, fresh.inet4Issued,
+		"a store with no inherited issuance never runs the protected-interval search, so recording "+
+			"every issued address would be a ledger nobody reads")
+
+	ledger := adapter.NewFakeIPIssuanceLedger()
+	ledger.RecordIssued(1, 0, netip.MustParseAddr("198.18.0.2"))
+	protected := newBoundaryStore(t, ledger, netip.MustParsePrefix("198.18.0.0/24"))
+	t.Cleanup(func() { _ = protected.Close() })
+	address, err := protected.Create("protected.example", false)
+	require.NoError(t, err)
+	require.NotEqual(t, netip.MustParseAddr("198.18.0.2"), address)
+	require.NotNil(t, protected.inet4Issued,
+		"with inherited issuance the search consults this generation's addresses, so they are recorded")
+}
+
 // TestAPoolOfEightAddressesAllocatesDistinctAddresses pins the capacity of a /29 and its exhaustion
 // boundary, which is the extent of the claim the audit asked for: four allocations proving "distinct"
 // said nothing about capacity or about what happens after it.

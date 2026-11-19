@@ -573,7 +573,6 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 			s.inet4Current = address
 		}
 	}
-	s.markIssued(address, isIPv6)
 	// An issued address MUST be inside the configured range, and must not be the range's network or
 	// broadcast address: `Contains` is what route/route.go uses to decide "this is a placeholder" and
 	// to restore its domain, so an address outside it is handed on as a LITERAL destination and
@@ -593,6 +592,14 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 			" has no issuable address; it must contain more than one address")
 	}
 	s.storage.FakeIPStoreAsync(address, domain, s.logger)
+	// The per-address set exists only to keep skipProtected from landing on a live mapping, and
+	// skipProtected only runs when there is inherited issuance to step around. Recording it on an
+	// unprotected store would add one hash entry per address for a lookup nobody performs - the normal
+	// first-start path - so it is recorded only where it can be consulted, and only after the address
+	// passed the issuable guard above.
+	if len(protected) > 0 {
+		s.markIssued(address, isIPv6)
+	}
 	if s.ledger != nil {
 		// The exact record: this is one address the store really handed out, so the ledger narrows
 		// whatever the persisted cursor over-approximated at Start. The address IS the advanced cursor -
