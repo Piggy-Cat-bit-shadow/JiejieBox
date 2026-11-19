@@ -53,6 +53,23 @@ type Store struct {
 	inet4Current  netip.Addr
 	inet6Current  netip.Addr
 	reservedCount int
+	// protected is what the PREVIOUS generations issued inside this store's ranges, clipped to the
+	// issuable span, captured once at Start. It is a standing constraint on every allocation, not just
+	// a cursor seed: once the free tail is used up, nextAddress wraps to the start of the pool and the
+	// naive candidate is an address a client may still hold. Create skips past each protected interval
+	// and refuses when nothing safe remains, instead of letting the wrap re-bind it.
+	//
+	// Only the snapshot taken at Start is protected: the addresses THIS generation issues are recorded
+	// in the ledger as they are allocated, and treating those as forbidden would starve the pool.
+	inet4Protected []adapter.FakeIPIssuanceInterval
+	inet6Protected []adapter.FakeIPIssuanceInterval
+	// inet4Issued / inet6Issued are the addresses THIS store has already handed out. They matter while
+	// searching past a protected interval: after skipping it the candidate can land on an address this
+	// generation gave to another name, which would be the same wrong destination one step later. The
+	// set is only consulted while that search is running, so a pool with no inherited issuance keeps
+	// the previous wrap behaviour.
+	inet4Issued map[netip.Addr]struct{}
+	inet6Issued map[netip.Addr]struct{}
 }
 
 func NewStore(ctx context.Context, logger logger.Logger, inet4Range netip.Prefix, inet6Range netip.Prefix) *Store {
@@ -146,21 +163,24 @@ func (s *Store) Start() error {
 			s.inet4Current = s.inet4Range.Addr().Next()
 			// Resume past what THIS PROCESS already handed out, when there is no durable cursor to
 			// restore (no `store_fakeip`, i.e. MemoryStorage). See resumeAfterLedger: an overlap that
-			// leaves no safe address refuses the start instead of re-binding a held address.
-			resumed, ok, resumeErr := s.resumeAfterLedger(s.inet4Range, s.inet4Last)
+			// leaves no safe address refuses the start instead of re-binding a held address, and the
+			// clipped overlaps become a standing constraint Create consults on every allocation.
+			resumed, protected, ok, resumeErr := s.resumeAfterLedger(s.inet4Range, s.inet4Last)
 			if resumeErr != nil {
 				return resumeErr
 			}
+			s.inet4Protected = protected
 			if ok {
 				s.inet4Current = resumed
 			}
 		}
 		if s.inet6Range.IsValid() {
 			s.inet6Current = s.inet6Range.Addr().Next()
-			resumed, ok, resumeErr := s.resumeAfterLedger(s.inet6Range, s.inet6Last)
+			resumed, protected, ok, resumeErr := s.resumeAfterLedger(s.inet6Range, s.inet6Last)
 			if resumeErr != nil {
 				return resumeErr
 			}
+			s.inet6Protected = protected
 			if ok {
 				s.inet6Current = resumed
 			}
@@ -303,21 +323,30 @@ func (s *Store) recordRetiredRanges(storage adapter.FakeIPStorage, metadata *ada
 //     would re-enter the overlap. That range cannot be served without risking a re-bind, so Start
 //     refuses instead of starting and silently mis-routing. Refusing is the safe failure the audit asked
 //     for; the operator gets a message naming the interval and the range.
-func (s *Store) resumeAfterLedger(addressRange netip.Prefix, last netip.Addr) (netip.Addr, bool, error) {
+//
+// It also returns the clipped overlaps as the caller's standing constraint: Start stores them, and
+// Create consults them on every allocation, because the wrap after the free tail is exhausted would
+// otherwise land inside a protected interval again. The re-review found that second half: the first
+// fix only seeded the cursor, so the fourth allocation in a /29 free-tail case re-bound a previous
+// generation's address.
+func (s *Store) resumeAfterLedger(addressRange netip.Prefix, last netip.Addr) (netip.Addr, []adapter.FakeIPIssuanceInterval, bool, error) {
 	if s.ledger == nil || !addressRange.IsValid() {
-		return netip.Addr{}, false, nil
+		return netip.Addr{}, nil, false, nil
 	}
 	if !last.IsValid() || !addressRange.Contains(last) {
-		return netip.Addr{}, false, nil
+		return netip.Addr{}, nil, false, nil
 	}
 	issuableFirst := addressRange.Addr().Next()
 	issuableLast := last.Prev()
 	if !addressRange.Contains(issuableFirst) || !addressRange.Contains(issuableLast) ||
 		issuableFirst.Compare(issuableLast) > 0 {
 		// A range with no issuable address at all is the range guard's business, not this function's.
-		return netip.Addr{}, false, nil
+		return netip.Addr{}, nil, false, nil
 	}
-	var resume netip.Addr
+	var (
+		resume    netip.Addr
+		protected []adapter.FakeIPIssuanceInterval
+	)
 	for _, interval := range s.ledger.IssuedIntervals() {
 		if !interval.From.IsValid() || !interval.To.IsValid() {
 			continue
@@ -339,7 +368,7 @@ func (s *Store) resumeAfterLedger(addressRange netip.Prefix, last netip.Addr) (n
 			continue
 		}
 		if high.Compare(issuableLast) == 0 {
-			return netip.Addr{}, false, E.New("the configured fakeip range ", addressRange,
+			return netip.Addr{}, nil, false, E.New("the configured fakeip range ", addressRange,
 				" overlaps addresses issued by a previous generation (", interval.From, " - ",
 				interval.To, ") and has no free address above them; refusing to start rather than "+
 					"bind a client's held address to a new domain")
@@ -350,8 +379,66 @@ func (s *Store) resumeAfterLedger(addressRange netip.Prefix, last netip.Addr) (n
 		if !resume.IsValid() || high.Compare(resume) > 0 {
 			resume = high
 		}
+		// The clipped overlap is also a standing constraint: when the free tail is exhausted,
+		// nextAddress wraps to the pool's start and would land inside it again.
+		protected = append(protected, adapter.FakeIPIssuanceInterval{From: low, To: high})
 	}
-	return resume, resume.IsValid(), nil
+	return resume, protected, resume.IsValid(), nil
+}
+
+// skipProtected advances `address` past every protected interval it falls inside and past every address
+// this generation already issued, and reports false when doing so leaves the issuable span (the wrap
+// point, the range's last address, or outside the range) with no safe address at all.
+//
+// The bound is the interval count plus the issued count plus one: each pass either leaves the interval
+// that blocked it or moves one address on, so the work is bounded by the number of things that can
+// block, and the extra pass is the one that finds the candidate free.
+func (s *Store) skipProtected(address netip.Addr, protected []adapter.FakeIPIssuanceInterval, isIPv6 bool) (netip.Addr, bool) {
+	issued := s.inet4Issued
+	if isIPv6 {
+		issued = s.inet6Issued
+	}
+	limit := len(protected) + len(issued) + 1
+	for attempt := 0; attempt < limit; attempt++ {
+		blockedByInterval := false
+		for _, interval := range protected {
+			if interval.From.Compare(address) <= 0 && address.Compare(interval.To) <= 0 {
+				address = interval.To.Next()
+				blockedByInterval = true
+				break
+			}
+		}
+		if blockedByInterval {
+			if !s.issuableAddress(address, isIPv6) {
+				return netip.Addr{}, false
+			}
+			continue
+		}
+		if _, alreadyIssued := issued[address]; alreadyIssued {
+			address = address.Next()
+			if !s.issuableAddress(address, isIPv6) {
+				return netip.Addr{}, false
+			}
+			continue
+		}
+		return address, true
+	}
+	return netip.Addr{}, false
+}
+
+// markIssued records an address this store handed out, for the search in skipProtected.
+func (s *Store) markIssued(address netip.Addr, isIPv6 bool) {
+	if isIPv6 {
+		if s.inet6Issued == nil {
+			s.inet6Issued = make(map[netip.Addr]struct{})
+		}
+		s.inet6Issued[address] = struct{}{}
+		return
+	}
+	if s.inet4Issued == nil {
+		s.inet4Issued = make(map[netip.Addr]struct{})
+	}
+	s.inet4Issued[address] = struct{}{}
 }
 
 // issuedInterval is the range of addresses a generation really handed out, or an empty interval when
@@ -453,6 +540,40 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 		s.inet6Current = nextAddress(s.inet6Range, s.inet6Last, s.inet6Current)
 		address = s.inet6Current
 	}
+	// The previous generation's addresses stay protected for the whole life of this store, not just at
+	// the first allocation.
+	//
+	// nextAddress wraps to the start of the pool once the cursor reaches the last address, so after the
+	// free tail above a previous generation's issuance is used up, the naive candidate is exactly an
+	// address a client may still hold. The re-review reproduced that: a /29 with two addresses
+	// inherited from a /15 handed out .4, .5, .6 and then re-bound .2 to a fourth name. Skipping past
+	// each protected interval keeps the promise at every allocation, and refusing when nothing safe
+	// remains is the only alternative to the wrap - a refusal writes nothing, so no mapping is
+	// corrupted.
+	protected := s.inet4Protected
+	if isIPv6 {
+		protected = s.inet6Protected
+	}
+	if len(protected) > 0 {
+		safeAddress, safe := s.skipProtected(address, protected, isIPv6)
+		if !safe {
+			if isIPv6 {
+				return netip.Addr{}, E.New("the IPv6 fakeip range ", s.inet6Range,
+					" has no address left that a previous generation did not issue; refusing to "+
+						"re-bind one of them to a new domain")
+			}
+			return netip.Addr{}, E.New("the IPv4 fakeip range ", s.inet4Range,
+				" has no address left that a previous generation did not issue; refusing to re-bind "+
+					"one of them to a new domain")
+		}
+		address = safeAddress
+		if isIPv6 {
+			s.inet6Current = address
+		} else {
+			s.inet4Current = address
+		}
+	}
+	s.markIssued(address, isIPv6)
 	// An issued address MUST be inside the configured range, and must not be the range's network or
 	// broadcast address: `Contains` is what route/route.go uses to decide "this is a placeholder" and
 	// to restore its domain, so an address outside it is handed on as a LITERAL destination and

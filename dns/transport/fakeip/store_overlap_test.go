@@ -30,6 +30,13 @@ func newOverlapStore(t *testing.T, ledger *adapter.FakeIPIssuanceLedger, prefix 
 	return store
 }
 
+func newOverlapStoreV6(t *testing.T, ledger *adapter.FakeIPIssuanceLedger, prefix netip.Prefix) *Store {
+	t.Helper()
+	ctx := service.ContextWithPtr(t.Context(), ledger)
+	store := NewStore(ctx, log.NewNOPFactory().NewLogger("fakeip"), netip.Prefix{}, prefix)
+	return store
+}
+
 // TestAnOverlapThatFillsTheNewPoolRefusesToStart is the defect the audit reproduced: /15 with twelve
 // names issued, then /29 - every address of the small pool has already been handed out.
 func TestAnOverlapThatFillsTheNewPoolRefusesToStart(t *testing.T) {
@@ -83,6 +90,116 @@ func TestAnOverlapWithAFreeTailResumesPastIt(t *testing.T) {
 	require.Greater(t, fresh.Compare(second), 0,
 		"the new generation must resume past the previous generation's overlap, got %v after %v-%v",
 		fresh, first, second)
+}
+
+// TestAnExhaustedFreeTailRefusesInsteadOfRebinding is the re-review's P1: the fix seeded the cursor,
+// but the wrap after the free tail was used up still handed a previous generation's address to a new
+// name. The protection is now a standing constraint on every allocation.
+func TestAnExhaustedFreeTailRefusesInsteadOfRebinding(t *testing.T) {
+	ledger := adapter.NewFakeIPIssuanceLedger()
+	wide := newOverlapStore(t, ledger, netip.MustParsePrefix("198.18.0.0/15"))
+	require.NoError(t, wide.Start())
+	first, err := wide.Create("a.example", false)
+	require.NoError(t, err)
+	second, err := wide.Create("b.example", false)
+	require.NoError(t, err)
+	require.Equal(t, netip.MustParseAddr("198.18.0.2"), first)
+	require.Equal(t, netip.MustParseAddr("198.18.0.3"), second)
+	require.NoError(t, wide.Close())
+
+	narrow := newOverlapStore(t, ledger, netip.MustParsePrefix("198.18.0.0/29"))
+	t.Cleanup(func() { _ = narrow.Close() })
+	require.NoError(t, narrow.Start(), "a /29 with a free tail above the overlap must start")
+
+	// The free tail is .4 - .6.
+	for index, expected := range []string{"198.18.0.4", "198.18.0.5", "198.18.0.6"} {
+		address, createErr := narrow.Create("tail-"+string(rune('a'+index))+".example", false)
+		require.NoError(t, createErr, "allocation %d of the free tail", index+1)
+		require.Equal(t, netip.MustParseAddr(expected), address)
+	}
+
+	// The fourth allocation has nowhere safe to go: the next candidate wraps to .2, which a client
+	// still holds, and every other address is already in use by this generation.
+	overflow, overflowErr := narrow.Create("overflow.example", false)
+	require.Error(t, overflowErr,
+		"the allocation after the free tail must be refused, got %v", overflow)
+	require.Contains(t, overflowErr.Error(), "has no address left that a previous generation did not issue")
+
+	// And the refusal wrote nothing: the held address is not bound to the new domain in this store.
+	domain, loaded := narrow.Lookup(netip.MustParseAddr("198.18.0.2"))
+	require.False(t, loaded, "the refused allocation wrote %v -> %v", netip.MustParseAddr("198.18.0.2"), domain)
+	require.False(t, overflow.IsValid())
+}
+
+// TestAnExhaustedFreeTailRefusesForIPv6 is the same contract on the v6 side.
+func TestAnExhaustedFreeTailRefusesForIPv6(t *testing.T) {
+	ledger := adapter.NewFakeIPIssuanceLedger()
+	addressRange := netip.MustParsePrefix("2001:db8::/125")
+	wide := newOverlapStoreV6(t, ledger, addressRange)
+	require.NoError(t, wide.Start())
+	first, err := wide.Create("v6-a.example", true)
+	require.NoError(t, err)
+	second, err := wide.Create("v6-b.example", true)
+	require.NoError(t, err)
+	require.Equal(t, netip.MustParseAddr("2001:db8::2"), first)
+	require.Equal(t, netip.MustParseAddr("2001:db8::3"), second)
+	require.NoError(t, wide.Close())
+
+	narrow := newOverlapStoreV6(t, ledger, addressRange)
+	t.Cleanup(func() { _ = narrow.Close() })
+	require.NoError(t, narrow.Start())
+	for index, expected := range []string{"2001:db8::4", "2001:db8::5", "2001:db8::6"} {
+		address, createErr := narrow.Create("v6-tail-"+string(rune('a'+index))+".example", true)
+		require.NoError(t, createErr, "allocation %d of the free tail", index+1)
+		require.Equal(t, netip.MustParseAddr(expected), address)
+	}
+	_, overflowErr := narrow.Create("v6-overflow.example", true)
+	require.Error(t, overflowErr)
+	require.Contains(t, overflowErr.Error(), "has no address left that a previous generation did not issue")
+	_, loaded := narrow.Lookup(netip.MustParseAddr("2001:db8::2"))
+	require.False(t, loaded)
+}
+
+// TestMultipleProtectedIntervalsAreAllHonoured covers the shape the re-review asked for: issued
+// addresses the current generation must never re-bind, with whatever interval structure the ledger
+// reports. It does not assume how the ledger coalesces them - it asserts the safety property instead:
+// no allocation lands on a protected address, none repeats, and the pool eventually refuses.
+func TestMultipleProtectedIntervalsAreAllHonoured(t *testing.T) {
+	ledger := adapter.NewFakeIPIssuanceLedger()
+	protected := []netip.Addr{netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("198.18.0.5")}
+	for _, address := range protected {
+		ledger.RecordIssued(1, 0, address)
+	}
+
+	store := newOverlapStore(t, ledger, netip.MustParsePrefix("198.18.0.0/29"))
+	t.Cleanup(func() { _ = store.Close() })
+	require.NoError(t, store.Start())
+
+	seen := make(map[netip.Addr]struct{})
+	var refused error
+	for index := 0; index < 10; index++ {
+		address, err := store.Create("multi-"+string(rune('a'+index))+".example", false)
+		if err != nil {
+			refused = err
+			break
+		}
+		for _, held := range protected {
+			require.NotEqual(t, held, address,
+				"allocation %d re-bound %v, which a previous generation issued", index+1, held)
+		}
+		if _, repeated := seen[address]; repeated {
+			t.Fatalf("allocation %d returned %v, already issued in this generation", index+1, address)
+		}
+		seen[address] = struct{}{}
+	}
+	require.Error(t, refused, "the pool must refuse once every non-protected address is used")
+	require.Contains(t, refused.Error(), "has no address left that a previous generation did not issue")
+
+	// None of the protected addresses was bound by this store.
+	for _, held := range protected {
+		_, loaded := store.Lookup(held)
+		require.False(t, loaded, "%v was bound by the new store", held)
+	}
 }
 
 // TestAnOverlapThatIsNotTheLastAddressResumesImmediately is the minimal case: one issued address inside
