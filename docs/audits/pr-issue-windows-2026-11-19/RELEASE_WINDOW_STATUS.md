@@ -1,5 +1,9 @@
 # The three release windows: what this session executed, and what it did not
 
+`WINDOW_A_STATUS.md` in this directory now answers window A's eight attack groups one by one, with the
+evidence and the two negative results (DNS stream isolation is structural, and a naive pipelining
+harness deadlocks against it) written down.
+
 The `JiejieBox_PR_Issue_Debug_…` prompt set asks for three release-stability windows: A (core control
 plane: TUN/DNS/lifecycle), B (protocol transports: QUIC/H3/XHTTP/Naive), C (expanded autonomous
 search). This page maps each window's **attack groups** — the tables at the top of each file — to what
