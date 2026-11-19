@@ -1,8 +1,9 @@
 # PAIRWISE B — Findings
 
-Three defects were confirmed and fixed in this window; eight more were confirmed by reading and are
+Five defects were confirmed and fixed in this window; eight more were confirmed by reading and are
 recorded with the exact sequence, the reason existing tests miss them, and the test that would settle
-them. Nothing is marked fixed without a regression that fails when the fix is removed.
+them. Two of the fixed ones (B-4, B-5) were first recorded as R-B6 and R-B7 and are numbered in place
+to keep the history readable. Nothing is marked fixed without a regression that fails when the fix is removed.
 
 Windows B's pairs overlap areas that earlier rounds hardened heavily (the dialer carries ~60
 dual-stack test files, the fake-IP store a full issuance ledger, `route` ~7.5 min of tests). Both
@@ -157,6 +158,73 @@ the router an address it cannot recognise.
 
 ---
 
+## B-4〔已确认，已修复；原 R-B6〕A placeholder from a retired fake-IP generation was bypassed to the platform
+
+**Pair:** B02 (fake-IP × TUN fast path) — the L0 guard.
+
+**Trigger.** A client still holding a fake-IP address minted by an earlier generation (a range move, or
+fake-IP removed from the configuration) sends traffic while `route_address_set` (or an exclude set) is
+configured.
+
+**What happened.** The TUN fast path gated its route-set bypass with
+`routeSetsApply := t.fakeIPStore == nil || !t.fakeIPStore.Contains(destinationAddress)`
+(`protocol/tun/inbound.go:1248`), i.e. with the CURRENT-range question. An address from a retired range
+fails `Contains`, so `routeSetsApply` became true and an include-set miss returned
+`tun.FlowVerdict{Action: tun.ActionBypass}` — **before** `adapter.JudgeFlow`, which is where
+`route/route.go:1382-1414` refuses an unattributable placeholder. The synthetic address was handed to
+the platform as a literal: no route exists for it, and no domain could be recovered for it either.
+
+The guard's own comment showed the premise it was built on ("without this guard the placeholder is
+silently black-holed instead of being unmapped"): the store can identify every placeholder. It cannot —
+it identifies the ones its CURRENT configuration would mint.
+
+**Fix.** `protocol/tun/inbound.go`: the flow path asks `fakeIPPlaceholder(address)`, which answers both
+halves — the current range (`Contains`) and the retirement snapshot resolved once at `Start`
+(`Store.RetiredAddresses()`), so a retired placeholder still reaches the router and is refused there
+with its explanation. The snapshot is a slice read without a lock on the per-flow path, and everything
+it can miss was issued after `Start`, i.e. inside the current range.
+
+**Regression.** `protocol/tun/fakeip_retired_guard_test.go`
+(`TestARetiredPlaceholderIsNotBypassedByTheRouteSet`): a store whose current range is `198.20.0.0/16`
+and whose retired interval is `198.18.0.2–.9`, an include set that does not contain the destination, and
+a flow to `198.18.0.5` — the router must be consulted and the verdict must not be `ActionBypass`. The
+test's own control asserts that an address in the same range **past the issuance cursor**
+(`198.18.0.200`) still bypasses, so the fix is proof-based rather than a blanket range block.
+**Mutation control MC-B4:** restoring the range-only expression turns it red with
+`router preMatchCalls = 0`.
+
+## B-5〔已确认，已修复；原 R-B7〕With no fakeip server configured, the durable retirement record was unreachable
+
+**Pair:** B02, the router half — the refusal itself.
+
+**Trigger.** A restart into a configuration that has `experimental.cache_file` with `store_fakeip` but
+**no** `fakeip` DNS transport, while the client still holds an address the previous process minted.
+
+**What happened.** `route/route.go:1471-1478` returned `false` immediately when
+`r.dnsTransport.FakeIP() == nil`. The durable record (`Store.RetiredAddresses` persisted by
+`store_fakeip`) is reachable only through a live fakeip store, so with none configured there was no
+reader at all: the address was dialled as an ordinary literal — the exact sequence the record was added
+for, with each such dial burning a connect timeout.
+
+**Fix.** `route/route.go`: `retiredFakeIPAddress` falls back to the cache file's record
+(`Router.durableFakeIPRetired`, resolved lazily and once) whenever no live store can answer. The lookup
+is lazy because the router is constructed (`box.go:665`) before the service manager creates the cache
+file (`:800`); the two are never added together because a live store's own `RetiredAddresses()` already
+includes that record. `!cacheFile.StoreFakeIP()` means "this installation keeps no record", which is the
+same answer as no record.
+
+**Regression.** `route/fakeip_durable_retired_test.go`:
+`TestARetiredPlaceholderIsRefusedWithoutAFakeIPStore` seeds the durable record and requires the refusal
+for `198.18.0.5`, while `198.18.0.200` (past the cursor) and a real address keep crossing;
+`TestNoFakeIPHistoryMeansNoRefusal` pins the degradation for a machine that never configured fake-IP.
+**Mutation control MC-B5:** removing the fallback turns the first test red.
+
+The TUN half of the same case is pinned separately:
+`TestARetiredPlaceholderIsRecognizedWithoutAFakeIPTransport` drives `fakeIPPlaceholder` with no store at
+all, so the durable record is the only thing that can recognise the address.
+
+---
+
 # Recorded, not fixed
 
 ## R-B1〔HIGH〕The generation gate's listener half exists in one owner of seven, so a destructive transition runs twice per generation
@@ -223,34 +291,6 @@ so a zero count cannot be the detector failing: the production transport sends 0
 600 ms, the control sends at least one. The same file pins `StrictMaxConcurrentStreams` and
 `ReadIdleTimeout == 0`, which are the two settings that keep one session on one connection.
 Recorded as a verified contract, not as a defect.
-
-## R-B6〔HIGH〕The TUN fast-path's fake-IP guard is range-shaped, and it runs before the router's refusal
-
-`protocol/tun/inbound.go:1248` gates the route-set bypass with
-`routeSetsApply := t.fakeIPStore == nil || !t.fakeIPStore.Contains(destinationAddress)`. The guard's
-own comment states the premise: without it "the placeholder is silently black-holed instead of being
-unmapped". The premise holds only for the CURRENT range. A placeholder minted by an earlier generation
-(previous range, or fake-IP removed from the config) fails `Contains`, so `routeSetsApply` is true —
-and an include-set miss returns `tun.FlowVerdict{Action: tun.ActionBypass}` at `:1250-1258`, i.e.
-**before** `adapter.JudgeFlow(t.router, ...)`, which is where `route/route.go:1382-1414` would have
-refused it. The synthetic address is handed to the stack as a literal.
-
-Why no test sees it: the TUN-side tests configure the current range only
-(`direct_fast_path_dns_test.go`), and the refusal tests are router-level
-(`route/fakeip_bypass_boundary_test.go`). Test that settles it: set a stub store whose `Contains`
-covers the NEW range while reporting retired intervals for the old one, then ask for a flow verdict on
-an old-range address with a route set that does not include it; assert the verdict is not
-`ActionBypass` and that the router was consulted. Not fixed: the guard has to distinguish "not ours at
-all" from "ours, from a generation we retired", which is a contract change in a per-flow fast path.
-
-## R-B7〔HIGH〕The durable retired-address record is unreachable without a current fake-IP server
-
-`route/route.go:1471-1478`: `retiredFakeIPAddress` returns false when `r.dnsTransport.FakeIP() == nil`.
-The durable record it would consult (`Store.RetiredAddresses`, persisted by `store_fakeip`) is only
-reachable through a live fakeip transport, so a restart into a config that has `store_fakeip` but no
-`fakeip` server dials a previously minted address as a real destination — the sequence the record was
-added for. The e2e rows cover each half separately (same-process ledger; dead process with a live
-store) and never their conjunction.
 
 ## R-B8〔HIGH〕A reload without `store_fakeip` restarts the cursor, so a client-held address can be remapped to a different domain
 

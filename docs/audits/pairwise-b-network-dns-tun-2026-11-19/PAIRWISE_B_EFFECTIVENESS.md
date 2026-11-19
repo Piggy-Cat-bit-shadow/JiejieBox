@@ -48,7 +48,24 @@ fails with `expected 2, actual 3`, i.e. the next stream opened the third connect
 
 ---
 
-## EC-B3 The recorded findings: does a detector exist?
+## EC-B3 The fake-IP placeholder guard (B-4, B-5)
+
+| Layer | Evidence |
+| --- | --- |
+| **Build** | `protocol/tun` and `route` are always built; the guard has no tag |
+| **Load** | `Inbound.fakeIPStore` is resolved once at `StartStateInitialize` from the DNS transport manager (`protocol/tun/inbound.go:585-598`); the retirement snapshot is resolved in the same block, from the store when there is one and from the cache file when there is not |
+| **Wiring** | `JudgeFlow` asks `fakeIPPlaceholder` before the route-set bypasses (`:1248`); the router asks `retiredFakeIPAddress` inside `prepareMatchMetadata` (`route/route.go:1387-1414`), which now falls back to the cache file's record |
+| **Decision** | Two booleans that decide between three outcomes: bypass to the platform, reach the router (and be refused there), or route normally. The tests assert **which component** produced the verdict (`router.preMatchCalls`) rather than only the verdict value, because a bypass and a refusal can look alike |
+| **Data** | No socket is opened in these tests; the observable is whether the router was consulted. The refusal itself is the router's `E.New("refusing destination ...")`, whose text names the interval |
+| **Cleanup** | n/a (per-flow decision); the snapshot is a value resolved at Start and dropped with the inbound |
+
+**Falsification controls.** MC-B4 (restore the range-only expression in `JudgeFlow`) → red with
+`preMatchCalls = 0`; MC-B5 (remove the durable fallback in `retiredFakeIPAddress`) → red with the
+`Should be true` assertion. Both tests carry their own **positive controls**: an address in the same
+range but past the issuance cursor must still bypass, and a real address must still cross. Without
+those, a blanket block on every fake-IP-shaped address would pass.
+
+## EC-B4 The recorded findings: does a detector exist?
 
 A finding is only actionable if something can fail when it regresses. Status of each recorded item's
 detector:

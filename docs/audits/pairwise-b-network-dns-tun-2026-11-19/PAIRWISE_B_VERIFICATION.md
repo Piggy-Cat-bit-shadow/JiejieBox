@@ -25,6 +25,8 @@ go test ./e2e -count=1                                                   # ok (3
 go test ./transport/v2rayhttp ./transport/v2raygrpclite ./protocol/vless ./protocol/vmess ./protocol/trojan
                                                                           # ok after B-2 (vmess has no test files)
 go test ./dns/transport/fakeip ./dns/...                                  # ok after B-3
+go test ./protocol/tun                                                   # ok (4.5s) after B-4
+go test ./route -run 'FakeIP|ARetiredPlaceholder|NoFakeIPHistory'        # ok; see the Windows flake in §6
 go test ./transport/trusttunnel ./protocol/trusttunnel                    # ok (32.1s / 0.2s) after B-1
 go test -run 'TestHTTP2Preface|TestAnIdleSessionSendsNoPing|TestTheSessionPrefersOneConnection' ./transport/trusttunnel
                                                                           # ok (1.3s) — the new push-gate step
@@ -54,6 +56,10 @@ Per-package result of the first broad run (all `ok` unless noted): `dns`, `dns/t
 | `TestResetDoesNotCutAStreamThatIsAlreadyRunning` | `transport/v2rayhttp` | a reset drains rather than cuts |
 | `TestADegenerateRangeIssuesNothingOutsideItself` | `dns/transport/fakeip` | B-3: `/31`, `/32` refuse instead of issuing out-of-range addresses |
 | `TestEveryIssuedAddressIsInsideItsRange` | `dns/transport/fakeip` | every issued address is a host address of its own range |
+| `TestARetiredPlaceholderIsNotBypassedByTheRouteSet` | `protocol/tun` | B-4: a placeholder from a retired generation reaches the router instead of being bypassed, with a control that an address past the cursor still bypasses |
+| `TestARetiredPlaceholderIsRecognizedWithoutAFakeIPTransport` | `protocol/tun` | B-4/B-5: the durable record alone recognises a placeholder when no store exists |
+| `TestARetiredPlaceholderIsRefusedWithoutAFakeIPStore` | `route` | B-5: the refusal works with no fakeip server configured, and stays proof-based |
+| `TestNoFakeIPHistoryMeansNoRefusal` | `route` | B-5: a machine that never configured fake-IP refuses nothing |
 
 ## 4. Mutation controls
 
@@ -62,6 +68,8 @@ Per-package result of the first broad run (all `ok` unless noted): `dns`, `dns/t
 | MC-B1 | delete `MaxReadFrameSize: chromeMaxFrameSize` | `TestHTTP2Preface` FAILED with `[MAX_FRAME_SIZE = 1048576]`, i.e. the pre-fix toolchain default |
 | MC-B2 | implement `Reset()` as `return c.Close()` | `TestResetKeepsThePoolReusable…` FAILED with `expected 2, actual 3` — one extra handshake for the second stream |
 | MC-B3 | disable the `issuableAddress` guard | the range tests FAILED with `must refuse instead of issuing 198.18.0.9` (`/32`) and `198.18.0.2` (`/31`) |
+| MC-B4 | restore the range-only expression in `JudgeFlow` | `TestARetiredPlaceholderIsNotBypassedByTheRouteSet` FAILED with `router preMatchCalls = 0` |
+| MC-B5 | remove the durable fallback in `retiredFakeIPAddress` | `TestARetiredPlaceholderIsRefusedWithoutAFakeIPStore` FAILED (`Should be true`) |
 
 The idle-PING test carries its own in-test control: a transport configured to ping must be seen to
 ping (it is), and only then is the production transport's zero meaningful.
@@ -102,3 +110,8 @@ cite as the proof of its own guards (`TestFIPLiteralWithoutIssuanceStaysReachabl
    no PING) rather than add it; no benchmark was run, and none is claimed.
 5. **CI was not executed.** The new `verify.yml` step was validated by parsing the workflow and by
    running its exact command locally; a workflow edit is not evidence that a job ran.
+6. **One `route` test flakes on Windows under full-suite load.**
+   `TestAnUnreferencedRuleSetDropsItsRulesAtStartup` failed once with `TempDir RemoveAll cleanup: …
+   The directory is not empty` — a Windows open-handle race in the rule-set artifact directory, not an
+   assertion: the same test passes 3/3 in isolation. It is unrelated to this window's changes
+   (rule-set artifacts, not fake-IP) and is recorded rather than worked around.
