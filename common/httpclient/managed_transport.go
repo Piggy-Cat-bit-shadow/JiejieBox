@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,12 @@ type ManagedTransport struct {
 	rebuildAccess sync.Mutex
 	factory       func() (innerTransport, error)
 	cheapRebuild  bool
+	// closed marks a transport whose Close has run. Without it, close()'s Swap(nil) is
+	// indistinguishable, at the next RoundTrip or Reset, from "nothing has been built yet": the
+	// epoch is rebuilt inside a transport the manager has already released, and nothing ever closes
+	// it. The check lives under rebuildAccess, the same lock the build takes, so a request cannot
+	// pass it while a Close is swapping the epoch away.
+	closed atomic.Bool
 
 	headers         http.Header
 	host            string
@@ -67,6 +74,12 @@ func (t *ManagedTransport) getEpoch() (*transportEpoch, error) {
 	}
 	t.rebuildAccess.Lock()
 	defer t.rebuildAccess.Unlock()
+	if t.closed.Load() {
+		// The owner is gone. Building here would install a transport that nothing will close: the
+		// manager's Close has already run, and the caller (a provider refresh, a rule-set fetch, a
+		// DNS query after shutdown) has no way to release it.
+		return nil, E.Cause(net.ErrClosed, "http transport[", t.tag, "] was closed")
+	}
 	epoch = t.epoch.Load()
 	if epoch != nil {
 		return epoch, nil
@@ -172,10 +185,15 @@ func (t *ManagedTransport) CloseIdleConnections() {
 }
 
 func (t *ManagedTransport) Reset() {
+	if t.closed.Load() {
+		// A network change after Close has nothing to rebuild: the transport was released, and
+		// building a replacement here would hand the closed transport a live socket pool again.
+		return
+	}
 	oldEpoch := t.epoch.Swap(nil)
 	if t.cheapRebuild {
 		t.rebuildAccess.Lock()
-		if t.epoch.Load() == nil {
+		if t.epoch.Load() == nil && !t.closed.Load() {
 			inner, err := t.factory()
 			if err == nil {
 				t.epoch.Store(&transportEpoch{transport: inner})
@@ -187,7 +205,13 @@ func (t *ManagedTransport) Reset() {
 }
 
 func (t *ManagedTransport) close() error {
+	// First, so a request that reads the epoch below cannot rebuild it: the swap and the build are
+	// serialised by rebuildAccess, and this flag is what makes "closed" a different answer from
+	// "not built yet" inside that section.
+	t.closed.Store(true)
+	t.rebuildAccess.Lock()
 	epoch := t.epoch.Swap(nil)
+	t.rebuildAccess.Unlock()
 	if epoch != nil {
 		return epoch.transport.Close()
 	}
