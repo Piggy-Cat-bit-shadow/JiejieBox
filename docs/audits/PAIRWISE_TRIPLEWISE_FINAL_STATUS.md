@@ -119,3 +119,21 @@ behaviour and pin, an artifact-level handshake comparison, the device/platform r
 recorded product decisions (Critical-UDP admission policy, H3 demotion observability, tiny-range
 rejection). None of those is a reason to undo the work; all of them are reasons not to call the original
 task list complete.
+
+## 7. After this page: the second upstream batch
+
+A second batch of 128 upstream Issue/PR candidates (38 P0 / 90 P1, eight repositories) was triaged
+afterwards; its verdicts, the 38 P0 upstream states, and the per-item classification are in
+[`batch2-upstream-triage-2026-11-19.md`](batch2-upstream-triage-2026-11-19.md). Three things came out of
+it that change this page's boundaries:
+
+- **the eight open sing-box P0s** are in this tree's mechanisms (tailscale endpoint, search domains,
+  hijack-dns, TFO, endpoint detour, netns, interrupt, srs) and are now the top of the attack list,
+  **not yet reproduced**;
+- the sing-tun netlink monitor's recovery gap (F1) is now a **patch with behaviour evidence in both
+  directions** (`patches/sing-tun-monitor-recovery/`: pinned FAIL, patched PASS), still unpinned;
+- one defensive fix: a fake-IP query before `Start` returns an error instead of panicking.
+
+Two dependency facts from that pass belong here: quic-go's 7 P0s are 6 closed before the pin plus
+#3883 still open, and mieru's 4 P0s all closed before the pin - both **inferred from dates**, not
+commit-level review.
