@@ -413,12 +413,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "branch": "dev",
-      "tip": "c0855e6761800b87a36988d5e01e88874bf3ea4f",
-      "pin": "c0855e676180",
+      "tip": "2105ebe3338298ab2908a115d6772733ff17f7aa",
+      "pin": "2105ebe33382",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-17",
-      "note": "dev advanced one commit past f4d0d5b6; c0855e67 adds only monitor_shared_test.go, which pins that Close stops and clears the update timer, and changes no production source. The release candidate moved the pin to that tip because Kernel release's freeze rejects an update pin that is behind; Android Core run 43991875219 and Release contract run 43991875072 built the moved pin set."
+      "observed_at": "2026-11-20",
+      "note": "dev integrates the two prepared patches and their tests: UDP NAT entries cancel the dial they launched on every close path (idle sweep, explicit Close, capacity eviction), and the Linux netlink monitor reopens its subscription with 1s->30s backoff after a read error and emits one update after recovery. Both were red before the patch and green after it on this base; linux-tun-verify runs them. The pin was moved by release-freeze.py apply and needs a run at the new lock before the release gate is satisfied."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
