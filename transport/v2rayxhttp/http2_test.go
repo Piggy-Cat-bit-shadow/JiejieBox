@@ -113,6 +113,14 @@ func TestClientDefaultKeepAliveReachesThePooledTransport(t *testing.T) {
 // unit test cannot wait for; what it can pin is that the pool keeps and reuses
 // the connection across idle time, so a future change that turned the keep-alive
 // period into an idle timeout (or a reconnect trigger) fails here.
+//
+// The count is a DELTA, not an absolute, because a cold pool may legitimately
+// open two TCP connections for the first session: the downlink GET and the first
+// upload POST are not ordered (SPEC 061), so both reach Go's HTTP/2 client at
+// once and it can give each its own connection. Measured, and reproduced in
+// plain Go on the pinned x/net with no sing-box code in the path. See
+// settledAccepts for the measurement and for why the absolute count is not this
+// test's property.
 func TestIdlePooledConnectionIsReusedWithoutANewDial(t *testing.T) {
 	server := newCountingH2CServer(t)
 	client := h2cClient(t, server.addr, modePacketUp)
@@ -128,6 +136,7 @@ func TestIdlePooledConnectionIsReusedWithoutANewDial(t *testing.T) {
 	if err = first.Close(); err != nil {
 		t.Fatalf("first close: %v", err)
 	}
+	settled := settledAccepts(t, server)
 
 	time.Sleep(1200 * time.Millisecond)
 
@@ -141,8 +150,8 @@ func TestIdlePooledConnectionIsReusedWithoutANewDial(t *testing.T) {
 	}
 	server.waitForRequests(t, 2)
 
-	if accepts := server.listener.count(); accepts != 1 {
-		t.Fatalf("server saw %d TCP connections across an idle period, want 1 (the pooled connection was re-dialed)", accepts)
+	if accepts := server.listener.count(); accepts != settled {
+		t.Fatalf("server saw %d TCP connections across an idle period, want the %d the first session left open (the pooled connection was re-dialed)", accepts, settled)
 	}
 	if pooled := pooledClientCount(client); pooled != 1 {
 		t.Fatalf("XMUX reports %d pooled connections after an idle period, want 1", pooled)

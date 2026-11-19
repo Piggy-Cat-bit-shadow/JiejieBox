@@ -668,10 +668,22 @@ jobs:
         # can be dropped from here and from the artifact workflows' deep legs. Deleting it from
         # here first would remove coverage without moving it, which is the failure mode this
         # comment exists to prevent. It is a MOVE, and the destination is not built yet.
+        #
+        # transport/v2rayxhttp joins for a different reason: it was raced NOWHERE, and not merely
+        # un-raced - no job in this repository ran its tests at all, `go list -deps` in
+        # server-linux-amd64 only proves the package is compiled into the binary. The cost of that
+        # gap was measured, not assumed: two of its pool-lifecycle tests were RED at
+        # 7654f1a77 and nothing noticed, and when they were finally run they turned out to assert a
+        # property Go's HTTP/2 client does not guarantee (a cold pool may give the downlink GET and
+        # the first upload POST a connection each, because SPEC 061 deliberately does not order them;
+        # xhttp's own settledAccepts documents the measurement). The package owns a pooled
+        # transport with a generation gate, a reuse boundary and a shared upload budget, so a
+        # fork-local regression lands here first - which is this step's stated criterion. Measured at
+        # ~23 s under -race with the Darwin tag profile, against a 30 m timeout.
         run: |
           set -euo pipefail
           tags="$(cat release/DEFAULT_BUILD_TAGS)"
-          go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./route/... ./adapter/...
+          go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./transport/v2rayxhttp/... ./route/... ./adapter/...
 
       - name: race on the control channel
         # The control channel's decision logic is concurrent by construction - a connection generation

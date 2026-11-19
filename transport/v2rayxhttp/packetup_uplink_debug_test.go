@@ -822,6 +822,40 @@ func (listener *acceptCountingListener) killAll() {
 	}
 }
 
+// settledAccepts returns the accept count once it has stopped moving.
+//
+// # Why a SESSION is counted as a delta and not as an absolute
+//
+// The downlink GET and the first upload POST are deliberately not ordered (SPEC 061: awaiting the
+// downlink response deadlocks against a server that holds it until the upload delivers bytes). On a
+// COLD transport pool both requests therefore reach Go's HTTP/2 client at the same instant, and it
+// can give each one its own TCP connection: measured here as 2 accepts for one packet-up session,
+// and 1 accept when the two requests are ≥5 ms apart. It is not a sing-box defect and not an
+// x/net-version regression - the same shape reproduces in plain Go on the pinned golang.org/x/net
+// with no sing-box code involved - so it is a property of the transport, not a property of XMUX, and
+// asserting an absolute count would make this suite fail for a reason it does not own.
+//
+// What the design does guarantee, and what these two tests are about, is the DELTA: once the pool
+// has a connection, a later session must not create another one, and a new connection may appear
+// only after the old one is dead. That is why the count is taken here, after the first session's
+// requests have been observed, and compared later.
+func settledAccepts(t *testing.T, server *countingH2CServer) int {
+	t.Helper()
+	previous := -1
+	deadline := time.Now().Add(writeFreeBudget)
+	for {
+		current := server.listener.count()
+		if current == previous {
+			return current
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the accept count never settled (last %d)", current)
+		}
+		previous = current
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 type countingH2CServer struct {
 	listener *acceptCountingListener
 	server   *http.Server
@@ -910,9 +944,9 @@ func TestTransportRedialIsInvisibleToXMUX(t *testing.T) {
 		t.Fatalf("first write: %v", err)
 	}
 	server.waitForRequests(t, 1)
-	if accepts := server.listener.count(); accepts != 1 {
-		t.Fatalf("server saw %d TCP connections for the first session, want 1", accepts)
-	}
+	// See settledAccepts: a cold pool may have used two TCP connections for this one session, so
+	// the baseline is taken here and every later assertion is about growth.
+	settled := settledAccepts(t, server)
 	if pooled := pooledClientCount(client); pooled != 1 {
 		t.Fatalf("XMUX reports %d pooled connections, want 1", pooled)
 	}
@@ -952,8 +986,8 @@ func TestTransportRedialIsInvisibleToXMUX(t *testing.T) {
 	if err = second.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if accepts < 2 {
-		t.Fatalf("server saw %d TCP connections after the first was killed, want a redial", accepts)
+	if accepts <= settled {
+		t.Fatalf("server saw %d TCP connections after the first was killed (baseline %d), want a redial", accepts, settled)
 	}
 	if pooled != 1 {
 		t.Fatalf("XMUX reports %d pooled connections after a transport-level redial, want 1 — a redial must not leak transports", pooled)
