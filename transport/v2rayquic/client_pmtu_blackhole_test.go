@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -83,10 +84,18 @@ func TestAPathThatDropsOversizedDatagramsStillCarriesTraffic(t *testing.T) {
 	sendRecord(t, second, 0, "and-a-second-stream")
 	require.EqualValues(t, 2, server.streamCount.Load())
 
-	require.Positive(t, dialer.dropped.Load(),
-		"the simulated path dropped nothing: the workload never grew a datagram past 1280, so this "+
-			"test did not exercise a black hole at all")
-	t.Logf("datagrams dropped by the simulated path: %d", dialer.dropped.Load())
+	// The drop assertion only makes sense where the client actually probes sizes above the path MTU:
+	// NewClient enables path-MTU discovery on Linux and Windows and disables it on Darwin, so a
+	// Darwin client deliberately stays at a datagram size the simulated path carries and there is no
+	// probe to drop. The traffic assertions above still hold there.
+	if C.IsLinux || C.IsWindows {
+		require.Positive(t, dialer.dropped.Load(),
+			"the simulated path dropped nothing: the workload never grew a datagram past 1280, so this "+
+				"test did not exercise a black hole at all")
+		t.Logf("datagrams dropped by the simulated path: %d", dialer.dropped.Load())
+	} else {
+		t.Log("path MTU discovery is disabled on this platform; no oversized datagram is expected")
+	}
 }
 
 // TestAPathThatDropsEverythingFailsForTheCaller is the control for the test above: the wrapper really
