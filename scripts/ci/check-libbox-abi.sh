@@ -365,7 +365,16 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 # The compile half: Apple client run 43636617538 built ONE Libbox from kernel 934a290 and compiled
 # iOS and macOS from this exact source; the 0.1.51 candidate gets a fresh compile on the same SHA.
 # It is not a device or TestFlight result.
-VERIFIED_APPLE_SHA="2e5b71fa59809b17faff1e24ab2e56caee52612e"
+# Moved from 2e5b71fa to 5998e5e for the 0.1.55 preparation. The range 2e5b71fa..5998e5e is ONE
+# UI-only Swift change (ApplicationLibrary/Views/Setting/CoreView.swift: drop the configuration status
+# section from the Core page) and touches no Go surface in experimental/libbox. Layer 4 was RUN
+# against a clean checkout of this revision (no submodules), not inherited:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <clone at 5998e5e>
+#   {"scanned": 742, "violations": [], "interface_methods": 3, "error": ""}
+# The compile half is the Apple client run dispatched for this candidate; its run id is recorded in
+# release/pin-runs.json with the rest of this round's evidence. It is not a device or TestFlight result.
+VERIFIED_APPLE_SHA="5998e5e8362d888c1ffe20ea0dee89041f066472"
 
 client_root=""
 skip_client=0
