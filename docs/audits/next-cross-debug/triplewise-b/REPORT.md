@@ -101,8 +101,30 @@ run.
 ## 4. Gates
 
 The `dns` package is green with the new tests, no production code changed, no dependency pin moved
-(`release/source-lock.json`, `release/pin-runs.json` untouched). The push gate status is in the
-session's final report.
+(`release/source-lock.json`, `release/pin-runs.json` untouched).
+
+### 4.1 The push gate failed once, on a pre-existing test flake, and it was fixed
+
+The first push of this window (`f22bf16ad`) failed `Verify` in "the pure-logic packages no other job
+runs", not in anything this window changed:
+
+```
+--- FAIL: TestAgentFFrameShapePlainGoroutine
+    MEASURED shape=plain goroutine with nothing leaked: before=20 inside=21 fires=false
+    Error: Should be false
+    Messages: nothing is leaked, so the predicate must not fire
+```
+
+`agentFShapeFires` takes a fresh goroutine census on a goroutine of its own, and the test called it
+twice - once for the log line, once for the assertion. The first call's goroutine is still visible to
+the census while it exits, so the second call can read one more than the first: same shape, two
+consecutive calls, two answers. The reading the test had already measured (`inside`, corrected by the
+one frame the helper subtracts) is what the predicate is about, so `agentFShapeFiresFor` evaluates it
+there and the second read is gone (`TEST_ASSERTION_FIXED`, `4323ccd1b`). Both "must not fire"
+assertions use the measured reading; the "must fire" ones keep the live read, because a real leak is
+held by the test and cannot be cancelled by an exiting goroutine. `common/sniff` passes
+`-race -count=2` (10.4 s) and the push gate at `4323ccd1b` is green.
+
 
 ## 5. New direction this window opened
 

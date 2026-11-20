@@ -22,6 +22,7 @@ round's open rows are re-checked against HEAD rather than re-counted.
 | TB-10 | H3-only fallback | **NO_DEFECT** (policy honoured) | no fallback object to reach |
 | TB-11 | reload consistency | **NO_DEFECT** (consistency) | close-then-build cannot expose a mixed graph; cost is R-B9 |
 | TB-12 | selector node · physical connection · state display | `NOT_COVERED` | no per-connection node surface exists to disagree; the selector's reported node is the *current selection* by contract, so the question is a semantics note, not a socket-vs-report defect |
+| — | the push gate itself | **TEST_ASSERTION_FIXED** | `common/sniff`'s leak predicate was called twice per test (log + assertion) and the two calls read different censuses; fixed to evaluate the measured reading (`4323ccd1b`), see `REPORT.md` §4.1 |
 
 ## 2. TB-4: which half is covered, and which is not
 
