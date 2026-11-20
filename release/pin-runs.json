@@ -433,6 +433,15 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44678300273"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 44678300270,
+      "head_sha": "0e2726686abd72e5c117f9378e480f0cbd040a1f",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44678300270"
     }
   ],
   "child_runs": [],

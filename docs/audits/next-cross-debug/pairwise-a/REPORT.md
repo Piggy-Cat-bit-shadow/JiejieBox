@@ -304,18 +304,18 @@ purpose rather than papered over:
    (`coalescing_test.go`, `admit_creation_test.go`); the new test file contributes none. The first
    push of the change did add three `paralleltest` findings in the new file, which the follow-up
    commit `da880d8` fixes — that is why the pinned revision is the follow-up and not `693a1fe`.
-3. **The JiejieBox commits are local.** The commits are on the local `testing` branch; pushing
-   them to `origin/testing` failed at the end of the session (`schannel: failed to receive handshake`
-   / `Connection was reset`), and `api.github.com` was unreachable in the same window, so no run could
-   be observed or recorded. The `sing-anytls` push did succeed - that fork's CI ran at `da880d8`
-   (run `44673034831`). The minimum condition to finish: `git push origin testing`, then record a
-   successful `linux-kernel-verify` run (it triggers on `transport/trusttunnel/**`) or `Android Core
-   ARM64` run at that commit into `release/pin-runs.json`'s `parent_runs` (the shape every entry
-   there already has: `repo`, `workflow`, `run_id`, `head_sha`, `event`, `conclusion`,
-   `url`), and push again. Until then `verify.yml`'s
-   last step is red **only** on `check-pin-runs.py`; every other step of that workflow was reproduced
-   locally (gofmt, the package-execution ratchet, nested-module integrity, knowledge facts, the source
-   lock and both build profiles).
+3. **The commit set is on `origin/testing` and its push gate is green.** Pushing was blocked for a
+   while (GitHub HTTPS and SSH both reset), and when the path recovered the ten commits went up as
+   `17b6fb2e0..0e2726686`. CI at `0e2726686` ran the fleet: **`linux-kernel-verify`
+   (`44678300273`, 2m50s) succeeded** - it builds with `with_trusttunnel`/`with_quic` and runs
+   `transport/trusttunnel` on a Linux kernel, the platform half this Windows host cannot cover - and
+   `Release contract verification` (`44678300270`), `iOS resource guard` (`44678300297`) and
+   `Maintenance ledger` (`44678300224`) also succeeded. That kernel run is what closes the pin gate:
+   it was recorded in `release/pin-runs.json`'s `parent_runs` (`b724a1e80`), so
+   `check-pin-runs.py` now reports `PASS: every pin in the lock is carried by an executed run at the
+   same pin set (44678300273)`, and `verify.yml` at `b724a1e80` is **success** (run `44678967288`).
+   The first push's own `Verify` run was cancelled by that follow-up push (concurrency
+   cancel-in-progress), which is why the green one is the follow-up.
 
 ## 6. Residual risks in the two fixes (stated, not hidden)
 

@@ -170,9 +170,16 @@ comment where the mistake was made).
 
 ## 7. Gates and CI
 
-The two fixes are in-tree, so no pin moved and `release/source-lock.json` is untouched
-(`scripts/ci/release-freeze.py verify` was green in the previous window and no input changed).
-Behaviour, package regression and `-race` results are in §1. The kernel branch could not be pushed
-from this environment (GitHub unreachable for HTTPS and SSH during the whole session), so the
-commits are local on `testing`; the same note, with the exact resume commands, is in the
-resource-lifecycle window's `REPORT.md` §5.
+The two fixes are in-tree, so no pin moved and `release/source-lock.json` is untouched. Behaviour,
+package regression and `-race` results are in §1, and the tagged whole-repository build at this HEAD
+exits 0.
+
+The branch is on `origin/testing` (`17b6fb2e0..0e2726686`) and its push gate is green: `Verify` at
+`b724a1e80` is **success** (run `44678967288`), `linux-kernel-verify` at `0e2726686` is **success**
+(run `44678300273`; it runs the TrustTunnel half on a Linux kernel), and
+`Release contract verification` (run `44678300270`) also succeeded. The only gate that was still red
+after the first push - `check-pin-runs.py`, because the AnyTLS pin moved in the resource-lifecycle
+window without a run at its lock - was closed by recording that kernel run in
+`release/pin-runs.json` (`b724a1e80`); `check-pin-runs.py` then reports
+`PASS: every pin in the lock is carried by an executed run at the same pin set (44678300273)`.
+

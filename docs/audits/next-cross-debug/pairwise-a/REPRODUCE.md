@@ -194,6 +194,7 @@ Recorded results: build exit 0; `trusttunnel` 52.98 s; `protocol/trusttunnel` 0.
 
 - iOS Network Extension footprint, Linux netns/nftables, Android OOM reports, native Cronet
   (`DialEarly`/`DialEarlyWithQUIC`): **not observable** on this host. No claim about them is made.
-- The release gate that needs a CI run at the new pin set (`check-pin-runs.py`): requires pushing the
-  branch and a successful runner job at a commit whose `release/source-lock.json` carries
-  `da880d8`; not obtainable in this environment.
+- The release gate that needs a CI run at the new pin set (`check-pin-runs.py`) is closed, but not
+  from this host: it took the branch push and a runner job. `linux-kernel-verify` 44678300273
+  succeeded at `0e2726686`, was recorded in `release/pin-runs.json` (`b724a1e80`), and the gate now
+  passes. Re-check it with `python scripts/ci/check-pin-runs.py`.
