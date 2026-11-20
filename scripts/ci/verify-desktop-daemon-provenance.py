@@ -7,6 +7,11 @@ Usage:
     --core-dir DIR          the core checkout the daemon was built in (default: .)
     --expect-core-sha SHA   the core commit the daemon must come from
     --expect-version V      the version the daemon must report
+    --expect-go-version V   the Go toolchain the daemon must have been built by (e.g. go1.27.4);
+                            required on the release path because the desktop client declares this
+                            version in its own version.json and setup-go installs it
+    --allow-unasserted-go-version
+                            explicitly skip that assertion (ad-hoc diagnostics only; never a release)
     --require-execution     fail instead of skipping when the daemon cannot be run
     --record PATH           also write the provenance record to PATH
 
@@ -28,7 +33,14 @@ Three independent things are checked, because each can be right while another is
                                      thing the stamp depends on and is checked first.
   2. the artifact's build metadata   `go version -m` reads the embedded Go build info
                                      without running the binary, and reports GOOS,
-                                     GOARCH and the exact build tags.
+                                     GOARCH and the exact build tags. It also names the
+                                     toolchain: the desktop client declares the Go version
+                                     it builds with (clients/desktop/version.json), and
+                                     `--expect-go-version` proves the shipped binary was
+                                     built by exactly that toolchain. Without it a daemon
+                                     compiled by an older Go passes every other check -
+                                     measured: the same source built by go1.27.4 and by
+                                     go1.26.8 differs only in that field.
   3. the daemon's own report          `sing-box-daemon version` prints the stamped
                                      constant.Version. This is the only check that reads
                                      the value the code will actually use at runtime, and
@@ -131,16 +143,114 @@ def build_settings(binary):
     return main_path, settings
 
 
+# `go version -m <binary>` starts with "<binary>: go1.27.4" on a release toolchain. A
+# development toolchain prints "<binary>: devel go1.28-<hash>", which this does not parse:
+# a release daemon must come from a release toolchain, and refusing to read the field is
+# the right answer for "devel" rather than treating it as a version.
+GO_VERSION_PATTERN = re.compile(r":\s*(go[0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$")
+
+
+def built_by_go_version(binary):
+    """The toolchain named in the binary's build info, or None when it cannot be read."""
+    output = run(["go", "version", "-m", str(binary)])
+    first = output.splitlines()[0] if output else ""
+    match = GO_VERSION_PATTERN.search(first)
+    return match.group(1) if match else None
+
+
+def go_version_record(built_by, expected, allow_unasserted):
+    """Apply the toolchain-identity rule and return the record line it earns.
+
+    Split out of main() so --self-test can execute every outcome without a binary: the
+    release path requires an exact match, the diagnostic path may skip it explicitly, and
+    an absent or unreadable toolchain is always a failure.
+    """
+    if built_by is None:
+        fail(
+            "cannot read the Go toolchain the daemon was built by",
+            ["`go version -m` names it on its first line; a daemon without that field is not attributable"],
+        )
+    if expected:
+        if built_by != expected:
+            fail(
+                f"the daemon was built by {built_by}, expected {expected}",
+                [
+                    "the desktop client declares this version in clients/desktop/version.json",
+                    "and the build must use exactly it; an older toolchain silently misses the",
+                    "runtime work the kernel's Go migration was made for",
+                ],
+            )
+        return f"built by go            {built_by} (== version.json go_version)"
+    if allow_unasserted:
+        return f"built by go            {built_by} (NOT asserted: --allow-unasserted-go-version)"
+    fail(
+        "--expect-go-version is required",
+        [
+            "the daemon's toolchain is part of its identity; a release must prove it",
+            "pass --allow-unasserted-go-version only for an ad-hoc diagnostic",
+        ],
+    )
+
+
+def self_test():
+    """Every outcome of the toolchain rule, without needing a binary or a Windows host."""
+    parse_cases = [
+        ("C:\\x\\sing-box-daemon.exe: go1.27.4", "go1.27.4"),
+        ("/tmp/daemon: go1.27", "go1.27"),
+        ("C:\\x\\daemon.exe: devel go1.28-abcdef", None),
+        ("", None),
+    ]
+    for line, want in parse_cases:
+        match = GO_VERSION_PATTERN.search(line)
+        got = match.group(1) if match else None
+        if got != want:
+            print(f"FAIL: self-test parse {line!r} -> {got!r}, want {want!r}", file=sys.stderr)
+            raise SystemExit(1)
+    record = go_version_record("go1.27.4", "go1.27.4", False)
+    if "== version.json" not in record:
+        print("FAIL: self-test matching toolchain did not record the equality", file=sys.stderr)
+        raise SystemExit(1)
+    record = go_version_record("go1.27.4", "", True)
+    if "NOT asserted" not in record:
+        print("FAIL: self-test did not record the explicit skip", file=sys.stderr)
+        raise SystemExit(1)
+    for built_by, expected, allow, why in [
+        ("go1.26.8", "go1.27.4", False, "mismatched toolchain"),
+        (None, "go1.27.4", False, "unreadable toolchain"),
+        ("go1.27.4", "", False, "unasserted without the opt-in"),
+    ]:
+        try:
+            go_version_record(built_by, expected, allow)
+        except SystemExit:
+            continue
+        print(f"FAIL: self-test accepted {why}", file=sys.stderr)
+        raise SystemExit(1)
+    print("PASS: desktop daemon provenance checker self-test (parse, match, mismatch, unreadable, opt-in)")
+
+
 def main():
     parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("daemon")
+    parser.add_argument("daemon", nargs="?")
+    parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--core-dir", default=".")
-    parser.add_argument("--expect-core-sha", required=True)
-    parser.add_argument("--expect-version", required=True)
+    parser.add_argument("--expect-core-sha", default="")
+    parser.add_argument("--expect-version", default="")
+    parser.add_argument("--expect-go-version", default="")
+    parser.add_argument("--allow-unasserted-go-version", action="store_true")
     parser.add_argument("--candidate", action="store_true")
     parser.add_argument("--require-execution", action="store_true")
     parser.add_argument("--record")
     arguments = parser.parse_args()
+
+    if arguments.self_test:
+        self_test()
+        return
+    if not arguments.daemon:
+        fail("no daemon given (or pass --self-test)")
+    for name, value in [("--expect-core-sha", arguments.expect_core_sha),
+                        ("--expect-version", arguments.expect_version)]:
+        if not value:
+            fail(f"{name} is required")
 
     daemon = pathlib.Path(arguments.daemon).resolve()
     core = pathlib.Path(arguments.core_dir).resolve()
@@ -234,6 +344,19 @@ def main():
     record.append(f"GOOS/GOARCH            {settings.get('GOOS')}/{settings.get('GOARCH')}")
     record.append(f"build tags ({len(tags)})       {','.join(sorted(tags))}")
     record.append(f"required tags          all {len(REQUIRED_TAGS)} present")
+
+    # The toolchain is part of the artifact's identity: the desktop client declares the Go
+    # version it builds with, setup-go installs that version, and the daemon must report
+    # having been built by it. This used to be invisible - two daemons that differ only in
+    # the toolchain (go1.27.4 vs go1.26.8) pass every other check in this script, so a
+    # build that silently fell back to an older local Go would have shipped as "1.27.4".
+    record.append(
+        go_version_record(
+            built_by_go_version(daemon),
+            arguments.expect_go_version,
+            arguments.allow_unasserted_go_version,
+        )
+    )
 
     # --- 3. what the daemon says about itself --------------------------------
     if os.name == "nt":

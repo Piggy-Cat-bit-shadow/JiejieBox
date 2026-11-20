@@ -126,6 +126,14 @@ jobs:
           jq --version
           python3 --version
 
+      - name: desktop daemon provenance checker self-test
+        # The Windows daemon's artifact gate now asserts the Go toolchain that built it, because
+        # the desktop client declares that version and the build must use exactly it. The checker's
+        # decision table has five outcomes (match, mismatch, unreadable, explicit skip, missing
+        # argument) and none of them needs a Windows runner or a binary, so they run on every push
+        # here instead of only when the release workflow happens to build the daemon.
+        run: python3 scripts/ci/verify-desktop-daemon-provenance.py --self-test
+
       - name: release gate tests (the existing 1000+-line suite, really executed)
         run: |
           set -uo pipefail

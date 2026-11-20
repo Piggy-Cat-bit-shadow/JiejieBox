@@ -163,8 +163,9 @@ jobs:
     name: unsigned-build / signed-test / install-lifecycle
     # `windows-latest` rather than a pinned image label, deliberately.
     #
-    # Pinning would reduce drift, but this pipeline's needs - Electron 43, Node 26, Go
-    # 1.26, the Rust MSVC toolchain, the Windows SDK for signtool, 7-Zip for the payload
+    # Pinning would reduce drift, but this pipeline's needs - Electron 43, Node 26, the Go
+    # version declared by clients/desktop/version.json (read below, not restated here), the
+    # Rust MSVC toolchain, the Windows SDK for signtool, 7-Zip for the payload
     # extraction, and NSIS - are all satisfied by the current image, and pinning to a label
     # that GitHub later retires fails a release for a reason that has nothing to do with
     # the release. Instead the image, the Windows build, the Visual Studio toolset, the
@@ -630,12 +631,20 @@ jobs:
         run: |
           candidate_flag=""
           if [ "${{ inputs.candidate }}" = "true" ]; then candidate_flag=--candidate; fi
+          # The toolchain is read from the SAME version.json the job installed and the client
+          # stamped: the artifact gate must prove the daemon was built by the version this
+          # candidate declares, not merely that some Go compiled it.
+          expected_go_version="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["go_version"])' \
+            "$CLIENT_DIR/version.json")"
+          test -n "$expected_go_version"
+          echo "version.json go_version: $expected_go_version"
           python tooling/scripts/ci/verify-desktop-daemon-provenance.py \
             $candidate_flag \
             "$CLIENT_DIR/release/win-unpacked/resources/daemon/sing-box-daemon.exe" \
             --core-dir core \
             --expect-core-sha "$CORE_SHA" \
             --expect-version "$CORE_VERSION" \
+            --expect-go-version "$expected_go_version" \
             --require-execution \
             --record "$RECORDS_DIR/daemon-provenance.txt"
 
