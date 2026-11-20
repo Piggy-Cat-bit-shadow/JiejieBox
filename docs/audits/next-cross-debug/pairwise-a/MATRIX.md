@@ -4,7 +4,7 @@ Routing table for the rows this window attacked. `REPORT.md` has the narrative a
 evidence; `REPRODUCE.md` has the commands. Labels: `FIXED` / `NO_DEFECT` / `SOURCE_ONLY` /
 `NOT_COVERED` / `NOT_OBSERVABLE` / `POLICY_DECISION`.
 
-- Repository: `Piggy-Cat-bit-shadow/JiejieBox` `testing`, start `17b6fb2e0`; code commits `f11def4b1`, `c867befd0`, `8426642c9`, `9e00fb390` (the three files in this directory are a documentation commit)
+- Repository: `Piggy-Cat-bit-shadow/JiejieBox` `testing`, start `17b6fb2e0`; code commits `f11def4b1`, `c867befd0`, `8426642c9`, `9e00fb390`, `418044508` (the three files in this directory are documentation commits)
 - Fork: `Piggy-Cat-bit-shadow/sing-anytls` `main` at `da880d8`
 - Platform: Windows amd64, Go 1.27.4; `-race` with mingw64 gcc; tags `with_trusttunnel,with_quic`
 
@@ -17,7 +17,7 @@ evidence; `REPRODUCE.md` has the commands. Labels: `FIXED` / `NO_DEFECT` / `SOUR
 | A-P09 | `transport/trusttunnel.Client` offer lifecycle × `Close`/`Reset`/network generation | pending offer, `c.session`, generation stamp | **NO_DEFECT** (regression re-run) | — |
 | A-P12 | `common/resourceguard.Guard` × OOM report / metadata diagnostics (JiejieBox) | the level→plan publication and the shed hooks | **NO_DEFECT** (executed) | `9e00fb390` |
 | A-P05 | `protocol/naive` H3 probe budget × caller deadline (JiejieBox) | the caller's remaining budget and the H3 fallback window | **POLICY_DECISION** | — |
-| A-P11 | H2/H3 response body × pool recycle (JiejieBox) | the stream's lifetime as the pool's Active/Idle evidence | **NOT_COVERED** | — |
+| A-P11 | H2/H3 response body × pool recycle (JiejieBox) | the stream's lifetime as the pool's Active/Idle evidence | **NO_DEFECT** (3 shapes executed, 2 mutation controls) | `418044508` |
 | A-P02 | QUIC PMTU probe × path migration (JiejieBox + `quic-go` fork) | the path's MTU/send-queue state | **NOT_COVERED** | — |
 
 ## A-P03 — TrustTunnel: the session a caller is handed is not reserved (FIXED)
@@ -87,15 +87,18 @@ evidence; `REPRODUCE.md` has the commands. Labels: `FIXED` / `NO_DEFECT` / `SOUR
 | Decision | arming the window on an ambiguous expiry would be a **policy change** with a cost on H3-only deployments; not changed |
 | Not observable | native Cronet (`DialEarly`, `DialEarlyWithQUIC`) on this host |
 
-## A-P11 — response body / half-close × pool recycle (NOT_COVERED)
+## A-P11 — a stream's end must reach the pool's books (NO_DEFECT)
 
 | Column | Value |
 | --- | --- |
 | Systems and repos | `transport/trusttunnel` stream/body lifetime × the session pool and its trim (JiejieBox) |
-| Shared object | the stream as the pool's Active/Idle evidence, and the response body as the stream's lifetime |
-| Why it is not covered | needs a controlled H2/H3 peer that never EOFs, half-closes and resets a stream while a sibling flow is healthy; the fake `sessionConn` used for the two fixes answers immediately, so a body-lifetime attack needs a real `x/net/http2` server harness |
-| Known contract to test | `Close` must return, the body must not strand a goroutine, a sibling stream must survive, and a genuine cold-start double connection is allowed |
-| Next step | build a `net/http` H2 server that sends headers and stalls the body; drive `DialContext` + `Read` + `Close` and count session reuse |
+| Shared object | `session.streams`: the stream is the pool's Active/Idle evidence, and the response body is the stream's lifetime |
+| Failure timeline that was looked for | a stream ends in a way the caller does not control (server EOF/half-close, caller closes a stalled tunnel, trim arrives mid-flight) and the slot, the carrier or the sibling flow is lost with it |
+| Why exactly 2 systems | the body's end belongs to the transport; the slot belongs to the pool. A body that ends without the pool noticing makes the session unkillable; a pool that closes on a liveness guess cuts the body |
+| Product path executed | real service + real client on loopback TLS: `DialContext` to a silent destination (`hold.test`), to a target that answers and closes, and a live flow across `CloseIdleConnections` |
+| Evidence | 3 tests green (0.11 s): Close of a stalled stream returns and the server releases it; the body reaches EOF and a write after it resolves; the trim leaves a live session untouched and can close it after the last stream. Mutation controls red: dropping the slot return in `streamConn.Close` → `a closed stream left its slot reserved`; making the trim ignore the stream count → `the trim closed a session that was carrying a stream` |
+| Uncovered boundary | a raw `http2.Server` RST_STREAM injection was not built (the product server ends a stream by closing it); the 1000-stream limit case is the pre-existing `testStreamLimit` |
+| Commit | `418044508` |
 
 ## A-P02 — QUIC PMTU probe × path migration (NOT_COVERED)
 

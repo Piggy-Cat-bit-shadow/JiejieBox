@@ -141,6 +141,27 @@ go test -count=1 -tags with_trusttunnel,with_quic -run 'TestClientCloseDiscardsT
 # 7 tests, all PASS, 0.32 s
 ```
 
+## 3b. `P11` — a stream's end must reach the pool's books
+
+```powershell
+go test -count=1 -tags with_trusttunnel -run 'TestClosingAStalledStreamKeepsTheSessionAndItsSibling|TestServerEndedStreamLeavesTheSessionUsable|TestTrimCannotTouchALiveStream' -v ./transport/trusttunnel/
+# --- PASS × 3, ok 0.11 s
+```
+
+The three shapes: a stalled tunnel the caller closes; a target that answers and closes (half-close,
+then a write after EOF); and a live stream across `CloseIdleConnections`. Each asserts the server
+released its side, the carrier was not re-dialled, the sibling kept working, and `streams` returned
+to 0.
+
+Mutation controls (both red in the round):
+
+```powershell
+# 1) in transport/trusttunnel/client.go, delete `c.session.streams.Add(-1)` from streamConn.Close:
+#    FAIL TestClosingAStalledStream...  "a closed stream left its slot reserved, so the session can never be trimmed"
+#    FAIL TestTrimCannotTouchALiveStream  "the closed stream left its slot reserved"
+# 2) make CloseIdleConnections ignore the count (`if session == nil {`):
+#    FAIL TestTrimCannotTouchALiveStream  "the trim closed a session that was carrying a stream"
+```
 ## 4. `P12` — `Stats()` as a reentrant reclaimer
 
 ```powershell
@@ -164,7 +185,7 @@ go test -count=1 ./route/                                               # ok 459
 go test -race -count=1 -tags with_trusttunnel,with_quic ./transport/trusttunnel/ ./protocol/anytls/
 ```
 
-`9e00fb390` and this documentation commit add only test/report files after the code HEAD; they do not change a build input.
+`9e00fb390`, `418044508` and the documentation commits add only test/report files after that code HEAD; they do not change a build input. The `P11` suite (418044508) was run separately: `ok 0.11 s`.
 
 Recorded results: build exit 0; `trusttunnel` 52.98 s; `protocol/trusttunnel` 0.24 s;
 `protocol/anytls` 7.20 s; `route` 459.94 s; `-race` 55.69 s and 8.33 s.

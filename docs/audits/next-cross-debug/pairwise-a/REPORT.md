@@ -5,8 +5,8 @@ H2-H3 / QUIC` pools and the reclaim side that closes them (`ResourceGuard`, `OOM
 reference manager's trim and reuse-boundary walks).
 
 - Repository: `Piggy-Cat-bit-shadow/JiejieBox`, branch **`testing`** (no new branch was created)
-- Starting HEAD: `17b6fb2e0` (`testing` == `origin/testing`, clean tree); four commits were added
-  (`f11def4b1`, `c867befd0`, `8426642c9`, `9e00fb390`)
+- Starting HEAD: `17b6fb2e0` (`testing` == `origin/testing`, clean tree); seven commits were added
+  (`f11def4b1`, `c867befd0`, `8426642c9`, `9e00fb390`, `52d7663e4`, `79c21b845`, `418044508`)
 - Fork touched: `Piggy-Cat-bit-shadow/sing-anytls` `main` → `da880d8` (two commits: `693a1fe`,
   `da880d8`), consumed through the `replace` pin and `release/source-lock.json`
 - Toolchain: Go **1.27.4** (the `toolchain` line), `-race` with the bundled mingw64 gcc,
@@ -29,9 +29,9 @@ outbound forwarded only the trim, so on a sleep/wake boundary the reference mana
 that pre-sleep session next died on the SDK's `streamOpenTimeout` (3 s, armed from the second
 stream on - exactly this case). The fix required the pool's own state, so it was made in the
 `sing-anytls` fork (`Client.RetireSuspect`), pinned in both Go modules, and reached from the
-outbound through `adapter.ReuseSuspect`. Two more rows were attacked
-and ruled out with executed evidence (`P09`, `P12`); three are recorded as policy, uncovered or
-unobservable here with the reason (`P05`, `P11`, `P02`).
+outbound through `adapter.ReuseSuspect`. Three more rows were attacked and ruled out with
+executed evidence (`P09`, `P11`, `P12`); two are recorded as policy or unobservable here with
+the reason (`P05`, `P02`).
 
 ## 1. What was actually executed
 
@@ -44,6 +44,7 @@ unobservable here with the reason (`P05`, `P11`, `P02`).
 | `go test -race -count=2 ./common/resourceguard/` | `ok` 3.192 s |
 | `python scripts/ci/release-freeze.py verify --lock release/source-lock.json` | `PASS: every pin in the tree is the pin the lock records` |
 | `python scripts/ci/check-pin-runs.py` | **FAIL by design**: `no recorded run carries the current pin set` (see §5) |
+| `go test -tags with_trusttunnel -run 'TestClosingAStalledStream|TestServerEndedStream|TestTrimCannotTouch' ./transport/trusttunnel/` | `ok` 0.11 s; 3 body-lifetime shapes, 2 mutation controls red |
 | fork `test` workflow at `da880d8` | run `44673034831`, success (23 s) |
 | fork `lint` workflow at `da880d8` | 13 errors, **identical count to the pre-change run** `43884383720`; 0 mention the new file |
 
@@ -258,11 +259,32 @@ would be a **policy change** with a cost on H3-only deployments, so it is not ma
 Cronet paths (`DialEarly`, `DialEarlyWithQUIC`) are `NOT_OBSERVABLE` on this host; the fallback
 decision itself is in-tree and testable without Cronet.
 
+### 4.4 `P11` - a stream's end must reach the pool's books: `NO_DEFECT`
+
+The stream is the pool's Active/Idle evidence, so its lifetime has to end in `streams` no matter how
+it ends. Three shapes were executed against the real service
+(`transport/trusttunnel/stream_lifecycle_test.go`):
+
+- **A stalled tunnel the caller never reads, then closes.** Close returns within 5 s, the server
+  releases its side (`handler.holding` back to 0), the carrier is the same one (`dials == 1`) and it
+  still carries a sibling flow, and the slot comes back: `streams` reaches 0 and the trim can then
+  close the session.
+- **The target answers and closes (half-close).** The body reaches `io.EOF`; a write after that EOF
+  resolves (accepting it or reporting the reset) instead of blocking the caller, and the session
+  still serves the next CONNECT without a re-dial.
+- **The trim while a stream is live.** `CloseIdleConnections` leaves the session alive and the stream
+  keeps echoing across it; the SAME call closes the session once that stream ends.
+
+Mutation controls, both executed and both red: removing the slot return from `streamConn.Close` makes
+the first and third fail (`a closed stream left its slot reserved, so the session can never be
+trimmed`); making `CloseIdleConnections` ignore the stream count makes the third fail (`the trim
+closed a session that was carrying a stream`). The 1000-stream limit case is already pinned by
+`testStreamLimit`, which now also exercises the new reservation (one session, one slot freed and
+reused) and stays green.
 ## 5. Not covered, not observable, and the gates that stay red
 
 | Item | Label | Why |
 | --- | --- | --- |
-| `P11` response body / half-close / RST_STREAM × pool recycle | `NOT_COVERED` | needs a controlled H2/H3 peer that never EOFs, half-closes and resets streams while a sibling flow is healthy; the TrustTunnel `sessionConn` fake used here answers immediately, so a body-lifetime test needs a real `x/net/http2` server harness. Planned, not executed in this round |
 | `P02` QUIC PMTU probe × path migration | `NOT_COVERED` | requires simultaneous PMTU-blackhole injection and NAT rebinding; the blackhole and the send-queue tests exist separately (`q35_udp_*`, `congestion_test.go`) but the cross-injection was not built |
 | native Cronet / iOS Network Extension / Linux netns | `NOT_OBSERVABLE` | not available on this host; no claim is made about them |
 | `sing-tun` UDP NAT residuals (R-4..R-7 of the previous round) | out of this window | they belong to the TUN/DNS window; nothing here changes their status |
@@ -281,8 +303,7 @@ purpose rather than papered over:
    (`coalescing_test.go`, `admit_creation_test.go`); the new test file contributes none. The first
    push of the change did add three `paralleltest` findings in the new file, which the follow-up
    commit `da880d8` fixes — that is why the pinned revision is the follow-up and not `693a1fe`.
-
-3. **The JiejieBox commits are local.** The five commits are on the local `testing` branch; pushing
+3. **The JiejieBox commits are local.** The seven commits are on the local `testing` branch; pushing
    them to `origin/testing` failed at the end of the session (`schannel: failed to receive handshake`
    / `Connection was reset`), and `api.github.com` was unreachable in the same window, so no run could
    be observed or recorded. The `sing-anytls` push did succeed - that fork's CI ran at `da880d8`
