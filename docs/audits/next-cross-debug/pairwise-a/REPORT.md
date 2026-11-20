@@ -304,19 +304,24 @@ purpose rather than papered over:
    push of the change did add three `paralleltest` findings in the new file, which the follow-up
    commit `da880d8` fixes — that is why the pinned revision is the follow-up and not `693a1fe`.
 3. **The commit set is on `origin/testing` and its push gate is green.** Pushing was blocked for a
-   while (GitHub HTTPS and SSH both reset), and when the path recovered the commits went up in three
-   pushes (`17b6fb2e0..5364c3150`). CI at `0e2726686` ran the fleet: **`linux-kernel-verify`
+   while (GitHub HTTPS and SSH both reset), and when the path recovered the commits went up in four
+   pushes (`17b6fb2e0..af4aa1fa1`). CI at `0e2726686` ran the fleet: **`linux-kernel-verify`
    (`44678300273`, 2m50s) succeeded** - it builds with `with_trusttunnel`/`with_quic` and runs
    `transport/trusttunnel` on a Linux kernel, the platform half this Windows host cannot cover - and
    `Release contract verification` (`44678300270`), `iOS resource guard` (`44678300297`) and
-   `Maintenance ledger` (`44678300224`) also succeeded; `Android Core ARM64` (`44678967220`)
-   succeeded at the follow-up commit. That kernel run and the release-contract run are what close the
-   pin gate: both are recorded in `release/pin-runs.json`'s `parent_runs` (`b724a1e80`,
-   `5364c3150`), `check-pin-runs.py` now reports `PASS: every pin in the lock is carried by an
-   executed run at the same pin set (44678300273, 44678300270)`, and `verify.yml` is **success** at
-   both `b724a1e80` (run `44678967288`) and the final commit. The first push's own `Verify` run was
-   cancelled by a follow-up push (concurrency cancel-in-progress), which is why the green ones are the
-   later commits.
+   `Maintenance ledger` (`44678300224`) also succeeded. `b724a1e80` then ran `Verify`, `Release
+   contract verification` and `Android Core ARM64` green, and `5364c3150` ran the latter two green
+   again. That kernel run and the release-contract run are what close the pin gate: both are recorded
+   in `release/pin-runs.json`'s `parent_runs` (`b724a1e80`, `5364c3150`), and `check-pin-runs.py`
+   now reports `PASS: every pin in the lock is carried by an executed run at the same pin set
+   (44678300273, 44678300270)`.
+4. **One CI flake, not a code signal.** `Verify` at the final documentation commit went red once in
+   `race checks`: `protocol/mieru`'s `TestShadowTLSv3CarriesMieruTCPOverLoopback` lost its ephemeral
+   port to a parallel package binary between the free-port probe and the bind
+   (`bind: address already in use`). Nothing in this round touches `protocol/mieru`; the job passed on
+   `gh run rerun --failed` and the run is green at `af4aa1fa1`. The fixture race is real
+   (`freePortForBothTransports` closes the probe sockets before `Start` binds) and is recorded here
+   rather than papered over.
 
 ## 6. Residual risks in the two fixes (stated, not hidden)
 

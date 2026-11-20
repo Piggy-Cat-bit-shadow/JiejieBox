@@ -174,12 +174,15 @@ The two fixes are in-tree, so no pin moved and `release/source-lock.json` is unt
 package regression and `-race` results are in §1, and the tagged whole-repository build at this HEAD
 exits 0.
 
-The branch is on `origin/testing` (`17b6fb2e0..0e2726686`) and its push gate is green: `Verify` at
-`b724a1e80` is **success** (run `44678967288`), `linux-kernel-verify` at `0e2726686` is **success**
-(run `44678300273`; it runs the TrustTunnel half on a Linux kernel), and
-`Release contract verification` (run `44678300270`) also succeeded. The only gate that was still red
-after the first push - `check-pin-runs.py`, because the AnyTLS pin moved in the resource-lifecycle
-window without a run at its lock - was closed by recording that kernel run in
-`release/pin-runs.json` (`b724a1e80`); `check-pin-runs.py` then reports
-`PASS: every pin in the lock is carried by an executed run at the same pin set (44678300273)`.
+The branch is on `origin/testing` (`17b6fb2e0..af4aa1fa1`) and its push gate is green: `Verify` at
+`b724a1e80` and at `af4aa1fa1` is **success** (runs `44678967288`, `44680798630`), `linux-kernel-verify`
+at `0e2726686` is **success** (run `44678300273`; it runs the TrustTunnel half on a Linux kernel),
+and `Release contract verification` (run `44678300270`) and `Android Core ARM64` also succeeded at
+that pin set. The only gate that was still red after the first push - `check-pin-runs.py`, because the
+AnyTLS pin moved in the resource-lifecycle window without a run at its lock - was closed by recording
+that kernel run and the release-contract run in `release/pin-runs.json`; `check-pin-runs.py` then
+reports `PASS: every pin in the lock is carried by an executed run at the same pin set
+(44678300273, 44678300270)`. One `race checks` red in between was a `protocol/mieru` port-collision
+flake unrelated to this window (`bind: address already in use` between a free-port probe and the
+bind); it passed on rerun, and the resource-lifecycle window's `REPORT.md` §5 records it.
 
