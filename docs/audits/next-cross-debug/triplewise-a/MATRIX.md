@@ -17,7 +17,7 @@ ownership, the ordering or the recovery - not if it merely runs alongside.
 | T11 | ① the Go toolchain's `tlssecpmlkem` default · ② the linker's `-X runtime.godebugDefault` override, owned by TWO strings (`cmd/internal/build_shared`, `release/LDFLAGS`) · ③ the shipped artifact path (`build_libbox`/`build_boxdd` vs `cmd/sing-box`) | the effective GODEBUG default, and through it the key-share list in every ClientHello | without ③ the two strings never meet: `cmd/sing-box` and the clients are built by different commands. Remove ② and the go.mod `godebug` line applies to both; keep ② short and only the clients lose the pin | **FIXED** (and the CI path filters that never rebuilt the artifacts are fixed with it) | `e8a74e41f`, `ci: rebuild on shared-flag changes` |
 | T04 | QUIC connection · stream lifetime · network Reset | the QUIC path/stream state | the fork implements no client-side migration (`docs/fork/interface-update-lifecycle.md`), so a client "migration" cannot be staged; the server-side NAT-rebinding path belongs to quic-go's own suite | **NOT_COVERED** (premise does not exist on the client side) | — |
 | T07 | `sing-tun` netlink monitor · `NetworkManager` transition · outbound pools | the monitor's socket, the epoch, the pools' publish decision | the monitor is Linux-only; the last round already closed its recovery/Close window in the fork and bound it to executed races | **NOT_OBSERVABLE** on this host (pointer to the prior evidence) | — |
-| T08 | a response body that never ends · one stream cancelled · pool retirement/trim | the stream's slot and the carrier's Active/Idle reading | the retirement decision is made from a count the cancel and the body both affect; the pairwise windows ran its halves | **NOT_COVERED** as a full triple (its two-system halves are `NO_DEFECT` in `pairwise-a` §4.4) | — |
+| T08 | a response body that never ends · one stream cancelled · pool retirement/trim | the stream's slot and the carrier's Active/Idle reading | the retirement decision is made from a count the cancel and the body both affect; the pairwise windows ran its halves | **NO_DEFECT** as a triple (both orders, h2+h3, mutation control) | `77d6884d0` |
 | T06 | MASQUE PREF64 · DNS bootstrap · QUIC path | the address the tunnel dials and the family it is built on | needs a PREF64/NAT64 network and an IPv6-only bootstrap | **NOT_COVERED** / **NOT_OBSERVABLE** here | — |
 
 ## T11 — the reducible control matrix (executed)
@@ -67,7 +67,7 @@ artifact split.
   change, which is `pairwise-b`'s B-P14 work.
 - **T07**: the Linux netlink monitor is not observable on Windows; its recovery and Close windows were
   closed in the fork and pinned by its own tests (the pin is recorded in `release/pin-runs.json`).
-- **T08**: the full triple needs a third flow cancelled *while* a body is stalled *and* the pool is
-  being retired; the two pairwise halves are `NO_DEFECT` (with mutation controls) in `pairwise-a`
-  §4.4, but the three-way interleaving was not built.
+- **T08**: executed on the TrustTunnel carrier and `NO_DEFECT` (both orders, h2+h3, with a mutation
+  control); the `common/httpclient` variant is correct by construction (the epoch is released by the
+  response body's Close) and was reasoned from its accounting rather than attacked.
 - **T06**: needs a PREF64/NAT64 network; `NOT_OBSERVABLE` here.

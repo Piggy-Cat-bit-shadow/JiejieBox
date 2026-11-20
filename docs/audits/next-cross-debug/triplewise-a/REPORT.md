@@ -21,9 +21,9 @@ desktop **boxdd** silently dropped the `tlssecpmlkem=0` pin that `release/LDFLAG
 `cmd/sing-box`: every client library shipped after the go line moved to 1.26 offered two extra
 post-quantum key-share groups while the server binary kept the pre-1.26 camouflage set. Measured, not
 argued: `[4588 29 23 24 25]` vs `[4588 4587 4589 29 23 24 25]`, and the control arm shows a short
-`-X` re-enables the extra groups even at language version 1.25. The other four triples of the brief
-are recorded as `NOT_COVERED` or `NOT_OBSERVABLE` with the reason each could not be staged here; none
-is claimed as passed.
+`-X` re-enables the extra groups even at language version 1.25. The body/cancel/retirement triple was
+executed on the TrustTunnel carrier and is `NO_DEFECT`; the other three are `NOT_COVERED` or
+`NOT_OBSERVABLE` with the reason each could not be staged here, and none is claimed as passed.
 
 ## 1. FIXED — T11: two build paths, two ClientHellos
 
@@ -102,7 +102,7 @@ the commit that touches **only** this package (a comment in `flags.go`): with th
 | --- | --- |
 | T04 QUIC migration × stream × Reset | the fork implements no client-side QUIC migration (`docs/fork/interface-update-lifecycle.md` records the audit): the client does not move a QUIC connection across paths, so "migration × stream × reset" cannot be staged from our side. The network-change reset is `pairwise-b`'s B-P14, fixed and tested there |
 | T07 netlink recovery × `NetworkManager` × pools | the netlink monitor is Linux-only. Its reopen/backoff/Close windows were closed in the `sing-tun` fork and pinned by executed races at the pinned revision (`release/pin-runs.json`) |
-| T08 body × cancel × pool retirement | the pairwise windows executed its halves: a stalled body with a trim, a live stream across a retirement, and the reserved-slot window, all with mutation controls (`pairwise-a` §4.4 and §2). The full three-way interleaving - a third flow cancelled while a body is stalled and the pool is being retired - was not built |
+| T08 body × cancel × pool retirement | **NO_DEFECT on the TrustTunnel carrier**: `transport/trusttunnel/triple_retire_test.go` runs both orders (retire-then-cancel, cancel-then-retire) for h2 and h3 with a stalled body, a cancelled flow and a healthy sibling on one session. The retirement drains instead of closing, the cancel releases only its own slot, the stalled body does not take the carrier, the last close closes the drained session, and the server releases both silent CONNECTs. Mutation control: a retirement that closes instead of draining turns it red (`the retirement closed a carrier that was carrying streams`). The `common/httpclient` pool's version of the triple (epoch active count over a body) is correct by construction - the epoch is released by the body's Close - and was not attacked here |
 | T06 MASQUE PREF64 × DNS bootstrap × QUIC path | needs a PREF64/NAT64 network and an IPv6-only bootstrap; `NOT_OBSERVABLE` on this host |
 
 ## 3. Gates
