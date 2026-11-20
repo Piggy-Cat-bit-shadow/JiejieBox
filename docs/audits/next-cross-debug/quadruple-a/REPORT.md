@@ -56,7 +56,13 @@ Note also that the client side does not migrate QUIC connections in this fork
 (`docs/fork/interface-update-lifecycle.md` records the audit), so "migration" here can only mean the
 server seeing a new 4-tuple - which is exactly the proxy experiment above.
 
-## 2. Q03 - the NAT half is not observable here
+## 2. Q03 - the NAT half: capability exists, the attack was not built (corrected below)
+
+> **Correction (executed on WSL2, see `quadruple-c/linux/README.md`).** The host has WSL2, and as root it
+> provides netns, TUN and nftables. `protocol/tun` (4.9 s), `route` (443.8 s) and the `sing-tun` fork at
+> the exact pin (262.4 s) were executed green on Linux, and a real fake-IP -> TUN -> router -> socket path
+> was demonstrated with packets. Q03's UDP-NAT burst was still not built, so it is `NOT_COVERED`, not
+> `NOT_OBSERVABLE`.
 
 The four systems are (1) the OOM killer's pressure fact, (2) the guard's admission plan, (3) the
 `sing-tun` NAT table and its per-entry queue, (4) the real UDP `PacketConn` and its goroutines. The

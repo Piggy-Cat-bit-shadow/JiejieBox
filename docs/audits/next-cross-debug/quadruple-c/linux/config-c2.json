@@ -1,0 +1,42 @@
+{
+  "log": {"level": "info", "timestamp": true},
+  "experimental": {"cache_file": {"enabled": true, "path": "/root/q01/cache.db"}},
+  "dns": {
+    "servers": [
+      {"tag": "fake", "type": "fakeip", "inet4_range": "198.19.0.0/15"},
+      {"tag": "local", "type": "local", "detour": "direct"}
+    ],
+    "rules": [
+      {"domain_suffix": ["test"], "query_type": ["A", "AAAA"], "server": "fake"}
+    ],
+    "final": "local"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "jjbq01",
+      "address": ["172.19.0.1/30"],
+      "mtu": 1500,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "gvisor"
+    }
+  ],
+  "outbounds": [{"type": "direct", "tag": "direct"}],
+  "route": {
+    "auto_detect_interface": false,
+    "rules": [
+      {"protocol": "dns", "action": "hijack-dns"},
+      {
+        "domain": ["alpha.test"],
+        "action": "route",
+        "outbound": "direct",
+        "override_address": "127.0.0.1",
+        "override_port": 18081
+      },
+      {"domain": ["beta.test"], "action": "reject"}
+    ],
+    "final": "direct"
+  }
+}

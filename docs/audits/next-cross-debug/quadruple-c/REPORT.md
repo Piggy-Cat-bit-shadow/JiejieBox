@@ -93,3 +93,61 @@ who has the binary, which is what an audit needs.
 No production code changed. The probe builds and runs (`go vet` clean); the three binaries above were
 built with the release tag profile. `release/source-lock.json` and `release/pin-runs.json` are
 untouched.
+
+## 7. Correction: the environment was NOT blocked (WSL2 was there all along)
+
+The quadruple windows repeatedly recorded Linux-only rows as `NOT_OBSERVABLE` "no netns/TUN/nftables".
+That was wrong for this host. WSL2 is installed (`Ubuntu-24.04`, kernel 6.18.33.2), and as `root` it
+provides everything the rows needed. Measured:
+
+```
+wsl -d Ubuntu-24.04 -u root -- bash -c 'id; ip netns add p; ip netns list; ip netns del p'   -> uid=0(root), netns created
+ip tuntap add dev probe0 mode tun                                                             -> exit 0
+nft add table inet probe                                                                      -> exit 0
+curl -sI https://go.dev                                                                       -> HTTP/2 200
+/usr/local/bin/xtool                                                                          -> xtool 1.24.0 (+ Swift/LLVM toolchain)
+```
+
+Go 1.27.4 (linux-amd64) was installed and the repository staged on ext4; the harness and the full
+execution log are in `linux/README.md`. What was executed green (as root):
+
+| Area | Time |
+| --- | --- |
+| `route` (fd disposal, family-route enumerate/filter) | 443.8 s |
+| `common/trafficsched` / `transport/http` / `transport/v2rayquic` (netns dual-path) | 105.8 / 72.9 / 12.6 s |
+| `experimental/libbox` (redirect judge) / `protocol/tun` (real device reset) | 11.4 / 4.9 s |
+| `common/tlsspoof` (after `apt-get install tcpdump`) | 3.9 s |
+| `common/netns`, `common/listener`, `common/process`, `common/ktls`, `common/netx`, `common/netcap`, `protocol/bridge` | all green |
+| **`sing-tun` fork at `f23ebd6` - the exact lock pin** | **262.4 s** |
+
+**And Q01 was executed end to end**, inside a private netns, with real packets:
+
+1. `alpha.test` resolved through the hijacked DNS to a fake address (`198.18.0.2`);
+2. dialling `198.18.0.2:18080` was captured by the TUN, the fake address was restored to `alpha.test`,
+   the route rule fired and the **direct outbound opened a real socket** to the override target - the
+   echo server accepted exactly one connection;
+3. `beta.test` (`198.18.0.3`) was refused by the reject rule and the echo never saw a second
+   connection;
+4. after a graceful restart with the **same** range and cache file, dialling the old placeholder
+   **without re-resolving** was restored from the durable ledger and routed (accept #2);
+5. after a restart with a **different** range over the same cache file, the old placeholder was
+   **refused** and nothing accepted.
+
+So the rows below change from `NOT_OBSERVABLE` to either `NO_DEFECT` (executed) or `NOT_COVERED`
+(capability exists, the specific attack harness was not built):
+
+| Row | Was | Is now | Why |
+| --- | --- | --- | --- |
+| quadruple-b Q01 (fake-IP x TUN x router x return path) | `NOT_OBSERVABLE` | **`NO_DEFECT`** | the capture path, the reject path and the retired-placeholder arms ran on real packets |
+| quadruple-a Q03 (TUN UDP NAT) | `NOT_OBSERVABLE` | `NOT_COVERED` | TUN/netns exist and `protocol/tun` + the fork's suite ran green; the UDP-NAT end-to-end burst harness was not built |
+| quadruple-a Q06 live TUN flow | `NOT_OBSERVABLE` | `NOT_COVERED` | a live TUN flow is now possible; the reload-during-flow attack was not built |
+| quadruple-a X-Q03 TProxy / X-Q05 netns | `NOT_OBSERVABLE` | `NOT_COVERED` | netns works; the TProxy rule set and the netns x QUIC attack were not built (the existing `transport/v2rayquic` netns suite is green) |
+| quadruple-b X-Q08 DNS64 | `NOT_OBSERVABLE` | `NOT_COVERED` | a DNS64 fabric is buildable here (TUN + a NAT64 service), not built |
+| quadruple-a Q08 iOS NE | `NOT_OBSERVABLE` | `NOT_OBSERVABLE` | xtool can build, but `phys_footprint`/Jetsam still need a device |
+
+**The harness error this exposed, recorded deliberately.** The first retirement run killed sing-box 0.3 s
+after the dial; the cache file writes fake-IP mappings asynchronously, so the record was still pending
+and the next start legitimately found none. It looked like a durability defect and was the harness
+racing the writer. With a 3 s settle the placeholder is restored. The log line
+`missing fakeip record, try enable experimental.cache_file` is emitted when the mapping is absent for
+any reason - including a retired range - and must not be read as "cache_file is disabled".

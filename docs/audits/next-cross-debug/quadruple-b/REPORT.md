@@ -111,7 +111,7 @@ have been seen by this window.
 
 | Row | Verdict | Blocker |
 | --- | --- | --- |
-| Q01 | `NOT_OBSERVABLE` | the kernel capture/route decision needs a Linux netns with nftables and root; the fake-IP store's own guards were inherited, not re-claimed |
+| Q01 | **`NO_DEFECT`** (executed; corrected) | the host has WSL2 and the path was run for real: fake-IP -> TUN -> domain restore -> route rule -> socket, plus the same-range restart restoring the placeholder and a different range refusing it (`quadruple-c/linux/README.md`) |
 | Q04 | `SOURCE_ONLY` | the candidate race was checked against the code and is already guarded (§2.1), so the two-server harness was not built |
 | Q06 | `NOT_OBSERVABLE` | the live-TUN-flow half needs a TUN device; the reload/history half is the inherited issuance-ledger work |
 

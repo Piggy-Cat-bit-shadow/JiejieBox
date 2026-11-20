@@ -54,3 +54,24 @@ download routes through its own group) that this environment cannot build.
 exists so "the artifact sends the camouflage set" can be re-checked after any build change instead of
 being assumed; it is deliberately **not** wired into a workflow, because it needs a locally built
 binary and a loopback listener, and the release recipes already measure their own output.
+
+## 5. Correction: the WSL2 executions (supersedes the `NOT_OBSERVABLE` rows of the quadruple round)
+
+The quadruple windows recorded Linux-only rows as blocked by the environment. WSL2 is installed and, as
+root, provides netns, TUN, nftables and network access; the harness and log are in `linux/README.md`.
+Corrected classifications:
+
+| Row (window) | Was | Is now | Evidence |
+| --- | --- | --- | --- |
+| quadruple-b Q01 fake-IP x TUN x router | `NOT_OBSERVABLE` | **`NO_DEFECT`** | real netns, real packets: fake-IP issuance, TUN capture, domain restoration, route/reject decisions, real socket; plus the same-range restart restoring the placeholder and the different-range restart refusing it |
+| quadruple-a Q03 TUN UDP NAT | `NOT_OBSERVABLE` | `NOT_COVERED` | `protocol/tun` 4.9 s and the fork's suite at the pin are green; the UDP-NAT end-to-end burst was not built |
+| quadruple-a Q06 live TUN flow | `NOT_OBSERVABLE` | `NOT_COVERED` | capability exists; the reload-during-flow attack was not built |
+| quadruple-a X-Q03 TProxy / X-Q05 netns | `NOT_OBSERVABLE` | `NOT_COVERED` | netns works; `transport/v2rayquic` netns suite 12.6 s green; the specific attacks were not built |
+| quadruple-b X-Q08 DNS64 | `NOT_OBSERVABLE` | `NOT_COVERED` | buildable with TUN + a NAT64 service, not built |
+| quadruple-a Q08 iOS NE | `NOT_OBSERVABLE` | `NOT_OBSERVABLE` | xtool builds iOS, but `phys_footprint`/Jetsam need a device |
+
+Linux suites executed green: `route` 443.8 s, `common/trafficsched` 105.8 s, `transport/http` 72.9 s,
+`transport/v2rayquic` 12.6 s, `experimental/libbox` 11.4 s, `protocol/tun` 4.9 s, `common/tlsspoof`
+3.9 s, `common/netns` / `common/listener` / `common/process` / `common/ktls` / `common/netx` /
+`common/netcap` / `protocol/bridge` (all), and the **sing-tun fork at `f23ebd6`, the exact lock pin,
+262.4 s**.
