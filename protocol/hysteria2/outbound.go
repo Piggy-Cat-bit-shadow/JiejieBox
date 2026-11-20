@@ -313,10 +313,16 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		logger:  logger,
 		client:  carrier,
 	}
+	// The gate's action is the RESET itself, never InterfaceUpdated. The gate holds its transition
+	// lock across this action so a demand that starts during the transition waits instead of
+	// borrowing a half-reset client; InterfaceUpdated routes back through NetworkChanged, so passing
+	// it here would re-enter applyTransition on the same goroutine and deadlock on that lock - after
+	// the once-per-generation guard has already let the transition through. The reset never runs, the
+	// lock is never released, and every later BeforeDial blocks behind it.
 	created.generation = runtimecoord.NewGenerationGate(
 		service.FromContext[*runtimecoord.Coordinator](ctx),
 		"hysteria2/"+options.ServerOptions.Build().String(),
-		created.InterfaceUpdated,
+		created.resetForNetworkChange,
 	)
 	return created, nil
 }
