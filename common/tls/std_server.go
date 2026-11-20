@@ -95,8 +95,20 @@ func getACMENextProtos(provider adapter.CertificateProvider) []string {
 }
 
 type STDServerConfig struct {
-	ctx                   context.Context
-	access                sync.RWMutex
+	ctx    context.Context
+	access sync.RWMutex
+	// reloadAccess serialises certificate reloads end to end.
+	//
+	// fswatch fires each debounced path callback from its own goroutine, and a renewal writes the
+	// certificate file and the key file, so two callbacks land at once. Each one stages the file
+	// contents in certificate/key before rebuilding the pair, and that staging was unsynchronised: the
+	// pair could be built from a certificate and a key written by different callbacks (the Go race
+	// detector reports the write/read pair, and a torn read is undefined behaviour even when the
+	// rebuilt pair happens to be valid).
+	//
+	// Holding this across the whole reload also makes the "a mismatched intermediate state is never
+	// installed" invariant hold for both callbacks instead of relying on them not overlapping.
+	reloadAccess          sync.Mutex
 	config                *tls.Config
 	handshakeTimeout      time.Duration
 	logger                log.Logger
@@ -171,20 +183,33 @@ func (c *STDServerConfig) hasACMEALPN() bool {
 }
 
 func (c *STDServerConfig) STDConfig() (*STDConfig, error) {
+	// The watcher replaces the pointer; a reader that takes no lock is a data race against it even
+	// though the pointed-to config is never mutated in place.
+	c.access.RLock()
+	defer c.access.RUnlock()
 	return c.config, nil
 }
 
 func (c *STDServerConfig) Client(conn net.Conn) (Conn, error) {
-	return tls.Client(conn, c.config), nil
+	c.access.RLock()
+	config := c.config
+	c.access.RUnlock()
+	return tls.Client(conn, config), nil
 }
 
 func (c *STDServerConfig) Server(conn net.Conn) (Conn, error) {
-	return tls.Server(conn, c.config), nil
+	c.access.RLock()
+	config := c.config
+	c.access.RUnlock()
+	return tls.Server(conn, config), nil
 }
 
 func (c *STDServerConfig) Clone() Config {
+	c.access.RLock()
+	config := c.config.Clone()
+	c.access.RUnlock()
 	return &STDServerConfig{
-		config:           c.config.Clone(),
+		config:           config,
 		handshakeTimeout: c.handshakeTimeout,
 	}
 }
@@ -263,6 +288,8 @@ func (c *STDServerConfig) startWatcher() error {
 }
 
 func (c *STDServerConfig) certificateUpdated(path string) error {
+	c.reloadAccess.Lock()
+	defer c.reloadAccess.Unlock()
 	if path == c.certificatePath || path == c.keyPath {
 		switch path {
 		case c.certificatePath:
