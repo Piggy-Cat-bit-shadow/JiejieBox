@@ -57,6 +57,9 @@ on:
       - 'cmd/internal/appletags/**'
       - 'cmd/internal/mobilebuildtags/**'
       - 'cmd/internal/applebuildtags/**'
+      # The shared linker flags decide the shipped -X runtime.godebugDefault (and through it the
+      # ClientHello); a contract run that does not re-link after a change there is not covering it.
+      - 'cmd/internal/build_shared/**'
       - 'cmd/internal/build_libbox/**'
       - 'experimental/libbox/**'
       - 'service/oomkiller/**'

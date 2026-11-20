@@ -32,6 +32,10 @@ on:
   push:
     branches: [testing]
     paths:
+      # The shared linker flags carry every artifact's -X runtime.godebugDefault, which REPLACES the
+      # go.mod default and therefore decides the ClientHello this build ships. A change there must
+      # rebuild the artifact or the fingerprint change ships unbuilt.
+      - 'cmd/internal/build_shared/**'
       - 'cmd/internal/build_libbox/**'
       - 'cmd/internal/mobilebuildtags/**'
       - 'cmd/internal/applebuildtags/**'

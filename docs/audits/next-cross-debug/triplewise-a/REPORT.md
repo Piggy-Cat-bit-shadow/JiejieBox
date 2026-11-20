@@ -80,6 +80,22 @@ shapes, plus the presence of `tlssecpmlkem=0`. The two owners can no longer drif
 `release/LDFLAGS`; the constant is now the same value, so only the two client-side builders change,
 and they change to the value the product documents.
 
+### 1.1 The same triple had a second hole: the change did not trigger the artifact build
+
+The workflows that compile the affected artifacts filter their triggers by path, and **none of them
+listed `cmd/internal/build_shared/**`**: `android-core-arm64.yml`, `mobile-contract.yml` and
+`windows-boxdd-tests.yml` all name `build_libbox/**` or `build_boxdd/**` but not the file that carries
+the flags they pass. A commit that only edits the shared flags - exactly the fix above - therefore
+triggers neither the Android core build nor the mobile contract run nor the daemon tests: the change
+that decides the shipped ClientHello would have reached `testing` with no artifact compiled from it
+and no job judging it. That is the P6 shape ("a test exists, nothing runs it") one level up: an
+artifact exists, nothing rebuilds it.
+
+Fixed in the same round: each push-triggered workflow (and `windows-boxdd-tests`' pull-request arm)
+now lists `cmd/internal/build_shared/**`, with the reason written next to the entry. The push carrying
+this commit is itself the positive control - it runs `Android Core ARM64` and the boxdd tests, which
+it did not for the flags commit.
+
 ## 2. The other triples of the brief
 
 | Row | Why it is not a pass here |

@@ -62,6 +62,9 @@ on:
       - "release/**"
     paths:
       - "experimental/boxdd/**"
+      # The daemon's ldflags (and so its -X runtime.godebugDefault / ClientHello) come from
+      # cmd/internal/build_shared; a change there must rebuild and re-test the daemon.
+      - "cmd/internal/build_shared/**"
       - "cmd/internal/build_boxdd/**"
       - "release/DEFAULT_BUILD_TAGS_WINDOWS"
       - "release/JIEJIE_VERSION"
@@ -69,6 +72,7 @@ on:
   pull_request:
     paths:
       - "experimental/boxdd/**"
+      - "cmd/internal/build_shared/**"
       - "cmd/internal/build_boxdd/**"
       - "release/DEFAULT_BUILD_TAGS_WINDOWS"
   workflow_dispatch:
