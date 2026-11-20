@@ -5,8 +5,8 @@ H2-H3 / QUIC` pools and the reclaim side that closes them (`ResourceGuard`, `OOM
 reference manager's trim and reuse-boundary walks).
 
 - Repository: `Piggy-Cat-bit-shadow/JiejieBox`, branch **`testing`** (no new branch was created)
-- Starting HEAD: `17b6fb2e0` (`testing` == `origin/testing`, clean tree); seven commits were added
-  (`f11def4b1`, `c867befd0`, `8426642c9`, `9e00fb390`, `52d7663e4`, `79c21b845`, `418044508`)
+- Starting HEAD: `17b6fb2e0` (`testing` == `origin/testing`, clean tree); commits added:
+  `f11def4b1` (TrustTunnel), `c867befd0` + `8426642c9` (AnyTLS + pin), `9e00fb390` (Guard),\n  `418044508` (P11), and the audit reports themselves
 - Fork touched: `Piggy-Cat-bit-shadow/sing-anytls` `main` → `da880d8` (two commits: `693a1fe`,
   `da880d8`), consumed through the `replace` pin and `release/source-lock.json`
 - Toolchain: Go **1.27.4** (the `toolchain` line), `-race` with the bundled mingw64 gcc,
@@ -44,7 +44,8 @@ the reason (`P05`, `P02`).
 | `go test -race -count=2 ./common/resourceguard/` | `ok` 3.192 s |
 | `python scripts/ci/release-freeze.py verify --lock release/source-lock.json` | `PASS: every pin in the tree is the pin the lock records` |
 | `python scripts/ci/check-pin-runs.py` | **FAIL by design**: `no recorded run carries the current pin set` (see §5) |
-| `go test -tags with_trusttunnel -run 'TestClosingAStalledStream|TestServerEndedStream|TestTrimCannotTouch' ./transport/trusttunnel/` | `ok` 0.11 s; 3 body-lifetime shapes, 2 mutation controls red |
+| `go test -tags with_trusttunnel -run 'TestClosingAStalledStream|TestServerEndedStream|TestTrimCannotTouch' ./transport/trusttunnel/` | `ok` 0.11 s on h2 and 0.13 s with `with_quic` (h2+h3); 2 mutation controls red |
+| `go test -race -count=1 -tags with_trusttunnel,with_quic ./transport/trusttunnel/ ./protocol/anytls/ ./protocol/trusttunnel/` (final HEAD) | `ok` 55.897 s / 8.893 s / 1.754 s |
 | fork `test` workflow at `da880d8` | run `44673034831`, success (23 s) |
 | fork `lint` workflow at `da880d8` | 13 errors, **identical count to the pre-change run** `43884383720`; 0 mention the new file |
 
@@ -262,8 +263,8 @@ decision itself is in-tree and testable without Cronet.
 ### 4.4 `P11` - a stream's end must reach the pool's books: `NO_DEFECT`
 
 The stream is the pool's Active/Idle evidence, so its lifetime has to end in `streams` no matter how
-it ends. Three shapes were executed against the real service
-(`transport/trusttunnel/stream_lifecycle_test.go`):
+it ends. Three shapes were executed against the real service, for BOTH carriers (`h2` and `h3` under
+`with_quic`), in `transport/trusttunnel/stream_lifecycle_test.go`:
 
 - **A stalled tunnel the caller never reads, then closes.** Close returns within 5 s, the server
   releases its side (`handler.holding` back to 0), the carrier is the same one (`dials == 1`) and it
@@ -303,13 +304,15 @@ purpose rather than papered over:
    (`coalescing_test.go`, `admit_creation_test.go`); the new test file contributes none. The first
    push of the change did add three `paralleltest` findings in the new file, which the follow-up
    commit `da880d8` fixes — that is why the pinned revision is the follow-up and not `693a1fe`.
-3. **The JiejieBox commits are local.** The seven commits are on the local `testing` branch; pushing
+3. **The JiejieBox commits are local.** The commits are on the local `testing` branch; pushing
    them to `origin/testing` failed at the end of the session (`schannel: failed to receive handshake`
    / `Connection was reset`), and `api.github.com` was unreachable in the same window, so no run could
    be observed or recorded. The `sing-anytls` push did succeed - that fork's CI ran at `da880d8`
    (run `44673034831`). The minimum condition to finish: `git push origin testing`, then record a
    successful `linux-kernel-verify` run (it triggers on `transport/trusttunnel/**`) or `Android Core
-   ARM64` run at that commit in `release/pin-runs.json`, and push again. Until then `verify.yml`'s
+   ARM64` run at that commit into `release/pin-runs.json`'s `parent_runs` (the shape every entry
+   there already has: `repo`, `workflow`, `run_id`, `head_sha`, `event`, `conclusion`,
+   `url`), and push again. Until then `verify.yml`'s
    last step is red **only** on `check-pin-runs.py`; every other step of that workflow was reproduced
    locally (gofmt, the package-execution ratchet, nested-module integrity, knowledge facts, the source
    lock and both build profiles).
