@@ -282,17 +282,19 @@ trimmed`); making `CloseIdleConnections` ignore the stream count makes the third
 closed a session that was carrying a stream`). The 1000-stream limit case is already pinned by
 `testStreamLimit`, which now also exercises the new reservation (one session, one slot freed and
 reused) and stays green.
+
 ## 5. Not covered, not observable, and the gates that stay red
 
 | Item | Label | Why |
 | --- | --- | --- |
 | `P02` QUIC PMTU probe × path migration | `NOT_COVERED` | requires simultaneous PMTU-blackhole injection and NAT rebinding; the blackhole and the send-queue tests exist separately (`q35_udp_*`, `congestion_test.go`) but the cross-injection was not built |
 | native Cronet / iOS Network Extension / Linux netns | `NOT_OBSERVABLE` | not available on this host; no claim is made about them |
-| `sing-tun` UDP NAT residuals (R-4..R-7 of the previous round) | out of this window | they belong to the TUN/DNS window; nothing here changes their status |
+| `sing-tun` UDP NAT residuals (R-4..R-7 of the previous round) | verified, none changed | re-checked against the pinned `f23ebd6`; see §5.1 for what is fixed and what is a product decision |
 
-**Gates.** The repository build, the listed package suites, `-race`, `release-freeze.py verify` and
-the fork's `test` workflow are green (§1). Two gates are **not** green and are left that way on
-purpose rather than papered over:
+**Gates.** The repository build, the listed package suites, `-race`, `release-freeze.py verify`, the
+pin-run binding and the fork's `test` workflow are green (§1). The only gate still red is the fork's
+`lint` job, which was red before this work; the list below records that history rather than hiding
+it:
 
 1. `scripts/ci/check-pin-runs.py` was red after the pin move (`no recorded run carries the current
    pin set`): a pin had moved and no CI run had been recorded against the new lock. **Closed** (item
@@ -322,6 +324,19 @@ purpose rather than papered over:
    `gh run rerun --failed` and the run is green at `af4aa1fa1`. The fixture race is real
    (`freePortForBothTransports` closes the probe sockets before `Start` binds) and is recorded here
    rather than papered over.
+
+### 5.1 sing-tun UDP-NAT residuals, verified at the pinned revision (`f23ebd6`)
+
+The brief names these as the next round's priority, so they were re-checked against the code that is
+actually pinned instead of staying a stale list. None was changed in this round; the state of each is
+recorded here with the line that decides it.
+
+| Residual | State at `f23ebd6` | Classification |
+| --- | --- | --- |
+| R-5 an evicted entry does not cancel the dial it launched | **fixed**: the handler context is derived from the entry (`udp_nat.go:435-437`), so every close path cancels it; the fork's `udp_nat_close_paths_test.go` pins the idle-sweep, explicit-close and capacity-eviction paths | `NO_DEFECT` (re-verified on the pinned code + its tests) |
+| R-6 a download-only flow dies one `UDPTimeout` after its last upload | **open**: the lifetime is refreshed only by `getOrCreate` (`udp_nat.go:394`, reached from `NewPacket`/`NewPacketBatch`); `UDPNatConn.WritePacket` (`:799`) and the batch writer (`:828`) never touch it, so a flow that keeps receiving but stops sending expires on schedule | `SOURCE_ONLY` - the fix touches the download hot path (an atomic "last write" stamp that `cleanupEntry` can extend, or a per-packet queue refresh), so it needs its own fork commit, pin and CI run rather than a last-hour edit |
+| R-7 the NAT-wide 8 MiB budget multiplies by NAT instances | **open, as a missing capability rather than a miscalculation**: `StackOptions` has no byte-budget field (`stack.go:37` carries only `UDPNATMax`), so `stack_go.go:73-79` never sets `MaxBytes`/`MaxBytesPerSession` and each of the N instances takes `DefaultUDPNatMaxBytes`. A fix adds the option, divides it across instances (the way `MaxSize` already is at `:187-189`) and threads it through the JiejieBox option schema | `POLICY_DECISION` - the aggregate budget is a product choice and the option surface is public |
+| R-4 nothing admits a TUN UDP flow before its per-flow objects exist | **open**: `route/conn.go:202-206` builds a `GrowthBudget` and reads `guard.Level`; there is no `AcquireFor`/`AdmitCreation` on the TUN UDP path (`protocol/tun` has none) | `POLICY_DECISION` - charging a flow before `sing-tun` creates the entry needs a decision on key, class and limit |
 
 ## 6. Residual risks in the two fixes (stated, not hidden)
 
