@@ -11,7 +11,7 @@ network epoch × pool) and Q06 (reload × fake-IP history × rule-set × live TU
 
 ## 0. Result in one paragraph
 
-One row was closed with real evidence and three are stated as blocked. **Q05 — the chain of a real DNS
+One row was closed with real evidence, one candidate race was checked against the source and turned out to be already guarded, and two rows are stated as blocked. **Q05 — the chain of a real DNS
 cache answer feeding the real dual-stack dialer across a network-generation change — had been recorded
 as `NOT_COVERED` in every previous round**, because it cannot be tested from the dialer package (`dns`
 imports `common/dialer`). It is now executed end to end in `dns`, against a real socket: two loopback
@@ -78,20 +78,54 @@ mistake and reported a false "cache not in the chain".
 
 ## 2. The rows that could not be executed
 
+### 2.1 Q04 — the candidate race was checked against the code and does not exist
+
+The race I designed for Q04 was: **a provider republication replaces the outbound object behind a tag,
+and the selector's cached choice keeps pointing at the old object** — the user-visible shape being "the
+UI shows B, the dial goes to A". Reading the selector at this HEAD, that shape is blocked four times
+over, and the code says why:
+
+| Guard | Where | What it prevents |
+| --- | --- | --- |
+| the selection is an atomic **object**, not an index or a tag cursor | `selector.go:68` (`selected common.TypedValue[adapter.Outbound]`) | the P2 shape (a short-lived index reusing long-lived history) cannot occur |
+| a provider republication re-resolves the selection **by tag** against the new member map | `selector.go:363-366`, `selector.go:398-420` | the selection follows the tag, so a replaced object is adopted rather than left behind |
+| replacing the object behind the same tag is explicitly "a subscription refresh, not a switch" | `selector.go:414-417` | the in-flight dial's lease keeps the old object open; the revision does not advance as if the user switched |
+| `dialMember` rejects a member whose revision moved during setup | `selector.go:767-773` | the dial cannot commit to a member that the update already replaced |
+
+The presentation side is a named contract too: `SelectionStatus`/`SelectionSnapshot`/`Revision`
+(`selector.go:542-609`) distinguish "configured default", "persisted preference", "committed" and
+"moved", and `common/physicalpath` consumes exactly those to label `PathNode.IsCurrent` and
+`Decision` (`selector.go:477-491`). That is the mechanism the prompt asks for — authoritative identity
+separate from the presentation label — and it exists.
+
+So Q04 is `SOURCE_ONLY` rather than `NOT_COVERED`: the harness was not built **because the race it was
+meant to attack is already prevented by construction**, and building it would have been a re-run of
+`protocol/group`'s own tests. `protocol/group` 7.24 s, `common/physicalpath` 0.10 s and
+`common/urltest` 8.50 s are green here.
+
+What is *not* claimed: a real two-server dial through a provider-backed selector was not executed, so a
+defect in a path these guards do not cover (for example the provider's own publish ordering) would not
+have been seen by this window.
+
+### 2.2 Q01 and Q06
+
 | Row | Verdict | Blocker |
 | --- | --- | --- |
 | Q01 | `NOT_OBSERVABLE` | the kernel capture/route decision needs a Linux netns with nftables and root; the fake-IP store's own guards were inherited, not re-claimed |
-| Q04 | `NOT_COVERED` | needs two local servers, a provider replacement with the same tag, a selector switch and a real dial in one harness; the ownership rule it would attack was already fixed, so a genuinely new race has to be designed first |
+| Q04 | `SOURCE_ONLY` | the candidate race was checked against the code and is already guarded (§2.1), so the two-server harness was not built |
 | Q06 | `NOT_OBSERVABLE` | the live-TUN-flow half needs a TUN device; the reload/history half is the inherited issuance-ledger work |
 
 ## 3. New direction this window opens
 
-The Q04 harness is the one worth building next, and this window's method says what it must observe:
-two local servers whose accept counts are the witness, the provider's node UID as the authoritative
-identity, and the selector's choice as the presentation label. The candidate race to design is a
-URLTest result carrying the *new* node's UID arriving while the selector still holds the old node
-object — the existing fix drops results by UID, and the open question is whether the selector's cached
-choice can outlive the object it names.
+The Q04 source check moved the open question: the selector side is guarded, so the remaining risk in
+that row is the **provider's publish ordering** - whether a provider can publish a member list whose
+objects are already closed, or publish two lists out of order under a rebuild. That is a different
+harness (no selector switch needed, two servers plus the provider's callback path), and it is the one
+to build next.
+
+The second direction is the one this window proved works: the Q05 style - a real owner behind a real
+consumer, two loopback listeners on one port as the witness, and a control arm that proves the cache or
+pool participates. The same shape applies to the HTTP/QUIC pool epoch questions that are still open.
 
 ## 4. Gates
 
