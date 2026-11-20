@@ -55,6 +55,20 @@ func agentFShapeFires(before int) bool {
 	return <-done
 }
 
+// agentFShapeFiresFor reports whether the leak predicate fires for a CORRECTED census reading, without
+// re-reading the process.
+//
+// The predicate is `corrected > before`, and `agentFShapeFires` evaluates it by taking a fresh reading
+// on a goroutine of its own. Calling that twice in a row - once for the log line and once for the
+// assertion - made the assertion depend on whether the first call's own goroutine was still visible to
+// the census while it exited. MEASURED on the CI runner at f22bf16ad: `before=20 inside=21 fires=false`
+// on the log line, and the identical call on the very next line returned true, failing the push gate.
+// Passing the reading makes the assertion about the shape that was measured instead of about whatever
+// the process looks like at assertion time.
+func agentFShapeFiresFor(before, corrected int) bool {
+	return corrected > before
+}
+
 // agentFShapeCallbackFrames counts the goroutines whose stack names `frame`, which is how this file
 // identifies the CONDITION GOROUTINE ITSELF rather than inferring it from a process-wide difference.
 //
@@ -138,7 +152,7 @@ func TestAgentFFrameShapeEventually(t *testing.T) {
 
 	t.Logf("MEASURED shape=require.Eventually with nothing leaked: before=%d inside=%d corrected=%d "+
 		"callback_frames=%d fires=%v",
-		before, inside, corrected, frameReading.Load(), agentFShapeFires(before))
+		before, inside, corrected, frameReading.Load(), agentFShapeFiresFor(before, corrected))
 
 	// THE LOAD-BEARING ASSERTION, frame-scoped: the condition really is running on a goroutine whose
 	// stack names this package, which is the premise of the `-1`. It cannot be cancelled by another
@@ -150,7 +164,8 @@ func TestAgentFFrameShapeEventually(t *testing.T) {
 	// asserted: other tests' goroutines can leave or arrive inside the window, so a difference against
 	// a process-wide baseline is an observation and not a proof. See agentFShapeCallbackFrames.
 	require.GreaterOrEqual(t, corrected, 0, "the corrected reading is a count and cannot be negative")
-	require.False(t, agentFShapeFires(before), "nothing is leaked, so the predicate must not fire")
+	require.False(t, agentFShapeFiresFor(before, corrected),
+		"nothing is leaked, so the predicate must not fire for the reading this shape produced")
 
 	release := agentFShapeLeak(t)
 	defer release()
@@ -208,15 +223,20 @@ func TestAgentFFrameShapePlainGoroutine(t *testing.T) {
 	done := make(chan int, 1)
 	go func() { done <- sniffGoroutines() }()
 	inside := <-done
+	// The reading came from a goroutine of this package, so its own frame is the one the production
+	// correction subtracts. Evaluating the predicate on it keeps the assertion about this shape rather
+	// than about whatever the process looks like a moment later; see agentFShapeFiresFor.
+	corrected := inside - 1
 
-	t.Logf("MEASURED shape=plain goroutine with nothing leaked: before=%d inside=%d fires=%v",
-		before, inside, agentFShapeFires(before))
+	t.Logf("MEASURED shape=plain goroutine with nothing leaked: before=%d inside=%d corrected=%d fires=%v",
+		before, inside, corrected, agentFShapeFiresFor(before, corrected))
 	// A plain goroutine's own frame is worth exactly one, and this one IS measured against a baseline:
 	// the reading is taken from that goroutine and returned, so no other test's goroutine can enter or
 	// leave between the two readings the way it can inside a 60 ms testify window.
 	require.Equal(t, before+1, inside,
 		"a plain goroutine must be worth exactly one goroutine, the same as a callback frame")
-	require.False(t, agentFShapeFires(before), "nothing is leaked, so the predicate must not fire")
+	require.False(t, agentFShapeFiresFor(before, corrected),
+		"nothing is leaked, so the predicate must not fire for the reading this shape produced")
 
 	release := agentFShapeLeak(t)
 	defer release()
