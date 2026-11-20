@@ -38,7 +38,14 @@ b641f836bb79bc369fe851be0eb1100e9b3fef0f6803ee95de471280762ce700  jiejie-sing-bo
 - Windows 桌面：`clients/desktop` pin `1a1c98e590db6ae2b38bd60f492db93ca395b30f`，`version.json` 的 `go_version=go1.27.4`；安装器作业的 provenance 门禁记录 `built by go go1.27.4 (== version.json go_version)`，daemon 自报 `jiejiebox-daemon version 0.1.55`、`core api version 4`。
 - 依赖 pin：`sing-anytls` `b74ada19da50`（换网清理在途创建），其余 9 个 Go 模块与 Android/Desktop/嵌套 dashboard 与各自跟踪分支头一致；cronet 29 个原生模块保持 controlled。
 
-## 卫星（Satelite）交接
+## 卫星（Satelite）
 
-- 内核已发布并验收；Satelite 需要 `versionName=0.1.55`、`coreCommit=70e9109e91660c8f04991d10f0ea66252aa85300`、`versionCode=67`，提交后打 `v0.1.55` 并推送，触发 `Release APK`。
-- Satelite 状态：**待完成**（发布后回填 Release URL、tag、客户端 SHA、run ID 与 APK 清单）。
+- 客户端提交：`79bc9696668c8de2fadd278013f86e94c7c76d74`（`main`，`versionCode=67`、`versionName=0.1.55`、`coreCommit=70e9109e91660c8f04991d10f0ea66252aa85300`）
+- tag：`v0.1.55`（剥离后即上述客户端提交）
+- Release：<https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.55>（2026-11-20T16:48:25Z 创建）
+- `Release APK` run：44777051726（tag push 触发，构建、签名、发布全部成功）
+- 公开附件（5 项，已回读）：
+  - `satelite-one-0.1.55-arm64-v8a-signed-v0.1.55.apk`（sha256 `dbd47309df4aba3f41c61f39b85f0af04d714c065c204363b4a39d400a97e4b4`）
+  - `satelite-one-0.1.55-x86_64-signed-v0.1.55.apk`（sha256 `6871b1a2126ecd6e0d16c0f282769140cbff3674c4743ed91512d38f9cc68014`）
+  - `SHA256SUMS.txt`、`build-info.json`、`apksigner-verify.txt`
+- `build-info.json` 记录 `core_commit=70e9109e9…`、`app_commit=79bc969…`、`core_aar_sha256=16c656f2…`；`apksigner verify` 判定 `Verifies`，v2 签名方案为 true。
