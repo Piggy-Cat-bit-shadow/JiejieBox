@@ -543,12 +543,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-anytls",
       "branch": "main",
-      "tip": "da880d8d402e596419beb5d6e3c3e14fedf5d12c",
-      "pin": "da880d8d402e",
+      "tip": "b74ada19da50ccab469f3103a937f27489b2f6c3",
+      "pin": "b74ada19da50",
       "relation": "identical",
       "policy": "update",
       "observed_at": "2026-11-20",
-      "note": "Main carries 693a1fe client: drain a suspect session instead of keeping it reusable - Client.RetireSuspect, the reuse-boundary action the pool could not express: a session with no stream is closed, one with a live stream leaves the idle list and closes when its last stream ends, and a session a dial is already opening a stream on is only marked. Tests: drain-with-a-live-stream (red with the body removed), empty-session close, empty-pool inert. protocol/anytls.Outbound now implements adapter.ReuseSuspect on top of it, and the reference manager's reuse boundary reaches it. The pin was moved by hand and needs a run at the new lock before the release gate is satisfied."
+      "note": "main carries b74ada1 fix(client): cancel and reject session creations on a network change. Reset cleared only established sessions and left the shared creation in c.pending, so demand on the NEW network attached to a TLS handshake parked on the old path and waited for it (or inherited its failure). A pendingCreation now has an abandoned channel and its own cancel: Reset clears c.pending, releases attached waiters and cancels the creation context; a result that arrives after the abandon is removed from the pool, closed and never published; the demand retries once against the new generation. Close abandons a pending creation too. Tests reset_creation_test.go: cancellation, new-demand-after-Reset, late-result rejection, waiter retry. The pin was moved by hand and needs a run at the new lock before the release gate is satisfied."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/mieru",
