@@ -8,7 +8,9 @@ evidence; `REPRODUCE.md` has the commands. Labels: `FIXED` / `NO_DEFECT` / `SOUR
   previous window left; its audit reports and fixes are untouched here)
 - Platform: Windows amd64, Go 1.27.4; `-race` with mingw64 gcc; no Linux netns/nftables, no
   iOS/macOS device, no Windows TProxy driver in this environment
-- Commits added by this window: `016f6c729` (hysteria2), `48db6678c` (anytls), plus these reports
+- Commits added by this window: `016f6c729` (hysteria2), `48db6678c` (anytls), `0e2726686` (these
+  reports), and `b724a1e80` + `5364c3150` (the executed-run records for the pin the previous window
+  moved; they are release bookkeeping, not window-B code)
 
 ## Summary
 

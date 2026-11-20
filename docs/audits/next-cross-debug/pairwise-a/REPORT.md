@@ -294,28 +294,29 @@ reused) and stays green.
 the fork's `test` workflow are green (§1). Two gates are **not** green and are left that way on
 purpose rather than papered over:
 
-1. `scripts/ci/check-pin-runs.py` → `FAIL: no recorded run carries the current pin set`. A pin moved
-   and no CI run has been recorded against the new lock, so the sources the lock names have not been
-   built by CI. `release/pin-runs.json` records the new tip and the note states this. Closing it
-   requires a workflow run at a commit whose `release/source-lock.json` carries `da880d8` (for the
-   kernel: `Android Core ARM64` / `linux-kernel-verify`), recorded in a follow-up commit. It cannot be
-   produced from this environment without pushing the branch and waiting for the runner fleet.
+1. `scripts/ci/check-pin-runs.py` was red after the pin move (`no recorded run carries the current
+   pin set`): a pin had moved and no CI run had been recorded against the new lock. **Closed** (item
+   3): `linux-kernel-verify` 44678300273 and `Release contract verification` 44678300270 both ran at
+   `0e2726686`, whose lock carries `da880d8`, and both are now recorded in
+   `release/pin-runs.json`.
 2. The fork's `lint` job is red on `main` **before and after** this change with the *same 13 errors*
    (`coalescing_test.go`, `admit_creation_test.go`); the new test file contributes none. The first
    push of the change did add three `paralleltest` findings in the new file, which the follow-up
    commit `da880d8` fixes — that is why the pinned revision is the follow-up and not `693a1fe`.
 3. **The commit set is on `origin/testing` and its push gate is green.** Pushing was blocked for a
-   while (GitHub HTTPS and SSH both reset), and when the path recovered the ten commits went up as
-   `17b6fb2e0..0e2726686`. CI at `0e2726686` ran the fleet: **`linux-kernel-verify`
+   while (GitHub HTTPS and SSH both reset), and when the path recovered the commits went up in three
+   pushes (`17b6fb2e0..5364c3150`). CI at `0e2726686` ran the fleet: **`linux-kernel-verify`
    (`44678300273`, 2m50s) succeeded** - it builds with `with_trusttunnel`/`with_quic` and runs
    `transport/trusttunnel` on a Linux kernel, the platform half this Windows host cannot cover - and
    `Release contract verification` (`44678300270`), `iOS resource guard` (`44678300297`) and
-   `Maintenance ledger` (`44678300224`) also succeeded. That kernel run is what closes the pin gate:
-   it was recorded in `release/pin-runs.json`'s `parent_runs` (`b724a1e80`), so
-   `check-pin-runs.py` now reports `PASS: every pin in the lock is carried by an executed run at the
-   same pin set (44678300273)`, and `verify.yml` at `b724a1e80` is **success** (run `44678967288`).
-   The first push's own `Verify` run was cancelled by that follow-up push (concurrency
-   cancel-in-progress), which is why the green one is the follow-up.
+   `Maintenance ledger` (`44678300224`) also succeeded; `Android Core ARM64` (`44678967220`)
+   succeeded at the follow-up commit. That kernel run and the release-contract run are what close the
+   pin gate: both are recorded in `release/pin-runs.json`'s `parent_runs` (`b724a1e80`,
+   `5364c3150`), `check-pin-runs.py` now reports `PASS: every pin in the lock is carried by an
+   executed run at the same pin set (44678300273, 44678300270)`, and `verify.yml` is **success** at
+   both `b724a1e80` (run `44678967288`) and the final commit. The first push's own `Verify` run was
+   cancelled by a follow-up push (concurrency cancel-in-progress), which is why the green ones are the
+   later commits.
 
 ## 6. Residual risks in the two fixes (stated, not hidden)
 
