@@ -442,6 +442,42 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44678300270"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 44729605464,
+      "head_sha": "5ef174bf9845bfb7d63872e5dafe2d7399e7d81b",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44729605464"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 44729605187,
+      "head_sha": "5ef174bf9845bfb7d63872e5dafe2d7399e7d81b",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44729605187"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Windows daemon tests",
+      "run_id": 44729605203,
+      "head_sha": "5ef174bf9845bfb7d63872e5dafe2d7399e7d81b",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44729605203"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Maintenance ledger",
+      "run_id": 44729605177,
+      "head_sha": "5ef174bf9845bfb7d63872e5dafe2d7399e7d81b",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44729605177"
     }
   ],
   "child_runs": [],
@@ -537,12 +573,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "2e5b71fa59809b17faff1e24ab2e56caee52612e",
-      "pin": "2e5b71fa5980",
+      "tip": "5998e5e8362d888c1ffe20ea0dee89041f066472",
+      "pin": "5998e5e8362d",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-15",
-      "note": "Moved to 2e5b71f for 0.1.51. v0.1.50's Apple build (run 43636617538) resolved this tip, not the 0947393 gitlink the 0.1.50 lock recorded, and compiled iOS and macOS; the 0.1.51 candidate re-compiles the same SHA. Parent-run coverage for this pin is recorded after the candidate's first executed build, as the 2026-11-14 window did. Not device or TestFlight evidence."
+      "observed_at": "2026-11-20",
+      "note": "Moved to 5998e5e for the 0.1.55 preparation: one UI-only Swift change (ApplicationLibrary/Views/Setting/CoreView.swift drops the configuration status section), no Go surface in experimental/libbox and no Libbox call-site change. Layer 4 was re-run against that checkout (742 files, 0 violations, 3 interface methods). The compile half is the Apple client workflow dispatched at this candidate with input 5998e5e; its run id is named in the release clearance record. Not device or TestFlight evidence."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
