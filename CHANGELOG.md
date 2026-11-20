@@ -4,6 +4,115 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.55](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.55) — 2026-11-21
+
+### 本次更新
+
+v0.1.55 是**连接代际与重载一致性的收口版**：不新增功能，目标是把"换网、证书重载、会话借用"三条边界上
+"看起来已经处理、实际还留着窗口"的路径补齐，并让这些边界第一次拥有可执行的守卫。本版修复了 AnyTLS 在
+换网时把新网络请求挂到旧握手上的缺陷（外部独立复现 3/3，本版在 fork 中修复并配 4 个守卫测试），修掉了
+hysteria2 代际门的一次重入死锁、证书重载的发布乱序与读竞态、TrustTunnel 的借用窗口，并让
+`go.mod` 的 GODEBUG 默认在每一条出厂路径上真正生效。macOS 发布门禁里两个"只在 Darwin 暴露"的测试假设
+也一并改正。
+
+### 一、网络切换（generation gate）
+
+- **hysteria2 重入死锁**：单客户端路径把 `created.InterfaceUpdated` 当作门的换网动作，而该方法本身又走
+  `GenerationGate.NetworkChanged`，第一次真实切换就在同一 goroutine 上重入 `applyTransition` 并再次获取
+  `resetAccess`（非重入锁）——listener 阶段永久阻塞，之后的每次 `BeforeDial` 都排在它后面，一次物理换网
+  让 Hysteria2 永久死亡且泄漏持锁 goroutine。动作改为 `resetForNetworkChange`（该出站双客户端路径同样使用的
+  普通 close），并加测试守住"动作不得重入门"。
+- **AnyTLS 接入代际门**：该池此前没有 generation gate，换网时"发布会话→通知 listener"之间的窗口里到达的
+  需求会被复用到旧网络的会话上；TLS over TCP 没有 keepalive，只有下一次读超时才暴露。现在 `DialContext` 与
+  `ListenPacket` 都在交出时 `BeforeDial`、成功时 `AfterDial`，与其余七个传输 owner 一致。
+- **AnyTLS 复用边界**：出站此前只转发 `CloseIdleConnections`，参考管理器在睡眠边界只能退化为"只清空闲"，
+  仍带流的会话被当作可用——而那正是"下一次写入才发现路径已死"的会话。现在实现 `adapter.ReuseSuspect`
+  （基于 fork 的 `Client.RetireSuspect`）：边界前的会话不再接新流，已在流上的继续跑，最后一条流结束时关闭。
+- **AnyTLS 换网清理正在创建的连接（P2）**：`Reset()` 只清已建会话，`c.pending` 保留；旧 TLS 握手卡住时，
+  新网络的请求仍会加入旧任务并继续等待或随旧任务失败。fork `b74ada1`：`Reset`/`Close` 在锁内清
+  `c.pending`，关闭 `abandoned` 释放等待者并取消创建 context；迟到结果从会话表移除并关闭、绝不发布；
+  等待者在新时代重试一次。`reset_creation_test.go` 用四个测试钉住取消、新需求走新创建、迟到结果拒绝、
+  等待者重试；内核 pin 同步到该提交。
+
+### 二、TLS 与证书重载
+
+- **服务端证书重载串行化**：证书与私钥两个回调各自由 fswatch 的定时 goroutine 触发，重建前无同步地写
+  `c.certificate`/`c.key`；`Server(conn)` 又无锁读 `c.config`。一次续期在活监听器上就是两处数据竞争，
+  且该文件此前没有任何重载测试。现在整个重载持有 `reloadAccess`，每次读配置都持锁；`-race` 下新测试在
+  修复前复现两条 DATA RACE。
+- **client-CA 分支的读侧**：该分支不暂存内容（新建 pool 后换 config），需要的是读侧保护；新增测试在重写
+  CA 文件期间让每个握手入口都与 swap 竞争，并用 `CertPool.Equal` 断言只信任新 CA。
+- **证书库重载排序**：两条被监视路径（或同一路径的两次相邻写入）会并发执行 `update()`，先读到文件的调用
+  可能后发布，留下"刚加的 CA 不受信 / 刚删的 CA 仍受信"的旧快照。现在重载串行，发布时间与读取顺序一致。
+
+### 三、TrustTunnel 与会话借用
+
+- **先占 stream 槽再交出 session**：`getSession` 把会话交给调用方之后才在 `roundTrip` 里计数 CONNECT，
+  这中间的 `CloseIdleConnections`、`RetireSuspect` 的 drain 与空闲监视都会读到 `streams==0` 而关闭调用方
+  已经拥有的 carrier——新会话上的 CONNECT 没有重试机会（`use of closed network connection`），复用会话则
+  多付一次建连并把"streams==0 即未使用"的生命周期前提打破。现在槽位在交出前预留。
+- **CONNECT 流的结束方式**成组验证：调用方不读的隧道被关闭、目标半关闭、trim 与活跃流并存，三种形态都
+  对真实服务执行，并验证槽位归还后 trim 才能关闭会话。
+
+### 四、构建与发布指纹
+
+- **每条出厂路径保留 `go.mod` 的 GODEBUG 默认**：`-X runtime.godebugDefault=...` 是**替换**而不是合并，
+  `cmd/internal/build_shared` 只传 `multipathtcp=0,tlssha1=1`，把 `godebug tlssecpmlkem=0` 从所有经它
+  构建的产物（Apple/Android Libbox、桌面 daemon）中丢掉了，而 `cmd/sing-box` 与发布配方走
+  `release/LDFLAGS` 仍保留——两条出厂路径发出了不同的 TLS ClientHello。现在共享构建使用完整默认集，
+  `scripts/ci/clienthello-probe` 实测回到 5 组握手。
+- **共享链接参数变更必须重建产物**：`android-core-arm64`、`mobile-contract`、`windows-boxdd-tests` 的路径
+  过滤都不含 `cmd/internal/build_shared/**`，只改共享参数的提交可以带着"没有产物由它编译、也没有 job 判定"
+  的状态进入 testing。三个 push 工作流（及 boxdd 的 PR 臂）已加入该路径。
+
+### 五、门禁与证据
+
+- 新增守卫：DNS complete lookup 的跨代拒绝（A/AAAA 分属两代时必须拒绝）、真实 DNS 缓存→真实双栈 dialer
+  →真实 socket 的联合链路（换网后落到新监听器且重新解析）、hysteria2 在途拨号的换网返回（约 3ms 返回
+  reset 的网络变化错误，不需生产改动）、resourceguard 的重入 shed/diagnostics、TrustTunnel 的
+  body/cancel/retire 三向交错、sniff 泄漏判定按一次 census 求值（修掉 push 门里同一 shape 连续两次读数
+  不一致的 flake）。
+- 2x2、3x3、4x4 跨调试审计的矩阵、报告与复现脚本入库：`docs/audits/next-cross-debug/`（9 份报告 +
+  矩阵 + REPRODUCE），其中 Linux 行在 WSL2 上真实执行并记录了环境结论。
+- macOS 门禁的两个平台假设改正：`dns` 联合测试需要第二个 IPv4 回环地址（macOS 的 lo0 默认只有
+  127.0.0.1，改为先探测、不可用则带原因 Skip），`httpclient` 的 one-shot body 夹具按产品方式设置 QUIC
+  套接字缓冲并改用 udp4（否则 Darwin 上 2s 握手超时、请求回落到 HTTP/2）。
+
+### 六、依赖与客户端
+
+- **两个 pin 移动**：`sing-anytls` 从 `da880d8` 前移到 `b74ada1`（换网清理在途创建）；`clients/apple`
+  gitlink 从 `2e5b71fa` 前移到 `5998e5e`（Core 页去掉配置状态区，纯 Swift UI 改动，无 Libbox 调用面变化；
+  访问器探针 742 文件 / 0 违规 / 3 接口方法）。
+- 其余依赖不变：10 个 Go 模块中 8 个、Android / Desktop gitlink 与嵌套 dashboard 全部等于各自跟踪分支
+  头（identical），cronet 29 个原生模块保持 controlled。
+- 版本 `0.1.55`；候选提交 `66febf37d`；tag `v0.1.55`。
+
+### 七、验证与发布
+
+- **同一候选 SHA 的门禁**：[Verify](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44739050674)
+  （含 pin-runs、知识库事实、ABI pin、e2e、build matrix、cronet provenance、race checks）、
+  [Release contract verification](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44739050662)、
+  [Android Core ARM64](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44739050636)、
+  [macOS arm64](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44739212514)（含 macOS tips
+  单元测试、Darwin core）、
+  [Apple client](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44739236869)（Libbox、iOS、
+  macOS、自签 IPA，解析 Apple SHA `5998e5e`）全部成功。
+- 本地：`release-freeze.py verify --strict`、`check-pin-runs.py`、`check-knowledge-facts.py`、
+  `check-upstream-retirement.py`、`check-libbox-abi.sh --pin-only` 全部通过。
+- [Release preparation](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44759379531)：`CHANGED: false`（无 behind pin），回读 exact-SHA evidence 后放行。
+- [Kernel release](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44760335832)：freeze、contract、Linux、macOS CLI、Windows core、Desktop 安装器、
+  Android AAR、Apple（Libbox + iOS + macOS + self-sign）、stage、publish 全部成功，2026-11-20T16:39:29Z 公开
+  `v0.1.55`。
+- 公开附件（8 项 + 校验和）：Linux amd64、macOS arm64 CLI、Windows amd64 core、Android ARM64 AAR、Apple
+  Libbox、Windows x64 安装器、自签 unsigned IPA、`SHA256SUMS`；`SHA256SUMS` 与各附件已回读核对。
+
+### 八、已知边界
+
+- 未在本环境执行 iPhone NetworkExtension 真机、TestFlight 上传或真实服务端矩阵；按独立设备/TF 流程验收。
+- AnyTLS 的换网修复有 fork 单测（4 个）与内核 pin，未做设备级"换网瞬间"的端到端验证。
+- `docs/audits/next-cross-debug` 的 3x3/4x4 组合仍有 NOT_COVERED 与环境受限项，逐条记录在各报告与 README。
+- macOS 13+ 为最低部署目标（Go 1.27 链接器默认 `minos=13.0`），与 0.1.54 相同。
+
 ## [v0.1.54](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.54) — 2026-11-20
 
 ### 本次更新
