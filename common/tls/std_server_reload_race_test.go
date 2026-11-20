@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -173,4 +174,91 @@ func assertReloadSucceeds(t *testing.T, config *STDServerConfig, path string) {
 		// silent failure cannot hide.
 		t.Logf("reload %s returned: %v", filepath.Base(path), err)
 	}
+}
+
+// writeClientCA writes a self-signed certificate that is usable as a client CA, and returns a pool that
+// contains exactly it.
+func writeClientCA(t *testing.T, path, commonName string) *x509.CertPool {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(7),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	content := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+	pool := x509.NewCertPool()
+	require.True(t, pool.AppendCertsFromPEM(content))
+	return pool
+}
+
+// TestAClientCAReloadDoesNotRaceTheHandshakePath covers the second reload branch. The certificate
+// branch stages its files in fields (which is why it needed the reload lock); this branch builds a new
+// pool and swaps the config, so what it needs is the READER side - every handshake entry must take the
+// read lock around c.config or the swap races it. The fix added those locks for all branches, and this
+// test holds that for the branch that writes ClientCAs.
+func TestAClientCAReloadDoesNotRaceTheHandshakePath(t *testing.T) {
+	directory := t.TempDir()
+	certificatePath := filepath.Join(directory, "server.pem")
+	keyPath := filepath.Join(directory, "server.key")
+	writeServerKeyPair(t, certificatePath, keyPath, "client-ca.test")
+	clientCAPath := filepath.Join(directory, "clients.pem")
+	firstPool := writeClientCA(t, clientCAPath, "client-ca-one")
+
+	serverConfig, err := NewSTDServer(context.Background(), log.NewNOPFactory().NewLogger("client-ca"),
+		option.InboundTLSOptions{
+			Enabled:               true,
+			CertificatePath:       certificatePath,
+			KeyPath:               keyPath,
+			ClientCertificatePath: []string{clientCAPath},
+			ClientAuthentication:  option.ClientAuthType(tls.RequireAndVerifyClientCert),
+		})
+	require.NoError(t, err)
+	config, isTyped := serverConfig.(*STDServerConfig)
+	require.True(t, isTyped)
+	t.Cleanup(func() { _ = config.Close() })
+
+	stdConfig, err := config.STDConfig()
+	require.NoError(t, err)
+	require.NotNil(t, stdConfig.ClientCAs)
+	require.True(t, stdConfig.ClientCAs.Equal(firstPool), "the initial client CA must be the file's")
+
+	var (
+		stop    = make(chan struct{})
+		readers sync.WaitGroup
+	)
+	for range 4 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, _ = config.Server(nil)
+				_, _ = config.Client(nil)
+				_, _ = config.STDConfig()
+			}
+		}()
+	}
+
+	secondPool := writeClientCA(t, clientCAPath, "client-ca-two")
+	require.NoError(t, config.certificateUpdated(clientCAPath))
+	close(stop)
+	readers.Wait()
+
+	stdConfig, err = config.STDConfig()
+	require.NoError(t, err)
+	require.True(t, stdConfig.ClientCAs.Equal(secondPool),
+		"after the reload the served config must verify clients against the new CA and only it")
 }
