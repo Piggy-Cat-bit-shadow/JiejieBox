@@ -155,7 +155,17 @@ func TestTheRealCacheFeedsTheRealDialerAcrossANetworkChange(t *testing.T) {
 	// resolver returns decides which listener the dial lands on.
 	firstListener := startCandidateListener(t, "127.0.0.1:0")
 	port := firstListener.port()
-	secondListener := startCandidateListener(t, net.JoinHostPort("127.0.0.2", strconv.Itoa(port)))
+	// 127.0.0.2 is a second address on the same loopback interface on Linux and Windows, but macOS
+	// gives lo0 only 127.0.0.1 by default: `bind: can't assign requested address`. The witness needs
+	// two addresses on one port, so this host cannot run it at all - skip with that reason rather than
+	// fail (the Linux verify job runs the full arm).
+	secondAddress := net.JoinHostPort("127.0.0.2", strconv.Itoa(port))
+	if probe, probeErr := net.Listen("tcp", secondAddress); probeErr != nil {
+		t.Skipf("this host has no second IPv4 loopback address (%v); the two-address witness needs 127.0.0.2 and the Linux job runs it", probeErr)
+	} else {
+		_ = probe.Close()
+	}
+	secondListener := startCandidateListener(t, secondAddress)
 	require.Equal(t, port, secondListener.port())
 
 	generation := &atomic.Uint64{}
