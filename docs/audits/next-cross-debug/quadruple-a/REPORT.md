@@ -36,11 +36,21 @@ in-flight dial or stream. The suites below were run here, with the general tag p
 | after a *network change* the carrier must remain able to build a client (the reset is not a shutdown) | `TestANetworkChangeLeavesTheCarrierReusable` | green |
 | two families under concurrent demand | `family_concurrency_test.go`, `family_lifecycle_test.go` | green |
 
-The arm that is **not** covered is the fourth one: a dial or stream **in flight** when the event
-arrives, with a real NAT rebinding in front of a real hysteria2 server. Building it needs a
-controlled UDP proxy that changes its upstream source port mid-handshake plus a local QUIC server;
-this window chose not to start it rather than to fake it with a blackholed handshake whose "failure"
-would prove nothing about rebinding.
+The fourth arm **was** executed (`f306b2505`): a dial already inside the QUIC handshake - the path is a
+UDP socket that reads and never answers, so it neither completes nor refuses the handshake - while the
+coordinator advances the generation and the listener notifies. Measured: the dial returns in ~3 ms with
+the reset's own `network changed` error, which means the pinned sing-quic client's `CloseWithError`
+does reach pending offers and no in-flight creation outlives its owner. No production change is needed
+for this arm.
+
+The test records the harness trap it hit first, because the trap is instructive: notifying the listener
+**without** the coordinator advance makes the gate treat the event as a duplicate of the generation it
+already applied, run no reset, and leave the dial waiting out its full timeout - which looks exactly
+like the defect the test exists to find. The production order is "publish the generation, then notify",
+the same order window B's gate tests use.
+
+What remains `NOT_COVERED` in Q02 is the NAT-rebinding half: a controlled UDP proxy that changes its
+upstream source port mid-handshake in front of a real hysteria2 server.
 
 Note also that the client side does not migrate QUIC connections in this fork
 (`docs/fork/interface-update-lifecycle.md` records the audit), so "migration" here can only mean the
@@ -79,8 +89,8 @@ four-way timeline cannot be produced, so the row is `NOT_OBSERVABLE`, not "proba
 
 The four-way rows in this area are not equally attackable, and the honest ranking is:
 
-1. **Q02's in-flight arm** is the one worth building next: it needs a UDP proxy, a local QUIC server
-   and two streams, all of which exist in this environment - only the harness is missing.
+1. **Q02's rebinding half** is the one worth building next: it needs a UDP proxy that changes its
+   upstream source port mid-handshake, in front of a real hysteria2 server. The in-flight arm is done.
 2. **Q03's NAT arm** and **Q07** need privileges/networks that the session does not have.
 3. **Q08** needs a device for its actual question; the Go half is already clean.
 

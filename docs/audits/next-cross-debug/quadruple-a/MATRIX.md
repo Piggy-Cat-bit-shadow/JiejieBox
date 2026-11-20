@@ -12,7 +12,7 @@ report says exactly which arm of each four-way was executed and which is platfor
 
 | Row | The four systems | Verdict | What was executed / what is blocked |
 | --- | --- | --- | --- |
-| **Q02** | platform interface event · `runtimecoord.GenerationGate` · QUIC carrier (`familyCarrier`/single client) · in-flight dial / stream | **`NO_DEFECT`** for the executable arms; NAT-rebinding arm `NOT_COVERED` | the gate's action, its once-per-generation dedupe, the teardown-vs-network-change distinction and post-reset reuse are all pinned by tests that were run green here (see §2). The rebinding arm needs a controlled UDP proxy in front of a real hysteria2 server, which this window did not build |
+| **Q02** | platform interface event · `runtimecoord.GenerationGate` · QUIC carrier (`familyCarrier`/single client) · in-flight dial / stream | **`NO_DEFECT`** for the executable arms, including the in-flight dial (`f306b2505`); the NAT-rebinding arm stays `NOT_COVERED` | the gate's action, its once-per-generation dedupe, the teardown-vs-network-change distinction, post-reset reuse and the demand already inside the handshake are all pinned by tests run green here (see §2). The rebinding arm needs a controlled UDP proxy in front of a real hysteria2 server, which this window did not build |
 | **Q03** | `service/oomkiller` pressure · `common/resourceguard` admission · `sing-tun` NAT table/queue · real UDP `PacketConn`/goroutines | **`NOT_OBSERVABLE`** for the NAT-table arm; the admission arms are `POLICY_DECISION` (already recorded, not re-claimed) | without TUN/admin there is no NAT table to drive; the 4096-entry cap and the "no admission on the UDP path" finding are window A's R-4 (pairwise), priced as a product decision, and are not re-counted here |
 | **Q07** | MASQUE PREF64 discovery · DNS bootstrap/cache · QUIC path · network epoch | **`NOT_OBSERVABLE`** | needs a NAT64/PREF64 network and an IPv6-only bootstrap. `transport/masque` is green (9.4 s) but its tests do not synthesize PREF64 discovery × bootstrap × epoch, so a pass there is not this row |
 | **Q08** | iOS NE budget · Cronet/native ownership · OOM/Guard pressure · H3 speed-test cancellation | desktop half **`NO_DEFECT`**; device half **`NOT_OBSERVABLE`** | the Go-side cancel chain is executed and green (§2); `phys_footprint`, Jetsam and native Cronet ownership need a device, and no Windows RSS number is offered as a substitute |
@@ -34,6 +34,13 @@ not re-claimed as new):
   no client; a dial after a *network change* is allowed to build a fresh client (the two meanings of
   `CloseWithError` are not conflated).
 - `family_concurrency_test.go`, `family_lifecycle_test.go` — two families under concurrent demand.
+- `in_flight_reset_test.go` (`f306b2505`) — **the fourth arm, executed for the first time**: a dial
+  already inside the QUIC handshake (the path is a UDP socket that reads and never answers) when the
+  coordinator advances the generation and the listener notifies. The dial returns in ~3 ms with the
+  reset's own `network changed` error, so the pinned sing-quic client's `CloseWithError` reaches
+  pending offers and no in-flight creation outlives its owner. The test also records the harness trap
+  it hit first: without the coordinator advance the gate (correctly) treats the event as a duplicate
+  and runs no reset, which leaves the dial waiting out its timeout and looks like the defect itself.
 
 For Q08's desktop half: `TestClashDelayIsCancelledWithTheRequest`,
 `TestGenericGroupDelayIsCancelledWithTheRequest` (the handler returns when the request context is

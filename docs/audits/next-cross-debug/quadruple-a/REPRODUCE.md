@@ -30,7 +30,26 @@ go test -count=1 -tags "$(Get-Content release/DEFAULT_BUILD_TAGS_OTHERS -Raw).Tr
   ./protocol/hysteria2/
 ```
 
-The arm **not** covered is a dial in flight across a NAT rebinding. The fixture it needs:
+### 2.1 The in-flight arm (executed, `f306b2505`)
+
+```powershell
+go test -count=1 -tags "$(Get-Content release/DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()" -v `
+  -run 'TestANetworkChangeAbortsADialStuckOnTheDeadPath' ./protocol/hysteria2/
+# --- PASS ... the in-flight dial returned 2.68ms after the network change: network changed
+```
+
+The fixture: a UDP socket bound on loopback that reads and never answers (the path is dead but refuses
+nothing), the production hysteria2 outbound pointed at it, a `DialContext` started in a goroutine, the
+first packet observed on the wire, then `coordinator.Advance(1)` **followed by**
+`outbound.InterfaceUpdated(ctx)`. The dial returns in ~3 ms with the reset's own error.
+
+The order is load-bearing: without `Advance(1)` the gate treats the notification as a duplicate and
+runs no reset, and the dial then waits out the full handshake timeout - the exact shape that looks
+like a defect. That is the gate doing its job (one epoch, one destructive action), not the arm failing.
+
+### 2.2 The rebinding arm (not covered)
+
+The fixture it needs:
 
 1. a UDP proxy bound on loopback that forwards to a local hysteria2 server and, after N bytes, starts
    using a second upstream socket (the server then sees a new 4-tuple - rebinding);
@@ -41,7 +60,7 @@ The arm **not** covered is a dial in flight across a NAT rebinding. The fixture 
    the client's physical socket actually moves; after everything closes the number of live QUIC
    sockets returns to zero.
 
-None of that was built, so the row is recorded as `NOT_COVERED`.
+None of that was built, so this half stays `NOT_COVERED`.
 
 ## 3. Q03 - why it is not observable here
 
