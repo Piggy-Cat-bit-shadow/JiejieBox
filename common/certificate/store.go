@@ -22,8 +22,21 @@ import (
 var _ adapter.CertificateStore = (*Store)(nil)
 
 type Store struct {
-	ctx                       context.Context
-	access                    sync.RWMutex
+	ctx    context.Context
+	access sync.RWMutex
+	// updateAccess serialises reloads from start to publish.
+	//
+	// Two reloads can overlap: fswatch fires each debounced callback from its own timer goroutine, so
+	// two watched paths - or two writes to one path close enough together - produce two concurrent
+	// update() calls. Without this lock the two calls read the files at different moments and publish
+	// independently, and the one that READ FIRST can publish LAST: the store then holds a trust set
+	// older than the file content, which is the opposite of what a reload is for (an added CA does not
+	// take effect, a removed one stays trusted) until the next write event happens to fix it.
+	//
+	// Holding it across BOTH the read and the publish makes "the last reload to run" and "the reload
+	// that read the files last" the same event. Reloads are file-change driven and rare, so serialising
+	// them costs nothing on any hot path.
+	updateAccess              sync.Mutex
 	storeType                 string
 	systemPool                *x509.CertPool
 	currentPool               *x509.CertPool
@@ -35,6 +48,10 @@ type Store struct {
 	//nolint:unused // populated only on darwin && cgo via the storePlatform embed.
 	platform storePlatform
 }
+
+// testHookStoreLoad runs between a reload's file reads and its publish. Tests use it to hold one
+// reload in the exact window a concurrent reload can overtake it. Production leaves it nil.
+var testHookStoreLoad func()
 
 func NewStore(ctx context.Context, logger logger.Logger, options option.CertificateOptions) (*Store, error) {
 	storeType := options.Store
@@ -143,9 +160,14 @@ func (s *Store) ExclusiveAnchors() bool {
 }
 
 func (s *Store) update() error {
+	s.updateAccess.Lock()
+	defer s.updateAccess.Unlock()
 	currentPool, anchorPEM, err := s.load()
 	if err != nil {
 		return err
+	}
+	if testHookStoreLoad != nil {
+		testHookStoreLoad()
 	}
 	s.access.Lock()
 	defer s.access.Unlock()
