@@ -92,9 +92,9 @@ and no job judging it. That is the P6 shape ("a test exists, nothing runs it") o
 artifact exists, nothing rebuilds it.
 
 Fixed in the same round: each push-triggered workflow (and `windows-boxdd-tests`' pull-request arm)
-now lists `cmd/internal/build_shared/**`, with the reason written next to the entry. The push carrying
-this commit is itself the positive control - it runs `Android Core ARM64` and the boxdd tests, which
-it did not for the flags commit.
+now lists `cmd/internal/build_shared/**`, with the reason written next to the entry. The control is
+the commit that touches **only** this package (a comment in `flags.go`): with the filter fixed it runs
+`Android Core ARM64` and the boxdd tests, which the flags-only commit `e8a74e41f` did not.
 
 ## 2. The other triples of the brief
 

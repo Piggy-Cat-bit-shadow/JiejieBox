@@ -20,6 +20,11 @@ import "strings"
 //
 // The camouflage this product ships is the pre-1.26 key-share set, so the extra post-quantum groups
 // are a fingerprint change, not a preference.
+//
+// Every workflow that compiles an artifact through this package must also list this file's directory
+// in its push path filter (android-core-arm64.yml, mobile-contract.yml, windows-boxdd-tests.yml):
+// editing only the flags is a change to the shipped wire, and a filter that does not match it lets
+// that change ship with no artifact built from it.
 const godebugDefaults = "multipathtcp=0,tlssha1=1,tlssecpmlkem=0,tracebacklabels=0,x509sslcertoverrideplatform=0"
 
 func LinkerFlags(version string, debug bool) string {
