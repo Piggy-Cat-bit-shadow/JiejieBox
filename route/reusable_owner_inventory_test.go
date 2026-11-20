@@ -8,6 +8,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/httpclient"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/protocol/anytls"
 	"github.com/sagernet/sing-box/protocol/masque"
 	"github.com/sagernet/sing-box/protocol/openconnect"
 	"github.com/sagernet/sing-box/protocol/openvpn"
@@ -118,6 +119,20 @@ func TestTheReusableOwnersTheWalkIsDocumentedToReachKeepTheirCapabilities(t *tes
 			"session with a live stream is neither closed nor refused new work. That is the "+
 			"capability the boundary walk prefers over the idle-only action and the reason it "+
 			"applies both.")
+
+	// protocol/anytls is the second multiplexed pool that can express the boundary. Its session is
+	// one TLS connection carrying many streams, and the SDK lists a session for reuse as soon as ANY
+	// of its streams finishes - so a session that still carries a live stream is listed, which is the
+	// state the boundary has to handle. CloseIdleConnections cannot: it skips a session that carries
+	// a stream, which is correct for memory pressure and wrong after a sleep.
+	anyTLS := reflect.TypeFor[*anytls.Outbound]()
+	require.True(t, anyTLS.Implements(idleConnectionReleaser),
+		"protocol/anytls.Outbound no longer implements adapter.IdleConnectionReleaser, so the trim, "+
+			"the DEEP_IDLE release and the memory pass cannot drop its idle sessions")
+	require.True(t, anyTLS.Implements(reuseSuspect),
+		"protocol/anytls.Outbound no longer implements adapter.ReuseSuspect, so every AnyTLS "+
+			"session that still carries a stream survives a sleep boundary and the next flow is "+
+			"multiplexed onto it; that flow is the one that discovers the path died")
 }
 
 // TestTheWalkReachesTheRealHTTPClientManager is the same claim as the assertion above, made through

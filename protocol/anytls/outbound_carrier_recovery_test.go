@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,10 +43,21 @@ type carrierHandler struct {
 	target     string
 	streams    atomic.Int32
 	streamEnds atomic.Int32
+	// sources is the per-stream client address the server accepted. Streams that share one AnyTLS
+	// session share one source port, so this is how a test tells "reused the carrier" from "opened a
+	// new session" without reaching into the client's pool.
+	sourceAccess sync.Mutex
+	sources      map[string]struct{}
 }
 
 func (h *carrierHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	h.streams.Add(1)
+	h.sourceAccess.Lock()
+	if h.sources == nil {
+		h.sources = make(map[string]struct{})
+	}
+	h.sources[source.String()] = struct{}{}
+	h.sourceAccess.Unlock()
 	go func() {
 		defer h.streamEnds.Add(1)
 		defer conn.Close()
@@ -100,6 +112,14 @@ func startCarrierEcho(t *testing.T) string {
 // startCarrierServer serves the pinned sing-anytls service over TLS on loopback.
 func startCarrierServer(t *testing.T, handler *carrierHandler) uint16 {
 	t.Helper()
+	return startCarrierServerWith(t, handler, nil)
+}
+
+// startCarrierServerWith builds the same server around a listener the caller may wrap. A wrapper is
+// how a test holds the first TLS handshake open: two flows that dial while that creation is in flight
+// share it, which is the shape a real burst has and the only way a session carries two live streams.
+func startCarrierServerWith(t *testing.T, handler N.TCPConnectionHandlerEx, wrap func(net.Listener) net.Listener) uint16 {
+	t.Helper()
 	directory := t.TempDir()
 	keyPEM, certPEM, err := boxTLS.GenerateCertificate(nil, nil, time.Now, "localhost", time.Now().Add(24*time.Hour))
 	require.NoError(t, err)
@@ -123,6 +143,10 @@ func startCarrierServer(t *testing.T, handler *carrierHandler) uint16 {
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", stdTLSConfig)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
+	var serving net.Listener = listener
+	if wrap != nil {
+		serving = wrap(listener)
+	}
 
 	service, err := singanytls.NewService(carrierPassword, singanytls.ServiceOptions{
 		Handler:         handler,
@@ -133,7 +157,7 @@ func startCarrierServer(t *testing.T, handler *carrierHandler) uint16 {
 
 	go func() {
 		for {
-			conn, acceptErr := listener.Accept()
+			conn, acceptErr := serving.Accept()
 			if acceptErr != nil {
 				return
 			}

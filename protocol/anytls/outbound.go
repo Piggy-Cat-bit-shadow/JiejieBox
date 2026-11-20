@@ -30,6 +30,7 @@ var (
 	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
 	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
 	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+	_ adapter.ReuseSuspect            = (*Outbound)(nil)
 )
 
 type Outbound struct {
@@ -168,6 +169,25 @@ func (h *Outbound) SetKeepIdleConnections(keep bool) {
 
 func (h *Outbound) CloseIdleConnections() {
 	h.client.CloseIdleConnections()
+}
+
+// RetireSuspect is the reuse boundary for this pool: a session that predates a sleep is no longer
+// trusted with new flows, while the flows already on it keep running.
+//
+// The two actions are different, and the difference is the whole reason the adapter has two
+// interfaces. CloseIdleConnections above is the trim: it may only drop what nobody is using, and it
+// skips a session that still carries a stream. That skip is correct for memory pressure and wrong
+// after a sleep - an open stream can be silent across one, so the session is unverified whatever its
+// stream count says, and the flow written onto it next is the one that discovers the path died. The
+// client owns that state (which sessions are listed for reuse, and which streams are still on them),
+// so the drain has to happen there: see sing-anytls Client.RetireSuspect, which leaves the idle list
+// and closes each session when its last stream ends.
+//
+// The reset above (InterfaceUpdated) is the larger action and is not interchangeable with this one:
+// it cuts every flow, which is right when the interface itself changed and wrong for a wake on the
+// same interface.
+func (h *Outbound) RetireSuspect() {
+	h.client.RetireSuspect()
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
