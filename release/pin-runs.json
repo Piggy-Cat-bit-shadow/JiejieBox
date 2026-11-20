@@ -620,12 +620,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
       "branch": "main",
-      "tip": "1bd68313caaca2986983a93d6dae18d11af80541",
-      "pin": "1bd68313caac",
+      "tip": "1a1c98e590db6ae2b38bd60f492db93ca395b30f",
+      "pin": "1a1c98e590db",
       "relation": "identical",
       "policy": "report",
-      "observed_at": "2026-11-15",
-      "note": "Lifted to 1bd68313 together with Apple so the client pair moves as one, and its tree records the dashboard gitlink b6e3193. Its build evidence is the Windows installer audit run dispatched on this candidate; release-kind artifacts stay the release workflow's job."
+      "observed_at": "2026-11-20",
+      "note": "main carries 1a1c98e chore: build the Windows client and daemon with Go 1.27.4: version.json go_version moves go1.26.8 -> go1.27.4, which the Windows installer workflow reads for setup-go and the daemon build (build_boxdd inside the pinned core checkout). The tree still records the dashboard gitlink b6e3193. Its build evidence is the Windows installer job of this candidate release run, which also records the daemon provenance; release-kind artifacts stay the release workflow's job."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
