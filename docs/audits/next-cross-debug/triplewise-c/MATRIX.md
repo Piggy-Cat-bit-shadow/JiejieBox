@@ -48,7 +48,7 @@ walked to its other users:
 | Candidate | Verdict | Why |
 | --- | --- | --- |
 | `provider/local` reload | `NOT_COVERED` | delegates into the shared provider adapter; a fair audit needs the adapter's publish path, not the watcher |
-| concurrent ECH-key reload against handshakes | `NOT_COVERED` | `setECHServerConfig` swaps under the same lock the fix now guards, but no test drives ECH reload concurrently |
+| concurrent ECH-key reload against handshakes | `NOT_COVERED` | `setECHServerConfig` swaps under the same lock the fix now guards, but generating valid ECH keys for a test was out of scope; the client-CA branch is covered (4c65de1d9) |
 | `Certificate` (inline) reload | `NOT_APPLICABLE` | no watcher is created for inline certificates |
 
 ## 5. Control matrix (reduced)

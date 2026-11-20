@@ -104,9 +104,10 @@ the session's final report.
 1. **The driver family, not the module, is the unit of this class of defect.** Any future watcher,
    ticker, or callback fan-out should be checked for the three ingredients at once: more than one
    driver goroutine, a shared mutable staging field, and a reader on another goroutine.
-2. **`setECHServerConfig` and the client-certificate branch** take the same lock but have no
-   concurrent tests; the fix makes them safe, and a test that drives them beside handshakes would pin
-   it the way this window pinned the certificate branch.
+2. **The client-CA branch is now covered** (`4c65de1d9`): readers against the swap plus
+   `CertPool.Equal` on the served pool, with the reader-lock mutation as the control. The ECH branch
+   takes the same lock and is safe for the same reason, but generating valid ECH keys for a test was
+   out of scope, so it stays `NOT_COVERED`.
 3. **`STDConfig()` returns the live pointer**, so a caller that keeps it across a reload sees the old
    config. That is the intended contract (the QUIC listeners capture it once), but it is the same
    shape as window 2x2 C's C-P02 on the client side and deserves one explicit note in the API doc.
