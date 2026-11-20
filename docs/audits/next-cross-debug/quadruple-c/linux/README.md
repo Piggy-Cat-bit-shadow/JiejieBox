@@ -80,6 +80,6 @@ range - so it must not be read as "cache_file is disabled".
 ## Prerequisites
 
 - WSL2 with a recent kernel, run as root (`wsl -d Ubuntu-24.04 -u root`);
-- a Linux Go toolchain (the setup script installs 1.27.4);
+- a Linux Go toolchain (the setup script installs 1.27.4). The client is stored as `q01client/q01client.go.txt`: a `.go` file here would be a Go package outside the module's checked-in source roots, which `cmd/internal/modlayout` correctly refuses; copy it to a `.go` path outside the repository to build it, exactly as `q01-capture.sh` does;
 - `tcpdump` for `common/tlsspoof` (`linux-suites-3.sh` installs it);
 - nothing listens on 18080/18081 in the namespace, and the scripts delete the namespace on exit.
