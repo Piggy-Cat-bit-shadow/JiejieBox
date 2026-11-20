@@ -59,9 +59,9 @@
     },
     {
       "module": "github.com/sagernet/sing-anytls",
-      "pinned": "8282e0069970",
+      "pinned": "da880d8d402e",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-anytls",
-      "version": "v0.0.0-20261116141833-8282e0069970"
+      "version": "v0.0.0-20261120041358-da880d8d402e"
     },
     {
       "module": "github.com/enfein/mieru/v3",

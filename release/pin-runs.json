@@ -489,12 +489,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-anytls",
       "branch": "main",
-      "tip": "8282e0069970a6dbc027d7b5c46bf272378f1376",
-      "pin": "8282e0069970",
+      "tip": "da880d8d402e596419beb5d6e3c3e14fedf5d12c",
+      "pin": "da880d8d402e",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-17",
-      "note": "Main now carries the creation-coalescing branch (8df0170 shared creation, d3e6d49 deadline, 8473492 waiter gauge); the temporary work branch is merged and retired."
+      "observed_at": "2026-11-20",
+      "note": "Main carries 693a1fe client: drain a suspect session instead of keeping it reusable - Client.RetireSuspect, the reuse-boundary action the pool could not express: a session with no stream is closed, one with a live stream leaves the idle list and closes when its last stream ends, and a session a dial is already opening a stream on is only marked. Tests: drain-with-a-live-stream (red with the body removed), empty-session close, empty-pool inert. protocol/anytls.Outbound now implements adapter.ReuseSuspect on top of it, and the reference manager's reuse boundary reaches it. The pin was moved by hand and needs a run at the new lock before the release gate is satisfied."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/mieru",

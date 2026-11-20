@@ -78,8 +78,8 @@ github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261116151243-d51ec71bf0dd h1
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261116151243-d51ec71bf0dd/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261110222322-4abfaed41727 h1:FOQfkSfAtacUfvz1iCd6yi/79K8XwhWu8jkUcmk6fpw=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261110222322-4abfaed41727/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
-github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261116141833-8282e0069970 h1:Hu7IzgPfHrETrFqYfQERBlRgHT/q/EG5uXONqBpiZtM=
-github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261116141833-8282e0069970/go.mod h1:ZjH8X9awKp6xdfgbJJZXH76Q0RNbDxxV/fgkXvt083o=
+github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261120041358-da880d8d402e h1:96B3LYzdMBpBiPQA55SGZxuIJtZvuNhhgeK2aXuQfqI=
+github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261120041358-da880d8d402e/go.mod h1:ZjH8X9awKp6xdfgbJJZXH76Q0RNbDxxV/fgkXvt083o=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261116152031-cdb57d74152e h1:m5oZULjJ4skkD8acoHjnuiBJp9vb1zAn2IGpu8roKS8=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261116152031-cdb57d74152e/go.mod h1:1p4qbghDMrEnkdBX8FXQRMqixJlEScn8z+O1mxUF7RY=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261119194153-f23ebd654a75 h1:6YI7YzzsYLONzYhIIENkGVLmc0BMsKd/ElZKsdNjQBI=
