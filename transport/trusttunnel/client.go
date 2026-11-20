@@ -617,6 +617,19 @@ func (c *Client) cordonGeneration(generation uint64, reason string) {
 // exact window; production leaves it nil.
 var testHookAfterPendingSessionWait func(*clientSession)
 
+// testHookSessionHandedOff runs after getSession has handed a session to its caller and dropped the
+// client lock, and before that caller sends its CONNECT. It is exactly the window a trim or a reuse
+// boundary used to win: tests run CloseIdleConnections or RetireSuspect there. Production leaves it
+// nil.
+var testHookSessionHandedOff func(*clientSession)
+
+// callSessionHandedOffHook is the nil-checked call site of testHookSessionHandedOff.
+func callSessionHandedOffHook(session *clientSession) {
+	if testHookSessionHandedOff != nil {
+		testHookSessionHandedOff(session)
+	}
+}
+
 // rejectPublishedSession reports whether a session that just came out of a shared creation must not
 // be handed to the waiting demand. A creation can publish after another demand armed the HTTP/2
 // verdict; a waiter that joined before the verdict would otherwise receive that HTTP/3 session
@@ -793,6 +806,9 @@ func (c *Client) Check(ctx context.Context) error {
 			return err
 		}
 		err = c.check(ctx, trace, session)
+		// _check carries no stream, so the slot getSession reserved for it goes back as soon as the
+		// probe has its answer: the carrier must be trimmable again after a check.
+		releaseSessionReservation(session)
 		if errors.Is(err, errSessionRetired) && attempt < 3 {
 			continue
 		}
@@ -864,7 +880,10 @@ func (c *Client) discardPendingLocked() *clientOffer {
 
 // CloseIdleConnections drops the session when no stream is using it. It is the
 // TRIM action of the resource contract: it never dials and it cannot terminate
-// a stream that is carrying traffic.
+// a stream that is carrying traffic. "Using it" includes a demand that has been
+// handed the session but has not sent its CONNECT yet: getSession reserves that
+// slot before it drops the lock, so a session that has an owner is never idle
+// here.
 func (c *Client) CloseIdleConnections() {
 	c.access.Lock()
 	session := c.session
@@ -889,59 +908,123 @@ func (c *Client) RetireSuspect() {
 	}
 }
 
+// reserveSessionSlot takes the stream slot of a caller that is about to be handed a session a shared
+// creation just published. The client lock is what makes it safe: it is the same lock
+// CloseIdleConnections, retireSession, Reset and Close hold while they detach the session, so the
+// reservation and the detach cannot interleave. It reports false when the session is no longer the
+// client's to lend - a trim, a reuse boundary, a teardown or Close got there first - and the caller
+// must then look at the current session instead of using this one.
+func (c *Client) reserveSessionSlot(session *clientSession) bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.session != session || session.retiring.Load() || !session.conn.alive() {
+		return false
+	}
+	session.streams.Add(1)
+	return true
+}
+
+// releaseSessionReservation gives back one stream slot that getSession reserved for a caller which
+// did not turn it into a stream. Closing a draining session is part of the same call on purpose: the
+// slot is the only thing that keeps a retiring session open, so returning the slot is what lets it
+// close instead of waiting for an owner that no longer exists.
+func releaseSessionReservation(session *clientSession) {
+	session.streams.Add(-1)
+	session.drainIfUnused()
+}
+
+// streamReservation is the one stream slot getSession hands to its caller. Ownership is explicit so
+// that the slot can never be counted twice or leaked: the holder either passes it to roundTrip, which
+// turns it into the stream or gives it back on failure, or releases it here.
+type streamReservation struct {
+	session *clientSession
+}
+
+func (r *streamReservation) release() {
+	if r.session != nil {
+		releaseSessionReservation(r.session)
+		r.session = nil
+	}
+}
+
+// consume transfers the slot to roundTrip, which owns it from then on.
+func (r *streamReservation) consume() *clientSession {
+	session := r.session
+	r.session = nil
+	return session
+}
+
 func (c *Client) openStream(ctx context.Context, trace *ClientTrace, authority string, userAgent string, withBody bool) (*clientSession, *rawStream, error) {
 	for attempt := 0; ; attempt++ {
-		session, fresh, err := c.getSession(ctx, trace)
-		if err != nil {
-			return nil, nil, err
-		}
-		if session.retiring.Load() {
-			// RetireSuspect removed the session between getSession and here;
-			// the next demand must open a fresh one.
-			if attempt < 3 {
-				continue
-			}
-			return nil, nil, errSessionRetired
-		}
-		if !fresh && c.healthCheck && session.checkDue() {
-			err = c.check(ctx, trace, session)
-			if err != nil && errors.Is(err, errSessionRetired) && attempt < 3 {
-				continue
-			}
-			if err != nil {
-				if ctx.Err() != nil || !retryable(err) {
-					return nil, nil, err
-				}
-				c.logger.DebugContext(ctx, "trusttunnel: health check of session to ", c.server, " failed, reconnecting: ", err)
-				session, fresh, err = c.getSession(ctx, trace)
-				if err != nil {
-					return nil, nil, err
-				}
-			}
-		}
-		stream, err := c.roundTrip(ctx, trace, session, authority, userAgent, withBody, !fresh)
-		if errors.Is(err, errSessionRetired) && attempt < 3 {
+		session, stream, err, retry := c.openStreamAttempt(ctx, trace, authority, userAgent, withBody, attempt)
+		if retry {
 			continue
 		}
-		// A fresh session whose CONNECT expired on the establishment budget is retried only when the
-		// timeout was corroborated and the session was retired: the retry then goes to a DIFFERENT
-		// carrier (HTTP/2 or a fresh session), and no business byte has been sent yet - only the
-		// CONNECT, which the caller has not received. An uncorroborated timeout is one slow target
-		// and is reported as such instead of paying the budget a second time.
-		if errors.Is(err, errConnectEstablishTimeout) && !errors.Is(err, errCarrierRetired) {
-			return session, stream, err
-		}
-		if err == nil || (fresh && !errors.Is(err, errCarrierRetired)) || ctx.Err() != nil || !retryable(err) {
-			return session, stream, err
-		}
-		c.logger.DebugContext(ctx, "trusttunnel: CONNECT on session to ", c.server, " failed, reconnecting: ", err)
-		session, _, err = c.getSession(ctx, trace)
-		if err != nil {
-			return nil, nil, err
-		}
-		stream, err = c.roundTrip(ctx, trace, session, authority, userAgent, withBody, false)
 		return session, stream, err
 	}
+}
+
+// openStreamAttempt runs one attempt and reports whether the caller must start over because a
+// lifecycle action won the race. getSession hands it one reserved stream slot; the attempt either
+// passes that slot to roundTrip - which turns it into the stream or gives it back on failure - or
+// releases it before returning. That single rule is what keeps a session that has been lent to a
+// caller from being judged idle and closed underneath it.
+func (c *Client) openStreamAttempt(ctx context.Context, trace *ClientTrace, authority string, userAgent string, withBody bool, attempt int) (session *clientSession, stream *rawStream, err error, retry bool) {
+	session, fresh, err := c.getSession(ctx, trace)
+	if err != nil {
+		return nil, nil, err, false
+	}
+	reservation := &streamReservation{session: session}
+	defer reservation.release()
+	if session.retiring.Load() {
+		// RetireSuspect removed the session between getSession and here;
+		// the next demand must open a fresh one.
+		if attempt < 3 {
+			return nil, nil, errSessionRetired, true
+		}
+		return nil, nil, errSessionRetired, false
+	}
+	if !fresh && c.healthCheck && session.checkDue() {
+		err = c.check(ctx, trace, session)
+		if err != nil && errors.Is(err, errSessionRetired) && attempt < 3 {
+			return nil, nil, err, true
+		}
+		if err != nil {
+			if ctx.Err() != nil || !retryable(err) {
+				return nil, nil, err, false
+			}
+			c.logger.DebugContext(ctx, "trusttunnel: health check of session to ", c.server, " failed, reconnecting: ", err)
+			reservation.release()
+			session, fresh, err = c.getSession(ctx, trace)
+			if err != nil {
+				return nil, nil, err, false
+			}
+			reservation.session = session
+		}
+	}
+	stream, err = c.roundTrip(ctx, trace, reservation.consume(), authority, userAgent, withBody, !fresh)
+	if errors.Is(err, errSessionRetired) && attempt < 3 {
+		return nil, nil, err, true
+	}
+	// A fresh session whose CONNECT expired on the establishment budget is retried only when the
+	// timeout was corroborated and the session was retired: the retry then goes to a DIFFERENT
+	// carrier (HTTP/2 or a fresh session), and no business byte has been sent yet - only the
+	// CONNECT, which the caller has not received. An uncorroborated timeout is one slow target
+	// and is reported as such instead of paying the budget a second time.
+	if errors.Is(err, errConnectEstablishTimeout) && !errors.Is(err, errCarrierRetired) {
+		return session, stream, err, false
+	}
+	if err == nil || (fresh && !errors.Is(err, errCarrierRetired)) || ctx.Err() != nil || !retryable(err) {
+		return session, stream, err, false
+	}
+	c.logger.DebugContext(ctx, "trusttunnel: CONNECT on session to ", c.server, " failed, reconnecting: ", err)
+	session, _, err = c.getSession(ctx, trace)
+	if err != nil {
+		return nil, nil, err, false
+	}
+	reservation.session = session
+	stream, err = c.roundTrip(ctx, trace, reservation.consume(), authority, userAgent, withBody, false)
+	return session, stream, err, false
 }
 
 // errSessionRetired reports a CONNECT that lost the race with RetireSuspect: the
@@ -956,17 +1039,18 @@ var errSessionRetired = E.New("trusttunnel: session retired")
 // stopped carrying, and retires it so the next demand can use the recovery path.
 func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *clientSession, authority string, userAgent string, withBody bool, mayBeStale bool) (_ *rawStream, err error) {
 	if session.retiring.Load() {
+		// The reuse boundary retired the session after getSession reserved its slot: this CONNECT is
+		// not sent, so the slot goes back and a draining session is allowed to close.
+		releaseSessionReservation(session)
 		return nil, errSessionRetired
 	}
-	// Count the CONNECT before it goes on the wire, not after the server answers 200. A trim or
-	// RetireSuspect that observes streams==0 while this request is in flight would close the
-	// carrier underneath it; the session must instead be drained and allowed to finish the CONNECT
-	// it already accepted. Every failure path gives the slot back and lets a retiring session close.
-	session.streams.Add(1)
+	// The caller's stream slot was reserved by getSession before the client lock was dropped, not
+	// here: a trim or a reuse boundary that ran between the hand-off and this call must already have
+	// seen the CONNECT as owed to the caller. Every failure path gives the slot back and lets a
+	// retiring session close; success hands it to the stream, whose Close returns it.
 	defer func() {
 		if err != nil {
-			session.streams.Add(-1)
-			session.drainIfUnused()
+			releaseSessionReservation(session)
 		}
 	}()
 	var status int
@@ -1212,8 +1296,15 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 					continue
 				}
 				session.markActivity()
+				// Reserve the caller's stream slot while the client lock is still held. Everything that
+				// decides "this carrier is unused" - CloseIdleConnections, retireSession's drainIfUnused,
+				// the idle watcher and the residency ledger - reads streams under this lock, so a session
+				// that is being handed out can no longer be judged idle. roundTrip consumes the slot: it
+				// becomes the stream, or it is given back on every path that does not end in one.
+				session.streams.Add(1)
 				c.access.Unlock()
 				trace.sessionReused(ctx, c.protocol, c.server, session.opened)
+				callSessionHandedOffHook(session)
 				return session, false, nil
 			}
 			c.session = nil
@@ -1237,7 +1328,13 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 			if c.rejectPublishedSession(session) {
 				continue
 			}
+			if !c.reserveSessionSlot(session) {
+				// A trim, a retirement or Close detached the session between its publication and this
+				// reservation. It cannot carry the CONNECT; look at the session the client holds now.
+				continue
+			}
 			trace.sessionReused(ctx, c.protocol, c.server, session.opened)
+			callSessionHandedOffHook(session)
 			return session, false, nil
 		}
 		// The offer keeps the caller's context VALUES but not its cancellation:
@@ -1270,6 +1367,10 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 		if c.rejectPublishedSession(session) {
 			continue
 		}
+		if !c.reserveSessionSlot(session) {
+			continue
+		}
+		callSessionHandedOffHook(session)
 		return session, true, nil
 	}
 }
