@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/resourceguard"
+	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -20,6 +21,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
+	"github.com/sagernet/sing/service"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -46,6 +48,11 @@ type Outbound struct {
 	// protect. A nil guard admits everything, so every platform that is not an iOS Network
 	// Extension keeps its previous behaviour without a branch in the dial path.
 	guard *resourceguard.Guard
+	// generation closes the publish-to-listener window: a dial that arrives after the network
+	// manager advanced the epoch but before the listener reset the pool runs the same reset here,
+	// before the client can lend a session built for the previous network. Nil without a
+	// coordinator, which is every embedder and test path.
+	generation *runtimecoord.GenerationGate
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.AnyTLSOutboundOptions) (adapter.Outbound, error) {
@@ -97,6 +104,11 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		// no-hook path.
 		AdmitCreation: admitSessionCreation(outbound.guard, outbound.server.String()),
 	}
+	outbound.generation = runtimecoord.NewGenerationGate(
+		service.FromContext[*runtimecoord.Coordinator](ctx),
+		"anytls/"+options.ServerOptions.Build().String(),
+		outbound.resetForNetworkChange,
+	)
 	return outbound, nil
 }
 
@@ -119,6 +131,12 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	h.uotClient = &uot.Client{
 		Dialer:  anytlsDialer(h.dialAdmitted),
 		Version: uot.Version,
+	}
+	if h.generation != nil {
+		scope.Add(func() error {
+			h.generation.Close()
+			return nil
+		})
 	}
 	return nil
 }
@@ -159,8 +177,30 @@ func (h *Outbound) MultiplexEnabled() bool {
 	return true
 }
 
+// InterfaceUpdated is the listener entry for a transition that has already published a new
+// generation.
+//
+// It is routed THROUGH the generation gate. A demand that arrived inside the same transition may have
+// already run this action (the gate's BeforeDial applies it when the hand-out sees a stale
+// generation), and running it twice closes the session that demand just built: the push notification
+// and the demand are the SAME action, so they must be one action
+// (runtimecoord.GenerationGate.NetworkChanged). Without a gate there is nothing to deduplicate and the
+// action runs directly, which is every build and test with no coordinator.
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
-	h.client.Reset()
+	if h.generation != nil {
+		h.generation.NetworkChanged(ctx)
+		return
+	}
+	h.resetForNetworkChange(ctx)
+}
+
+// resetForNetworkChange is the action itself: what the gate runs, and what the listener runs when this
+// build has no coordinator. The pool's Reset closes every session, active streams included: TLS over
+// TCP has no session keepalive, so the notification is the only signal that the path is gone.
+func (h *Outbound) resetForNetworkChange(context.Context) {
+	if h.client != nil {
+		h.client.Reset()
+	}
 }
 
 func (h *Outbound) SetKeepIdleConnections(keep bool) {
@@ -191,6 +231,18 @@ func (h *Outbound) RetireSuspect() {
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	var gateEpoch uint64
+	if h.generation != nil {
+		gateEpoch = h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.dialContext(ctx, network, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(gateEpoch, err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) dialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
@@ -254,6 +306,18 @@ func (h *Outbound) nameTheProxy(err error) error {
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	var gateEpoch uint64
+	if h.generation != nil {
+		gateEpoch = h.generation.BeforeDial(ctx)
+	}
+	conn, err := h.listenPacket(ctx, destination)
+	if h.generation != nil {
+		h.generation.AfterDial(gateEpoch, err)
+	}
+	return conn, err
+}
+
+func (h *Outbound) listenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination

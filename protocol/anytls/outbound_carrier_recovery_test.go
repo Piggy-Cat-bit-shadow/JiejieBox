@@ -171,7 +171,15 @@ func startCarrierServerWith(t *testing.T, handler N.TCPConnectionHandlerEx, wrap
 
 func newCarrierOutbound(t *testing.T, port uint16) *Outbound {
 	t.Helper()
-	created, err := NewOutbound(context.Background(), nil, log.NewNOPFactory().NewLogger("carrier-anytls-out"), "anytls-carrier",
+	return newCarrierOutboundIn(t, context.Background(), port)
+}
+
+// newCarrierOutboundIn is newCarrierOutbound with the constructor context supplied, which is how a
+// test attaches a runtimecoord.Coordinator: the generation gate is created inside NewOutbound from
+// that context, so a test that wants the production gate must go through the constructor.
+func newCarrierOutboundIn(t *testing.T, ctx context.Context, port uint16) *Outbound {
+	t.Helper()
+	created, err := NewOutbound(ctx, nil, log.NewNOPFactory().NewLogger("carrier-anytls-out"), "anytls-carrier",
 		option.AnyTLSOutboundOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: port},
 			Password:      carrierPassword,
