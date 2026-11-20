@@ -282,6 +282,17 @@ purpose rather than papered over:
    push of the change did add three `paralleltest` findings in the new file, which the follow-up
    commit `da880d8` fixes — that is why the pinned revision is the follow-up and not `693a1fe`.
 
+3. **The JiejieBox commits are local.** The five commits are on the local `testing` branch; pushing
+   them to `origin/testing` failed at the end of the session (`schannel: failed to receive handshake`
+   / `Connection was reset`), and `api.github.com` was unreachable in the same window, so no run could
+   be observed or recorded. The `sing-anytls` push did succeed - that fork's CI ran at `da880d8`
+   (run `44673034831`). The minimum condition to finish: `git push origin testing`, then record a
+   successful `linux-kernel-verify` run (it triggers on `transport/trusttunnel/**`) or `Android Core
+   ARM64` run at that commit in `release/pin-runs.json`, and push again. Until then `verify.yml`'s
+   last step is red **only** on `check-pin-runs.py`; every other step of that workflow was reproduced
+   locally (gofmt, the package-execution ratchet, nested-module integrity, knowledge facts, the source
+   lock and both build profiles).
+
 ## 6. Residual risks in the two fixes (stated, not hidden)
 
 - **TrustTunnel `Check()` now holds a slot for up to 7 s.** A trim that arrives during a health probe

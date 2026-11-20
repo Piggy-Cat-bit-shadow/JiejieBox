@@ -13,7 +13,7 @@ evidence; `REPRODUCE.md` has the commands. Labels: `FIXED` / `NO_DEFECT` / `SOUR
 | Row | Systems (repo) | Shared object | Conclusion | Commit |
 | --- | --- | --- | --- | --- |
 | A-P03 | `transport/trusttunnel.Client` (JiejieBox) × reference-manager trim / `Guard.runShed` / idle watcher (JiejieBox) | `clientSession.streams`, the only "is this carrier in use" evidence | **FIXED** | `f11def4b1` |
-| A-P04 | `protocol/anytls.Outbound` (JiejieBox) × `samernet/sing-anytls` session pool (fork) × `route/reference.go` boundary walk (JiejieBox) | the pool's idle-session list and live-stream set; the boundary's verdict | **FIXED** | `c867befd0`, `8426642c9` (fork `693a1fe`, `da880d8`) |
+| A-P04 | `protocol/anytls.Outbound` (JiejieBox) × `sagernet/sing-anytls` session pool (fork) × `route/reference.go` boundary walk (JiejieBox) | the pool's idle-session list and live-stream set; the boundary's verdict | **FIXED** | `c867befd0`, `8426642c9` (fork `693a1fe`, `da880d8`) |
 | A-P09 | `transport/trusttunnel.Client` offer lifecycle × `Close`/`Reset`/network generation | pending offer, `c.session`, generation stamp | **NO_DEFECT** (regression re-run) | — |
 | A-P12 | `common/resourceguard.Guard` × OOM report / metadata diagnostics (JiejieBox) | the level→plan publication and the shed hooks | **NO_DEFECT** (executed) | `9e00fb390` |
 | A-P05 | `protocol/naive` H3 probe budget × caller deadline (JiejieBox) | the caller's remaining budget and the H3 fallback window | **POLICY_DECISION** | — |
