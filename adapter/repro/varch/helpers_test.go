@@ -26,8 +26,16 @@ func readFile(t *testing.T, path string) []byte {
 // document tests are excluded.
 func evidenceRoot(t *testing.T) string {
 	t.Helper()
-	if root := os.Getenv("V_EVIDENCE"); root != "" {
-		return root
+	root := os.Getenv("V_EVIDENCE")
+	if root == "" {
+		root = `C:\Deepseek\JiejieBox-node-architecture-2026-11-22`
 	}
-	return `C:\Deepseek\JiejieBox-node-architecture-2026-11-22`
+	// The fixtures and ledgers are artefacts of the round, checked in with the evidence package, not
+	// part of the module. A runner that does not carry them must SKIP (and say so), not FAIL: a test
+	// that fails for a missing artefact trains people to ignore the colour. `V_EVIDENCE` points at
+	// the directory when it lives somewhere else.
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Skipf("evidence directory %s is not present on this host; this test needs the round's artefacts", root)
+	}
+	return root
 }
