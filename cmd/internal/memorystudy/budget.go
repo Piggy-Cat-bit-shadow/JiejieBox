@@ -576,7 +576,131 @@ func readBudgetFile(path string) (budgetFile, error) {
 	if budget.SchemaVersion != budgetSchemaVersion {
 		return budget, fmt.Errorf("%s is %q, this binary writes %q", path, budget.SchemaVersion, budgetSchemaVersion)
 	}
+	if err = validateBudgetStructure(budget, path); err != nil {
+		return budget, err
+	}
 	return budget, nil
+}
+
+// validateBudgetStructure refuses a budget that cannot fail.
+//
+// A threshold is the whole content of a rule: a rule with neither Min nor Max evaluates to PASS
+// unconditionally, and a budget whose rules were trimmed or duplicated still "runs". Both were
+// demonstrated: deleting 16 of 17 rules, and nulling one rule's threshold, both left the gate at
+// exit 0. The file is a baseline, so an empty or duplicated rule set is not a smaller check - it is
+// a different one.
+func validateBudgetStructure(budget budgetFile, path string) error {
+	if len(budget.Rules) == 0 {
+		return fmt.Errorf("%s has no rules: a gate with an empty rule set verifies nothing and must not pass", path)
+	}
+	seen := make(map[string]bool, len(budget.Rules))
+	for index, rule := range budget.Rules {
+		if rule.ID == "" {
+			return fmt.Errorf("%s rule %d has no id", path, index)
+		}
+		if seen[rule.ID] {
+			return fmt.Errorf("%s declares rule id %q twice; a duplicate id makes the report ambiguous", path, rule.ID)
+		}
+		seen[rule.ID] = true
+		if rule.Min == nil && rule.Max == nil {
+			return fmt.Errorf("%s rule %q has no threshold: it would pass unconditionally", path, rule.ID)
+		}
+	}
+	return nil
+}
+
+// requireCompleteEvidence refuses a ledger that is not the evidence the gate claims to have read.
+//
+// The thresholds were derived from a 3-repetition baseline, so a session that silently ran one
+// repetition, lost a run_end, mixed two processes under one run id or skipped a stage is not a
+// weaker measurement of the same thing - it is a different measurement, and every rule it answers
+// is answered against the wrong population. Each of these was a demonstrated false pass before this
+// check existed: 5 of 6 run_end records removed, the base case deleted entirely, and 1 of 3
+// repetitions kept all reached "17 pass" with exit 0.
+func requireCompleteEvidence(current *session, flags *runFlags) error {
+	specs := gateSpecs(flags.wide)
+	expectedRuns := flags.runs * len(specs)
+	seen := runIDs(current.records)
+	if len(seen) != expectedRuns {
+		return fmt.Errorf("incomplete evidence: %d repetition(s) x %d spec(s) = %d run(s) planned, "+
+			"the ledger names %d; a gate cannot be compared against a 3-run baseline with fewer runs",
+			flags.runs, len(specs), expectedRuns, len(seen))
+	}
+	core := []string{
+		stageSetup, stageConfigParse, stageConfigBuild, stageConstruct, stageFixtureServers,
+		stageServiceStart, stageReady, stageClose, stageRunEnd,
+	}
+	runEnd := make(map[string]int, len(seen))
+	stageIndex := make(map[string]map[int]bool, len(seen))
+	stagePID := make(map[string]map[int]bool, len(seen))
+	stageName := make(map[string]map[string]bool, len(seen))
+	childOK := make(map[string]bool, len(seen))
+	for _, record := range current.records {
+		id := record.runID()
+		if id == "" {
+			continue
+		}
+		switch record.recordKind() {
+		case recordChildResult:
+			// The parent writes this line for every run, including a child that died. `ok` here is
+			// the parent's own verdict on the child.
+			if record.status() != statusOK {
+				cause := ""
+				if value, ok := record["failure_cause"].(string); ok {
+					cause = value
+				}
+				return fmt.Errorf("incomplete evidence: run %s is not ok (%s)", id, cause)
+			}
+			if runEndSeen, ok := record["run_end_seen"].(bool); ok && !runEndSeen {
+				return fmt.Errorf("incomplete evidence: run %s is ok but the parent did not see a run_end", id)
+			}
+			childOK[id] = true
+		case recordStage:
+			if record.stage() == stageRunEnd {
+				runEnd[id]++
+			}
+			if value, ok := intFromRecord(record, "stage_index"); ok {
+				if stageIndex[id] == nil {
+					stageIndex[id] = make(map[int]bool)
+				}
+				stageIndex[id][value] = true
+			}
+			if value, ok := intFromRecord(record, "pid"); ok {
+				if stagePID[id] == nil {
+					stagePID[id] = make(map[int]bool)
+				}
+				stagePID[id][value] = true
+			}
+			if stageName[id] == nil {
+				stageName[id] = make(map[string]bool)
+			}
+			stageName[id][record.stage()] = true
+		}
+	}
+	for _, id := range seen {
+		if !childOK[id] {
+			return fmt.Errorf("incomplete evidence: run %s has no ok child_result record", id)
+		}
+		if runEnd[id] != 1 {
+			return fmt.Errorf("incomplete evidence: run %s has %d run_end record(s), want exactly one", id, runEnd[id])
+		}
+		if len(stagePID[id]) != 1 {
+			return fmt.Errorf("incomplete evidence: run %s has %d process ids among its stage records, want exactly one",
+				id, len(stagePID[id]))
+		}
+		indexes := stageIndex[id]
+		for expected := 0; expected < len(indexes); expected++ {
+			if !indexes[expected] {
+				return fmt.Errorf("incomplete evidence: run %s stage indexes are not contiguous from 0 (missing %d)", id, expected)
+			}
+		}
+		for _, stage := range core {
+			if !stageName[id][stage] {
+				return fmt.Errorf("incomplete evidence: run %s is missing the %s stage", id, stage)
+			}
+		}
+	}
+	return nil
 }
 
 func writeBudgetFile(path string, budget budgetFile) error {

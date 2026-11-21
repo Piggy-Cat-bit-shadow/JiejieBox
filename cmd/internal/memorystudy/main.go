@@ -227,6 +227,16 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A failed child does not stop the session (the other cases are still worth measuring), so the
+	// failure has to stop the GATE. Without this the gate certified a session in which every child
+	// had failed: runSpecs only counted the failures, and nothing read the count.
+	if current.failures > 0 {
+		return fmt.Errorf("%d of %d child run(s) failed; a session with a failed child is not evidence "+
+			"for a gate (the child_result records name the run and the cause)", current.failures, current.planned)
+	}
+	if err = requireCompleteEvidence(current, flags); err != nil {
+		return err
+	}
 	budgetPath := flags.budgetPath
 	if budgetPath == "" {
 		budgetPath = defaultBudgetPath()
@@ -236,11 +246,18 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 		return err
 	}
 	results := evaluateBudget(budget, current.records)
+	build := captureBuildIdentity()
 	report := gateReport{
 		SchemaVersion:  gateSchemaVersion,
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
 		BudgetPath:     budgetPath,
 		BudgetBaseline: budget.Baseline,
 		Output:         flags.output,
+		Source:         captureSourceIdentity(build),
+		GoVersion:      build.GoVersion,
+		GOOS:           build.GOOS,
+		GOARCH:         build.GOARCH,
+		Tags:           build.Tags,
 		Runs:           runIDs(current.records),
 		Results:        results,
 		RecordCount:    len(current.records),
