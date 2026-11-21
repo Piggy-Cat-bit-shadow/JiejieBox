@@ -93,6 +93,13 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 		endpointsRaw json.RawMessage
 		hasOutbounds bool
 		hasEndpoints bool
+		// The short-circuit below is the one place the previous reader was CASE-SENSITIVE: it asked
+		// its generic object for the exact key "outbounds" before doing anything else, so a document
+		// whose only key was `Outbounds` returned "no servers found" even though the struct decode
+		// that followed would have accepted it. Both halves are reproduced: this flag answers the
+		// short-circuit, the case-insensitive value above answers the decode.
+		lowerOutboundsRaw json.RawMessage
+		hasLowerOutbounds bool
 	)
 	for decoder.More() {
 		keyToken, err := decoder.Token()
@@ -103,15 +110,23 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 		if !isKey {
 			return document, E.New("expected json object key, but got ", keyToken)
 		}
-		switch key {
-		case "outbounds":
+		switch {
+		// The historical reader matched these keys through encoding/json's struct decoder, which is
+		// CASE-INSENSITIVE, so `Outbounds` and `OUTBOUNDS` were the same field. A schema-less
+		// streaming reader that compared exact strings silently started rejecting documents the
+		// previous one accepted.
+		case strings.EqualFold(key, "outbounds"):
 			var raw json.RawMessage
 			if err := decoder.Decode(&raw); err != nil {
 				return document, err
 			}
 			outboundsRaw = raw
 			hasOutbounds = true
-		case "endpoints":
+			if key == "outbounds" {
+				lowerOutboundsRaw = raw
+				hasLowerOutbounds = true
+			}
+		case strings.EqualFold(key, "endpoints"):
 			var raw json.RawMessage
 			if err := decoder.Decode(&raw); err != nil {
 				return document, err
@@ -139,6 +154,9 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 	if trailing != nil {
 		return document, E.New("invalid character after top-level value: ", trailing)
 	}
+	if !hasLowerOutbounds || outboundsAbsentOrNull(true, lowerOutboundsRaw) {
+		return document, nil
+	}
 	if hasOutbounds {
 		outbounds, err := decodeOutboundsRaw(ctx, outboundsRaw)
 		if err != nil {
@@ -154,6 +172,18 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 		document.Endpoints = endpoints
 	}
 	return document, nil
+}
+
+// outboundsAbsentOrNull reports the historical short-circuit: when the document had no `outbounds`
+// key, or its value was exactly `null`, the previous reader returned an empty document WITHOUT ever
+// decoding `endpoints`. That is a quirk, not a design, but a subscription is remote input and the
+// accepted set is the contract, so it is reproduced rather than tidied away.
+func outboundsAbsentOrNull(hasOutbounds bool, raw json.RawMessage) bool {
+	if !hasOutbounds {
+		return true
+	}
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) == 4 && string(trimmed) == "null"
 }
 
 // decodeOutboundsRaw decodes the winning `outbounds` value from its raw bytes.

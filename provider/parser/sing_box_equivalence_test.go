@@ -97,6 +97,16 @@ func TestParseBoxSubscriptionMatchesTheWholeDocumentReader(t *testing.T) {
 		{"duplicate endpoints, early invalid", `{"endpoints":5,"endpoints":[],"outbounds":[{"type":"trojan","tag":"a","server":"203.0.113.1","server_port":443,"password":"p"}]}`},
 		{"duplicate endpoints, late invalid", `{"outbounds":[],"endpoints":[],"endpoints":5}`},
 		{"duplicate outbounds, valid then valid with different value", `{"outbounds":[{"type":"block","tag":"first"}],"outbounds":[{"type":"block","tag":"second"}]}`},
+		// Two more legacy quirks the independent review found, both reproduced rather than tidied:
+		// the previous reader matched these keys through encoding/json's CASE-INSENSITIVE struct
+		// decoder, and a document with no `outbounds` (or a null one) short-circuited BEFORE the
+		// endpoints were decoded. A streaming reader that compared exact keys and always decoded
+		// endpoints changed the accepted set in both directions.
+		{"case-variant top level key, last wins", `{"outbounds":[{"type":"selector","tag":"g","outbounds":["a"]}],"Outbounds":[{"type":"trojan","tag":"a","server":"203.0.113.1","server_port":443,"password":"p"}]}`},
+		{"upper case outbounds only", `{"OUTBOUNDS":[{"type":"trojan","tag":"a","server":"203.0.113.1","server_port":443,"password":"p"}]}`},
+		{"endpoints without any outbounds key", `{"endpoints":[{"type":"wireguard","tag":"wg"}]}`},
+		{"null outbounds short circuits invalid endpoints", `{"outbounds":null,"endpoints":5}`},
+		{"absent outbounds short circuits invalid endpoints", `{"endpoints":5}`},
 	}
 	// The streaming decoder rejects every case below exactly like the frozen reader, but the message
 	// is allowed to differ for the documented reasons: a malformed `endpoints` value is reported by
