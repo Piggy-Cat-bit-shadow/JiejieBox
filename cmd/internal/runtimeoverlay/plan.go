@@ -25,14 +25,28 @@ const (
 
 // DefaultMode is what the product build compiles when nothing overrides it.
 //
-// It is A without B, and that is a decision rather than an oversight. Group A's effect is
-// measurable on any host that can run the runtime it patches, and it was measured; group B
-// changes how a foreign thread's m is released, and the only machine that can execute its
-// arm64 half is an Apple device this repository's build machines are not. Shipping B by
-// default without that evidence is exactly the trade the construction brief forbids, so B
-// stays one flag away (-runtime-overlay=both, or JJ_RUNTIME_OVERLAY=both) until a device run
-// exists. See docs/internal/ios-runtime-overlay.md for the evidence table and the remaining gap.
-const DefaultMode = ModeSmall
+// It is both groups, and the scope of that is narrower than the word suggests: the `ios` build
+// constraint selects the file carrying these values, so an artifact produced from
+// `-platform ios/arm64,macos/arm64` gets A and B in the iOS slice and the toolchain's runtime in the
+// macOS slice. B's own arch gate then narrows it again - `goarch.IsArm64 == 1` - so an amd64
+// simulator slice gets A and upstream's binding in both halves.
+//
+// # Why B ships on even though its per-call cost is 9x
+//
+// That was the product owner's call, taken with both measurements in hand: 1.5 us per Swift->Go
+// call against 0.19 us, and 36 KiB of resident m/g0/signal-stack per thread that has ever called in.
+// The trade is accepted because the cost is paid per control-plane call, not per packet, and the
+// residency is paid per dispatch thread for the life of the process. See
+// docs/internal/ios-runtime-overlay.md §3.4 and §4.4 for the numbers, and §7 for what is still
+// unverified on a device.
+//
+// # What is still not verified, and what to do about it
+//
+// The arm64 half of the assembly pair has never executed on an Apple device; the host evidence is
+// the same state machine mirrored onto amd64. §7 of that document is the device run that would close
+// it. The mode is one flag away from being turned off again if that run disagrees:
+// JJ_RUNTIME_OVERLAY=small, no code change.
+const DefaultMode = ModeBoth
 
 // ParseMode validates a mode string from a flag or the environment.
 func ParseMode(text string) (Mode, error) {

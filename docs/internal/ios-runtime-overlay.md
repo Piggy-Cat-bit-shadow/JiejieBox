@@ -50,7 +50,7 @@ changed since Go 1.26 (the adaptive starting stack size, in particular).
 | `spanSetBlockEntries` 512 -> 32 | `mspan` bookkeeping blocks are `persistentalloc`'d off-heap and never returned; each of the 4 spanSets per mcentral pays one block per span-set generation | ~1.2 MiB of `GCSys`/`metadata/other` on a few-MiB heap | more spine growth, more block allocs under a large heap | **Adopted** at the same 32/16, measured below |
 | `_StackCacheSize` 32 KiB -> 16 KiB | per-P per-order stack cache block also sizes the span `stackpoolalloc` cuts stacks from | freed stack pages are returned sooner after a burst | more `stackcacherefill`/`release` traffic; on iOS 16 KiB is exactly one page | **Adopted** at 16 KiB |
 | Exited goroutine returns its starting stack | upstream parks the starting stack on the P's `gFree`; Go 1.27 also *recomputes* `startingStackSize` every GC, so "the starting size" is no longer a constant | ~1.8 MiB of stack residency after a burst | the next goroutine in that slot allocates a stack instead of finding one | **Adopted with a different policy** - see §3.3; it is the single largest win and it has a real cost |
-| `needAndBindM` + `asm_arm64.s` pair | a non-Go thread that calls into Go gets an m bound to its pthread until the thread exits | ~36 KiB per thread that has ever called in (g0 + signal stack) | two extra syscalls per call (`minit`/`unminit` sigaltstack) | **Implemented, verified on a host, NOT enabled by default** - see §3.4 |
+| `needAndBindM` + `asm_arm64.s` pair | a non-Go thread that calls into Go gets an m bound to its pthread until the thread exits | ~36 KiB per thread that has ever called in (g0 + signal stack) | two extra syscalls per call (`minit`/`unminit` sigaltstack) | **Implemented, verified on a host, enabled by default for iOS slices only** - see §3.4 |
 | marker symbol + `nm` check | - | - | `nm` stops answering once the release link uses `-s -w` | **Replaced** with a string marker reachable from `schedinit`, checked by byte search |
 
 ### 2.1 Why the marker is a string and not a symbol
@@ -172,19 +172,35 @@ an iOS **amd64 simulator** slice must take upstream's path in *both* halves. Sup
 without the assembly half would leak an m; dropping without suppressing the binding would let the
 pthread destructor and `dropm` both return the same m.
 
-**B is not enabled by default.** Two reasons, both measured:
+**B is enabled by default for the iOS family, and only for the iOS family.** That is the product
+owner's decision, taken with both measurements in hand:
 
-1. Its own cost is 1.7 us per Swift->Go call against 0.19 us (see §4.4) - a 9x per-call price. On a
-   control-plane call rate that is nothing, but the brief for this work names "every Swift/Go API
-   call becomes slower" as a cost a ~1 MiB saving does not justify without evidence that the real
-   call rate is low. No such evidence exists for this client yet.
-2. Its arm64 half has never executed on an Apple device. The host verification in §4.4 runs the
-   *mirrored* amd64 epilogue; that proves the state machine and the TLS/destructor invariants, not
-   the arm64 instruction sequence on a device.
+1. Its cost is 1.7 us per Swift->Go call against 0.19 us (see §4.4) - a 9x per-call price. Paid per
+   control-plane call rather than per packet, which is the basis the decision was taken on.
+2. Its benefit is ~36 KiB of resident `m`/`g0`/signal-stack per thread that has ever called in, paid
+   once per dispatch thread for the life of the process.
+3. Its arm64 half has still never executed on an Apple device. The host verification in §4.4 runs the
+   *mirrored* amd64 epilogue, which proves the state machine and the TLS/destructor invariants but
+   not the arm64 instruction sequence. §7 is the device run that closes it, and it is now a
+   post-ship verification rather than a gate.
 
-Enabling it is one flag: `-runtime-overlay=both` (or `JJ_RUNTIME_OVERLAY=both`). The verification,
-marker, provenance and macOS-leak gates are identical for both modes, so the same pipeline proves it
-once a device run exists. The evidence a device run must produce is listed in §7.
+**"Default on" means iOS slices, and the scope is narrower than the word.** The default
+(`runtimeoverlay.DefaultMode = both`) resolves per gomobile target: an artifact built from
+`-platform ios/arm64,macos/arm64` gets A+B in `ios-arm64` and the toolchain's runtime in
+`macos-arm64`, because the values file is selected by the `ios` build constraint and the macOS slice
+compiles the file that restates upstream's constants with `jjOverlayDropExtraM = false` and no
+marker. A macOS-only build (`-platform macos/arm64`) prepares nothing at all and records
+`runtime.overlay=base`. `TestTheProductDefaultEnablesGroupBForIOSOnly` pins all three parts of that:
+the default mode, which constraint selects the values, and the arch gate.
+
+The residual scope where B is active but unmeasured: an **iossimulator/arm64** slice (Apple-silicon
+simulator) also compiles the `ios` file with `goarch.IsArm64 == 1`, so it takes the same path. No
+release artifact contains that slice - `build-apple-libbox.sh both` produces `ios-arm64` and
+`macos-arm64` only - so it is a `make lib_apple` concern, not a shipped one.
+
+Turning it off again is one flag, no code change: `JJ_RUNTIME_OVERLAY=small` (or
+`-runtime-overlay=small`). The verification, marker, provenance and macOS-leak gates are identical
+for both modes, so the same pipeline proves whichever is selected.
 
 ## 4. Evidence
 
@@ -285,7 +301,7 @@ parks; linux-amd64; `GOMAXPROCS=2`)
 - Every callback returned the value the C thread expected, in both builds, including 12 000
   concurrent calls from 8 threads: no TLS corruption, no double free, no crash.
 - The cost is 9x per call (1.5 us), which is the price the analysis predicted (`minit`/`unminit`
-  sigaltstack syscalls). §3.4 is why this does not ship enabled.
+  sigaltstack syscalls). §3.4 records the decision that ships it for iOS anyway, with the scope that keeps macOS out.
 
 ### 4.5 Negative gates that were actually exercised
 
@@ -421,10 +437,14 @@ Everything below is `NEEDS_DEVICE` and must not be read as a pass:
   measured, because it requires a running `NEPacketTunnelProvider`. What is measured is Go heap
   classes on a host. The two are not interchangeable, and no MiB figure in this document is a
   `phys_footprint` claim.
-* **The arm64 assembly half of group B.** The host probe mirrors it onto amd64. Group B is off by
-  default, so nothing ships with an unverified arm64 edit - but enabling it requires the run below.
+* **The arm64 assembly half of group B.** The host probe mirrors it onto amd64. Group B now ships
+  enabled for iOS slices (§3.4), so this is the one unverified edit in a shipping artifact: the run
+  below is how it gets closed, and `JJ_RUNTIME_OVERLAY=small` is how it gets withdrawn if the run
+  disagrees.
 * **The real Swift -> Go call rate.** It decides whether group B's 1.5 us per call is noise or not.
-  Measuring it needs an instrumented build on a device.
+  Measuring it needs an instrumented build on a device. The decision to ship B was taken without it,
+  on the reasoning that the price is per control-plane call rather than per packet; this run is what
+  would confirm or refute that.
 
 The minimum device run that would close the group B gap, on the same commit, ideally as one
 alternating sequence on one device:
