@@ -34,7 +34,8 @@ func run(args []string, stdout io.Writer) error {
 	command.StringVar(&flags.caseName, "case", "empty", "fixture case: empty | ordinary | heavy")
 	command.IntVar(&flags.nodes, "nodes", -1, "ordinary nodes in the configuration (ordinary defaults to 100, heavy to 10)")
 	command.IntVar(&flags.groups, "groups", -1, "selection groups over the nodes (ordinary defaults to 2, empty to 0)")
-	command.StringVar(&flags.nodeProto, "node-proto", "", "node kind: trojan | direct | heavy (the case decides by default)")
+	command.StringVar(&flags.nodeProto, "node-proto", "", "node kind: trojan | direct | heavy | mixed (the case decides by default)")
+	command.StringVar(&flags.configSource, "config-source", "", "where the nodes live: static | provider (default static; provider needs -nodes >= 1)")
 	command.StringVar(&flags.activity, "activity", "none", "activity history: none | probe | traffic | a comma list")
 	command.StringVar(&flags.idle, "idle", "0s", "cumulative idle checkpoints, e.g. 30s,300s")
 	command.StringVar(&flags.postIdle, "post-idle", "0s", "idle after the activity history, e.g. 30s")
@@ -56,6 +57,8 @@ func run(args []string, stdout io.Writer) error {
 	command.StringVar(&flags.godebug, "godebug", "", "start every child with this GODEBUG string in its environment")
 	command.BoolVar(&flags.inittrace, "inittrace", false, "add inittrace=1 to the children's GODEBUG and keep their stderr")
 
+	command.StringVar(&flags.heapprofile, "heapprofile", "", "internal (child): write a heap profile here before the process exits; .allocs carries allocation sites")
+	command.StringVar(&flags.dumpFixture, "dump-fixture", "", "internal: write the generated configuration document(s) to this directory and exit")
 	command.BoolVar(&flags.child, "child", false, "internal: run one case in this process and write its JSONL to stdout")
 	command.StringVar(&flags.runID, "run-id", "", "internal: the run id the parent assigned")
 	command.DurationVar(&flags.timeout, "timeout", 15*time.Minute, "per-child timeout")
@@ -124,6 +127,7 @@ func runChildMode(flags *runFlags, stdout io.Writer) error {
 		Nodes:        flags.nodes,
 		Groups:       flags.groups,
 		NodeProto:    flags.nodeProto,
+		ConfigSource: flags.configSource,
 		Activity:     nil,
 		Idle:         nil,
 		PostIdle:     flags.postIdle,
@@ -153,6 +157,10 @@ func runChildMode(flags *runFlags, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if flags.dumpFixture != "" {
+		return dumpFixtureFiles(spec, flags.dumpFixture)
+	}
+	heapProfilePath = flags.heapprofile
 	return runChild(spec, flags.runID, stdout)
 }
 

@@ -54,6 +54,21 @@ const (
 	stageTrafficHeld = "traffic_held"
 	// stageTrafficVerified is the same flows after the integrity and half-close checks.
 	stageTrafficVerified = "traffic_verified"
+	// stageProviderRefreshSame is after a provider publication whose node documents are byte-identical
+	// to the published set. The product's DeepEqual check should reuse every live object, so this
+	// reading is the cost of the transaction itself: parse, compare, decide, and the group callback.
+	stageProviderRefreshSame = "provider_refresh_same"
+
+	// stageProviderRefreshChanged is after a provider publication whose every node's transport address
+	// changed. Every node is rebuilt, so this reading is the retention left by one full generation
+	// replacement with the old objects retired.
+	stageProviderRefreshChanged = "provider_refresh_changed"
+
+	// stageProviderRefreshChangedAgain is a SECOND changed publication. One changed refresh cannot
+	// distinguish a one-time high-water mark from a cost that accumulates per refresh, and that
+	// difference is what decides whether the publication path is bounded.
+	stageProviderRefreshChangedAgain = "provider_refresh_changed_again"
+
 	// stageClose is after Box.Close and after the goroutines have come back down.
 	stageClose = "close"
 	// stageRunEnd is the child's last word. Its presence is what makes a run complete evidence.
@@ -119,6 +134,7 @@ type runSpec struct {
 	Nodes        int      `json:"nodes"`
 	Groups       int      `json:"groups"`
 	NodeProto    string   `json:"node_proto"`
+	ConfigSource string   `json:"config_source"`
 	Activity     []string `json:"activity"`
 	Idle         []string `json:"idle"`
 	PostIdle     string   `json:"post_idle"`

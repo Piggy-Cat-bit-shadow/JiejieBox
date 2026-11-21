@@ -23,6 +23,7 @@ import (
 const (
 	fixtureOutboundTag    = "out"
 	fixtureInboundTag     = "in"
+	fixtureProviderTag    = "nodes"
 	fixtureSelectorPrefix = "group-selector"
 	fixtureURLTestPrefix  = "group-urltest"
 )
@@ -39,6 +40,17 @@ type fixtureConfig struct {
 	ProbeURL string
 	Nodes    int
 	Groups   int
+	// ProviderDocument is the node document a local provider reads, and ProviderTag the tag the
+	// configuration declares it under. Both are empty for a static configuration.
+	ProviderDocument []byte
+	ProviderTag      string
+	// MemberEdges is the number of group-member references the document declares: one per static
+	// node named by a group, or one provider edge per group plus the provider's own node list. It
+	// is reported so "node cost" and "member-reference cost" cannot be confused.
+	MemberEdges int
+	// DocumentBytes and ProviderBytes are the exact sizes of the two documents; the node term is a
+	// function of both when the nodes live in a provider file.
+	ProviderBytes int
 }
 
 // nodeServer is TEST-NET-2 (RFC 5737). A never-dialled node must not reach a real peer, and a test
@@ -48,6 +60,20 @@ const nodeServerPrefix = "198.51.100."
 
 // generateFixture renders the configuration document for a spec.
 func generateFixture(spec runSpec, inboundPort uint16, probeURL string) fixtureConfig {
+	return generateFixtureWithProvider(spec, inboundPort, probeURL, "")
+}
+
+// generateFixtureWithProvider renders the configuration document for a spec, and the separate node
+// document a local provider reads when spec.ConfigSource is "provider".
+//
+// # Why the provider document is a second file
+//
+// A provider subscription is not the configuration: the product keeps the configuration small and
+// reads a node document from the filesystem (or a URL). Measuring a provider by inlining its nodes
+// would measure the static shape with extra steps. The provider path is passed in because the child
+// owns the temporary directory; an empty path is only used by the static tests, which never reach
+// the provider branch.
+func generateFixtureWithProvider(spec runSpec, inboundPort uint16, probeURL string, providerPath string) fixtureConfig {
 	fixture := fixtureConfig{Nodes: spec.Nodes, Groups: spec.Groups, ProbeURL: probeURL}
 	builder := &strings.Builder{}
 	// A 10 000-node document is roughly 1.6 MB; pre-sizing keeps the builder's own growth out of the
@@ -58,16 +84,43 @@ func generateFixture(spec runSpec, inboundPort uint16, probeURL string) fixtureC
 	builder.WriteString(fixtureInboundTag)
 	builder.WriteString(`","listen":"127.0.0.1","listen_port":`)
 	builder.WriteString(strconv.Itoa(int(inboundPort)))
-	builder.WriteString(`}],"outbounds":[{"type":"direct","tag":"`)
+	builder.WriteString(`}]`)
+
+	providerSource := spec.ConfigSource == "provider"
+	if providerSource {
+		fixture.ProviderTag = fixtureProviderTag
+		fixture.ProviderDocument = generateProviderDocument(spec, 0)
+		fixture.ProviderBytes = len(fixture.ProviderDocument)
+		builder.WriteString(`,"providers":[{"type":"local","tag":"`)
+		builder.WriteString(fixtureProviderTag)
+		builder.WriteString(`","path":"`)
+		// The child hands in a path it has already normalised to forward slashes, so the string can
+		// be embedded without a JSON escaper: a Windows path in JSON with raw backslashes would be a
+		// decode error, and quietly rewriting it here would hide that from the caller.
+		builder.WriteString(providerPath)
+		builder.WriteString(`"}]`)
+	}
+
+	builder.WriteString(`,"outbounds":[{"type":"direct","tag":"`)
 	builder.WriteString(fixtureOutboundTag)
 	builder.WriteString(`"}`)
 
 	fixture.NodeTags = make([]string, 0, spec.Nodes)
-	for index := 0; index < spec.Nodes; index++ {
-		tag := fmt.Sprintf("node-%05d", index)
-		fixture.NodeTags = append(fixture.NodeTags, tag)
-		builder.WriteString(`,`)
-		writeNode(builder, spec.NodeProto, tag, index)
+	if !providerSource {
+		for index := 0; index < spec.Nodes; index++ {
+			tag := fmt.Sprintf("node-%05d", index)
+			fixture.NodeTags = append(fixture.NodeTags, tag)
+			builder.WriteString(`,`)
+			writeNode(builder, spec.NodeProto, tag, index, 0)
+		}
+	} else {
+		// The rendered tag is what the product publishes and what a client addresses: "<provider
+		// tag>/<node tag>". The fixture records the rendered form so a later stage that looks a node
+		// up by tag addresses the same object the product does.
+		for index := 0; index < spec.Nodes; index++ {
+			fixture.NodeTags = append(fixture.NodeTags,
+				fixtureProviderTag+"/"+fmt.Sprintf("node-%05d", index))
+		}
 	}
 
 	fixture.GroupTags = make([]string, 0, spec.Groups)
@@ -94,7 +147,18 @@ func generateFixture(spec runSpec, inboundPort uint16, probeURL string) fixtureC
 			fixture.ProbeTag = tag
 		}
 		builder.WriteString(`,`)
-		writeGroup(builder, groupType, tag, fixture.NodeTags, probeURL)
+		if providerSource {
+			// One provider edge per group. The provider's own node list is the other edge set; the
+			// two are counted apart so the ledger cannot present a thousand node references as a
+			// thousand extra nodes.
+			writeProviderGroup(builder, groupType, tag, probeURL)
+		} else {
+			fixture.MemberEdges += len(fixture.NodeTags)
+			writeGroup(builder, groupType, tag, fixture.NodeTags, probeURL)
+		}
+	}
+	if providerSource {
+		fixture.MemberEdges = spec.Groups + spec.Nodes
 	}
 
 	builder.WriteString(`],"route":{"final":"`)
@@ -109,7 +173,26 @@ func generateFixture(spec runSpec, inboundPort uint16, probeURL string) fixtureC
 	return fixture
 }
 
-func writeNode(builder *strings.Builder, proto string, tag string, index int) {
+// generateProviderDocument renders the node document a local provider reads.
+//
+// portOffset shifts every node's port; a refresh that re-reads the same bytes is the "unchanged"
+// case and a refresh with a different offset rebuilds every node, which is what makes the two
+// readings a controlled A/B rather than two names for the same work.
+func generateProviderDocument(spec runSpec, portOffset int) []byte {
+	builder := &strings.Builder{}
+	builder.Grow(32 + spec.Nodes*180)
+	builder.WriteString(`{"outbounds":[`)
+	for index := 0; index < spec.Nodes; index++ {
+		if index > 0 {
+			builder.WriteString(`,`)
+		}
+		writeNode(builder, spec.NodeProto, fmt.Sprintf("node-%05d", index), index, portOffset)
+	}
+	builder.WriteString(`]}`)
+	return []byte(builder.String())
+}
+
+func writeNode(builder *strings.Builder, proto string, tag string, index int, portOffset int) {
 	switch proto {
 	case "direct":
 		// A direct node has no dialer and no TLS: it exists so that grouping and URL-test cost can be
@@ -126,9 +209,11 @@ func writeNode(builder *strings.Builder, proto string, tag string, index int) {
 		builder.WriteString(nodeServerPrefix)
 		builder.WriteString(strconv.Itoa(7 + index%200))
 		builder.WriteString(`","server_port":`)
-		builder.WriteString(strconv.Itoa(20000 + index%1000))
+		builder.WriteString(strconv.Itoa(20000 + index%1000 + portOffset))
 		builder.WriteString(`,"password":"memory-study","multiplex":{"enabled":true,`)
 		builder.WriteString(`"protocol":"smux","max_streams":4},"tls":{"enabled":true,"server_name":"node.example"}}`)
+	case "mixed":
+		writeMixedNode(builder, tag, index, portOffset)
 	default:
 		// Trojan is the representative light kind: it has the full shape of a node - a dialer, a TLS
 		// configuration and a transport - without any of them being eager. This is the same choice
@@ -139,13 +224,81 @@ func writeNode(builder *strings.Builder, proto string, tag string, index int) {
 		builder.WriteString(nodeServerPrefix)
 		builder.WriteString(strconv.Itoa(7 + index%200))
 		builder.WriteString(`","server_port":`)
-		builder.WriteString(strconv.Itoa(20000 + index%1000))
+		builder.WriteString(strconv.Itoa(20000 + index%1000 + portOffset))
 		builder.WriteString(`,"password":"memory-study","tls":{"enabled":true,"insecure":true,`)
 		builder.WriteString(`"server_name":"cold.example"}}`)
 	}
 }
 
+// mixedNodeKinds are the five protocols this build really compiles in, in the round-robin order the
+// mixed fixture uses. Each is registered unconditionally by include.OutboundRegistry except the two
+// QUIC protocols, which need the with_quic build tag; the run that produced the ledger was built
+// with release/DEFAULT_BUILD_TAGS_OTHERS (which contains with_quic) plus with_purego.
+var mixedNodeKinds = []string{"trojan", "vless", "anytls", "hysteria2", "tuic"}
+
+// mixedNodeKind reports the protocol of the index-th mixed node and whether it carries the V2Ray
+// WebSocket transport. The transport is the one variant that makes a "plain" protocol carry an
+// extra nested option object, so it is present in a fixed one-in-fifteen share rather than spread
+// over every node.
+func mixedNodeKind(index int) (string, bool) {
+	kind := mixedNodeKinds[index%len(mixedNodeKinds)]
+	websocket := kind == "vless" && (index/len(mixedNodeKinds))%3 == 2
+	return kind, websocket
+}
+
+// writeMixedNode writes one node of the mixed subscription: Trojan, VLESS, AnyTLS, Hysteria2 and
+// TUIC in equal shares, with a TLS block on every node and a WebSocket transport on one VLESS in
+// three.
+//
+// # Why the TLS blocks are "insecure"
+//
+// The address is TEST-NET-2, so no node is ever dialled in the cases this fixture is for. `insecure`
+// keeps a node that IS accidentally dialled from reaching a real peer through a certificate
+// failure path: the connection attempt must fail on the address, not on trust.
+func writeMixedNode(builder *strings.Builder, tag string, index int, portOffset int) {
+	kind, websocket := mixedNodeKind(index)
+	server := nodeServerPrefix + strconv.Itoa(7+index%200)
+	port := strconv.Itoa(20000 + index%1000 + portOffset)
+
+	builder.WriteString(`{"type":"`)
+	builder.WriteString(kind)
+	builder.WriteString(`","tag":"`)
+	builder.WriteString(tag)
+	builder.WriteString(`","server":"`)
+	builder.WriteString(server)
+	builder.WriteString(`","server_port":`)
+	builder.WriteString(port)
+	switch kind {
+	case "trojan":
+		builder.WriteString(`,"password":"memory-study"`)
+	case "vless":
+		builder.WriteString(`,"uuid":"b831381d-6324-4d53-ad4f-8cda48b30811"`)
+		if websocket {
+			builder.WriteString(`,"transport":{"type":"ws","path":"/memory-study"}`)
+		}
+	case "anytls":
+		builder.WriteString(`,"password":"memory-study"`)
+	case "hysteria2":
+		builder.WriteString(`,"password":"memory-study","up_mbps":10,"down_mbps":50`)
+	case "tuic":
+		builder.WriteString(`,"uuid":"b831381d-6324-4d53-ad4f-8cda48b30811",` +
+			`"password":"memory-study","congestion_control":"bbr"`)
+	}
+	builder.WriteString(`,"tls":{"enabled":true,"insecure":true,"server_name":"cold.example"}}`)
+}
+
+func writeProviderGroup(builder *strings.Builder, groupType string, tag string, probeURL string) {
+	writeGroupWithProviders(builder, groupType, tag, nil, []string{fixtureProviderTag}, probeURL)
+}
+
 func writeGroup(builder *strings.Builder, groupType string, tag string, members []string, probeURL string) {
+	writeGroupWithProviders(builder, groupType, tag, members, nil, probeURL)
+}
+
+// writeGroupWithProviders writes a group whose members are static tags, provider tags, or both.
+// The `providers` array is omitted when empty so a static document keeps exactly the shape the
+// existing tests pin.
+func writeGroupWithProviders(builder *strings.Builder, groupType string, tag string, members []string, providers []string, probeURL string) {
 	builder.WriteString(`{"type":"`)
 	builder.WriteString(groupType)
 	builder.WriteString(`","tag":"`)
@@ -160,6 +313,22 @@ func writeGroup(builder *strings.Builder, groupType string, tag string, members 
 		builder.WriteString(`"`)
 	}
 	builder.WriteString(`]`)
+	if len(providers) > 0 {
+		builder.WriteString(`,"providers":[`)
+		for index, provider := range providers {
+			if index > 0 {
+				builder.WriteString(`,`)
+			}
+			builder.WriteString(`"`)
+			builder.WriteString(provider)
+			builder.WriteString(`"`)
+		}
+		builder.WriteString(`]`)
+	}
+	writeGroupTail(builder, groupType, probeURL)
+}
+
+func writeGroupTail(builder *strings.Builder, groupType string, probeURL string) {
 	if groupType == "urltest" {
 		builder.WriteString(`,"url":"`)
 		builder.WriteString(probeURL)
@@ -203,6 +372,25 @@ func normalizeSpec(spec runSpec) (runSpec, error) {
 	}
 	if spec.Groups < 0 {
 		return spec, fmt.Errorf("case %s takes a non-negative -groups, got %d", spec.Case, spec.Groups)
+	}
+	switch spec.ConfigSource {
+	case "":
+		spec.ConfigSource = "static"
+	case "static":
+	case "provider":
+		if spec.Nodes == 0 {
+			// A provider with no nodes cannot be published: the product refuses an empty node set
+			// precisely so a garbage document cannot wipe the last known good one. A zero-node
+			// origin is a static configuration.
+			return spec, fmt.Errorf("-config-source provider needs at least one node, got %d", spec.Nodes)
+		}
+	default:
+		return spec, fmt.Errorf("unknown -config-source %q (want static or provider)", spec.ConfigSource)
+	}
+	switch spec.NodeProto {
+	case "direct", "trojan", "heavy", "mixed":
+	default:
+		return spec, fmt.Errorf("unknown -node-proto %q (want direct, trojan, heavy or mixed)", spec.NodeProto)
 	}
 	if spec.Nodes == 0 && spec.Groups > 0 {
 		// A selection group over zero members is not a legal configuration: box.New rejects it with

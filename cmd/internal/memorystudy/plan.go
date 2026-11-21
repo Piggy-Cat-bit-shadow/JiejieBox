@@ -24,6 +24,7 @@ type runFlags struct {
 	nodes        int
 	groups       int
 	nodeProto    string
+	configSource string
 	activity     string
 	idle         string
 	postIdle     string
@@ -45,11 +46,13 @@ type runFlags struct {
 	godebug    string
 	inittrace  bool
 
-	child    bool
-	runID    string
-	timeout  time.Duration
-	verbose  bool
-	keepLogs bool
+	child       bool
+	runID       string
+	heapprofile string
+	dumpFixture string
+	timeout     time.Duration
+	verbose     bool
+	keepLogs    bool
 }
 
 // planSpecs turns the requested case into the child processes that must run.
@@ -75,6 +78,7 @@ func planSpecs(flags *runFlags) ([]runSpec, error) {
 		Nodes:        flags.nodes,
 		Groups:       flags.groups,
 		NodeProto:    flags.nodeProto,
+		ConfigSource: flags.configSource,
 		Activity:     activity,
 		Idle:         idle,
 		PostIdle:     flags.postIdle,
@@ -234,7 +238,8 @@ func runSpecs(flags *runFlags, specs []runSpec) (*session, error) {
 
 func specTag(spec runSpec) string {
 	activity := strings.Join(spec.Activity, "+")
-	return fmt.Sprintf("%s-n%d-g%d-%s-%s-%s", spec.Case, spec.Nodes, spec.Groups, spec.NodeProto, activity, spec.GCMode)
+	return fmt.Sprintf("%s-n%d-g%d-%s-%s-%s-%s", spec.Case, spec.Nodes, spec.Groups, spec.NodeProto,
+		spec.ConfigSource, activity, spec.GCMode)
 }
 
 func randomSuffix() string {
@@ -367,6 +372,7 @@ func childArguments(spec runSpec, runID string) []string {
 		"-nodes", strconv.Itoa(spec.Nodes),
 		"-groups", strconv.Itoa(spec.Groups),
 		"-node-proto", spec.NodeProto,
+		"-config-source", spec.ConfigSource,
 		"-activity", strings.Join(spec.Activity, ","),
 		"-idle", strings.Join(spec.Idle, ","),
 		"-post-idle", spec.PostIdle,

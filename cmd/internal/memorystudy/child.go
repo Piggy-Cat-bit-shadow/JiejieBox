@@ -8,7 +8,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
+	goprofile "runtime/pprof"
 	"strconv"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/provider/parser"
 	singjson "github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
 )
@@ -67,6 +70,13 @@ type childRun struct {
 	probeServer *probeServer
 	destination *destinationServer
 	inboundPort uint16
+
+	// provider state: the node document a local provider reads, and the directory that owns it.
+	// The child, not the fixture, owns the file's lifetime so a run cannot leave a subscription
+	// document behind in the working directory.
+	providerDirectory string
+	providerPath      string
+	providerBytes     int
 
 	// product state
 	ctx          context.Context
@@ -143,10 +153,21 @@ func runChild(spec runSpec, runID string, output io.Writer) (returnErr error) {
 	if instance.probeServer != nil {
 		probeURL = instance.probeServer.URL()
 	}
-	instance.fixture = generateFixture(spec, instance.inboundPort, probeURL)
+	if spec.ConfigSource == "provider" {
+		if err = instance.writeProviderDocument(); err != nil {
+			return err
+		}
+	}
+	instance.fixture = generateFixtureWithProvider(spec, instance.inboundPort, probeURL, instance.providerPath)
 	instance.configBytes = instance.fixture.Document
-	instance.note(fmt.Sprintf("fixture document: %d bytes, %d nodes, %d groups, node_proto=%s",
-		len(instance.fixture.Document), instance.fixture.Nodes, instance.fixture.Groups, spec.NodeProto))
+	instance.note(fmt.Sprintf("fixture document: %d bytes, %d nodes, %d groups, node_proto=%s, config_source=%s",
+		len(instance.fixture.Document), instance.fixture.Nodes, instance.fixture.Groups, spec.NodeProto,
+		spec.ConfigSource))
+	if instance.providerBytes > 0 {
+		instance.note(fmt.Sprintf("provider node document: %d bytes at %s, %d member edges (%d provider edges + %d node declarations)",
+			instance.providerBytes, instance.providerDirectory, instance.fixture.MemberEdges,
+			instance.fixture.Groups, instance.fixture.Nodes))
+	}
 	instance.record(stageConfigBuild)
 
 	// 5. Decode. Both the document and the option tree are alive at this reading on purpose: that
@@ -235,6 +256,11 @@ func runChild(spec runSpec, runID string, output io.Writer) (returnErr error) {
 		instance.record(idleAgainStage(spec.PostIdle))
 	}
 
+	// 11. Publication refreshes. These come after the activity readings on purpose: a refresh
+	//     allocates a generation of objects and retires the previous one, so taking it before the
+	//     idle checkpoint would charge its garbage to "idle".
+	instance.runProviderRefreshStages()
+
 	// 12. Teardown. The references are dropped BEFORE the reading so that a forced collection can
 	//     reclaim them: a close stage that still holds the Box would report the cost of the object
 	//     it is supposed to prove is gone.
@@ -251,7 +277,49 @@ func runChild(spec runSpec, runID string, output io.Writer) (returnErr error) {
 		instance.note(fmt.Sprintf("the fixture probe server answered %d requests", instance.probeServer.Requests()))
 	}
 	instance.record(stageRunEnd)
+
+	// The profile is written AFTER the last reading on purpose: profiling machinery and the profile
+	// file itself must not appear in any number the ledger reports. It exists so a retained or
+	// allocated byte can be attributed to a call site instead of argued from struct sizes.
+	if heapProfilePath != "" {
+		if profileErr := writeHeapProfiles(heapProfilePath); profileErr != nil {
+			fmt.Fprintln(os.Stderr, "memorystudy: heap profile:", profileErr)
+		}
+	}
 	return nil
+}
+
+// heapProfilePath is set by -heapprofile in child mode. It is a package variable rather than a
+// childRun field so the command line can set it before the measured object exists.
+var heapProfilePath string
+
+// writeHeapProfiles writes the live heap and the cumulative allocation sites.
+//
+// Two files, because they answer different questions: inuse_space is what the Box still holds at the
+// end of a run, alloc_space is what the run spent to get there. A changed provider refresh is
+// allocated-but-not-retained by construction, so the second file is the only one that can price it.
+func writeHeapProfiles(path string) error {
+	if err := writeProfile(path, "heap"); err != nil {
+		return err
+	}
+	return writeProfile(path+".allocs", "allocs")
+}
+
+func writeProfile(path string, name string) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	profile := goprofile.Lookup(name)
+	if profile == nil {
+		_ = file.Close()
+		return fmt.Errorf("profile %q is not available", name)
+	}
+	if err = profile.WriteTo(file, 0); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // closeAndRecord tears the Box down and records what is left.
@@ -268,6 +336,13 @@ func (c *childRun) closeAndRecord() error {
 	var closeErr error
 	if c.instance != nil {
 		closeErr = c.instance.Close()
+	}
+	// The provider document is harness input, not product state: close it before the teardown
+	// reading so a temporary directory cannot appear as retained heap or as a leaked handle.
+	if c.providerDirectory != "" {
+		_ = os.RemoveAll(c.providerDirectory)
+		c.providerDirectory = ""
+		c.providerPath = ""
 	}
 	// Drop every reference the ledger could still be holding through this struct. Setting the
 	// fields is what makes the close reading a measurement of the release rather than of the
@@ -296,6 +371,154 @@ func (c *childRun) closeAndRecord() error {
 		return fmt.Errorf("box.Close: %w", closeErr)
 	}
 	return nil
+}
+
+// writeProviderDocument materialises the node document a local provider reads.
+//
+// The bytes are written to a directory the child owns and then dropped: the product re-reads the
+// file from disk at Start, so keeping a second copy in the harness would charge the measurement for
+// an input the product never holds. The file is created before the configuration document because
+// the configuration names its path.
+func (c *childRun) writeProviderDocument() error {
+	directory, err := os.MkdirTemp("", "memorystudy-provider-")
+	if err != nil {
+		return fmt.Errorf("create provider directory: %w", err)
+	}
+	document := generateProviderDocument(c.spec, 0)
+	path := filepath.Join(directory, "nodes.json")
+	if err = os.WriteFile(path, document, 0o644); err != nil {
+		_ = os.RemoveAll(directory)
+		return fmt.Errorf("write provider document: %w", err)
+	}
+	c.providerDirectory = directory
+	// Forward slashes are what a JSON configuration in this tree uses: a raw backslash would have to
+	// be escaped, and the watcher resolves the configured string rather than a cleaned path.
+	c.providerPath = filepath.ToSlash(path)
+	c.providerBytes = len(document)
+	return nil
+}
+
+// runProviderRefreshStages drives the product's own publication transaction twice: once with the
+// node document it already published, and once with a document whose every node changed.
+//
+// # What this measures, and what it does not
+//
+// Both refreshes go through adapter.Provider.UpdateNodes + UpdateGroups, which is the transaction the
+// local provider's reloadFile itself calls. They are driven with a freshly parsed document rather
+// than by rewriting the file and waiting for fsnotify: the watcher's callback is asynchronous and
+// the ledger has no synchronous boundary to read at, so a file-rewrite variant would measure the
+// sleep in this harness as much as the refresh.
+func (c *childRun) runProviderRefreshStages() {
+	if c.spec.ConfigSource != "provider" {
+		return
+	}
+	manager := service.FromContext[adapter.ProviderManager](c.ctx)
+	if manager == nil {
+		reason := "the provider manager is not in the context"
+		c.recordStatus(stageProviderRefreshSame, statusFailed, reason)
+		c.recordStatus(stageProviderRefreshChanged, statusFailed, reason)
+		return
+	}
+	provider, ok := manager.Get(fixtureProviderTag)
+	if !ok {
+		reason := "provider " + fixtureProviderTag + " is not registered; the publication transaction is not observable"
+		c.recordStatus(stageProviderRefreshSame, statusFailed, reason)
+		c.recordStatus(stageProviderRefreshChanged, statusFailed, reason)
+		return
+	}
+	updater, ok := provider.(interface {
+		UpdateNodes(outOpts []option.Outbound) error
+	})
+	if !ok {
+		reason := fmt.Sprintf("%T does not expose UpdateNodes", provider)
+		c.recordStatus(stageProviderRefreshSame, statusUnsupported, reason)
+		c.recordStatus(stageProviderRefreshChanged, statusUnsupported, reason)
+		return
+	}
+
+	// The unchanged refresh: the same bytes the provider already published. The product's
+	// reflect.DeepEqual check should decide every node is unchanged and touch no live object, so the
+	// reading after it is the transaction's own cost.
+	same, err := parser.ParseSubscription(c.ctx, string(c.readProviderDocument()), nil, fixtureProviderTag)
+	if err != nil {
+		c.recordStatus(stageProviderRefreshSame, statusFailed, "parse the unchanged provider document: "+err.Error())
+	} else if same == nil {
+		c.recordStatus(stageProviderRefreshSame, statusUnsupported, "the provider document parsed to no nodes")
+	} else if err = updater.UpdateNodes(same); err != nil {
+		c.recordStatus(stageProviderRefreshSame, statusFailed, "publish the unchanged document: "+err.Error())
+	} else if groupErr := updateProviderGroups(provider); groupErr != nil {
+		c.recordStatus(stageProviderRefreshSame, statusFailed, "rebuild the groups: "+groupErr.Error())
+	} else {
+		// No keep: UpdateNodes does not retain the parsed slice, it retains a copy of each node's
+		// option struct in appliedOutbounds. Pinning the slice here would charge the reading for a
+		// document the product drops, which is exactly the mistake the keeps parameter exists to avoid.
+		c.record(stageProviderRefreshSame)
+	}
+
+	// The changed refresh: every node's port moved, so every node is rebuilt and the previous
+	// generation is retired through the same hand-off a real subscription update uses. The document
+	// bytes are generated here rather than written to the provider's path because this measures the
+	// transaction, not the file watcher.
+	changed := generateProviderDocument(c.spec, 1)
+	changedOptions, err := parser.ParseSubscription(c.ctx, string(changed), nil, fixtureProviderTag)
+	if err != nil {
+		c.recordStatus(stageProviderRefreshChanged, statusFailed, "parse the changed provider document: "+err.Error())
+		return
+	}
+	if err = updater.UpdateNodes(changedOptions); err != nil {
+		c.recordStatus(stageProviderRefreshChanged, statusFailed, "publish the changed document: "+err.Error())
+		return
+	}
+	if groupErr := updateProviderGroups(provider); groupErr != nil {
+		c.recordStatus(stageProviderRefreshChanged, statusFailed, "rebuild the groups: "+groupErr.Error())
+		return
+	}
+	// No keeps: the changed document's per-node option objects survive through appliedOutbounds,
+	// which the provider itself holds. The slice and the bytes are dropped by the product, so pinning
+	// them would report the harness's copy as retained heap.
+	c.record(stageProviderRefreshChanged)
+
+	// A second changed publication, with a different address again. The pair answers the question a
+	// single measurement cannot: is the retained cost of a replacement a one-time high-water mark,
+	// or does it grow with every refresh?
+	again := generateProviderDocument(c.spec, 2)
+	againOptions, err := parser.ParseSubscription(c.ctx, string(again), nil, fixtureProviderTag)
+	if err != nil {
+		c.recordStatus(stageProviderRefreshChangedAgain, statusFailed, "parse the second changed provider document: "+err.Error())
+		return
+	}
+	if err = updater.UpdateNodes(againOptions); err != nil {
+		c.recordStatus(stageProviderRefreshChangedAgain, statusFailed, "publish the second changed document: "+err.Error())
+		return
+	}
+	if groupErr := updateProviderGroups(provider); groupErr != nil {
+		c.recordStatus(stageProviderRefreshChangedAgain, statusFailed, "rebuild the groups: "+groupErr.Error())
+		return
+	}
+	c.record(stageProviderRefreshChangedAgain)
+}
+
+// readProviderDocument re-reads the provider file the product reads, rather than a harness copy.
+func (c *childRun) readProviderDocument() []byte {
+	if c.providerDirectory == "" {
+		return nil
+	}
+	content, err := os.ReadFile(filepath.Join(c.providerDirectory, "nodes.json"))
+	if err != nil {
+		return nil
+	}
+	return content
+}
+
+// updateProviderGroups performs the second half of the product's publication transaction. A
+// provider whose adapter cannot rebuild memberships is not a supported shape here, and its absence
+// has to be visible rather than silently skipping the step the measurement depends on.
+func updateProviderGroups(provider adapter.Provider) error {
+	updater, ok := provider.(interface{ UpdateGroups() error })
+	if !ok {
+		return fmt.Errorf("%T does not expose UpdateGroups", provider)
+	}
+	return updater.UpdateGroups()
 }
 
 // stopFixtureServers closes the harness's listeners.
