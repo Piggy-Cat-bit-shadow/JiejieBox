@@ -82,6 +82,15 @@ func init() {
 	// would be the first thing to drift - which is exactly how the gVisor exposure hid.
 	flag.StringVar(&printRuntimeOverlay, "print-runtime-overlay", "",
 		"print the resolved runtime overlay mode for a gomobile -target value and exit")
+	flag.BoolVar(&printStartupPolicy, "print-startup-policy", false,
+		"print the composed -X runtime.godebugDefault value for the Apple build and exit")
+	// -startup-policy selects the runtime startup defaults the Apple framework links: which sampling
+	// rate and whether the adaptive starting stack size stays on. It is a build input, not a product
+	// switch, for the same reason -runtime-overlay is one: the value is applied by runtime.schedinit
+	// before any init() and cannot be changed afterwards, and one framework is shared by the app and
+	// the extension.
+	flag.StringVar(&startupPolicyFlag, "startup-policy", "",
+		`runtime startup defaults: memprofilerate=inherit|off|<bytes>,adaptivestackstart=inherit|on|off (default: the reviewed default, or $JJ_APPLE_STARTUP_POLICY)`)
 	// flag.BoolVar(&withTailscale, "with-tailscale", false, "build tailscale for iOS and tvOS")
 }
 
@@ -165,12 +174,29 @@ func main() {
 		fmt.Println(plan.Mode)
 		return
 	}
+	if printStartupPolicy {
+		policy, err := startupPolicyFromEnvironment()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(policy.GODEBUGDefaults())
+		return
+	}
 
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		log.Fatal(E.Cause(err, "resolve the module root"))
 	}
 	rootDir = workingDirectory
+
+	if target == "apple" {
+		policy, err := startupPolicyFromEnvironment()
+		if err != nil {
+			log.Fatal(err)
+		}
+		appleStartupPolicy = policy
+		log.Info("runtime startup policy: ", policy.String())
+	}
 
 	build_shared.FindMobile()
 
@@ -214,6 +240,9 @@ func writeProvenance() {
 	// "no overlay" is a recorded fact rather than an absent key that an older build would also
 	// have.
 	for _, line := range runtimeOverlayProvenanceLines() {
+		content += line + "\n"
+	}
+	for _, line := range startupPolicyProvenanceLines() {
 		content += line + "\n"
 	}
 	for _, name := range []string{"libbox.provenance", filepath.Join("..", "sing-box-for-android", "app", "libs", "libbox.provenance")} {
@@ -325,7 +354,11 @@ var (
 	// printRuntimeOverlay names a gomobile -target value to report the resolved runtime overlay
 	// mode for, then exit.
 	printRuntimeOverlay string
-	sharedTags          []string
+	// printStartupPolicy reports the composed startup default and exits, for the same reason
+	// -print-runtime-overlay exists: CI has to assert the Apple build's linked default against the
+	// same function the builder uses, rather than re-listing the string in YAML.
+	printStartupPolicy bool
+	sharedTags         []string
 	// memcTags []string
 	debugTags []string
 )
@@ -540,10 +573,15 @@ func appleBindArguments(bindTarget, frameworkPath string) []string {
 	//	args = append(args, "-tags-macos="+strings.Join(memcTags, ","))
 	//}
 
-	if !debugEnabled {
-		args = append(args, sharedFlags...)
+	// The Apple build is the only one carrying a startup policy, so it composes its own -ldflags
+	// instead of reusing sharedFlags/debugFlags. The rest of those lists is preserved: -trimpath
+	// -buildvcs=false for a release, no -s/-w for a debug build.
+	if debugEnabled {
+		args = append(args, "-ldflags", build_shared.LinkerFlagsWithStartupPolicy(buildVersion, true, appleStartupPolicy))
 	} else {
-		args = append(args, debugFlags...)
+		args = append(args,
+			"-trimpath", "-buildvcs=false",
+			"-ldflags", build_shared.LinkerFlagsWithStartupPolicy(buildVersion, false, appleStartupPolicy))
 	}
 
 	// The COMMON tag set. iOS, tvOS and their simulators additionally receive

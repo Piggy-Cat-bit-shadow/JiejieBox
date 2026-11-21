@@ -28,9 +28,27 @@ import "strings"
 const godebugDefaults = "multipathtcp=0,tlssha1=1,tlssecpmlkem=0,tracebacklabels=0,x509sslcertoverrideplatform=0"
 
 func LinkerFlags(version string, debug bool) string {
+	return linkerFlags(version, debug, godebugDefaults)
+}
+
+// LinkerFlagsWithStartupPolicy is LinkerFlags with a startup policy appended to the godebug default.
+//
+// It exists so the Apple library build can opt into a runtime startup candidate (see
+// startup_policy.go) WITHOUT changing what every other product links: an Android AAR, the Windows
+// daemon and `cmd/sing-box` keep calling LinkerFlags and keep their bytes. The inherit policy is
+// byte-identical to LinkerFlags, which TestStartupPolicyLinkStrings asserts.
+//
+// The composed value still starts with the compatibility list above, because
+// `-X runtime.godebugDefault=` REPLACES go.mod's computed default; a policy build that dropped
+// `tlssecpmlkem=0`, say, would send a different ClientHello on every Apple slice.
+func LinkerFlagsWithStartupPolicy(version string, debug bool, policy StartupPolicy) string {
+	return linkerFlags(version, debug, policy.GODEBUGDefaults())
+}
+
+func linkerFlags(version string, debug bool, godebug string) string {
 	flags := []string{
 		"-X github.com/sagernet/sing-box/constant.Version=" + version,
-		"-X runtime.godebugDefault=" + godebugDefaults,
+		"-X runtime.godebugDefault=" + godebug,
 		"-checklinkname=0",
 	}
 	if !debug {
