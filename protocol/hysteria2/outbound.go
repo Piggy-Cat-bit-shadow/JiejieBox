@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/quicpolicy"
 	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/tls"
@@ -235,6 +236,29 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	guard := resourceguard.FromContext(ctx)
 	admissionKey := "hysteria2/" + options.ServerOptions.Build().String()
 
+	// The QUIC windows this connection will ask for. Built once, before the closure, because the
+	// policy and the fingerprint decision are both properties of THIS outbound, not of a dial.
+	quicOptions := qtls.QUICOptions{
+		IdleTimeout:              options.IdleTimeout.Build(),
+		KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
+		StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
+		ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
+		MaxConcurrentStreams:     options.MaxConcurrentStreams,
+		InitialPacketSize:        effectiveInitialPacketSize,
+		InitialPacketSizeCeiling: sizing.HardCeiling,
+		DisablePathMTUDiscovery:  sizing.DisablePMTUD,
+	}
+	if windows, hasPolicy := quicpolicy.FromContext(ctx); hasPolicy {
+		// The handshake transport parameters are hysteria2's own only when it is not presenting
+		// the browser fingerprint. With ChromeParrot on, quic-go replaces BOTH advertised initial
+		// windows with the prototype's values after every other setting, so writing a grant here
+		// would be a configuration that looks applied and is not - the same failure this file
+		// already documents for a ceiling encoded inside disable_path_mtu_discovery.
+		grantsApplied := applyReceiveWindowPolicy(&quicOptions, windows, options.DisableChromeParrot)
+		logger.Info("QUIC receive windows: policy ", windows.String(),
+			", initial grants ", map[bool]string{true: "applied", false: "owned by the browser fingerprint"}[grantsApplied])
+	}
+
 	newClient := func(clientDialer N.Dialer) (*hysteria2.Client, error) {
 		return hysteria2.NewClient(hysteria2.ClientOptions{
 			Context:            ctx,
@@ -253,21 +277,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			GeckoMaxPacketSize: geckoMaxPacketSize,
 			Password:           options.Password,
 			TLSConfig:          tlsConfig,
-			QUICOptions: qtls.QUICOptions{
-				IdleTimeout:              options.IdleTimeout.Build(),
-				KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
-				StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
-				ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
-				MaxConcurrentStreams:     options.MaxConcurrentStreams,
-				InitialPacketSize:        effectiveInitialPacketSize,
-				InitialPacketSizeCeiling: sizing.HardCeiling,
-				DisablePathMTUDiscovery:  sizing.DisablePMTUD,
-			},
-			UDPDisabled:   !common.Contains(networkList, N.NetworkUDP),
-			BBRProfile:    options.BBRProfile,
-			ChromeParrot:  !options.DisableChromeParrot,
-			RealmOptions:  realmOptions,
-			AdmitCreation: admitCreation(guard, admissionKey),
+			QUICOptions:        quicOptions,
+			UDPDisabled:        !common.Contains(networkList, N.NetworkUDP),
+			BBRProfile:         options.BBRProfile,
+			ChromeParrot:       !options.DisableChromeParrot,
+			RealmOptions:       realmOptions,
+			AdmitCreation:      admitCreation(guard, admissionKey),
 		})
 	}
 	if familyDialers[0] != nil && familyDialers[1] != nil {

@@ -345,7 +345,12 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // (withSyscallConn, CreatePacketTransport, ListenWithOptions, ListenEarlyWithOptions) through
 // that helper, which covers the obfuscated hysteria/hysteria2 clients and the realm punch conn;
 // the per-hop calls of the port-hopping conn stay because a HopConn exposes no Upstream().
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261116152031-cdb57d74152e
+//
+// The 2026-11-21 pin (4464211) splits the receive windows: QUICOptions can state the advertised
+// initial window and the local auto-tuning ceiling separately, while StreamReceiveWindow /
+// ConnectionReceiveWindow keep their "one value for both" meaning and still win when set. Nothing
+// in the parent used the split until common/quicpolicy did.
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261121121431-44642117dcd3
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten

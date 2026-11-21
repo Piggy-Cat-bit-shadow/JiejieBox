@@ -351,6 +351,10 @@ func New(options Options) (*Box, error) {
 	// document). Callers that do not fit wait; beyond the queue they receive a retryable
 	// deferral instead of an unbounded queue of blocked refreshes.
 	ctx = withBuildGate(ctx)
+	// And the QUIC receive-window policy, for the one platform whose footprint is enforced. Like
+	// the gate this is a PER BOX decision read from the construction context, so two boxes in one
+	// process cannot see each other's answer and an embedder's own policy is never overwritten.
+	ctx = withNetworkExtensionQUICReceiveWindows(ctx)
 	// One packet-up upload budget for the whole Box. The XHTTP transport asks the
 	// construction context for it when the first client is built (the client is created
 	// inside the vless outbound constructor, which is why the provider travels through
