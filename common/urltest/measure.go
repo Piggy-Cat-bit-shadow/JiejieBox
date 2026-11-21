@@ -47,6 +47,12 @@ func newMeasurementTransport(instance net.Conn, ctx context.Context) *http.Trans
 		//
 		// 256 KiB is far above any real CDN response and far below the default.
 		MaxResponseHeaderBytes: 256 << 10,
+		// Each probe owns a transport for two HEAD requests. Start its buffers
+		// small instead of keeping net/http's default 4 KiB in each direction.
+		// Header parsing can span reads up to MaxResponseHeaderBytes; this does
+		// not restrict the endpoint's accepted header size.
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
 	}
 }
 

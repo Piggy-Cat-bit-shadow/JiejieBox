@@ -183,6 +183,33 @@ v0.1.39 消费的 Linux DNS 修复另有功能复现：旧路径首次写入约 
 
 ## 5. 如何复测与使用这些数据
 
+### 2026-11-21：订阅更新与测速的临时分配
+
+对照源码为 `80e9e7a1b`，Windows/amd64、Ryzen 7 4800H、Go 1.27.4、默认标签。
+每项三次样本；完整更新的旧实现通过临时 Go source overlay 读取上述提交，工作区及依赖相同。
+以下均为 **B/op 累计分配**，不是同时驻留、iOS `phys_footprint` 或设备性能结论。
+共享主机同时有编译负载，不将本轮耗时波动报告为稳定提速。
+
+| 场景 | 改造前 | 改造后 | 说明 |
+| --- | ---: | ---: | --- |
+| 约 1.1 MB 普通 JSON 文本的 Base64 格式探测 | 5,234,696–5,234,957 B，5 allocs | 0 B，0 allocs | 在有限前缀内识别非 Base64，保留编码输入的原解码规则；不是整个订阅解析零分配 |
+| 30,000 行订阅的信息头边界提取 | 1,507,329–1,507,363 B，2 allocs | 0 B，0 allocs | 只定位第一个换行，不拆分和重新拼接全部正文 |
+| 两次 HEAD 的本地 HTTP 测速 | 26,389–26,460 B | 19,993–20,140 B | 私有传输的读写缓冲从默认各 4 KiB 改为各 1 KiB；256 KiB 响应头上限不变 |
+| 1000 个独立节点的路由图校验 | 135,008–135,016 B，1007 allocs | 16,384–16,385 B，1 alloc | 无出边节点不分配边列表和 DFS 状态，仍完整检查原有图边 |
+| 本地下载约 1 MiB 节点文档并发布 | 1,346,283,304–1,347,006,552 B | 672,010,624–672,342,864 B | 使用测试协议节点、真实 Provider 发布管理器；累计分配约减半，仍存在逐节点复制快照等成本 |
+
+新增回归覆盖 Base64 与旧语义对照、长请求与 64 KiB 响应头、图边借用所有权和独立节点的分配预算。
+Provider/出站管理器/策略组的既有环检测与发布测试、根包 Provider/CrossKind 测试通过；
+Linux 宿主对相关包的 `-race` 通过，Base64 兼容性 fuzz 5 秒共执行约 35,000 个输入后通过。
+这些修改不包含通用的 probe-only 协议会话释放、惰性重型 endpoint 或完整重载内存 admission。
+
+复测入口：
+
+```sh
+go test ./provider/parser ./provider/remote ./common/urltest ./adapter/outbound ./adapter/provider ./protocol/group -count=1
+go test ./provider/parser ./provider/remote ./common/urltest ./adapter/outbound -run '^$' -bench 'BenchmarkDecodeProviderDocument|BenchmarkProviderFirstLine|BenchmarkProviderDocumentRefresh|BenchmarkURLTestUnifiedDelay|BenchmarkIndependentOutboundGraph' -benchmem -count=3
+```
+
 1. 固定核心、依赖与对端提交，记录 OS、CPU、Go、构建标签、协议模式和参数。
 2. 对照使用相同载荷、并发和入口，安排预热与交错轮次，保留失败而非只取成功最快值。
 3. 分别测吞吐、p50/p95/p99、CPU/GiB、累计分配、稳态内存和进程 footprint；不要以 Go heap 代替 iOS NE 内存预算。

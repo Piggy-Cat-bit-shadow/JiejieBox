@@ -1109,12 +1109,11 @@ func (s *ProviderRemote) redact(text string) string {
 }
 
 func getFirstLine(content string) (string, string) {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 1 {
-		return lines[0], ""
-	}
-	others := strings.Join(lines[1:], "\n")
-	return lines[0], others
+	// Only the header boundary matters. Splitting every subscription line and
+	// joining the body kept a second full document and an index of every line
+	// alive while parsing a replacement provider generation.
+	first, rest, _ := strings.Cut(content, "\n")
+	return first, rest
 }
 
 func parseInfo(infoStr string) (adapter.SubscriptionInfo, bool) {

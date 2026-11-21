@@ -159,7 +159,10 @@ func validateAcyclicOutboundGraph(nodes map[string]adapter.Outbound, overrides m
 	if len(nodes) == 0 {
 		return nil
 	}
-	state := make(map[string]uint8, len(nodes))
+	// Leaf-only provider sets need no DFS state. Allocate it only when a node
+	// actually has outgoing edges; every edge is still inspected and cycles
+	// retain the same traversal and deterministic diagnostic order.
+	var state map[string]uint8
 	var path []string
 	var visit func(tag string) error
 	visit = func(tag string) error {
@@ -180,9 +183,16 @@ func validateAcyclicOutboundGraph(nodes map[string]adapter.Outbound, overrides m
 			loop := append(append([]string(nil), path[start:]...), tag)
 			return E.New("circular outbound dependency: ", strings.Join(loop, " -> "))
 		}
+		edges := outboundGraphEdges(nodes[tag], overrides[tag])
+		if len(edges) == 0 {
+			return nil
+		}
+		if state == nil {
+			state = make(map[string]uint8, len(nodes))
+		}
 		state[tag] = graphVisiting
 		path = append(path, tag)
-		for _, dependency := range outboundGraphEdges(nodes[tag], overrides[tag]) {
+		for _, dependency := range edges {
 			if _, known := nodes[dependency]; !known {
 				// A tag that names nothing is the start-order sort's message ("dependency[tag] not
 				// found"), and repeating it here as a cycle would send the operator looking for a
@@ -222,18 +232,28 @@ func outboundGraphEdges(object adapter.Outbound, override []string) []string {
 	if object == nil {
 		return nil
 	}
-	edges := make([]string, 0, 4)
-	edges = append(edges, object.Dependencies()...)
+	dependencies := object.Dependencies()
+	var members, references []string
 	if override != nil {
-		edges = append(edges, override...)
+		members = override
 	} else {
 		if group, isGroup := object.(adapter.OutboundGroup); isGroup {
-			edges = append(edges, group.All()...)
+			members = group.All()
 		}
 		if referrer, isReferrer := object.(adapter.Referrer); isReferrer {
-			edges = append(edges, referrer.References()...)
+			references = referrer.References()
 		}
 	}
+	count := len(dependencies) + len(members) + len(references)
+	if count == 0 {
+		return nil
+	}
+	// Dependencies and membership are borrowed. Copy before deduplicating so
+	// validation cannot rewrite the objects whose prospective graph it reads.
+	edges := make([]string, 0, count)
+	edges = append(edges, dependencies...)
+	edges = append(edges, members...)
+	edges = append(edges, references...)
 	return dedupeTags(edges)
 }
 

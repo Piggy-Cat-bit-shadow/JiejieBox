@@ -38,6 +38,23 @@ func parseRawSubscription(content string) ([]option.Outbound, error) {
 }
 
 func DecodeBase64URLSafe(content string) (string, error) {
+	// Native JSON/YAML and share-link lists normally reveal themselves in the
+	// prefix. Reject them before the normalizations and DecodeString's
+	// document-sized allocation. Bound the scan so encoded subscriptions keep
+	// the decoder's existing throughput and permissive normalization semantics.
+	for i := 0; i < len(content) && i < 128; i++ {
+		c := content[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+			continue
+		}
+		switch c {
+		case '-', '_', '/', '+', '=', ' ', '\r', '\n':
+			// The legacy decoder accepts CR/LF, maps spaces to '-', and
+			// removes padding even in the middle of the input.
+		default:
+			return content, nil
+		}
+	}
 	s := strings.ReplaceAll(content, " ", "-")
 	s = strings.ReplaceAll(s, "/", "_")
 	s = strings.ReplaceAll(s, "+", "-")
