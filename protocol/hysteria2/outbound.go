@@ -255,8 +255,11 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		// would be a configuration that looks applied and is not - the same failure this file
 		// already documents for a ceiling encoded inside disable_path_mtu_discovery.
 		grantsApplied := applyReceiveWindowPolicy(&quicOptions, windows, options.DisableChromeParrot)
-		logger.Info("QUIC receive windows: policy ", windows.String(),
-			", initial grants ", map[bool]string{true: "applied", false: "owned by the browser fingerprint"}[grantsApplied])
+		grantState := "owned by the browser fingerprint"
+		if grantsApplied {
+			grantState = "applied"
+		}
+		logger.Info("QUIC receive windows: policy ", windows.String(), ", initial grants ", grantState)
 	}
 
 	newClient := func(clientDialer N.Dialer) (*hysteria2.Client, error) {
