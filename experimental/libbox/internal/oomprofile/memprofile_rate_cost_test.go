@@ -447,4 +447,3 @@ func memProfileRateChurnC(size int) []byte { return make([]byte, size) }
 
 //go:noinline
 func memProfileRateChurnD(size int) []byte { return make([]byte, size) }
-
