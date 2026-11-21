@@ -139,7 +139,7 @@ jobs:
           path: |
             ${{ runner.temp }}/memory-gate.jsonl
             ${{ runner.temp }}/memory-gate.jsonl.d/
-            ${{ runner.temp }}/memory-gate.gate.json
+            ${{ runner.temp }}/memory-gate.jsonl.gate.json
           if-no-files-found: warn
 
   windows-daemon-tests:

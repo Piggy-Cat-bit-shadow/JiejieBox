@@ -55,7 +55,8 @@
         2119304,
         2106048,
         2111176
-      ]
+      ],
+      "required": true
     },
     {
       "id": "base-idle-live-heap",
@@ -76,7 +77,8 @@
         2446904,
         2427712,
         2452128
-      ]
+      ],
+      "required": true
     },
     {
       "id": "base-idle-total-memory",
@@ -97,7 +99,8 @@
         20015352,
         15812856,
         15558904
-      ]
+      ],
+      "required": true
     },
     {
       "id": "base-idle-goroutines",
@@ -118,7 +121,8 @@
         28,
         27,
         28
-      ]
+      ],
+      "required": true
     },
     {
       "id": "base-construct-delta",
@@ -139,7 +143,8 @@
         24144,
         17256,
         22464
-      ]
+      ],
+      "required": true
     },
     {
       "id": "base-teardown-goroutines",
@@ -160,7 +165,8 @@
         24,
         24,
         24
-      ]
+      ],
+      "required": true
     },
     {
       "id": "base-teardown-live-heap-delta",
@@ -181,7 +187,8 @@
         238424,
         219200,
         252128
-      ]
+      ],
+      "required": true
     },
     {
       "id": "ordinary-zero-idle-live-heap",
@@ -199,7 +206,8 @@
         2442520,
         2448128,
         2449472
-      ]
+      ],
+      "required": true
     },
     {
       "id": "ordinary-100-construct-per-node",
@@ -217,7 +225,8 @@
         7678,
         7561,
         7622
-      ]
+      ],
+      "required": true
     },
     {
       "id": "ordinary-100-idle-per-node",
@@ -235,7 +244,8 @@
         9956,
         9936,
         9955
-      ]
+      ],
+      "required": true
     },
     {
       "id": "ordinary-100-goroutines",
@@ -253,7 +263,8 @@
         27,
         27,
         27
-      ]
+      ],
+      "required": true
     },
     {
       "id": "ordinary-100-threads",
@@ -271,7 +282,8 @@
         20,
         21,
         21
-      ]
+      ],
+      "required": true
     },
     {
       "id": "probe-members-succeed",
@@ -289,7 +301,8 @@
         8,
         8,
         8
-      ]
+      ],
+      "required": true
     },
     {
       "id": "natural-idle-growth",
@@ -307,7 +320,8 @@
         0,
         15936,
         8192
-      ]
+      ],
+      "required": true
     },
     {
       "id": "traffic-per-flow-live-heap",
@@ -326,7 +340,8 @@
         46350,
         44942,
         45066
-      ]
+      ],
+      "required": true
     },
     {
       "id": "traffic-verified",
@@ -344,7 +359,8 @@
         1,
         1,
         1
-      ]
+      ],
+      "required": true
     },
     {
       "id": "traffic-half-close",
@@ -362,7 +378,8 @@
         1,
         1,
         1
-      ]
+      ],
+      "required": true
     }
   ]
 }

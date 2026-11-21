@@ -468,8 +468,10 @@ func TestBudgetDerivationAndEvaluation(t *testing.T) {
 		t.Fatal("doubling the per-node construction cost did not fail the per-node budget")
 	}
 
-	// A metric this platform does not produce must be a SKIP with a reason, and the gate must not
-	// count it as a pass.
+	// A REQUIRED metric that the run did not produce must FAIL, not skip: a gate that treats missing
+	// evidence as "not applicable" still reports success on the strength of the rules that did have
+	// data, which is the silent-green failure this gate exists to prevent. The audit reproduced
+	// exactly that with the traffic rules removed from the ledger.
 	unobservable := syntheticGateLedger()
 	for index, record := range unobservable {
 		if record.stage() != stageTrafficVerified {
@@ -478,20 +480,47 @@ func TestBudgetDerivationAndEvaluation(t *testing.T) {
 		record["traffic"] = map[string]any{"flows": json.Number("4")}
 		unobservable[index] = record
 	}
-	sawSkip := false
+	sawRequiredFailure := false
 	for _, result := range evaluateBudget(budget, unobservable) {
-		if result.ID == "traffic-verified" {
-			if result.Status != statusUnsupported {
-				t.Fatalf("a null traffic.verified was evaluated as %s", result.Status)
-			}
-			if result.Reason == "" {
-				t.Fatal("a skipped rule must say why")
-			}
-			sawSkip = true
+		if result.ID != "traffic-verified" {
+			continue
+		}
+		if result.Status != statusFailed {
+			t.Fatalf("a null required traffic.verified was evaluated as %s, want failed", result.Status)
+		}
+		if result.Reason == "" {
+			t.Fatal("a failed rule must say why")
+		}
+		sawRequiredFailure = true
+	}
+	if !sawRequiredFailure {
+		t.Fatal("the traffic rule was not evaluated")
+	}
+
+	// The same null value on a rule that opted OUT of being required is a skip again: that is the
+	// one legitimate use of unsupported, a platform metric this budget knows it cannot answer.
+	optional := budget
+	optional.Rules = append([]budgetRule(nil), budget.Rules...)
+	for index := range optional.Rules {
+		if optional.Rules[index].ID == "traffic-verified" {
+			optional.Rules[index].Required = false
 		}
 	}
-	if !sawSkip {
-		t.Fatal("the traffic rule was not evaluated")
+	sawOptionalSkip := false
+	for _, result := range evaluateBudget(optional, unobservable) {
+		if result.ID != "traffic-verified" {
+			continue
+		}
+		if result.Status != statusUnsupported {
+			t.Fatalf("a null non-required traffic.verified was evaluated as %s, want unsupported", result.Status)
+		}
+		if result.Reason == "" {
+			t.Fatal("a skipped rule must say why")
+		}
+		sawOptionalSkip = true
+	}
+	if !sawOptionalSkip {
+		t.Fatal("the optional traffic rule was not evaluated")
 	}
 
 	// A foreign platform's budget is a skip, not a failure and not a pass.

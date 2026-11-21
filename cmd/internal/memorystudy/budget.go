@@ -71,6 +71,13 @@ type budgetRule struct {
 	Basis           string    `json:"basis,omitempty"`
 	Observed        []float64 `json:"observed,omitempty"`
 	ObservedMissing int       `json:"observed_missing,omitempty"`
+	// Required separates "this platform cannot report it" from "the run did not produce the
+	// evidence". A required rule that no record can answer FAILS on a supported platform instead of
+	// being skipped: without it, a run that lost its traffic or half-close observation still passed
+	// the gate on the strength of the rules that did have data, which is exactly the silent-green
+	// failure the gate exists to prevent. A platform-specific metric that is genuinely unavailable
+	// opts out explicitly with `required: false`.
+	Required bool `json:"required,omitempty"`
 
 	noiseFloor float64
 }
@@ -180,6 +187,10 @@ func gateRuleTemplates() []budgetRule {
 			Stage:       stage,
 			Metric:      metric,
 			noiseFloor:  noise,
+			// Every template this matrix ships is a rule the fast gate is supposed to answer on
+			// the platform it was derived for, so the default is "the evidence is required". An
+			// optional platform metric has to say so, not the other way round.
+			Required: true,
 		}
 	}
 	emptyForced := ruleSelector{"empty", 0, 0, "direct", "forced"}
@@ -338,17 +349,33 @@ func evaluateBudget(budget budgetFile, records []recordMap) []ruleResult {
 			result.Status = statusUnsupported
 			result.Reason = fmt.Sprintf("no ok-status record matched case=%s nodes=%d groups=%d proto=%s gc=%s stage=%s",
 				rule.Case, rule.Nodes, rule.Groups, rule.NodeProto, rule.GCMode, rule.Stage)
+			if rule.Required {
+				result.Status = statusFailed
+				result.Reason = "required evidence missing: " + result.Reason
+			}
 			results = append(results, result)
 			continue
 		}
 		if len(values) == 0 {
 			result.Status = statusUnsupported
 			result.Reason = fmt.Sprintf("all %d matching record(s) had a null %s", matched, rule.Metric)
+			if rule.Required {
+				result.Status = statusFailed
+				result.Reason = "required evidence missing: " + result.Reason
+			}
 			results = append(results, result)
 			continue
 		}
 		if missing > 0 {
 			result.Reason = fmt.Sprintf("%d of %d matching record(s) had no value", missing, matched)
+			if rule.Required {
+				// A rule answered by a subset of the runs is not verified: accepting the runs that
+				// happen to carry the observation is how a lost half of the matrix becomes a pass.
+				result.Status = statusFailed
+				result.Reason = "required evidence incomplete: " + result.Reason
+				results = append(results, result)
+				continue
+			}
 		}
 		worst := values[0]
 		for _, value := range values[1:] {
