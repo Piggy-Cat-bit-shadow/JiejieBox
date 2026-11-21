@@ -13,6 +13,7 @@ import (
 	_ "github.com/sagernet/gomobile"
 	"github.com/sagernet/sing-box/cmd/internal/build_shared"
 	"github.com/sagernet/sing-box/cmd/internal/mobilebuildtags"
+	"github.com/sagernet/sing-box/cmd/internal/runtimeoverlay"
 	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/rw"
@@ -63,6 +64,24 @@ func init() {
 	// compiles a product nobody consumes is not telling the truth about its own cost.
 	flag.StringVar(&androidVariant, "android-variant", androidVariantAll,
 		`which Android AARs to build: "main", "legacy", or "all"`)
+	// -runtime-overlay selects which of the four local Apple build modes this build compiles.
+	//
+	// The values are base|small|cgo|both; empty means "the reviewed default for this commit, or
+	// JJ_RUNTIME_OVERLAY if it is set". It exists so an effect can be attributed to the small
+	// runtime (A) and the cgo extra-M change (B) separately, from ONE commit and one builder, and
+	// so a device run can enable a mode the host evidence does not cover. See
+	// docs/internal/ios-runtime-overlay.md and cmd/internal/runtimeoverlay.
+	flag.StringVar(&runtimeOverlayMode, "runtime-overlay", "",
+		`Apple Go runtime overlay mode: base, small, cgo or both (default: the reviewed default, or $JJ_RUNTIME_OVERLAY)`)
+	// -print-runtime-overlay reports the mode this build would resolve for a gomobile -target
+	// value, then exits without building.
+	//
+	// It exists for the same reason -print-resolved-tags does: CI has to ASSERT that the shipping
+	// Apple build actually compiles the overlay, and the honest way to ask is the same function the
+	// builder calls. A check that re-listed the modes in YAML would answer a different question and
+	// would be the first thing to drift - which is exactly how the gVisor exposure hid.
+	flag.StringVar(&printRuntimeOverlay, "print-runtime-overlay", "",
+		"print the resolved runtime overlay mode for a gomobile -target value and exit")
 	// flag.BoolVar(&withTailscale, "with-tailscale", false, "build tailscale for iOS and tvOS")
 }
 
@@ -134,6 +153,18 @@ func main() {
 		fmt.Println(strings.Join(ResolveBuildTags(printResolvedTags), ","))
 		return
 	}
+	if printRuntimeOverlay != "" {
+		mode, err := runtimeOverlayModeFromEnvironment()
+		if err != nil {
+			log.Fatal(err)
+		}
+		plan, err := runtimeoverlay.Resolve(mode, printRuntimeOverlay)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(plan.Mode)
+		return
+	}
 
 	workingDirectory, err := os.Getwd()
 	if err != nil {
@@ -177,6 +208,13 @@ func writeProvenance() {
 	// dependency pin.
 	for _, variant := range sortedTagVariants() {
 		content += "tags." + variant + "=" + strings.Join(ResolveBuildTags(variant), ",") + "\n"
+	}
+	// The runtime overlay plan this Apple build compiled, with the Go version and the digest of
+	// every file the overlay wrote. An Apple artifact records the mode even when it is base, so
+	// "no overlay" is a recorded fact rather than an absent key that an older build would also
+	// have.
+	for _, line := range runtimeOverlayProvenanceLines() {
+		content += line + "\n"
 	}
 	for _, name := range []string{"libbox.provenance", filepath.Join("..", "sing-box-for-android", "app", "libs", "libbox.provenance")} {
 		if dir := filepath.Dir(name); dir != "." {
@@ -284,7 +322,10 @@ var (
 	debugFlags  []string
 	// printResolvedTags names a variant to report the resolved tags for, then exit.
 	printResolvedTags string
-	sharedTags        []string
+	// printRuntimeOverlay names a gomobile -target value to report the resolved runtime overlay
+	// mode for, then exit.
+	printRuntimeOverlay string
+	sharedTags          []string
 	// memcTags []string
 	debugTags []string
 )
@@ -536,13 +577,39 @@ func buildApple() {
 	// look.
 	frameworkPath := filepath.Join(gomobileWorkDir(rootDir), "Libbox.xcframework")
 
+	err := prepareRuntimeOverlay(bindTarget)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if appleRuntimeOverlay != nil {
+		defer appleRuntimeOverlay.Close()
+	}
+
 	command, err := newGomobileCommand(rootDir, appleBindArguments(bindTarget, frameworkPath)...)
 	if err != nil {
 		log.Fatal(err)
 	}
+	// The overlay rides in through PATH and nowhere else: gomobile resolves `go` from it
+	// (cmd/gomobile/build.go, bind_iosapp.go), so the shim is the injection point and this is the
+	// only command that gets it.
+	if appleRuntimeOverlay != nil {
+		command.Env = appleRuntimeOverlay.Env
+	}
 	err = command.Run()
+	if err != nil && appleRuntimeOverlay != nil {
+		// The build failed; the artifact does not exist, so there is nothing to verify. Reporting
+		// the overlay's state here would suggest the failure was the overlay's.
+		log.Fatal(err)
+	}
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if appleRuntimeOverlay != nil {
+		err = verifyRuntimeOverlay(appleRuntimeOverlay, frameworkPath)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	copyPath := filepath.Join(rootDir, "..", "sing-box-for-apple")
