@@ -596,11 +596,6 @@ func buildApple() {
 		command.Env = appleRuntimeOverlay.Env
 	}
 	err = command.Run()
-	if err != nil && appleRuntimeOverlay != nil {
-		// The build failed; the artifact does not exist, so there is nothing to verify. Reporting
-		// the overlay's state here would suggest the failure was the overlay's.
-		log.Fatal(err)
-	}
 	if err != nil {
 		log.Fatal(err)
 	}
