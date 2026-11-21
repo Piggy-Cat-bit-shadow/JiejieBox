@@ -154,8 +154,8 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		providers:                    make(map[string]adapter.Provider),
 		outboundsCache:               make(map[string][]adapter.Outbound),
 		providerTags:                 options.Providers,
-		exclude:                      (*regexp.Regexp)(options.Exclude),
-		include:                      (*regexp.Regexp)(options.Include),
+		exclude:                      options.Exclude.Build(),
+		include:                      options.Include.Build(),
 		useAllProviders:              options.UseAllProviders,
 	}
 	// The configuration surface maps onto the policy here, once. An absent block keeps the historical

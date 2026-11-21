@@ -201,8 +201,8 @@ func NewSelector(ctx context.Context, router adapter.Router, logger log.ContextL
 		provider:        service.FromContext[adapter.ProviderManager](ctx),
 		providers:       make(map[string]adapter.Provider),
 		providerTags:    options.Providers,
-		exclude:         (*regexp.Regexp)(options.Exclude),
-		include:         (*regexp.Regexp)(options.Include),
+		exclude:         options.Exclude.Build(),
+		include:         options.Include.Build(),
 		useAllProviders: options.UseAllProviders,
 	}
 	// A member may be declared more than once. That is one edge, not a configuration error: route

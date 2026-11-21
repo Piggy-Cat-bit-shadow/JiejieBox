@@ -2,7 +2,6 @@ package group
 
 import (
 	"context"
-	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -273,13 +272,15 @@ func TestSelectorProviderFilters(t *testing.T) {
 	world := newGroupWorld(t)
 	world.add(newEdgeLeaf("self", "tcp", "udp"))
 	world.ctx = service.ContextWith[adapter.ProviderManager](world.ctx, newStubProviderManager(provider))
-	include := regexp.MustCompile(`prov/(hk|sg)-`)
-	exclude := regexp.MustCompile(`expired`)
+	include, err := badoption.NewRegexp(`prov/(hk|sg)-`)
+	require.NoError(t, err)
+	exclude, err := badoption.NewRegexp(`expired`)
+	require.NoError(t, err)
 	created, err := NewSelector(world.ctx, nil, log.NewNOPFactory().NewLogger("selector"), "proxy", option.SelectorOutboundOptions{
 		Outbounds: []string{"self"},
 		Providers: []string{"prov"},
-		Include:   (*badoption.Regexp)(include),
-		Exclude:   (*badoption.Regexp)(exclude),
+		Include:   include,
+		Exclude:   exclude,
 	})
 	require.NoError(t, err)
 	selector := created.(*Selector)

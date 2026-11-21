@@ -198,8 +198,8 @@ func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory lo
 		updateInterval:    updateInterval,
 		fetchTimeout:      defaultFetchTimeout,
 		maxDocumentSize:   defaultMaxDocumentSize,
-		exclude:           (*regexp.Regexp)(options.Exclude),
-		include:           (*regexp.Regexp)(options.Include),
+		exclude:           options.Exclude.Build(),
+		include:           options.Include.Build(),
 
 		overrideDialer: options.OverrideDialer,
 
