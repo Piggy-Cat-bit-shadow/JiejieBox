@@ -214,6 +214,10 @@ func TestProviderUpdateParsedMixedDocument(t *testing.T) {
 	require.Len(t, fixture.provider.Outbounds(), 5)
 	require.Equal(t, 5, fixture.provider.storeRecords())
 	require.Greater(t, fixture.provider.storeBytes(), int64(0))
+	// Every supported protocol shape stays inside the canonical domain: no node may fall back to an
+	// Opaque record, because that would silently rebuild it on every refresh. This is the regression
+	// for "the safe fallback must not become the normal path".
+	require.Zero(t, fixture.provider.opaqueRecords.Load(), "a supported document must not produce Opaque records")
 
 	// An unchanged refresh of the same document must reuse every object and keep the records.
 	require.NoError(t, fixture.provider.UpdateNodes(parseMixedDocument(t)))

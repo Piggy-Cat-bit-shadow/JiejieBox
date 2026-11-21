@@ -206,9 +206,28 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 			// The value cannot be canonically compared. Keep ownership with a record that can never
 			// match: every refresh will rebuild this node instead of mistaking the next document
 			// for a foreign outbound, and no stale record can ever be a false "unchanged".
+			//
+			// This is a SAFE fallback, not a silent one: an encoder bug would otherwise turn into
+			// "every provider node rebuilds on every refresh" with no signal at all. The count and
+			// the first cause are reported once per apply, and stay queryable for a test.
+			a.opaqueRecords.Add(1)
+			if a.opaqueCause.Load() == "" {
+				if _, encodeErr := nodestore.Encode(*node.outbound); encodeErr != nil {
+					a.opaqueCause.Store(node.tag + ": " + encodeErr.Error())
+				}
+			}
 			records[node.tag] = nodestore.Opaque()
 		}
 		outByTag[node.tag] = current
+	}
+	if count := a.opaqueRecords.Load(); count > 0 {
+		// One line per apply, not per node: a persistent encoder refusal is a bug, and a log flood
+		// would hide it. The count is cumulative; the cause is the first one observed.
+		cause, _ := a.opaqueCause.Load().(string)
+		if a.logger != nil {
+			a.logger.Warn("provider ", a.providerTag, ": ", count,
+				" node record(s) could not be canonically encoded and will be rebuilt on every refresh; first: ", cause)
+		}
 	}
 	// Remember what could not be unlinked. A group that still names a retired node keeps it LIVE:
 	// closing it under the selector that may still dial it is the defect this hand-off removes.

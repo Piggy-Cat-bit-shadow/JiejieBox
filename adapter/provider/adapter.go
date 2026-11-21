@@ -52,7 +52,13 @@ type Adapter struct {
 	// updateAccess serialises applies. The concrete providers already serialise their own refresh
 	// cycles (remote through its updating flag, local through its file mutex), but UpdateNodes is an
 	// exported entry point and two callers that interleave would publish a map assembled from both.
-	updateAccess   sync.Mutex
+	updateAccess sync.Mutex
+	// opaqueRecords counts nodes whose configuration could not be canonically encoded, so they are
+	// kept with a record that never matches and are rebuilt on every refresh. That is the safe
+	// direction, but an encoder regression would otherwise be completely silent; the count and the
+	// first cause are reported once per apply and stay queryable by a test.
+	opaqueRecords  atomic.Int64
+	opaqueCause    atomic.Value
 	ticker         *time.Ticker
 	checking       atomic.Bool
 	history        *urltest.HistoryStorage
