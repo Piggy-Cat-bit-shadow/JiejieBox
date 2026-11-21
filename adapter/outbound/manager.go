@@ -58,6 +58,11 @@ type Manager struct {
 	// exclusive check-and-increment. Production leaves it nil; it exists so the publication window
 	// can be hit deterministically instead of by scheduler luck.
 	testAcquireAfterRead func()
+	// deferredOutbound is the OPTIONAL deferred-construction seam. Nil keeps the eager path exactly
+	// as before; when installed, a publisher may return a light recipe object instead of the
+	// expanded outbound. It is consulted under access and called OUTSIDE every manager lock, so a
+	// deferred implementation never runs protocol work under the namespace lock. See lazy.go.
+	deferredOutbound DeferredOutboundConstructor
 
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
@@ -758,7 +763,7 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.access.Unlock()
 
-	outbound, err := m.registry.CreateOutbound(ctx, router, logger, tag, inboundType, options)
+	outbound, err := m.constructOutbound(ctx, router, logger, tag, inboundType, options, "")
 	if err != nil {
 		return err
 	}
@@ -824,7 +829,7 @@ func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log
 	}
 	m.mutation.Lock()
 	defer m.mutation.Unlock()
-	outbound, err := m.registry.CreateOutbound(ctx, router, logger, tag, outboundType, options)
+	outbound, err := m.constructOutbound(ctx, router, logger, tag, outboundType, options, owner)
 	if err != nil {
 		return err
 	}
