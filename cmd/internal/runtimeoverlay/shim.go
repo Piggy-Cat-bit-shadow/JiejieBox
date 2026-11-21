@@ -110,18 +110,47 @@ func EnvValue(env []string, name string) string {
 	return ""
 }
 
-// CheckGoFlagsHasNoOverlay refuses a GOFLAGS that already carries -overlay.
+// CheckGoFlagsHasNoOverlay refuses an environment whose go flags already decide how the runtime is
+// compiled.
 //
-// A second -overlay would win or lose silently depending on argument order, and either way the
-// artifact's marker would name a plan that is not the one that compiled it.
+// Two cases, both about the same thing: the overlay must be the ONLY thing that decides, or the
+// artifact's marker would name a plan that did not compile it.
+//
+//   - GOFLAGS carrying `-overlay` means two overlays, and which one wins depends on argument
+//     order.
+//   - GOFLAGS appearing more than once is worse, because it is silent: execve keeps both entries
+//     and getenv (and therefore the go command) returns the FIRST, so a second assignment appended
+//     by anything from a wrapper script to a CI `env:` block is ignored - or, read the other way,
+//     an overlay appended that way never takes effect while the build looks configured correctly.
+//     This was found by the test below passing on one host and failing on another purely because
+//     the second host exported an empty GOFLAGS.
 func CheckGoFlagsHasNoOverlay(env []string) error {
-	goFlags := EnvValue(env, "GOFLAGS")
-	if strings.Contains(goFlags, "-overlay") {
+	values := EnvValues(env, "GOFLAGS")
+	if len(values) > 1 {
 		return fmt.Errorf(
-			"runtime overlay: GOFLAGS already contains -overlay (%q). Two overlays cannot both be the one that compiled this artifact, "+
-				"so the build stops instead of letting the last flag win", goFlags)
+			"runtime overlay: GOFLAGS appears %d times in the environment (%q). execve keeps every entry and the go "+
+				"command reads the first, so the later ones are silently ignored; a build that cannot say which flags it "+
+				"compiled with must stop rather than guess", len(values), strings.Join(values, `", "`))
+	}
+	if len(values) == 1 && strings.Contains(values[0], "-overlay") {
+		return fmt.Errorf(
+			"runtime overlay: GOFLAGS already contains -overlay (%q). Two overlays cannot both be the one that compiled "+
+				"this artifact, so the build stops instead of letting the last flag win", values[0])
 	}
 	return nil
+}
+
+// EnvValues returns every value of one NAME in an environment slice, in order, so a caller can tell
+// one entry from two.
+func EnvValues(env []string, name string) []string {
+	prefix := name + "="
+	values := make([]string, 0, 2)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			values = append(values, strings.TrimPrefix(entry, prefix))
+		}
+	}
+	return values
 }
 
 func shellQuote(value string) string {

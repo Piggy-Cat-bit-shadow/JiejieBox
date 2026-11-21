@@ -122,7 +122,12 @@ func TestPrepareReturnsNothingForModeBaseAndForAMacOSOnlyTarget(t *testing.T) {
 
 func TestPrepareRefusesAConflictingGoFlagsOverlay(t *testing.T) {
 	goBinary := goBinary(t)
-	env := append(os.Environ(), "GOFLAGS=-overlay=/tmp/somebody-elses.json")
+	// The inherited entry is REPLACED rather than appended to: execve keeps both, the go command
+	// reads the first, and on a host that exports an empty GOFLAGS an appended one is dead weight.
+	// The earlier form of this test appended, so it proved nothing on that host - which is exactly
+	// how the duplicate-entry hole was found.
+	env := withoutEnv(os.Environ(), "GOFLAGS")
+	env = append(env, "GOFLAGS=-overlay=/tmp/somebody-elses.json")
 	_, err := Prepare(PrepareRequest{Root: repoRoot(t), Mode: ModeSmall, BindTarget: "ios/arm64", GoBinary: goBinary, Env: env})
 	if err == nil {
 		t.Fatal("a GOFLAGS that already carries an overlay must be refused: two overlays cannot both be the one that compiled the artifact")
@@ -130,6 +135,20 @@ func TestPrepareRefusesAConflictingGoFlagsOverlay(t *testing.T) {
 	if !strings.Contains(err.Error(), "GOFLAGS") {
 		t.Fatalf("the refusal must name the cause: %v", err)
 	}
+}
+
+// withoutEnv drops every entry for one name, so a test can set a variable rather than stack a second
+// assignment that the child would ignore.
+func withoutEnv(env []string, name string) []string {
+	prefix := name + "="
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // The shim is the injection point, so its shape is a contract: it must add the overlay to the go

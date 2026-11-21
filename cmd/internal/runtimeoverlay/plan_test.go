@@ -219,6 +219,20 @@ func TestCheckGoFlagsHasNoOverlay(t *testing.T) {
 	if !strings.Contains(err.Error(), "GOFLAGS") {
 		t.Fatalf("the failure must name the variable: %v", err)
 	}
+	// Two entries is the silent version of the same problem: the go command reads the first one, so
+	// an appended overlay never takes effect. This case is here because the check was written for
+	// the first form only, passed on a host with no inherited GOFLAGS, and failed on a host that
+	// exported an empty one.
+	err = CheckGoFlagsHasNoOverlay([]string{"GOFLAGS=-mod=mod", "GOFLAGS=-overlay=/tmp/x.json"})
+	if err == nil {
+		t.Fatal("a duplicated GOFLAGS must be refused: the second entry is ignored by the go command")
+	}
+	if !strings.Contains(err.Error(), "appears 2 times") {
+		t.Fatalf("the failure must say how many entries it saw: %v", err)
+	}
+	if values := EnvValues([]string{"GOFLAGS=", "GOFLAGS=-x"}, "GOFLAGS"); len(values) != 2 {
+		t.Fatalf("EnvValues returned %d entries, want 2: %v", len(values), values)
+	}
 }
 
 func TestWithShimPathPutsTheShimFirst(t *testing.T) {

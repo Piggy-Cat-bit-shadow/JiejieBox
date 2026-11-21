@@ -103,9 +103,15 @@ func VerifyXCframework(xcframeworkPath, wanted string) ([]SliceCheck, error) {
 	}
 	sliceNames := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() && strings.Contains(entry.Name(), "-") {
-			sliceNames = append(sliceNames, entry.Name())
+		if !entry.IsDir() {
+			continue
 		}
+		// EVERY directory is a slice, including one whose name does not look like one. Filtering
+		// by name shape was the earlier form and it had a hole: an unexpected directory (a new
+		// platform, a renamed slice, a stray build product) was silently skipped, and a slice that
+		// is never inspected is a slice whose leaked marker cannot fail the build. Every directory
+		// is therefore inspected, and one that is not a framework fails loudly in SliceBinary.
+		sliceNames = append(sliceNames, entry.Name())
 	}
 	sort.Strings(sliceNames)
 	if len(sliceNames) == 0 {

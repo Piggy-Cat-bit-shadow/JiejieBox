@@ -252,6 +252,37 @@ func TestScanDistinguishesAnotherPlanFromNoOverlay(t *testing.T) {
 	}
 }
 
+// A directory whose name does not look like a slice is still inspected. The earlier form filtered
+// by name shape, so an unexpected directory - a new platform, a renamed slice - was skipped
+// silently, and a slice nobody inspects is a slice whose leaked marker cannot fail the build.
+func TestAnUnexpectedSliceDirectoryCannotEscapeTheCheck(t *testing.T) {
+	root := t.TempDir()
+	plan, err := Resolve(ModeSmall, "ios/arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFakeFramework(t, root, map[string]string{
+		"ios-arm64": plan.Marker(),
+		"weirdname": "x" + plan.Marker() + "y",
+	})
+	if _, err := RequireVerifiedXCframework(root, plan.Marker()); err == nil {
+		t.Fatal("a directory that is not a slice carried the marker and was not inspected")
+	} else if !strings.Contains(err.Error(), "weirdname") {
+		t.Fatalf("the failure must name the unexpected directory: %v", err)
+	}
+	// And a directory that is not a framework at all fails loudly rather than being skipped.
+	if _, err := VerifyXCframework(root, plan.Marker()); err != nil {
+		t.Fatalf("both directories are frameworks here: %v", err)
+	}
+	notAFramework := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(notAFramework, "ios-arm64"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyXCframework(notAFramework, plan.Marker()); err == nil {
+		t.Fatal("a slice directory with no framework inside must fail, not be skipped")
+	}
+}
+
 func TestSliceBinaryUnderstandsBothFrameworkLayouts(t *testing.T) {
 	root := t.TempDir()
 	flat := filepath.Join(root, "ios-arm64", "Libbox.framework", "Libbox")
