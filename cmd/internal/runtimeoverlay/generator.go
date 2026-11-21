@@ -199,6 +199,12 @@ func Generate(request GenerationRequest) (*Overlay, error) {
 	if !plan.Enabled() {
 		return nil, fmt.Errorf("runtime overlay: mode %q compiles nothing; Generate must not be called for it", plan.Mode)
 	}
+	// Validated here as well as in Resolve, because a test or a future caller can build a Plan
+	// directly, and the values that Validate refuses are the ones that compile and then throw at
+	// startup on a target this host cannot run.
+	if err := plan.Params.Validate(); err != nil {
+		return nil, err
+	}
 	if err := request.Toolchain.Check(); err != nil {
 		return nil, err
 	}

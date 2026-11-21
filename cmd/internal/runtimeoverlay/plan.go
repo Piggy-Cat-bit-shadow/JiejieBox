@@ -76,6 +76,75 @@ type Params struct {
 	DropExtraM bool
 }
 
+// The two runtime constants every plan value has to respect, neither of which the Go compiler
+// checks.
+const (
+	// appleArm64PageSize is physPageSize on every Apple arm64 target: iPhone/iPad, the simulator on
+	// Apple silicon, and tvOS.
+	appleArm64PageSize = 16 * 1024
+	// upstreamFixedStack is fixedStack on the 64-bit targets this repository ships; it is the size
+	// of order 0 and therefore the grain stackpoolalloc slices a cache block into.
+	upstreamFixedStack = 2 * 1024
+)
+
+// Validate refuses plan values that compile but violate a runtime invariant.
+//
+// # Why this exists at all
+//
+// Every value in Params is emitted as a Go constant, so any integer compiles. Two of them are read
+// by code that THROWS at startup or, worse, writes past a span, and both were reachable from the
+// parameter space during the measurement round:
+//
+//   - `_StackCacheSize` must be a multiple of the *target's* physPageSize, or `stackinit`
+//     (src/runtime/stack.go) throws "cache size must be a multiple of page size" before main runs.
+//     An 8 KiB block is a perfectly reasonable-looking tuning value, compiles, and runs correctly
+//     on an amd64 host with 4 KiB pages - and crashes every iOS launch, where the page size is
+//     16 KiB. It was measured as the best-looking stack number in the host probe, which is exactly
+//     how a host measurement becomes a device launch crash.
+//   - `stackpoolalloc` cuts one `_StackCacheSize` page run into `fixedStack<<order` stacks with
+//     `for i := uintptr(0); i < _StackCacheSize; i += s.elemsize`. A block size that is not a
+//     multiple of every reachable element size leaves the last stack straddling the end of its
+//     span, which is heap corruption rather than a clean throw. A power of two that is a multiple
+//     of the largest cached stack size is the condition that keeps the loop in bounds, so that is
+//     what is required.
+func (p Params) Validate() error {
+	if p.SpanSetBlockEntries < 2 || p.SpanSetBlockEntries > 4096 ||
+		p.SpanSetBlockEntries&(p.SpanSetBlockEntries-1) != 0 {
+		return fmt.Errorf(
+			"runtime overlay: SpanSetBlockEntries is %d; it must be a power of two between 2 and 4096. "+
+				"A spanSet indexes its blocks with cursor/spanSetBlockEntries and cursor%%spanSetBlockEntries, and the "+
+				"block-free path compares a counter against it, so a size that is not a power of two makes the two "+
+				"halves of that arithmetic disagree", p.SpanSetBlockEntries)
+	}
+	if p.SpanSetInitSpineCap < 1 || p.SpanSetInitSpineCap > 4096 ||
+		p.SpanSetInitSpineCap&(p.SpanSetInitSpineCap-1) != 0 {
+		return fmt.Errorf(
+			"runtime overlay: SpanSetInitSpineCap is %d; it must be a power of two between 1 and 4096, because the "+
+				"spine grows by doubling from it", p.SpanSetInitSpineCap)
+	}
+	if p.StackCacheSize <= 0 || p.StackCacheSize&(p.StackCacheSize-1) != 0 {
+		return fmt.Errorf(
+			"runtime overlay: StackCacheSize is %d; it must be a power of two. stackpoolalloc slices one "+
+				"_StackCacheSize run of pages into fixedStack<<order stacks with `for i := 0; i < _StackCacheSize; "+
+				"i += elemsize` (src/runtime/stack.go), so a block that is not a multiple of every reachable element "+
+				"size leaves the last stack straddling the end of its span", p.StackCacheSize)
+	}
+	if p.StackCacheSize%appleArm64PageSize != 0 {
+		return fmt.Errorf(
+			"runtime overlay: StackCacheSize is %d, which is not a multiple of %d - physPageSize on Apple arm64. "+
+				"stackinit (src/runtime/stack.go) throws \"cache size must be a multiple of page size\" before main, so "+
+				"the build would produce an app that crashes on every launch. This is not hypothetical: a value this "+
+				"size measured better than 16384 on an amd64 host, whose pages are 4 KiB", p.StackCacheSize, appleArm64PageSize)
+	}
+	if p.FreeExitedStackBacklog < 0 {
+		return fmt.Errorf(
+			"runtime overlay: FreeExitedStackBacklog is %d; a negative backlog would be inert while the marker "+
+				"claimed it was set, and an inert change that reports itself as active is worse than no change",
+			p.FreeExitedStackBacklog)
+	}
+	return nil
+}
+
 // smallParams is group A at the values measured for this fork. See the evidence table in
 // docs/internal/ios-runtime-overlay.md; the numbers are the reviewed ones, not a guess.
 //
@@ -158,6 +227,9 @@ func Resolve(mode Mode, bindTarget string) (Plan, error) {
 		params := smallParams()
 		params.DropExtraM = true
 		plan.Params = params
+	}
+	if err := plan.Params.Validate(); err != nil {
+		return Plan{}, err
 	}
 	if !HasIOSFamilyPlatform(bindTarget) {
 		// Not an error: `-platform macos/arm64` is a legitimate local build, and the honest
