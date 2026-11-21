@@ -230,8 +230,8 @@ jobs:
         # footprint, and what is measured here is the relay, not the tunnel device.
         run: |
           set -euo pipefail
-          go test -count=1 -timeout 300s -run 'TestAHeldConnection|TestAHalfClosedFlow' -v .
-          go test -tags with_low_memory -count=1 -timeout 300s -run 'TestAHeldConnection|TestAHalfClosedFlow' -v .
+          go test -count=1 -timeout 300s -run 'TestAHeldConnection|TestAHalfClosedFlow|TestAFlowThatIsReset' -v .
+          go test -tags with_low_memory -count=1 -timeout 300s -run 'TestAHeldConnection|TestAHalfClosedFlow|TestAFlowThatIsReset' -v .
 
       - name: client gitlinks match the ABI contract pins
         # The full libbox ABI gate needs cgo and the Darwin profile, so it runs in
