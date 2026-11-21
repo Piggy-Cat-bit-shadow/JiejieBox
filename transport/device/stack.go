@@ -97,6 +97,21 @@ func (d *stackDevice) WaitWriteInboundBuffers(packetBuffers []*buf.Buffer) error
 	return d.processInboundBuffers(packetBuffers, d.waitWriteBuffers)
 }
 
+// writeRawBuffers and waitWriteRawBuffers are the same writes WITHOUT this device's own return-path
+// pass.
+//
+// They exist for deferredDevice, which owns the return path a caller attached to the STABLE facade
+// and applies it before the packet reaches the stack. Going through WriteInboundBuffers there would
+// apply an empty return path a second time and, once the facade forwarded an attachment, would hand
+// the same packet to the return path twice.
+func (d *stackDevice) writeRawBuffers(packetBuffers []*buf.Buffer) error {
+	return d.writeBuffers(packetBuffers)
+}
+
+func (d *stackDevice) waitWriteRawBuffers(packetBuffers []*buf.Buffer) error {
+	return d.waitWriteBuffers(packetBuffers)
+}
+
 func (d *stackDevice) writeBuffers(packetBuffers []*buf.Buffer) error {
 	_, err := d.memoryTun.WritePackets(common.Map(packetBuffers, (*buf.Buffer).Bytes))
 	return err

@@ -349,7 +349,25 @@ func (c *ClientEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) e
 	switch stage {
 	case adapter.StartStateInitialize:
 		c.deviceOptions.MemoryPressure = oomkiller.MemoryPressure(c.ctx)
-		tunnelDevice, err := device.New(*c.deviceOptions)
+		var tunnelDevice device.Device
+		var err error
+		if c.system {
+			// The system device claims host routes, sockets and the interface, so it is built here,
+			// in the stage that owns those side effects. Nothing about that path changes.
+			tunnelDevice, err = device.New(*c.deviceOptions)
+		} else {
+			// The userspace stack is only reachable through a live tunnel session, so an endpoint
+			// that is never used never needs it BUILT. Initialize therefore installs a stable
+			// facade and the stack is constructed on the first real demand - a dial, an inbound
+			// packet, an outbound queue. See transport/device/deferred.go for the ownership rules;
+			// MTU, addresses and a return path attached before the build are part of the facade, so
+			// no caller can observe a device that was swapped for a closed one.
+			//
+			// The measured prize is bounded and small (9.7 KB/node at Initialize, 43.6 KB more at
+			// first configuration), which is why this defers construction only and runs no idle
+			// releaser: releasing a built stack needs flow proofs that belong to the session.
+			tunnelDevice, err = device.NewDeferred(*c.deviceOptions)
+		}
 		if err != nil {
 			return err
 		}
