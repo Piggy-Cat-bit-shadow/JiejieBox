@@ -147,10 +147,9 @@ type closeDiagnostics struct {
 func NewScope(ctx context.Context, logger log.ContextLogger) *Scope {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Scope{
-		ctx:      ctx,
-		cancel:   cancel,
-		logger:   logger,
-		children: make(map[Lifecycle]*Scope),
+		ctx:    ctx,
+		cancel: cancel,
+		logger: logger,
 	}
 }
 
@@ -183,6 +182,54 @@ func (s *Scope) AddNamed(name string, cleanup func() error) {
 	s.add(name, cleanup)
 }
 
+// childScope returns the nested Scope that owns one component started through Start, creating it and
+// its reverse-order close cleanup on first use.
+//
+// The map is allocated here rather than in NewScope: a Scope that starts no component - a dynamic
+// sub-scope that only carries cleanups, which is the common shape outside the Box root - never pays
+// for it. MEASURED in adapter/lifecycle_group_floor_test.go; the empty map is a pointer field, but
+// make(map[Lifecycle]*Scope) is one hmap allocation that no compiler folds away.
+func (s *Scope) childScope(name string, component Lifecycle) (*Scope, error) {
+	s.access.Lock()
+	defer s.access.Unlock()
+	err := s.ctx.Err()
+	if err != nil {
+		return nil, err
+	}
+	child, loaded := s.children[component]
+	if !loaded {
+		if s.children == nil {
+			s.children = make(map[Lifecycle]*Scope)
+		}
+		child = NewScope(s.ctx, s.logger)
+		s.children[component] = child
+		s.cleanups = append(s.cleanups, scopeCleanup{name: "close " + name, run: func() error {
+			return closeComponentScope(s.logger, name, child)
+		}})
+	}
+	return child, nil
+}
+
+// closeComponentScope closes one component's Scope the way the ownership tree has always closed it:
+// with the elapsed trace, the per-component close monitor and the "close <name>" error context.
+//
+// It exists so the two owners of a component scope share ONE implementation: Scope.Start, whose
+// per-component Scope is a nested child reached from the parent's cleanup queue, and LifecycleGroup,
+// which owns the component's Scope directly and therefore has no parent-side cleanup to carry this.
+// Extracting it is what makes collapsing the nested layer possible without dropping the diagnostics.
+func closeComponentScope(logger log.ContextLogger, name string, scope *Scope) error {
+	done := LogElapsed(logger, "close ", name)
+	monitor := taskmonitor.New(logger, C.StopTimeout)
+	monitor.Start("close ", name)
+	closeErr := scope.Close()
+	monitor.Finish()
+	done()
+	if closeErr != nil {
+		return E.Cause(closeErr, "close ", name)
+	}
+	return nil
+}
+
 // add is Add with a name for the bounded close diagnostic. The public Add has no name because the
 // Scope cannot invent one; the component path below does know the component.
 func (s *Scope) add(name string, cleanup func() error) {
@@ -200,34 +247,37 @@ func (s *Scope) add(name string, cleanup func() error) {
 }
 
 func (s *Scope) Start(name string, component Lifecycle, stage StartStage) error {
-	s.access.Lock()
-	err := s.ctx.Err()
+	child, err := s.childScope(name, component)
 	if err != nil {
-		s.access.Unlock()
 		return err
 	}
-	child, loaded := s.children[component]
-	if !loaded {
-		child = NewScope(s.ctx, s.logger)
-		s.children[component] = child
-		s.cleanups = append(s.cleanups, scopeCleanup{name: "close " + name, run: func() error {
-			done := LogElapsed(s.logger, "close ", name)
-			monitor := taskmonitor.New(s.logger, C.StopTimeout)
-			monitor.Start("close ", name)
-			closeErr := child.Close()
-			monitor.Finish()
-			done()
-			if closeErr != nil {
-				return E.Cause(closeErr, "close ", name)
-			}
-			return nil
-		}})
+	return child.startOwned(name, component, stage)
+}
+
+// startOwned runs one Start stage of a component against a Scope that is ALREADY that component's own
+// Scope, without creating a nested child for it.
+//
+// It is the piece Scope.Start and LifecycleGroup.Start share. The component sees its own Scope, the
+// monitor/elapsed trace and the "<stage> <name>" error context are identical, and the post-start
+// cancellation check is the same rule on the same context: a component whose Scope was cancelled
+// while it started must not report success.
+//
+// What it does NOT do is create a Scope. That is deliberate - a public Start that called this and also
+// built a child would nest one more scope per stage, which is the opposite of the convergence - so the
+// caller decides which Scope the component owns:
+//
+//   - Scope.Start builds a nested child and gives that to the component, which keeps the child's
+//     Close reachable only through the parent's cleanup queue (the reverse-order tree shape).
+//   - LifecycleGroup.Start hands the component the Scope the GROUP owns for it, because the group
+//     already has an independent per-component Scope with its own close entry point (Remove).
+func (s *Scope) startOwned(name string, component Lifecycle, stage StartStage) error {
+	if ctxErr := s.ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
-	s.access.Unlock()
 	done := LogElapsed(s.logger, stage, " ", name)
 	monitor := taskmonitor.New(s.logger, C.StartTimeout)
 	monitor.Start(stage, " ", name)
-	err = component.Start(stage, child)
+	err := component.Start(stage, s)
 	monitor.Finish()
 	done()
 	if err != nil {
@@ -239,7 +289,7 @@ func (s *Scope) Start(name string, component Lifecycle, stage StartStage) error 
 	// Start may take. Whatever that component registered has already been released - Add on a
 	// closing Scope runs the cleanup immediately - so a nil return here would tell the caller a live
 	// component exists when none does, and the caller would go on to use it.
-	if ctxErr := child.Context().Err(); ctxErr != nil {
+	if ctxErr := s.ctx.Err(); ctxErr != nil {
 		return E.Cause(ctxErr, stage, " ", name)
 	}
 	return nil
