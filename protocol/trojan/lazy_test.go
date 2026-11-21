@@ -310,7 +310,8 @@ func TestLazyEvictionReleasesIdleExpansionAndAllowsRebuild(t *testing.T) {
 }
 
 // TestLazyEvictionRefusesDuringAHandoff is the safety half of eviction: an expansion that a dial
-// already obtained must not be released underneath it.
+// already obtained must not be released underneath it, and neither may one whose connection is still
+// open - that is what "the policy only reclaims idle nodes" means at the object level.
 func TestLazyEvictionRefusesDuringAHandoff(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -322,17 +323,24 @@ func TestLazyEvictionRefusesDuringAHandoff(t *testing.T) {
 	lazy, _ := newLazyTest(t, func(ctx context.Context, recipe string) (adapter.Outbound, error) {
 		return runtime, nil
 	})
-	dialResult := make(chan error, 1)
+	type dialOutcome struct {
+		conn net.Conn
+		err  error
+	}
+	dialResult := make(chan dialOutcome, 1)
 	go func() {
-		_, err := dialLazy(t, lazy)
-		dialResult <- err
+		conn, err := dialLazy(t, lazy)
+		dialResult <- dialOutcome{conn: conn, err: err}
 	}()
 	<-entered
 	require.False(t, lazy.Evict(), "a runtime a dial is using is not an idle object")
 	require.Equal(t, outbound.LazyStateReady, lazy.State())
 	close(release)
-	require.NoError(t, <-dialResult)
-	require.True(t, lazy.Evict())
+	outcome := <-dialResult
+	require.NoError(t, outcome.err)
+	require.False(t, lazy.Evict(), "an open connection keeps the node in use after the dial returned")
+	require.NoError(t, outcome.conn.Close())
+	require.True(t, lazy.Evict(), "closing the connection is what makes the expansion idle")
 }
 
 // TestLazyRecipeRebuildsValueEqualOptions is the "single owner of recipe-to-runtime" invariant: the

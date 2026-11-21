@@ -202,11 +202,19 @@ func TestLazyTrojanRealConnectionDeliversBothDirections(t *testing.T) {
 	require.True(t, server.alpnOK.Load(), "the server must have negotiated the recipe's ALPN")
 }
 
-// TestLazyTrojanActiveConnectionSurvivesEvictionAndClose is the object-layer version of "an active
-// connection keeps a valid owner": eviction and Close release what the NODE owns, and an
-// established connection is owned by its caller. For the eligible Trojan shape the expansion owns no
-// pooled object, so neither action can cut a live stream - which is exactly why this shape is safe
-// to evict and why it is the prototype.
+// TestLazyTrojanActiveConnectionSurvivesEvictionAndClose is the object layer's answer to two
+// different questions about a live connection.
+//
+//  1. While the connection is OPEN the expansion is not idle, so Evict refuses it. That is the
+//     contract the reclamation policy relies on: a sweep can only release a node nothing is using.
+//  2. Once the connection is closed the expansion is evictable, and the next demand rebuilds it.
+//  3. A live connection is never cut by the NODE's teardown. Close is terminal and does not consult
+//     the connection counter, so this is where "the node owns the expansion, the caller owns the
+//     connection" is proved: the extra round trip after Close still succeeds.
+//
+// For the eligible Trojan shape the expansion holds no pooled object, which is why 3 is true at all,
+// and why this shape is the prototype. A protocol whose connection shares a pooled transport must not
+// be admitted here (see the eligibility list in lazy.go).
 func TestLazyTrojanActiveConnectionSurvivesEvictionAndClose(t *testing.T) {
 	const password = "cold-node-password"
 	server := startTrojanEchoServer(t, password, "http/1.1")
@@ -214,23 +222,34 @@ func TestLazyTrojanActiveConnectionSurvivesEvictionAndClose(t *testing.T) {
 
 	conn, err := deferred.DialContext(context.Background(), "tcp", M.Socksaddr{Fqdn: "destination.example", Port: 443})
 	require.NoError(t, err)
-	defer conn.Close()
 
-	echoOnce := func(payload string) {
+	echoThrough := func(target net.Conn, payload string) {
 		t.Helper()
-		_, writeErr := conn.Write([]byte(payload))
+		_, writeErr := target.Write([]byte(payload))
 		require.NoError(t, writeErr)
 		echoed := make([]byte, len(payload))
-		_, readErr := io.ReadFull(conn, echoed)
+		_, readErr := io.ReadFull(target, echoed)
 		require.NoError(t, readErr)
 		require.Equal(t, payload, string(echoed))
 	}
-	echoOnce("before-eviction")
+	echoThrough(conn, "before-eviction")
 
-	require.True(t, deferred.Evict(), "no dial is in flight, so the idle expansion is evictable")
+	require.False(t, deferred.Evict(),
+		"a connection this expansion produced is still open, so the node is in use and must not be evicted")
+	require.Equal(t, 1, deferred.Builds(), "a refused eviction must not build anything")
+
+	require.NoError(t, conn.Close())
+	require.True(t, deferred.Evict(), "with the connection closed the expansion is idle, so it is evictable")
 	require.Equal(t, 1, deferred.Builds(), "eviction does not rebuild")
-	echoOnce("after-eviction")
 
+	// The next demand rebuilds the node from its recipe and still carries traffic.
+	rebuilt, err := deferred.DialContext(context.Background(), "tcp", M.Socksaddr{Fqdn: "destination.example", Port: 443})
+	require.NoError(t, err)
+	require.Equal(t, 2, deferred.Builds(), "an evicted node is rebuilt on the next demand")
+	echoThrough(rebuilt, "after-rebuild")
+
+	// Close tears the NODE down while this connection is open; the connection is the caller's.
 	require.NoError(t, deferred.Close())
-	echoOnce("after-close")
+	echoThrough(rebuilt, "after-close")
+	require.NoError(t, rebuilt.Close())
 }

@@ -124,14 +124,20 @@ func (l *lazyTrojanOutbound) SetKeepIdleConnections(keep bool) {
 	})
 }
 
-// CloseIdleConnections forwards the trim action. A never-built node holds no pooled object, so the
-// correct answer is a no-op rather than an expansion.
+// CloseIdleConnections forwards the trim action, then reports the walk to the reclaim owner.
+//
+// A never-built node holds no pooled object, so the trim itself is a no-op rather than an expansion.
+// The report matters: this is the process's EXISTING idle walk (DEEP_IDLE, the memory pass, the
+// resume boundary - see route/reference.go), and a deferred expansion is exactly another idle
+// resource that walk should be able to reclaim. The node does not evict itself; it tells the one
+// policy owner that the walk reached it.
 func (l *lazyTrojanOutbound) CloseIdleConnections() {
 	l.WithRuntime(func(runtime adapter.Outbound) {
 		if keeper, isKeeper := runtime.(adapter.IdleConnectionKeeper); isKeeper {
 			keeper.CloseIdleConnections()
 		}
 	})
+	l.NotifyIdleWalk()
 }
 
 // ResidencyLedger reports an honest "unknown" for a node that was never expanded: it holds no
@@ -186,8 +192,18 @@ func deferredTrojanOutbound(ctx context.Context, router adapter.Router, logger l
 		// The SAME constructor the eager path uses. One owner of recipe-to-runtime behaviour.
 		return NewOutbound(buildContext, router, logger, tag, buildRecipe.outboundOptions())
 	})
+	// The expansion's size, MEASURED on this tree: a never-dialled node holds 698 B and an expanded
+	// one 3 603 B (N=10 000, real Manager), i.e. ~2.9 KiB per expansion. Reporting it lets the
+	// reclaim policy's BYTE budget be a real bound for this protocol instead of falling back to the
+	// policy's documented assumption (outbound.DeferredReclaimPolicy.AssumedExpansionBytes).
+	deferred.SetExpansionEstimate(trojanExpansionEstimate)
 	return &lazyTrojanOutbound{LazyOutbound: deferred}, true, nil
 }
+
+// trojanExpansionEstimate is what ONE expanded Trojan node costs beyond its recipe, rounded up from
+// the measured 2.9 KiB. It is an estimate, not a footprint: it covers the runtime object plus the
+// per-build scope and its lifetime context, and it is used only to bound the reclaim budget.
+const trojanExpansionEstimate = 3 * 1024
 
 // LazyEligible reports whether one Trojan option shape is covered by the deferred path, and if not,
 // a short stable reason. It is the diagnostic a management view uses to say how much of a

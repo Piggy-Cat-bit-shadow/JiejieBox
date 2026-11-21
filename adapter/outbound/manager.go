@@ -63,6 +63,10 @@ type Manager struct {
 	// expanded outbound. It is consulted under access and called OUTSIDE every manager lock, so a
 	// deferred implementation never runs protocol work under the namespace lock. See lazy.go.
 	deferredOutbound DeferredOutboundConstructor
+	// deferredReclaim is the budget and the single-flight state of the deferred-expansion sweep. It
+	// is inert (enabled=false) until a deferred constructor is installed, so a manager without the
+	// seam carries one zero-valued struct and no behaviour. See reclaim.go.
+	deferredReclaim deferredReclaimState
 
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
@@ -936,11 +940,31 @@ type retiredOutbound struct {
 // holds a lock across the network dial, and a release closes the object only when the publication
 // barrier already passed and the count reaches zero. Callers that do not implement the manager (test
 // doubles) get a no-op.
+//
+// # The object's own lease
+//
+// A deferred object also needs to know that a hand-off is outstanding, because IT is the thing an
+// eviction releases: a manager lease that stayed in the manager did not stop Evict, and the hand-off
+// that had already obtained the object then dialled a released runtime. Every path below that returns
+// a usable object therefore also asks the object for a lease (ExpansionLease) and composes the two
+// releases, so "the router holds this object" and "this object's expansion may not be released" are
+// the same fact. A non-deferred object answers no such interface and the assertion costs one type
+// check.
 func (m *Manager) AcquireOutbound(object adapter.Outbound) (release func(), ok bool) {
 	if m == nil || object == nil {
 		return func() {}, false
 	}
 	tag := object.Tag()
+	// The OBJECT's lease is taken FIRST, before any manager decision. Two reasons: it is the pin
+	// that stops an eviction for the whole window this call is deciding in, and calling it before
+	// m.access means the object's own lock is never taken while the manager's exclusive lock is
+	// held (a release composed for a refusal would otherwise re-enter m.access and deadlock).
+	objectRelease, objectLeaseOK := m.takeObjectLease(object)
+	if !objectLeaseOK {
+		// The object is terminal (its own Close already ran). No manager count was taken, so there is
+		// nothing to unwind, and the caller must refuse the hand-off rather than dial a closed node.
+		return func() {}, false
+	}
 	// Endpoints live in their own namespace (Manager.Outbound falls back to it) and have no
 	// retirement lifecycle: the endpoint manager refuses a second object for an existing tag, so
 	// once Get returns this object it stays published for the life of the manager. A published
@@ -959,7 +983,7 @@ func (m *Manager) AcquireOutbound(object adapter.Outbound) (release func(), ok b
 		if endpointManager != nil {
 			publishedEndpoint, found := endpointManager.Get(tag)
 			if found && publishedEndpoint == endpointObject {
-				return func() {}, true
+				return composeObjectLease(objectRelease, func() {}), true
 			}
 		}
 	}
@@ -973,7 +997,7 @@ func (m *Manager) AcquireOutbound(object adapter.Outbound) (release func(), ok b
 	_, owned := m.ownedTags[tag]
 	m.access.RUnlock()
 	if published && current == object && !owned {
-		return func() {}, true
+		return composeObjectLease(objectRelease, func() {}), true
 	}
 	if hook := m.testAcquireAfterRead; hook != nil {
 		hook()
@@ -981,27 +1005,65 @@ func (m *Manager) AcquireOutbound(object adapter.Outbound) (release func(), ok b
 	// EVERYTHING below is one exclusive critical section. The read above is only a fast path; the
 	// publication that this call must be correct against can land between that read and this lock,
 	// so the decision and the user count are made together here. No network operation happens while
-	// this lock is held.
+	// this lock is held, and nothing below calls back into this manager's locks on the way out.
 	m.access.Lock()
-	defer m.access.Unlock()
 	current, published = m.outboundByTag[tag]
 	if published && current == object {
 		if _, stillOwned := m.ownedTags[tag]; !stillOwned {
-			// A non-provider object published under this tag: no lease needed.
-			return func() {}, true
+			// A non-provider object published under this tag: no manager count needed.
+			m.access.Unlock()
+			return composeObjectLease(objectRelease, func() {}), true
 		}
 		// Still published by a provider: the lease carries the count across a later retirement.
 		m.users[object]++
-		return m.leaseRelease(object), true
+		m.access.Unlock()
+		return composeObjectLease(objectRelease, m.leaseRelease(object)), true
 	}
 	entry := m.retiredEntryLocked(object)
 	if entry != nil && !entry.released {
 		m.users[object]++
-		return m.leaseRelease(object), true
+		m.access.Unlock()
+		return composeObjectLease(objectRelease, m.leaseRelease(object)), true
 	}
+	m.access.Unlock()
 	// Neither published nor retired. That includes a removed provider tag (ownedTags deleted by
-	// unlinkLocked) and an object whose retirement already released; a dial must not use it.
+	// unlinkLocked) and an object whose retirement already released; a dial must not use it. The
+	// object pin taken above belongs to a hand-off that will not happen, so drop it.
+	if objectRelease != nil {
+		objectRelease()
+	}
 	return func() {}, false
+}
+
+// takeObjectLease asks the object for its own hand-off lease. An object that does not implement
+// ExpansionLease (every eager outbound) costs one type assertion and returns a nil release.
+func (m *Manager) takeObjectLease(object adapter.Outbound) (func(), bool) {
+	leaser, isLeaser := object.(ExpansionLease)
+	if !isLeaser {
+		return nil, true
+	}
+	return leaser.AcquireExpansionLease()
+}
+
+// composeObjectLease runs the object's release LAST: a retirement that becomes closable when the
+// manager's count reaches zero must not release the expansion while the object still believes it is
+// leased. Both halves run at most once, so a caller that defers the release and a retry path cannot
+// double count one hand-off.
+func composeObjectLease(objectRelease func(), managerRelease func()) func() {
+	if objectRelease == nil && managerRelease == nil {
+		return func() {}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if managerRelease != nil {
+				managerRelease()
+			}
+			if objectRelease != nil {
+				objectRelease()
+			}
+		})
+	}
 }
 
 // leaseRelease makes the release idempotent: a caller that defers it and a retry path cannot double

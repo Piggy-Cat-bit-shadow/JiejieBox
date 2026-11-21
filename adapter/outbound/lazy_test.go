@@ -37,7 +37,15 @@ type deferredTestRuntime struct {
 	cleanupRuns atomic.Int32
 	dialCalls   atomic.Int32
 
+	access sync.Mutex
+	peers  []net.Conn
+
 	gate *dialGate
+	// cleanupGate, when set, parks the SCOPE CLEANUP. It is how a test pins the eviction window open:
+	// Evict runs scope.Close() inline, so a blocked cleanup is a controlled teardown in progress.
+	cleanupGate *dialGate
+	// startError, when set, makes Start fail at the stage it is called with.
+	startError error
 }
 
 func (r *deferredTestRuntime) Type() string           { return "deferred-test" }
@@ -49,9 +57,16 @@ func (r *deferredTestRuntime) Start(stage adapter.StartStage, scope *adapter.Sco
 	r.startCalls.Add(1)
 	if stage == adapter.StartStateInitialize {
 		scope.AddNamed("deferred-test["+r.tag+"]", func() error {
+			if r.cleanupGate != nil {
+				r.cleanupGate.once.Do(func() { close(r.cleanupGate.entered) })
+				<-r.cleanupGate.release
+			}
 			r.cleanupRuns.Add(1)
 			return nil
 		})
+	}
+	if r.startError != nil && stage > adapter.StartStateInitialize {
+		return r.startError
 	}
 	return nil
 }
@@ -67,8 +82,23 @@ func (r *deferredTestRuntime) DialContext(ctx context.Context, network string, d
 		}
 	}
 	client, server := net.Pipe()
-	_ = server.Close()
+	// The PEER stays open: a test asks "is this connection still usable" by reading from the returned
+	// end with a deadline, and closing the peer here would answer that question instead of the node's
+	// state. The pipe is memory-only, so a test process leaking a few is harmless.
+	r.access.Lock()
+	r.peers = append(r.peers, server)
+	r.access.Unlock()
 	return client, nil
+}
+
+func (r *deferredTestRuntime) closePeers() {
+	r.access.Lock()
+	peers := r.peers
+	r.peers = nil
+	r.access.Unlock()
+	for _, peer := range peers {
+		_ = peer.Close()
+	}
 }
 
 func (r *deferredTestRuntime) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -93,6 +123,18 @@ type deferredFixture struct {
 	owners   []string
 	// buildBlocker, when set, parks the BUILDER, so a test can observe a first expansion in flight.
 	buildBlocker *dialGate
+	// cleanupGate, when set, is handed to every built runtime so its scope cleanup parks.
+	cleanupGate *dialGate
+	// startError, when set, makes Start fail at the first stage AFTER Initialize, so the cleanup
+	// Initialize registered is already on the per-build scope. A failure before registration would
+	// not exercise the release path at all.
+	startError error
+	// plainRuntime, when set, makes the builder return a closable that is NOT an adapter.Lifecycle
+	// (stubOutbound), which is the shape the early-retirement branch used to drop without closing.
+	// plainError is returned WITH that object, to cover a builder that reports an error and a value.
+	plainRuntime bool
+	plainError   error
+	plainBuilt   *stubOutbound
 	// buildError, when set, makes the next builder call fail.
 	buildError error
 }
@@ -122,7 +164,19 @@ func newDeferredFixture(t *testing.T) *deferredFixture {
 				fixture.buildError = nil
 				return nil, err
 			}
-			runtime := &deferredTestRuntime{tag: tag, gate: fixture.gate}
+			if fixture.plainRuntime {
+				built := &stubOutbound{tag: tag}
+				fixture.access.Lock()
+				fixture.plainBuilt = built
+				fixture.access.Unlock()
+				if fixture.plainError != nil {
+					err := fixture.plainError
+					fixture.plainError = nil
+					return built, err
+				}
+				return built, nil
+			}
+			runtime := &deferredTestRuntime{tag: tag, gate: fixture.gate, cleanupGate: fixture.cleanupGate, startError: fixture.startError}
 			fixture.access.Lock()
 			fixture.runtimes = append(fixture.runtimes, runtime)
 			fixture.access.Unlock()

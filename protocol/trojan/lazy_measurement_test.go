@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
@@ -331,6 +332,11 @@ func measureMembershipIndex(t *testing.T, nodes int) heapReading {
 // TestMeasureColdHolding is the 0/100/1000/10000 table.
 func TestMeasureColdHolding(t *testing.T) {
 	requireMeasurement(t)
+	// The deferred object's own size, so a per-node delta can be attributed to the struct instead of
+	// guessed at: a few added words can move the object into the next allocator size class, which
+	// costs more than the words themselves.
+	t.Logf("MEASURED size deferred-object=%d B recipe=%d B",
+		unsafe.Sizeof(outbound.LazyOutbound[lazyRecipe]{}), unsafe.Sizeof(lazyRecipe{}))
 	sizes := []int{0, 100, 1000}
 	if os.Getenv("HAKO_GM4_FULL") != "" {
 		sizes = append(sizes, 10000)
@@ -494,6 +500,11 @@ func TestMeasureThreeStates(t *testing.T) {
 		manager.Initialize(func() (adapter.Outbound, error) { return &measureDirectOutbound{}, nil })
 		if deferred {
 			manager.SetDeferredOutboundConstructor(DeferredConstructor())
+			// This case measures the UNBOUNDED probe state - every node expanded at once - and then
+			// what the policy does about it. Installing the seam arms the default budget, which would
+			// bound the probe while it ran and leave nothing to reclaim; that bounded product shape is
+			// TestMeasureBoundedProbe.
+			manager.DisableDeferredReclaim()
 		}
 		scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
 		t.Cleanup(func() { _ = scope.Close() })
@@ -535,21 +546,51 @@ func TestMeasureThreeStates(t *testing.T) {
 	dialColdNodesParallel(t, measured[3:])
 	waitForQuiescence(t, baselineGoroutines)
 	full := readHeap().sub(baseline)
+	// The reclaim policy, at its DEFAULT budget, is what turns "every node was expanded by the probe"
+	// back into "the subscription is cold again". One sweep is deliberately BOUNDED (the policy's
+	// MaxEvictionsPerSweep), so convergence is "as many sweeps as the bound requires" - which is what
+	// the product's triggers (demand, idle walk, pressure) also do.
+	manager.SetDeferredReclaimPolicy(outbound.DefaultDeferredReclaimPolicy())
+	reclaimStart := time.Now()
+	totalEvicted := 0
+	sweeps := 0
+	var reclaim outbound.ReclaimResult
+	for sweeps < 64 {
+		reclaim = manager.ReclaimDeferredExpansions(context.Background(), outbound.ReclaimCauseExplicit)
+		totalEvicted += reclaim.Evicted
+		sweeps++
+		if manager.DeferredExpansionCount() <= reclaim.Target {
+			break
+		}
+	}
+	reclaimElapsed := time.Since(reclaimStart)
+	require.Equal(t, nodes-reclaim.Target, totalEvicted)
+	require.LessOrEqual(t, manager.DeferredExpansionCount(), reclaim.Target)
+	afterReclaim := readHeap().sub(baseline)
+	runtime.KeepAlive(measured)
+	runtime.KeepAlive(scope)
+	perEviction := reclaimElapsed / time.Duration(max(totalEvicted, 1))
+	t.Logf("MEASURED reclaim N=%d target=%d evicted=%d sweeps=%d total=%s perEviction=%s estimated=%d budgetBytes=%d",
+		nodes, reclaim.Target, totalEvicted, sweeps, reclaimElapsed, perEviction, reclaim.EstimatedBytes, reclaim.BudgetBytes)
+	require.LessOrEqual(t, afterReclaim.live-never.live, int64(reclaim.Target)*reclaimTargetEstimate+256*1024,
+		"after reclaiming, the live heap must sit within the budget of the never-dialled state")
+	// The floor: releasing the budget's own survivors too, so the report can state the fully cold
+	// state as well as the policy's steady state.
 	evicted := 0
 	for _, node := range lazyNodes {
 		if node.Evict() {
 			evicted++
 		}
 	}
-	require.Equal(t, nodes, evicted)
+	require.Equal(t, reclaim.Target, evicted)
 	afterEvict := readHeap().sub(baseline)
-	runtime.KeepAlive(measured)
-	runtime.KeepAlive(scope)
+	t.Logf("MEASURED evict-all N=%d evicted=%d", nodes, evicted)
 
 	for name, reading := range map[string]heapReading{
 		"never-dialled":        never,
 		"few-used":             few,
 		"full-probe-then-idle": full,
+		"full-probe-reclaimed": afterReclaim,
 		"full-probe-evicted":   afterEvict,
 	} {
 		recorder.rows = append(recorder.rows, reading.row("three-states", nodes, "manager-lazy", name))
@@ -595,6 +636,84 @@ func TestMeasureThreeStates(t *testing.T) {
 	recorder.rows = append(recorder.rows, session.row("three-states", 1, "manager-eager", "one-live-session"))
 	t.Logf("MEASURED session N=1 mode=manager-eager live=%+d objects=%+d", session.live, session.objects)
 	require.NoError(t, conn.Close())
+}
+
+// reclaimTargetEstimate is the per-expansion size the reclaim budget is derived from (the measured
+// 2.9 KiB, rounded up). The acceptance checks compare the reclaimed heap against the SAME number the
+// policy uses, so they cannot pass by relying on a different assumption than the code.
+const reclaimTargetEstimate = int64(3 * 1024)
+
+// TestMeasureBoundedProbe is the product shape: the reclaim budget is armed BEFORE the probe, so the
+// expansion set is bounded WHILE a round expands every node instead of only after it. It answers the
+// audit's "全量测速后不淘汰会使原型变大" directly: with the policy on, a 1000-node probe never holds
+// more than the budget of expansions, and the heap after the round is the never-dialled heap plus the
+// budget.
+func TestMeasureBoundedProbe(t *testing.T) {
+	requireMeasurement(t)
+	const nodes = 1000
+	recorder := newRecorder(t, "gm4-bounded-probe.csv",
+		"case", "nodes", "mode", "state", "live_bytes", "objects", "scan_bytes", "stack_bytes", "goroutines")
+	defer recorder.flush(t)
+
+	server := startTrojanEchoServer(t, "cold-node-password", "h2")
+	serverAddr := server.addr()
+	baselineGoroutines := runtime.NumGoroutine()
+
+	ctx := context.Background()
+	registry := outbound.NewRegistry()
+	RegisterOutbound(registry)
+	manager := outbound.NewManager(registry, &measureEndpointManager{}, "")
+	manager.Initialize(func() (adapter.Outbound, error) { return &measureDirectOutbound{}, nil })
+	manager.SetDeferredOutboundConstructor(DeferredConstructor())
+	policy := outbound.DefaultDeferredReclaimPolicy()
+	manager.SetDeferredReclaimPolicy(policy)
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	t.Cleanup(func() { _ = scope.Close() })
+	logger := log.NewNOPFactory().NewLogger("measure")
+
+	baseline := readHeap()
+	for index := range nodes {
+		require.NoError(t, manager.Create(ctx, nil, logger, coldTag(index), C.TypeTrojan, coldTrojanOptionsFor(serverAddr, index)))
+	}
+	for _, stage := range adapter.ListStartStages {
+		require.NoError(t, manager.Start(stage, scope))
+	}
+	measured := make([]adapter.Outbound, 0, nodes)
+	for _, node := range manager.Outbounds() {
+		if node.Tag() == "direct" {
+			continue
+		}
+		measured = append(measured, node)
+	}
+	require.Len(t, measured, nodes)
+	never := readHeap().sub(baseline)
+
+	dialColdNodesParallel(t, measured)
+	waitForQuiescence(t, baselineGoroutines)
+	// A sweep may still be in flight: wait for the budget to hold before reading the heap.
+	require.Eventually(t, func() bool {
+		return manager.DeferredExpansionCount() <= policy.MaxExpanded
+	}, 30*time.Second, 10*time.Millisecond)
+	bounded := readHeap().sub(baseline)
+	expanded := manager.DeferredExpansionCount()
+	runtime.KeepAlive(manager)
+	runtime.KeepAlive(measured)
+	runtime.KeepAlive(scope)
+
+	t.Logf("MEASURED bounded-probe N=%d expandedAfterRound=%d budget=%d neverLive=%d boundedLive=%d objects=%d",
+		nodes, expanded, policy.MaxExpanded, never.live, bounded.live, bounded.objects)
+	require.LessOrEqual(t, expanded, policy.MaxExpanded, "the budget must hold while the round runs")
+	require.LessOrEqual(t, bounded.live-never.live, int64(policy.MaxExpanded)*reclaimTargetEstimate+256*1024,
+		"the heap after a bounded probe must stay within the budget of the never-dialled state")
+
+	for name, reading := range map[string]heapReading{
+		"never-dialled":           never,
+		"full-probe-budget-armed": bounded,
+	} {
+		recorder.rows = append(recorder.rows, reading.row("bounded-probe", nodes, "manager-lazy", name))
+		t.Logf("MEASURED bounded-probe N=%d state=%s live=%+d objects=%+d scan=%+d",
+			nodes, name, reading.live, reading.objects, reading.scanBytes)
+	}
 }
 
 func percentile(durations []time.Duration, fraction float64) time.Duration {

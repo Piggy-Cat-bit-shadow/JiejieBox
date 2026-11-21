@@ -552,6 +552,10 @@ func New(options Options) (*Box, error) {
 	// The reachable-leaf dry run reports non-fatal capability findings as warnings, and a warning
 	// must go through the normal log interface so the configured level applies to it.
 	outboundManager.SetLogger(logFactory.NewLogger("outbound/manager"))
+	// The deferred-construction seam for the node kinds that can honour it, with the manager's own
+	// bounded reclaim policy. Installed before any provider exists, because a provider builds its
+	// outbounds through this manager. See box_deferred.go for why it is on rather than switched.
+	withDeferredOutbounds(outboundManager)
 	// The reachable-leaf dry run needs three facts the outbound objects cannot report themselves:
 	// which tags DECLARED destination_dns_ownership, how a domain resolver is derived for one of
 	// them, and whether the network layer configures a resolver that applies when an outbound
