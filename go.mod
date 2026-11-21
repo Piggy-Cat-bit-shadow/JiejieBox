@@ -226,6 +226,11 @@ require (
 // fix(bufio): a Pipe2 setup failure must fall back, not claim the stream, and the branch
 // also carries the Linux runtime proof for unix.Splice() that runs in this fork's
 // linux-splice-proof workflow.
+//
+// The 2026-11-21 pin (7246d06) makes badoption.Regexp point at ONE canonical compiled
+// expression per pattern through a weak-reference cache, instead of BEING the compiled
+// object. Build() returns the same shallow copy the standard library's Regexp.Copy
+// returns, so a caller's Longest cannot change another holder's matching.
 replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261121123313-7246d061b907
 
 // Adds async read/write buffer pinning (correctness: the native side retains the pointer
