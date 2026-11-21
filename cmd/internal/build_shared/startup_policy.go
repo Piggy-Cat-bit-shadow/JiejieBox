@@ -147,6 +147,12 @@ func (p StartupPolicy) WithAdaptiveStackStart(value string) (StartupPolicy, erro
 // an error rather than a silently dropped setting: a typo here would otherwise ship a build that
 // claims to have a policy it does not have.
 func ParseStartupPolicy(text string) (StartupPolicy, error) {
+	// "inherit" alone is the whole-document shorthand for "leave both settings to the runtime".
+	// It exists because the reviewed default now turns both off, so the common way to undo it is to
+	// ask for the inherited behaviour rather than to name every key.
+	if strings.TrimSpace(strings.ToLower(text)) == "inherit" {
+		return StartupPolicyInherit(), nil
+	}
 	var policy StartupPolicy
 	seen := make(map[string]bool, 2)
 	for _, field := range strings.Split(text, ",") {
@@ -186,15 +192,44 @@ func ParseStartupPolicy(text string) (StartupPolicy, error) {
 // not something the built binary reads at runtime.
 const StartupPolicyEnvironmentVariable = "JJ_APPLE_STARTUP_POLICY"
 
-// DefaultStartupPolicy is the policy a build links when nothing overrides it.
+// DefaultStartupPolicy is the policy an Apple build links when nothing overrides it.
 //
-// It is "inherit both" today, and the reasoning is in reports/R-GM2.md: disabling heap sampling
-// removes the historical allocation samples the OOM report embeds and cannot be undone later, and
-// no Apple device measurement has yet shown that the saved bytes matter inside the extension
-// budget. A build can opt into a candidate with JJ_APPLE_STARTUP_POLICY or -startup-policy; a later
-// commit may move this default once a device run justifies it.
+// # The product decision, and exactly what it costs
+//
+// BOTH settings are off by default: heap sampling is disabled and the adaptive starting stack size
+// is disabled. The product owner took this on the measurements in reports/R-GM2.md, which is the
+// right place to re-read before changing it back.
+//
+// The saving: the profiler's bucket hash table is 1 439 992 bytes, allocated by the FIRST sample and
+// never released, so disabling the sampler avoids it entirely - measured here as
+// /memory/classes/profiling/buckets:bytes going from ~1.45 MB to ~5.6 KB while live heap is
+// unchanged. It is Go runtime metadata, not iOS phys_footprint, and it must not be reported as the
+// latter.
+//
+// The cost, stated where the next reader will look:
+//
+//   - `memprofilerate=0` means the OOM report's `heap` and `allocs` profiles are ALWAYS EMPTY.
+//     Sampling history cannot be recreated: turning the rate on later only collects from that
+//     moment, so a post-mortem of an allocation made before the switch shows nothing. A diagnostic
+//     build that needs those profiles links `memprofilerate=inherit` explicitly.
+//   - `adaptivestackstart=0` keeps a goroutine's starting stack at the platform's fixed size instead
+//     of the GC-derived average. Under the shipping runtime overlay the extra saving is ~160-256 KiB,
+//     NOT the multi-megabyte figure a synthetic churn experiment suggests, because the overlay's
+//     exit-stack backlog already reclaims most of it.
+//
+// Both settings can be restored per build without touching this file:
+//
+//	JJ_APPLE_STARTUP_POLICY=inherit                                  # both runtime defaults
+//	JJ_APPLE_STARTUP_POLICY=memprofilerate=inherit,adaptivestackstart=inherit
 func DefaultStartupPolicy() StartupPolicy {
-	return StartupPolicyInherit()
+	policy, err := ParseStartupPolicy("memprofilerate=off,adaptivestackstart=off")
+	if err != nil {
+		// This constant is owned by this file, so a failure means someone edited it into an invalid
+		// value. Panicking during a build is the loud outcome; silently falling back to inherit would
+		// ship a binary whose provenance claims a policy it does not have.
+		panic("build_shared: the reviewed default startup policy is not parseable: " + err.Error())
+	}
+	return policy
 }
 
 // StartupPolicyFromEnvironment resolves the environment variable over the default. An empty value

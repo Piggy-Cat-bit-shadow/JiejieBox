@@ -381,19 +381,19 @@ jobs:
         # dropped the TLS compatibility list would send a different ClientHello on every slice.
         run: |
           set -euo pipefail
-          base="$(go run ./cmd/internal/build_libbox -print-startup-policy)"
-          want="multipathtcp=0,tlssha1=1,tlssecpmlkem=0,tracebacklabels=0,x509sslcertoverrideplatform=0"
-          if [ "$base" != "$want" ]; then
-            echo "FAIL: the default startup policy is '$base', want '$want'" >&2
+          compat="multipathtcp=0,tlssha1=1,tlssecpmlkem=0,tracebacklabels=0,x509sslcertoverrideplatform=0"
+          default="$(go run ./cmd/internal/build_libbox -print-startup-policy)"
+          want="$compat,memprofilerate=0,adaptivestackstart=0"
+          if [ "$default" != "$want" ]; then
+            echo "FAIL: the default startup policy is '$default', want '$want'" >&2
             exit 1
           fi
-          candidate="$(JJ_APPLE_STARTUP_POLICY=memprofilerate=off,adaptivestackstart=off go run ./cmd/internal/build_libbox -print-startup-policy)"
-          want="$want,memprofilerate=0,adaptivestackstart=0"
-          if [ "$candidate" != "$want" ]; then
-            echo "FAIL: the candidate startup policy is '$candidate', want '$want'" >&2
+          restored="$(JJ_APPLE_STARTUP_POLICY=inherit go run ./cmd/internal/build_libbox -print-startup-policy)"
+          if [ "$restored" != "$compat" ]; then
+            echo "FAIL: the inherit opt-out is '$restored', want '$compat'" >&2
             exit 1
           fi
-          echo "PASS: the startup policy composer keeps the compatibility defaults and appends the candidate"
+          echo "PASS: the default disables both runtime settings and the compatibility list survives; JJ_APPLE_STARTUP_POLICY=inherit restores them"
 
       - name: mirrored runtime structures match the pinned toolchain
         # The 0.1.52 Network Extension crash was this class of defect, and nothing in this file

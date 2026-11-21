@@ -176,3 +176,45 @@ func TestLinkedGODEBUGDefaultsArePresent(t *testing.T) {
 	// even when it runs to the end of the buffer.
 	require.False(t, inherited.LinkedGODEBUGDefaultsArePresent([]byte(inherited.GODEBUGDefaults()+",")))
 }
+
+// TestDefaultStartupPolicyDisablesBothRuntimeSettings pins the PRODUCT decision: an Apple build with
+// nothing overridden disables heap sampling and the adaptive starting stack size. It is a default
+// with a real cost - the OOM report's heap and allocs profiles are empty in such a build - so a
+// silent edit to this function must fail here rather than ship.
+func TestDefaultStartupPolicyDisablesBothRuntimeSettings(t *testing.T) {
+	policy := DefaultStartupPolicy()
+	require.False(t, policy.IsZero(), "the reviewed default is not the inherit policy")
+	require.Equal(t, "memprofilerate=0,adaptivestackstart=0", policy.String())
+	require.Equal(t, godebugDefaults+",memprofilerate=0,adaptivestackstart=0", policy.GODEBUGDefaults())
+	require.True(t, strings.HasPrefix(policy.GODEBUGDefaults(), godebugDefaults),
+		"the TLS compatibility list must survive the default policy: -X replaces the toolchain default")
+	require.Equal(t, LinkerFlagsWithStartupPolicy("v1.2.3", false, policy),
+		strings.Replace(LinkerFlags("v1.2.3", false), godebugDefaults, policy.GODEBUGDefaults(), 1),
+		"the policy flags must be the ordinary flags with ONLY the godebug default extended")
+}
+
+// TestParseStartupPolicyInheritShorthand covers the documented way to undo the default for one build
+// without naming every key: the whole-value word `inherit` is the inherit policy.
+func TestParseStartupPolicyInheritShorthand(t *testing.T) {
+	for _, text := range []string{"inherit", " Inherit ", "INHERIT"} {
+		policy, err := ParseStartupPolicy(text)
+		require.NoError(t, err, text)
+		require.True(t, policy.IsZero(), "%q must parse to the inherit policy", text)
+		require.Equal(t, godebugDefaults, policy.GODEBUGDefaults())
+	}
+}
+
+// TestStartupPolicyFromEnvironmentOverridesTheDefault covers the build-time opt-out the docs promise.
+// An EMPTY value keeps the default (so `JJ_APPLE_STARTUP_POLICY=` in a shell cannot silently disable
+// a reviewed default), while an explicit `inherit` restores the runtime behaviour.
+func TestStartupPolicyFromEnvironmentOverridesTheDefault(t *testing.T) {
+	t.Setenv(StartupPolicyEnvironmentVariable, "")
+	policy, err := StartupPolicyFromEnvironment()
+	require.NoError(t, err)
+	require.Equal(t, DefaultStartupPolicy(), policy, "an empty variable keeps the reviewed default")
+
+	t.Setenv(StartupPolicyEnvironmentVariable, "inherit")
+	policy, err = StartupPolicyFromEnvironment()
+	require.NoError(t, err)
+	require.True(t, policy.IsZero(), "inherit must restore both runtime settings")
+}
