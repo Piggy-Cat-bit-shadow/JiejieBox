@@ -23,9 +23,9 @@
   "go_modules": [
     {
       "module": "github.com/sagernet/sing",
-      "pinned": "4abfaed41727",
+      "pinned": "7246d061b907",
       "target": "github.com/Piggy-Cat-bit-shadow/sing",
-      "version": "v0.9.6-0.20261110222322-4abfaed41727"
+      "version": "v0.9.6-0.20261121123313-7246d061b907"
     },
     {
       "module": "github.com/sagernet/sing-tun",
@@ -35,9 +35,9 @@
     },
     {
       "module": "github.com/sagernet/sing-quic",
-      "pinned": "cdb57d74152e",
+      "pinned": "6c2f94740819",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-quic",
-      "version": "v0.7.2-0.20261116152031-cdb57d74152e"
+      "version": "v0.7.2-0.20261121123015-6c2f94740819"
     },
     {
       "module": "github.com/sagernet/quic-go",
@@ -65,9 +65,9 @@
     },
     {
       "module": "github.com/enfein/mieru/v3",
-      "pinned": "04259b115daf",
+      "pinned": "44aaf9582106",
       "target": "github.com/Piggy-Cat-bit-shadow/mieru/v3",
-      "version": "v3.39.1-0.20261116170915-04259b115daf"
+      "version": "v3.39.1-0.20261121125055-44aaf9582106"
     },
     {
       "module": "github.com/sagernet/cronet-go",

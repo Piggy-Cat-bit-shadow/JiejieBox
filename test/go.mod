@@ -225,7 +225,7 @@ require (
 //
 // The current revision also carries the bufio splice fix (a Pipe2 setup failure must fall back
 // rather than claim the handover); the root's pin comment names the commit and the reason.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261110222322-4abfaed41727
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261121123313-7246d061b907
 
 // Adds the accept-loop recovery (040), the Go stack's Start/Close handshake, and the IPv6-only
 // re-bind self-heal. Same fork revision as the root module: the test module runs integration tests
@@ -259,7 +259,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // so the replace is here to keep the two modules pinned to the same revision: the guard in
 // scripts/ci/check-go-module-integrity.sh fails when a fork the root builds drifts here, which is
 // how the test module was once found resolving a different sing-tun than the product ships.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261116152031-cdb57d74152e
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261121123015-6c2f94740819
 
 // The cronet-go pin is a tree of modules, not one: see the root module for why every path the
 // repository publishes is pinned. A nested module does not inherit the root's replaces.
@@ -331,4 +331,4 @@ replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wire
 
 replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261120123305-b74ada19da50
 
-replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261116170915-04259b115daf
+replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261121125055-44aaf9582106
