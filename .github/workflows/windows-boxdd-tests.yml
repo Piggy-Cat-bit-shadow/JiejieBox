@@ -160,10 +160,14 @@ jobs:
           & "$env:RUNNER_TEMP\memorystudy.exe" -gate -runs 1 `
               -output "$env:RUNNER_TEMP\canary-gate.jsonl" `
               -budget $canary
-          if ($LASTEXITCODE -eq 0) {
+          $canaryExit = $LASTEXITCODE
+          if ($canaryExit -eq 0) {
             throw "the canary budget PASSED: the gate can no longer fail, so every other verdict is worthless"
           }
-          Write-Output "canary failed as required (exit $LASTEXITCODE)"
+          Write-Output "canary failed as required (exit $canaryExit)"
+          # The gate's non-zero exit is the EXPECTED result here, so the step must not inherit it:
+          # GitHub appends `exit $LASTEXITCODE` to every pwsh step and a leftover 1 would fail the job.
+          exit 0
 
       - name: evaluate the budget
         shell: pwsh
