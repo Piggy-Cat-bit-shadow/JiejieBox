@@ -160,6 +160,15 @@ func DefaultDeferredReclaimPolicy() DeferredReclaimPolicy {
 // i.e. the same ones the admission gate and the build reservation tighten with: at Armed the budget
 // halves, at Critical it drops to an eighth, always keeping a floor of two so the node a flow is
 // about to use (and its detour) is not released on every pressure transition.
+//
+// # Why the floor is clamped to the configured budget
+//
+// A floor is a LOWER bound on how far pressure may shrink a budget; it is not permission to grow one.
+// Written without the clamp, a budget of one expansion became TWO under Critical pressure (max(1/8,2)),
+// and a byte budget below two expansions' worth was raised the same way - i.e. a pressure event made
+// the process hold more than the operator configured, which is the exact opposite of what the level is
+// for. The floor therefore takes the configured value as its ceiling, and the byte floor is computed
+// only when it cannot overflow (AssumedExpansionBytes is an int64 an embedder supplies).
 func (p DeferredReclaimPolicy) pressurized(level resourceguard.Level) DeferredReclaimPolicy {
 	if level == resourceguard.LevelNormal {
 		return p
@@ -169,10 +178,18 @@ func (p DeferredReclaimPolicy) pressurized(level resourceguard.Level) DeferredRe
 		divisor = 8
 	}
 	if p.MaxExpanded > 0 {
-		p.MaxExpanded = max(p.MaxExpanded/divisor, 2)
+		floor := 2
+		if p.MaxExpanded < floor {
+			floor = p.MaxExpanded
+		}
+		p.MaxExpanded = max(p.MaxExpanded/divisor, floor)
 	}
 	if p.MaxBytes > 0 {
-		floor := p.AssumedExpansionBytes * 2
+		// Two expansions' worth, without multiplying past MaxInt64 and never above what was configured.
+		floor := p.MaxBytes
+		if p.AssumedExpansionBytes > 0 && p.AssumedExpansionBytes <= p.MaxBytes/2 {
+			floor = p.AssumedExpansionBytes * 2
+		}
 		p.MaxBytes = max(p.MaxBytes/int64(divisor), floor)
 	}
 	return p
@@ -306,11 +323,18 @@ func (m *Manager) DeferredExpansionCount() int {
 
 // NoteExpansionPublished is called by a deferred object after it publishes an expansion. It is on the
 // dial path, so it does one atomic add and (only when the trigger fires) one goroutine hand-off.
+//
+// The count is incremented BEFORE the enabled check, because NoteExpansionReleased decrements
+// unconditionally: a policy that is disarmed and re-armed must not inherit a count that is missing the
+// publishes made while it was disarmed. That drift made the demand trigger fall silent exactly when a
+// process was already over budget - only the 30-second idle walk would have noticed. Keeping the
+// increment unconditional costs one atomic add and makes the pair exact by construction.
 func (m *Manager) NoteExpansionPublished(ctx context.Context) {
 	if m == nil {
 		return
 	}
 	state := &m.deferredReclaim
+	pending := state.pending.Add(1)
 	state.access.Lock()
 	enabled := state.enabled
 	policy := state.policy
@@ -318,7 +342,6 @@ func (m *Manager) NoteExpansionPublished(ctx context.Context) {
 	if !enabled {
 		return
 	}
-	pending := state.pending.Add(1)
 	if policy.MaxExpanded <= 0 || int(pending) <= policy.MaxExpanded {
 		return
 	}
