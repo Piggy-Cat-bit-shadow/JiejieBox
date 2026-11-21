@@ -210,6 +210,24 @@ jobs:
           fi
           echo "PASS: gofmt clean"
 
+      - name: a held flow costs one read buffer, not two
+        # The per-flow half of the memory census. `outbound_cold_cost_test.go` pins what a node that
+        # is configured and never dialled costs; this pins what a connection that IS held costs, at
+        # the geometry the artifact ships with: one `buf.BufferSize` read buffer plus 12 KiB of
+        # bookkeeping, two parked goroutines, and nothing left behind once the flows close.
+        #
+        # Both geometries, because the budget is written in terms of `buf.BufferSize`: the default
+        # build is ~44 KiB per held flow and `with_low_memory` - what iOS and tvOS ship - is ~28 KiB.
+        # A constant budget would be slack on one geometry and would hide a doubled buffer on the
+        # other, which is the failure this exists to catch.
+        #
+        # `phys_footprint` is NOT this number: a host test cannot see a Network Extension's
+        # footprint, and what is measured here is the relay, not the tunnel device.
+        run: |
+          set -euo pipefail
+          go test -count=1 -timeout 300s -run 'TestAHeldConnectionStaysWithinItsBudget' -v .
+          go test -tags with_low_memory -count=1 -timeout 300s -run 'TestAHeldConnectionStaysWithinItsBudget' -v .
+
       - name: client gitlinks match the ABI contract pins
         # The full libbox ABI gate needs cgo and the Darwin profile, so it runs in
         # client-apple.yml against a real client checkout. This half needs only git, and it is
