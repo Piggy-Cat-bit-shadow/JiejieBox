@@ -32,3 +32,16 @@ import (
 func withDeferredOutbounds(manager *outbound.Manager) {
 	manager.SetDeferredOutboundConstructor(trojan.DeferredConstructor())
 }
+
+// DeferredExpansionCount reports how many deferred nodes of this box are expanded right now.
+//
+// It exists because the number is the difference between the feature working and the feature
+// costing more than it saves: a configuration whose every node is expanded after a url-test round is
+// the +42% case the prototype measured, and a count that stays under the budget is the bounded case.
+// A diagnostic or a test asks this instead of inferring it from a heap profile.
+func (s *Box) DeferredExpansionCount() int {
+	if s == nil || s.outbound == nil {
+		return 0
+	}
+	return s.outbound.DeferredExpansionCount()
+}
