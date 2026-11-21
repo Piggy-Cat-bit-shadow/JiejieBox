@@ -302,9 +302,12 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	}
 	// The budget is a per-Box decision the operator cannot see in the outbound's JSON, so it is
 	// reported once, next to the client it applies to. The verdict is computed from the same parsed
-	// profile the client was built with, so the sentence and the enforcement cannot disagree.
+	// profile the client was built with, so the sentence and the enforcement cannot disagree - and it
+	// prints the quota the reader will ENFORCE, not the one that was asked for: a request below the
+	// protocol's minimum is raised to it, and printing the request would claim a bound the client
+	// does not have.
 	if budget := h.primarySpec.budget; budget.UnreadPayloadBytes > 0 {
-		h.logger.Info("mieru receive budget ", budget.String(), receiveBudgetVerdict(h.primarySpec.options))
+		h.logger.Info("mieru receive budget ", receiveBudgetLogLine(budget, h.primarySpec.options))
 	}
 	if fallbackEnabled {
 		h.logger.Info("mieru client started (fallback ", fallbackTransport, " enabled)")

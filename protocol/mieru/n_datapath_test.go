@@ -113,6 +113,37 @@ func TestReceiveBudgetIsReportedInTheLogLine(t *testing.T) {
 		"the sentence and the client config must describe the same decision")
 }
 
+// TestReceiveBudgetLogNamesTheEnforcedQuota closes the other half of the same disagreement: when the
+// requested budget is below the protocol's minimum the client carries the raised value, so a log line
+// that printed the request would tell an operator their 1-byte budget is in force when 64 KiB is.
+//
+// The oracle is the pair again, in the clamped direction: the sentence names the enforced quota AND
+// says it was raised, and the client config carries exactly that quota.
+func TestReceiveBudgetLogNamesTheEnforcedQuota(t *testing.T) {
+	var logged bytes.Buffer
+	factory, err := log.New(log.Options{DefaultWriter: &logged})
+	require.NoError(t, err)
+	require.NoError(t, factory.Start())
+	t.Cleanup(func() { _ = factory.Close() })
+
+	options := validOutboundOptions()
+	options.Multiplexing = "off"
+	created, err := NewOutbound(boxContextWithReceiveBudget(receivebudget.Policy{UnreadPayloadBytes: 1}),
+		nil, factory.NewLogger("mieru-budget-raised"), "mieru-budget-raised-log", options)
+	require.NoError(t, err)
+	outboundInstance := created.(*Outbound)
+	t.Cleanup(func() { _ = outboundInstance.Close() })
+	scope := adapter.NewScope(context.Background(), nopLogger())
+	require.NoError(t, outboundInstance.Start(adapter.StartStateStart, scope))
+	t.Cleanup(func() { _ = scope.Close() })
+
+	require.Contains(t, logged.String(), "mieru receive budget 64 kB",
+		"the sentence must name the quota the reader enforces")
+	require.Contains(t, logged.String(), "raised from",
+		"a raised request must be reported as raised, not silently substituted")
+	require.Equal(t, int64(mieruprotocol.MinReceiveByteQuota), outboundInstance.primary.config.ReceiveByteQuota)
+}
+
 // TestReceiveBudgetBelowTheProtocolMinimumDoesNotPoisonTheOutbound covers the value the SDK refuses:
 // receivebudget.Policy accepts any positive byte count, but mieru rejects a positive quota below
 // protocol.MinReceiveByteQuota (64 KiB) in Client.Store. Writing such a value unchanged turns a

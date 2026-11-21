@@ -365,20 +365,47 @@ func applyReceiveBudget(config *mieruclient.ClientConfig, budget receivebudget.P
 	if config.Profile.GetMultiplexing().GetLevel() != mierupb.MultiplexingLevel_MULTIPLEXING_OFF {
 		return false
 	}
+	config.ReceiveByteQuota = enforcedReceiveBudgetQuota(budget)
+	return true
+}
+
+// enforcedReceiveBudgetQuota is the quota the protocol can actually enforce for a requested budget:
+// a positive request below the protocol minimum is raised to it. `applyReceiveBudget` writes this
+// value and `receiveBudgetLogLine` prints it, so the configuration and the sentence cannot disagree.
+func enforcedReceiveBudgetQuota(budget receivebudget.Policy) int64 {
 	quota := budget.UnreadPayloadBytes
 	if quota < mieruprotocol.MinReceiveByteQuota {
 		quota = mieruprotocol.MinReceiveByteQuota
 	}
-	config.ReceiveByteQuota = quota
-	return true
+	return quota
+}
+
+// receiveBudgetApplies reports whether the budget will reach this outbound's reader at all.
+func receiveBudgetApplies(options option.MieruOutboundOptions) bool {
+	multiplexing, err := parseMultiplexing(options.Multiplexing)
+	return err == nil && multiplexing.GetLevel() == mierupb.MultiplexingLevel_MULTIPLEXING_OFF
+}
+
+// receiveBudgetLogLine is the one sentence an operator gets about a budget that is not in the
+// outbound's JSON. It names the quota that is IN FORCE, and says when the request had to be raised:
+// printing the request would claim a bound the client does not have.
+func receiveBudgetLogLine(budget receivebudget.Policy, options option.MieruOutboundOptions) string {
+	quota := enforcedReceiveBudgetQuota(budget)
+	if !receiveBudgetApplies(options) {
+		return budget.String() + receiveBudgetVerdict(options)
+	}
+	text := receivebudget.Policy{UnreadPayloadBytes: quota}.String()
+	if quota != budget.UnreadPayloadBytes {
+		text += " (raised from " + budget.String() + " to the protocol's smallest quota)"
+	}
+	return text + receiveBudgetVerdict(options)
 }
 
 // receiveBudgetVerdict explains, for the outbound's log line, whether a budget reaches this
 // outbound's reader. It reads the same parsed profile the connection will use, so the log cannot
 // disagree with the configuration.
 func receiveBudgetVerdict(options option.MieruOutboundOptions) string {
-	multiplexing, err := parseMultiplexing(options.Multiplexing)
-	if err == nil && multiplexing.GetLevel() == mierupb.MultiplexingLevel_MULTIPLEXING_OFF {
+	if receiveBudgetApplies(options) {
 		return " (the exclusive stream reader pauses at the budget)"
 	}
 	return " (not applied: only an exclusive stream reader can be paused, and multiplexing is not off)"
