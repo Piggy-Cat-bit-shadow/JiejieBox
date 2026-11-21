@@ -30,18 +30,22 @@ var appleRuntimeOverlay *runtimeoverlay.Prepared
 // provenance says what the build did rather than what it was told.
 var resolvedRuntimeOverlayMode = runtimeoverlay.DefaultMode
 
-// runtimeOverlayModeFromEnvironment applies the flag/environment/default precedence.
+// runtimeOverlayModeFromEnvironment applies the flag/environment/default precedence. The refusal
+// names the input the value actually came from: a message that named the flag for a value read out
+// of JJ_RUNTIME_OVERLAY sent the operator to the wrong variable.
 func runtimeOverlayModeFromEnvironment() (runtimeoverlay.Mode, error) {
 	requested := runtimeOverlayMode
+	source := "-runtime-overlay"
 	if requested == "" {
 		requested = os.Getenv("JJ_RUNTIME_OVERLAY")
+		source = "JJ_RUNTIME_OVERLAY"
 	}
 	if requested == "" {
 		return runtimeoverlay.DefaultMode, nil
 	}
 	mode, err := runtimeoverlay.ParseMode(requested)
 	if err != nil {
-		return "", E.Cause(err, "resolve -runtime-overlay")
+		return "", E.Cause(err, "resolve "+source)
 	}
 	return mode, nil
 }

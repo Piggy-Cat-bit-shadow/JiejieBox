@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-
 	"github.com/sagernet/sing-box/cmd/internal/build_shared"
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -19,19 +17,21 @@ var startupPolicyFlag string
 var appleStartupPolicy = build_shared.DefaultStartupPolicy()
 
 // startupPolicyFromEnvironment applies flag > JJ_APPLE_STARTUP_POLICY > the reviewed default.
+//
+// The two sourced cases are not parsed by two copies of the precedence: the environment case is
+// delegated to build_shared.StartupPolicyFromEnvironment, whose error names
+// JJ_APPLE_STARTUP_POLICY. This function used to parse both with the message
+// "resolve -startup-policy", so an operator who had exported the variable was sent to a flag that
+// was not set - found by running the builder with JJ_APPLE_STARTUP_POLICY=memprofilerate=abc.
 func startupPolicyFromEnvironment() (build_shared.StartupPolicy, error) {
-	requested := startupPolicyFlag
-	if requested == "" {
-		requested = os.Getenv(build_shared.StartupPolicyEnvironmentVariable)
+	if startupPolicyFlag != "" {
+		policy, err := build_shared.ParseStartupPolicy(startupPolicyFlag)
+		if err != nil {
+			return build_shared.StartupPolicy{}, E.Cause(err, "resolve -startup-policy")
+		}
+		return policy, nil
 	}
-	if requested == "" {
-		return build_shared.DefaultStartupPolicy(), nil
-	}
-	policy, err := build_shared.ParseStartupPolicy(requested)
-	if err != nil {
-		return build_shared.StartupPolicy{}, E.Cause(err, "resolve -startup-policy")
-	}
-	return policy, nil
+	return build_shared.StartupPolicyFromEnvironment()
 }
 
 // startupPolicyProvenanceLines are appended to libbox.provenance. The policy is written even when
