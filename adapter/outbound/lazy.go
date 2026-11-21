@@ -498,6 +498,12 @@ func (lz *LazyOutbound[T]) buildRuntime(lifetime context.Context, recipe T, buil
 		lz.access.Unlock()
 		if retired {
 			lz.finishLateBuild()
+			// The build SUCCEEDED but the node was retired while it ran: nothing is published, so
+			// the constructed object has no owner left. It registered nothing on a scope (Start has
+			// not run yet), but its constructor may have opened a connection or a pool, so dropping
+			// it without Close leaks exactly what the late path below closes. Both retirement exits
+			// must own their cleanup; only one of them did.
+			_ = common.Close(runtime)
 			return nil, os.ErrClosed
 		}
 	}
