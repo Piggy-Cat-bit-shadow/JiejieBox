@@ -197,39 +197,62 @@ JJ_RUNTIME_OVERLAY=small ./scripts/ci/build-apple-libbox.sh ios
 JJ_RUNTIME_OVERLAY=both  ./scripts/ci/build-apple-libbox.sh ios
 ```
 
-### 4.2 Group A, per item (`testdata/probe`: 256-goroutine bursts x8, 64 objects in every step of
-the size-class ladder, `GOMAXPROCS=4`, measured after two GCs)
+### 4.2 Group A, shipped plan against the toolchain runtime
 
-| Build | `/memory/classes/heap/stacks` | `/memory/classes/metadata/other` | goroutine create+exit |
+`testdata/probe`: eight bursts of 256 short-lived goroutines with a 512-byte frame, 64 objects in
+every step of the size-class ladder, `GOMAXPROCS=4`, everything measured after two forced GCs. Six
+samples of each side; the ranges are the spread between runs of the SAME binary, which is what the
+gate is built around.
+
+| | toolchain runtime | shipped `small` (A1+A2+A3) | delta |
+|---|---:|---:|---:|
+| `/memory/classes/heap/stacks` | 1 998 848 .. 2 752 512 | 147 456 .. 196 608 | **~ -1.9 MiB (-93%)** |
+| `/memory/classes/metadata/other` | 2 938 960 .. 2 999 888 | 1 689 632 .. 1 693 632 | **~ -1.25 MiB (-42%)** |
+| goroutine create+exit | 190 .. 330 ns | 449 .. 576 ns | **~ +280 ns** (2.0-2.6x) |
+| `/memory/classes/metadata/mspan/inuse` | 176 960 | 188 160 .. 192 800 | +12..16 KiB (expected, see below) |
+
+Per item, from the same harness with the other items held at upstream's values:
+
+| Variant | `/memory/classes/heap/stacks` | `/memory/classes/metadata/other` | create+exit |
 |---|---:|---:|---:|
 | toolchain runtime | 1 998 848 | 2 938 960 | 214 ns |
-| + A1 only | ~2 000 000 | 1 691 600 | ~unchanged |
-| + A2 only | ~2 030 000 | ~2 941 000 | ~unchanged |
-| + A3 (backlog 8) only | 196 608 | ~2 970 000 | 449 ns |
-| **shipped `small`** (A1+A2+A3) | **147 456** | **1 691 600** | **559 ns** |
+| A1 only (span sets) | ~2 000 000 (unchanged) | **1 691 600** | unchanged |
+| A2 only (stack cache) | ~2 030 000 (noise) | ~2 941 000 (unchanged) | unchanged |
+| A3 only (backlog 8) | **425 984** | ~2 970 000 (unchanged) | 449 ns |
 
-- The stack residency falls by **1.77 MiB** (93%).
-- `metadata/other` falls by **1.19 MiB** (42%); `/memory/classes/metadata/mspan/inuse` moves slightly
-  *up* (+16 KiB), which is expected: the blocks A1 shrinks are persistent allocations, not `mspan`s.
-- The goroutine create+exit rate costs roughly **+210..350 ns** per goroutine. This is the price of
-  A3 and it is reported, not hidden. With a tunnel's connection rate it is a fraction of a percent
-  of CPU, but it is a real regression on a pure churn microbenchmark and the plan says "8 parked".
-- `heap/inuse` was 0 in this probe (everything it allocates is retained by the harness, so the class
-  reports the retained slices through goal rather than in-use); it is not used as a signal.
+- A1 is the only item that moves `metadata/other`, and it moves it by 1.25 MiB. A2 alone is not
+  resolvable in this harness: its effect is on how much is cached, which the probe's burst-then-idle
+  shape already drains. It is kept because it bounds what a burst *can* pin per P, not because this
+  probe shows a number for it.
+- A3 is the only item that moves stack residency: ~2.2-2.7 MiB down to 0.13-0.20 MiB. It is also
+  the only item with a measured cost: +280 ns per goroutine create-and-exit.
+- `/memory/classes/metadata/mspan/inuse` moves slightly *up*. That is consistent with A1: the blocks
+  it shrinks are `persistentalloc`'d into `gcMiscSys`, not `mspan`s, so a smaller `metadata/other`
+  next to a barely-changed `mspan/inuse` is the signature the change predicts.
+- `heap/inuse` was 0 in this probe (the harness retains everything it allocates, so the class
+  reports through the goal rather than in-use) and is not used as a signal.
 
-### 4.3 The A3 policy trade-off (same harness, A1+A2 held constant)
+### 4.3 The A3 policy trade-off
 
-| A3 policy | stack residency | create+exit |
-|---|---:|---:|
-| off (upstream) | 2.4 MiB | 1.00x |
-| backlog 64 | 2.36 MiB | 1.07x |
-| backlog 32 | 0.82 MiB | 1.86x |
-| **backlog 8 (shipped)** | 0.16 MiB | 2.13x |
-| always (Clash) | 0.15 MiB | 2.31x |
+Two configurations, because the second one is what ships. Both have A1 and A2 at the plan's values
+in the "shipped" column and at upstream's in the "A3 only" column; the number that matters is the
+pair (residency, cost).
+
+| A3 policy | stack residency, A3 only | create+exit | stack residency, shipped plan | create+exit |
+|---|---:|---:|---:|---:|
+| off (upstream) | 2.63 MiB | 1.00x | 2.63 MiB | 1.00x |
+| backlog 64 | 2.25 MiB | 1.07x | - | - |
+| backlog 32 | - | - | 0.78 MiB | 1.86x |
+| **backlog 8 (shipped)** | 0.41 MiB | 2.40x | **0.16 MiB** | **2.13x** |
+| always (what Clash does) | 0.16 MiB | 2.31x | 0.14 MiB | 2.31-3.34x |
 
 The cliff between 32 and 64 is upstream's `gFree.size >= 64` batch transfer: a P's local list hovers
-at 32..64, so a threshold at 64 never fires. 8 was chosen because it is on the flat part of the
-residency curve and does not trade the clamp for a bigger per-goroutine cost.
+at 32..64, so a threshold at 64 never fires and nothing is ever released. 8 sits at the bottom of
+the residency curve and costs less than the unconditional free, which is why it is the shipped
+policy; the "always" column is what this fork deliberately does not do.
+
+Note that A2 helps residency only in combination: A3 alone lands at 0.41 MiB and A1+A2+A3 at
+0.16 MiB, because halving the cache block also halves what a P can pin between releases.
 
 ### 4.4 Group B (`testdata/bprobe`: 48 pthreads, each calls one exported Go function once and then
 parks; linux-amd64; `GOMAXPROCS=2`)
@@ -262,6 +285,49 @@ parks; linux-amd64; `GOMAXPROCS=2`)
 | GOROOT already has a file the overlay adds | `TestGenerateRefusesToReplaceAFileItMeansToAdd` | fails |
 | an Apple build would compile mode base | the `build-apple-libbox.sh` gate + `-print-runtime-overlay` | fails the build |
 | the shim was never used | `build_libbox`'s post-build check on the shim's injection log | fails the build |
+
+### 4.6 What the real Apple pipeline produced
+
+The push gate and the Apple pipeline ran on the commits this document describes:
+
+* `Verify` [run 44865229113](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44865229113)
+  on `e9690ad4b`: `verify` green in 7m49s (which includes
+  `ok github.com/sagernet/sing-box/cmd/internal/runtimeoverlay 27.680s` - the suite in §4.1
+  executed on ubuntu, cgo probe included - plus gofmt, the tag/linkname gates, the
+  package-execution ratchet and the build matrix) and `race checks` green in 12m7s.
+* `Apple client` [run 44864704909](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44864704909)
+  on `840632f49`: `libbox` green in 11m42s. Its log is the artifact-level proof:
+
+  ```
+  runtime overlay mode: small
+  runtime overlay: mode small, Go go1.27.4, 5 patched file(s), shim /var/folders/…/jiejiebox-runtime-overlay-1590656368/bin/go
+  runtime overlay: the go shim injected -overlay into 30 go invocation(s)
+  runtime overlay: slice ios-arm64 (marker present, iOS family)
+  runtime overlay: slice macos-arm64 (marker absent, other)
+  runtime overlay: mode small (Go go1.27.4) verified in 2 slice(s)
+  ```
+
+  and the same run's `macos` job built and linked the macOS app against that framework.
+
+* The packed artifact of that run (`Libbox.xcframework.tar.gz`,
+  `f471d17c99f3166a3f72d0239a0b567c9f18238e37a17e7b180007c7fbc7a549`, `BUILD-INFO` recording
+  `runtime_overlay: small` / `runtime_overlay_go: go1.27.4`) was downloaded, extracted, and re-checked
+  by this package on a different machine, independently of the pipeline's own check:
+
+  ```
+  slice ios-arm64    iosFamily=true  anyMarker=true  wanted=true
+  slice macos-arm64  iosFamily=false anyMarker=false wanted=false
+  expected: jiejiebox-ios-runtime-overlay/1 mode=small spanSetBlockEntries=32
+            spanSetInitSpineCap=16 stackCacheSize=16384 freeExitedStack=0
+            freeStackBacklog=8 dropExtraM=0
+  ```
+
+That is "the overlay is in the iOS arm64 slice of the artifact the release would ship, and the macOS
+slice kept the official runtime", proven on the bytes rather than on the build log.
+
+The pin's portability was checked the same way: the five runtime files hash identically in the
+`linux-amd64`, `darwin-arm64` and `windows-amd64` archives of Go 1.27.4, so one digest set covers
+every machine this build runs on.
 
 ## 5. What is deliberately NOT part of this
 
