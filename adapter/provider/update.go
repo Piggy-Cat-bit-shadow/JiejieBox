@@ -4,6 +4,7 @@ import (
 	"reflect"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/provider/nodestore"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -45,7 +46,13 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	nodes := make(map[string]updateNode, len(outOpts))
 	for i := range outOpts {
 		opt := &outOpts[i]
-		nodes[outTags[i]] = updateNode{tag: outTags[i], kind: opt.Type, options: opt.Options, outbound: opt}
+		// An embedder may hand us an interface that holds a typed nil pointer (the document
+		// readers never do: they always allocate the options value). Method calls on a typed nil
+		// pointer - TakeDialerOptions, the group member switches - would dereference it and panic
+		// before the node is even constructed. Normalise it to a nil interface, which the manager
+		// already accepts as "zero options"; the original option value is still kept for change
+		// detection, where nil and typed nil are different values and must stay different.
+		nodes[outTags[i]] = updateNode{tag: outTags[i], kind: opt.Type, options: nonNilOptions(opt.Options), outbound: opt}
 	}
 	// Order by declared dependencies (a detour, or a group's members). A subscription may list a
 	// chain in either direction; constructing the dependency first is what lets a node's Start
@@ -88,7 +95,7 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 			}
 			// A node from the previous subscription that is about to be removed is not a usable
 			// dependency; naming it would make this update depend on something it is deleting.
-			if _, owned := a.appliedOutbounds[dep]; owned {
+			if a.hasAppliedRecord(dep) {
 				if _, stillPublished := nodes[dep]; !stillPublished {
 					return E.New("provider dependency removed: ", dep)
 				}
@@ -108,11 +115,24 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	active := a.activeOutboundTags()
 	outByTag := make(map[string]adapter.Outbound, len(outOpts))
 	replaced := make(map[string]bool, len(outOpts))
+	// records is the canonical payload of every tag whose object this apply freshly published. A
+	// tag that keeps its previous object (unchanged, or a failed replacement) carries its previous
+	// record forward instead of being re-encoded.
+	records := make(map[string]nodestore.Payload, len(outOpts))
+	// nextRefs starts as the previous snapshot's ownership map. It is edited into the next
+	// snapshot, so a node that is no longer named but is still LIVE as some other node's
+	// dependency keeps both its object and its ownership record.
+	nextRefs := make(map[string]nodestore.Ref, len(outOpts))
+	if previous := a.currentSnapshot(); previous != nil {
+		for tag, ref := range previous.entries {
+			nextRefs[tag] = ref
+		}
+	}
 	var updateErr error
 	for _, node := range ordered {
 		ctx := adapter.WithContext(a.ctx, &adapter.InboundContext{Outbound: node.tag})
 		current, exists := a.outbound.Outbound(node.tag)
-		_, owned := a.appliedOutbounds[node.tag]
+		owned := a.hasAppliedRecord(node.tag)
 		// A rendered tag that already belongs to a static outbound (or to another provider) is not
 		// this provider's to replace. Taking it would silently remove a node the user wrote in the
 		// configuration, which is the one outcome the tag prefix exists to prevent.
@@ -131,9 +151,35 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 				break
 			}
 		}
-		if !rebuildDependent && exists && active[node.tag] && reflect.DeepEqual(*node.outbound, a.appliedOutbounds[node.tag]) {
+		// The canonical encoding is the comparison key and the retained record at the same time, so
+		// it is computed once and only when a decision needs it. A value the encoder refuses is
+		// never treated as equal: the node is rebuilt, which is the safe direction. Note that this
+		// is the ONLY use of the encoding for the decision; there is no JSON round-trip whose byte
+		// equality would stand in for value equality.
+		var (
+			payload     nodestore.Payload
+			payloadOK   bool
+			payloadRead bool
+		)
+		nodePayload := func() (nodestore.Payload, bool) {
+			if !payloadRead {
+				payloadRead = true
+				if encoded, err := nodestore.Encode(*node.outbound); err == nil {
+					payload, payloadOK = encoded, true
+				}
+			}
+			return payload, payloadOK
+		}
+		unchanged := false
+		if !rebuildDependent && exists && active[node.tag] {
+			if encoded, ok := nodePayload(); ok && a.appliedMatches(node.tag, encoded) {
+				unchanged = true
+			}
+		}
+		if unchanged {
 			// Unchanged: do not touch the live object, and do not count it as a failure.
 			outByTag[node.tag] = current
+			records[node.tag] = payload
 			continue
 		}
 		err := a.replaceOutbound(ctx, a.router, a.logFactory.NewLogger("outbound/"+node.kind+"["+node.tag+"]"), node.tag, node.kind, node.options)
@@ -142,6 +188,9 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 			if exists && active[node.tag] {
 				outByTag[node.tag] = current
 			}
+			// A failed replacement keeps the previous object published. Its previous record is
+			// carried forward by publishAppliedSnapshot, so the next refresh compares against the
+			// configuration that actually produced the live object, not against the rejected one.
 			continue
 		}
 		if exists {
@@ -151,7 +200,14 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 		}
 		replaced[node.tag] = true
 		current, _ = a.outbound.Outbound(node.tag)
-		a.appliedOutbounds[node.tag] = *node.outbound
+		if encoded, ok := nodePayload(); ok {
+			records[node.tag] = encoded
+		} else {
+			// The value cannot be canonically compared. Keep ownership with a record that can never
+			// match: every refresh will rebuild this node instead of mistaking the next document
+			// for a foreign outbound, and no stale record can ever be a false "unchanged".
+			records[node.tag] = nodestore.Opaque()
+		}
 		outByTag[node.tag] = current
 	}
 	// Remember what could not be unlinked. A group that still names a retired node keeps it LIVE:
@@ -170,19 +226,7 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	a.outboundsAccess.Lock()
 	a.outbounds, a.outboundsByTag = outbounds, outByTag
 	a.outboundsAccess.Unlock()
-	for tag := range a.appliedOutbounds {
-		if _, stillPublished := outByTag[tag]; stillPublished {
-			continue
-		}
-		if _, stillExists := a.outbound.Outbound(tag); stillExists {
-			// The removal was refused because a LIVE node outside this provider still names the tag
-			// as a dependency. The node stays in the manager for that dependency, and ownership must
-			// stay with it too: without the entry, a later document that names the tag again is
-			// mistaken for a foreign outbound and refused, permanently losing the node.
-			continue
-		}
-		delete(a.appliedOutbounds, tag)
-	}
+	a.publishAppliedSnapshot(nextRefs, records, outByTag)
 	if a.enabled && a.history != nil {
 		a.run(func() { a.HealthCheck(a.ctx) })
 	}
@@ -193,6 +237,22 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 		a.completePublication()
 	}
 	return updateErr
+}
+
+// nonNilOptions normalises an interface holding a typed nil pointer to a nil interface. Dependency
+// discovery calls methods on the options value, and a typed nil pointer would make those calls
+// dereference nil before construction. Nil and typed nil remain DIFFERENT values for the record
+// comparison, which is why only the construction/dependency view is normalised, never the original
+// option tree that is encoded.
+func nonNilOptions(options any) any {
+	if options == nil {
+		return nil
+	}
+	value := reflect.ValueOf(options)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return nil
+	}
+	return options
 }
 
 func (a *Adapter) activeOutboundTags() map[string]bool {

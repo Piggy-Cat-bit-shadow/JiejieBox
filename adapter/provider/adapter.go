@@ -41,10 +41,14 @@ type Adapter struct {
 	outboundsAccess sync.RWMutex
 	outbounds       []adapter.Outbound
 	outboundsByTag  map[string]adapter.Outbound
-	// appliedOutbounds is the option set that produced the published objects. It is what makes an
-	// update a diff: an entry whose options are unchanged is not reconstructed, so a subscription
-	// refresh that only reorders or reformats does not drop live connections.
-	appliedOutbounds map[string]option.Outbound
+	// snapshot is the configuration record set that produced the published objects. It replaces the
+	// map of option.Outbound this adapter used to retain: the record is the canonical byte encoding
+	// of the exact value the apply compared, so an unchanged refresh is still detected, but the
+	// decoded options tree is no longer kept alive per node. See snapshot.go.
+	snapshotAccess sync.RWMutex
+	snapshot       *appliedSnapshot
+	// snapshotGeneration names the next store generation. Guarded by updateAccess.
+	snapshotGeneration uint64
 	// updateAccess serialises applies. The concrete providers already serialise their own refresh
 	// cycles (remote through its updating flag, local through its file mutex), but UpdateNodes is an
 	// exported entry point and two callers that interleave would publish a map assembled from both.
@@ -88,16 +92,15 @@ func NewAdapter(ctx context.Context, router adapter.Router, outbound adapter.Out
 	dynamicOutbound, _ := outbound.(adapter.DynamicOutboundManager)
 	ctx, cancel := context.WithCancel(ctx)
 	return Adapter{
-		cancel:           cancel,
-		appliedOutbounds: make(map[string]option.Outbound),
-		pendingTags:      make(map[string]bool),
-		ctx:              ctx,
-		outbound:         dynamicOutbound,
-		router:           router,
-		logFactory:       logFactory,
-		logger:           logger,
-		providerType:     providerType,
-		providerTag:      providerTag,
+		cancel:       cancel,
+		pendingTags:  make(map[string]bool),
+		ctx:          ctx,
+		outbound:     dynamicOutbound,
+		router:       router,
+		logFactory:   logFactory,
+		logger:       logger,
+		providerType: providerType,
+		providerTag:  providerTag,
 
 		enabled:  options.Enabled,
 		link:     options.URL,
@@ -348,6 +351,7 @@ func (a *Adapter) Close() error {
 	if a.outbound == nil {
 		// No dynamic manager: the provider never published anything, so there is nothing to
 		// unlink. Reported as success rather than a nil dereference during teardown.
+		a.closeSnapshot()
 		return nil
 	}
 	var err error
@@ -367,6 +371,10 @@ func (a *Adapter) Close() error {
 			})
 		}
 	}
+	// The records are retired only after every outbound they described has been released: the store
+	// must not close before its last legitimate reader, and releasing the nodes is what proves the
+	// provider itself is done reading. A lease held from outside still keeps its generation alive.
+	a.closeSnapshot()
 	return err
 }
 
