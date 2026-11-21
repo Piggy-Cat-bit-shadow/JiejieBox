@@ -81,6 +81,67 @@ permissions:
   contents: read
 
 jobs:
+  # The staged memory ledger and its budget gate, on the platform the budget was derived from.
+  #
+  # `cmd/internal/memorystudy` runs every case in its own child process and records a staged ledger of
+  # a box's resident cost (parsing, construction, start, idle, probe, traffic, close). Its budget file
+  # was derived from windows/amd64 measurements, so a Linux runner would take the platform-mismatch
+  # branch for every rule and exit non-zero by design - which is why this job lives here and not in
+  # verify.yml. `go test` (without -run '^$', which the package-execution gate does not count as
+  # execution) covers the runner's own contract; the binary run covers the gate itself.
+  memory-budget:
+    name: staged memory ledger and budget gate (windows)
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: check out the source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: the runner's own contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -count=1 -timeout 15m ./cmd/internal/memorystudy
+
+      - name: build the study binary with the product's tag profile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tags = (Get-Content -LiteralPath release/DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim() + ',with_purego'
+          go build -tags $tags -o "$env:RUNNER_TEMP\memorystudy.exe" ./cmd/internal/memorystudy
+
+      - name: evaluate the budget
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:RUNNER_TEMP\memorystudy.exe" -gate -runs 1 `
+              -output "$env:RUNNER_TEMP\memory-gate.jsonl" `
+              -budget cmd\internal\memorystudy\testdata\budget.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "the memory budget gate failed with exit code $LASTEXITCODE; the ledger and its verdict are attached to this run"
+          }
+
+      - name: upload the ledger and its verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-budget-ledger
+          path: |
+            ${{ runner.temp }}/memory-gate.jsonl
+            ${{ runner.temp }}/memory-gate.jsonl.d/
+            ${{ runner.temp }}/memory-gate.gate.json
+          if-no-files-found: warn
+
   windows-daemon-tests:
     name: boxdd security tests (windows)
     # `windows-latest`, not `ubuntu-latest` with GOOS=windows. The distinction is the entire point of

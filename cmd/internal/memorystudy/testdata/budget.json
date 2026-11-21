@@ -1,0 +1,368 @@
+{
+  "schema_version": "memorystudy-budget/1",
+  "baseline": {
+    "captured_at": "2026-11-21T14:49:23Z",
+    "source_sha": "00aac2129d889ca1461d44e44ccdb542976b8126",
+    "source_dirty": true,
+    "goos": "windows",
+    "goarch": "amd64",
+    "go_version": "go1.27.4",
+    "tags": [
+      "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,with_xhttp,with_trusttunnel,with_awg,badlinkname,http2legacy,with_purego"
+    ],
+    "runs": [
+      "20261121T144904Z-3ff47a-00-empty-n0-g0-direct-none-forced-b579",
+      "20261121T144904Z-3ff47a-00-empty-n0-g0-direct-none-natural-8a08",
+      "20261121T144904Z-3ff47a-00-ordinary-n0-g0-trojan-none-forced-c695",
+      "20261121T144904Z-3ff47a-00-ordinary-n100-g2-trojan-none-forced-7554",
+      "20261121T144904Z-3ff47a-00-empty-n0-g0-direct-traffic-forced-a4f2",
+      "20261121T144904Z-3ff47a-00-ordinary-n8-g2-direct-probe-forced-f1a6",
+      "20261121T144904Z-3ff47a-01-empty-n0-g0-direct-none-forced-6774",
+      "20261121T144904Z-3ff47a-01-empty-n0-g0-direct-none-natural-54d3",
+      "20261121T144904Z-3ff47a-01-ordinary-n0-g0-trojan-none-forced-d30c",
+      "20261121T144904Z-3ff47a-01-ordinary-n100-g2-trojan-none-forced-a8cb",
+      "20261121T144904Z-3ff47a-01-empty-n0-g0-direct-traffic-forced-e4c9",
+      "20261121T144904Z-3ff47a-01-ordinary-n8-g2-direct-probe-forced-5d72",
+      "20261121T144904Z-3ff47a-02-empty-n0-g0-direct-none-forced-5faf",
+      "20261121T144904Z-3ff47a-02-empty-n0-g0-direct-none-natural-e951",
+      "20261121T144904Z-3ff47a-02-ordinary-n0-g0-trojan-none-forced-95ef",
+      "20261121T144904Z-3ff47a-02-ordinary-n100-g2-trojan-none-forced-81a6",
+      "20261121T144904Z-3ff47a-02-empty-n0-g0-direct-traffic-forced-d09d",
+      "20261121T144904Z-3ff47a-02-ordinary-n8-g2-direct-probe-forced-50fd"
+    ],
+    "notes": [
+      "thresholds are derived from the runs listed in baseline.runs; they are not copied from another project and they are not a device footprint",
+      "re-derive with: memorystudy -write-budget \u003cpath\u003e -from \u003cbaseline.jsonl\u003e"
+    ]
+  },
+  "rules": [
+    {
+      "id": "base-entry-live-heap",
+      "description": "the process floor: what a Box-capable binary already holds at its earliest observable point",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "earliest_observable",
+      "metric": "readings.go.live_heap_bytes",
+      "max": 2664250,
+      "basis": "derived from 6 baseline run(s) of THIS tree: observed 2104384..2131400; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "observed": [
+        2128624,
+        2104384,
+        2131400,
+        2119304,
+        2106048,
+        2111176
+      ]
+    },
+    {
+      "id": "base-idle-live-heap",
+      "description": "the absolute ledger for an idle base Box with no activity history",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "idle_0s",
+      "metric": "readings.go.live_heap_bytes",
+      "max": 3065160,
+      "basis": "derived from 6 baseline run(s) of THIS tree: observed 2425048..2452128; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "observed": [
+        2448248,
+        2425048,
+        2449440,
+        2446904,
+        2427712,
+        2452128
+      ]
+    },
+    {
+      "id": "base-idle-total-memory",
+      "description": "Go's own total for an idle base Box, including memory the heap reading does not classify",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "idle_0s",
+      "metric": "readings.go.total_bytes",
+      "max": 25029430,
+      "basis": "derived from 6 baseline run(s) of THIS tree: observed 15558904..20023544; threshold = ceil(max(observed)*1.25, observed+65536) with 65536 of noise allowance",
+      "observed": [
+        20023544,
+        19548408,
+        16140536,
+        20015352,
+        15812856,
+        15558904
+      ]
+    },
+    {
+      "id": "base-idle-goroutines",
+      "description": "the goroutine floor of an idle base Box",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "idle_0s",
+      "metric": "readings.goroutines.current",
+      "max": 35,
+      "basis": "derived from 6 baseline run(s) of THIS tree: observed 27..28; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "observed": [
+        27,
+        28,
+        27,
+        28,
+        27,
+        28
+      ]
+    },
+    {
+      "id": "base-construct-delta",
+      "description": "what box.New adds over the decoded configuration for the base Box",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "construct",
+      "metric": "deltas.from_previous.live_heap_bytes",
+      "max": 32336,
+      "basis": "derived from 6 baseline run(s) of THIS tree: observed 17256..24144; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
+      "observed": [
+        17272,
+        17304,
+        17272,
+        24144,
+        17256,
+        22464
+      ]
+    },
+    {
+      "id": "base-teardown-goroutines",
+      "description": "goroutines still running after Close returned",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "run_end",
+      "metric": "readings.goroutines.current",
+      "max": 30,
+      "basis": "derived from 6 baseline run(s) of THIS tree: observed 24..24; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "observed": [
+        24,
+        24,
+        24,
+        24,
+        24,
+        24
+      ]
+    },
+    {
+      "id": "base-teardown-live-heap-delta",
+      "description": "live heap above the earliest observable point after Close: the release has to actually happen",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "run_end",
+      "metric": "deltas.from_entry.live_heap_bytes",
+      "max": 315160,
+      "basis": "derived from 6 baseline run(s) of THIS tree: observed 215496..252128; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "observed": [
+        217048,
+        237448,
+        215496,
+        238424,
+        219200,
+        252128
+      ]
+    },
+    {
+      "id": "ordinary-zero-idle-live-heap",
+      "description": "the ordinary code path with no nodes: it must not cost more than the base Box",
+      "case": "ordinary",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "trojan",
+      "gc_mode": "forced",
+      "stage": "idle_0s",
+      "metric": "readings.go.live_heap_bytes",
+      "max": 3061840,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2442520..2449472; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "observed": [
+        2442520,
+        2448128,
+        2449472
+      ]
+    },
+    {
+      "id": "ordinary-100-construct-per-node",
+      "description": "per-node live-heap cost of 100 configured, never-dialled trojan nodes, measured right after construction",
+      "case": "ordinary",
+      "nodes": 100,
+      "groups": 2,
+      "node_proto": "trojan",
+      "gc_mode": "forced",
+      "stage": "construct",
+      "metric": "deltas.from_entry.live_heap_per_node_bytes",
+      "max": 9598,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 7561..7678; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
+      "observed": [
+        7678,
+        7561,
+        7622
+      ]
+    },
+    {
+      "id": "ordinary-100-idle-per-node",
+      "description": "per-node live-heap cost of the same nodes once the Box is started and idle",
+      "case": "ordinary",
+      "nodes": 100,
+      "groups": 2,
+      "node_proto": "trojan",
+      "gc_mode": "forced",
+      "stage": "idle_0s",
+      "metric": "deltas.from_entry.live_heap_per_node_bytes",
+      "max": 12445,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 9936..9956; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
+      "observed": [
+        9956,
+        9936,
+        9955
+      ]
+    },
+    {
+      "id": "ordinary-100-goroutines",
+      "description": "never-dialled nodes must not buy a goroutine each",
+      "case": "ordinary",
+      "nodes": 100,
+      "groups": 2,
+      "node_proto": "trojan",
+      "gc_mode": "forced",
+      "stage": "idle_0s",
+      "metric": "readings.goroutines.current",
+      "max": 34,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 27..27; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "observed": [
+        27,
+        27,
+        27
+      ]
+    },
+    {
+      "id": "ordinary-100-threads",
+      "description": "never-dialled nodes must not buy an operating-system thread each",
+      "case": "ordinary",
+      "nodes": 100,
+      "groups": 2,
+      "node_proto": "trojan",
+      "gc_mode": "forced",
+      "stage": "idle_0s",
+      "metric": "readings.process.threads",
+      "max": 27,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 20..21; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "observed": [
+        20,
+        21,
+        21
+      ]
+    },
+    {
+      "id": "probe-members-succeed",
+      "description": "a URL test round over eight local members must reach all of them",
+      "case": "ordinary",
+      "nodes": 8,
+      "groups": 2,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "probe",
+      "metric": "probe.succeeded",
+      "max": 10,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 8..8; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "observed": [
+        8,
+        8,
+        8
+      ]
+    },
+    {
+      "id": "natural-idle-growth",
+      "description": "an untouched Box must not grow across one second of natural idle (no forced collection)",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "natural",
+      "stage": "idle_1s",
+      "metric": "deltas.from_previous.heap_objects_bytes",
+      "max": 24128,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 0..15936; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
+      "observed": [
+        0,
+        15936,
+        8192
+      ]
+    },
+    {
+      "id": "traffic-per-flow-live-heap",
+      "description": "live heap per held flow: one buffer plus bookkeeping, not two buffers",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "traffic_held",
+      "metric": "deltas.from_previous.live_heap_bytes",
+      "per": "spec.held_flows",
+      "max": 57938,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 44942..46350; threshold = ceil(max(observed)*1.25, observed+2048) with 2048 of noise allowance",
+      "observed": [
+        46350,
+        44942,
+        45066
+      ]
+    },
+    {
+      "id": "traffic-verified",
+      "description": "the traffic fixture must verify both directions",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "traffic_verified",
+      "metric": "traffic.verified",
+      "min": 1,
+      "basis": "business check, not a budget: 3 of 3 baseline run(s) satisfied it; the minimum is the definition of the fixture, not a measurement threshold",
+      "observed": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "traffic-half-close",
+      "description": "the client's half-close must be propagated: the destination only answers after EOF",
+      "case": "empty",
+      "nodes": 0,
+      "groups": 0,
+      "node_proto": "direct",
+      "gc_mode": "forced",
+      "stage": "traffic_verified",
+      "metric": "traffic.half_close_propagated",
+      "min": 1,
+      "basis": "business check, not a budget: 3 of 3 baseline run(s) satisfied it; the minimum is the definition of the fixture, not a measurement threshold",
+      "observed": [
+        1,
+        1,
+        1
+      ]
+    }
+  ]
+}
