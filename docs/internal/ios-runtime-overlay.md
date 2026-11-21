@@ -331,6 +331,12 @@ The push gate and the Apple pipeline ran on the commits this document describes:
   `macos` 15m22s building both apps against that framework, `ios-selfsign` skipped by the dispatch
   input.
 
+* `Apple client` [run 44872256658](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44872256658)
+  on `8a6959089`, after the round-two checks were added, ran the workflow with its DEFAULT inputs so
+  that no job was skipped: all five green - `libbox` 4m28s with the same marker evidence,
+  `macos` 10m51s, `ios` 8m38s, and `ios-selfsign` 14m1s. That is the whole pipeline the release
+  uses, not the subset a narrowed dispatch exercises.
+
 * The packed artifact of the earlier run (`Libbox.xcframework.tar.gz`,
   `f471d17c99f3166a3f72d0239a0b567c9f18238e37a17e7b180007c7fbc7a549`, `BUILD-INFO` recording
   `runtime_overlay: small` / `runtime_overlay_go: go1.27.4`) was downloaded, extracted, and re-checked
