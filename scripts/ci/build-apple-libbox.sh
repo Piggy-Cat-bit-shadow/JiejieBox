@@ -162,16 +162,35 @@ echo "  capability tags: with_trusttunnel, with_awg present"
 #
 # A target with no iOS-family platform (a macOS-only framework) resolves to base by design and is
 # not an error: that build keeps the toolchain's runtime on purpose.
+#
+# # The one way to build a BASE iOS framework, and why it is an environment variable
+#
+# The A/B comparison the evidence tables are made of needs an iOS framework with NO overlay, built
+# by THIS script so that everything else (tags, toolchain, output paths, install step) is identical
+# to the product build. Without a hatch the only way to get one is to edit this file, which is
+# exactly the kind of local edit that gets committed by accident.
+#
+# So the refusal stays, and the escape is explicit, loud, and per-invocation:
+#
+#   LIBBOX_OVERLAY_ALLOW_BASE=1 JJ_RUNTIME_OVERLAY=base ./scripts/ci/build-apple-libbox.sh ios
+#
+# Nothing in CI sets it, so a product build cannot reach base by inheriting an environment.
 resolved_overlay="$(go run ./cmd/internal/build_libbox -print-runtime-overlay "$targets")"
 case ",$targets," in
   *,ios*)
     case "$resolved_overlay" in
       base)
-        echo "FAIL: the iOS Libbox would be built with mode base, so its Go runtime would be the" >&2
-        echo "      unmodified one and none of the small-process work would ship." >&2
-        echo "      resolved: $resolved_overlay for targets $targets" >&2
-        echo "      See docs/internal/ios-runtime-overlay.md before changing the default." >&2
-        exit 1
+        if [ "${LIBBOX_OVERLAY_ALLOW_BASE:-0}" = "1" ]; then
+          echo "  WARNING: building a BASE iOS framework because LIBBOX_OVERLAY_ALLOW_BASE=1." >&2
+          echo "           This artifact has the toolchain's runtime: it is an A/B baseline, not a product." >&2
+        else
+          echo "FAIL: the iOS Libbox would be built with mode base, so its Go runtime would be the" >&2
+          echo "      unmodified one and none of the small-process work would ship." >&2
+          echo "      resolved: $resolved_overlay for targets $targets" >&2
+          echo "      For a local A/B baseline only: LIBBOX_OVERLAY_ALLOW_BASE=1 JJ_RUNTIME_OVERLAY=base $0 $which" >&2
+          echo "      See docs/internal/ios-runtime-overlay.md before changing the default." >&2
+          exit 1
+        fi
         ;;
     esac
     ;;

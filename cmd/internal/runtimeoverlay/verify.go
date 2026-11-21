@@ -235,33 +235,94 @@ type ProvenanceOverlay struct {
 // agree, which is not the claim. The claim is that the bytes match what the build says it did.
 func ParseProvenanceOverlay(content string) (ProvenanceOverlay, error) {
 	var parsed ProvenanceOverlay
-	var mode string
+	modes := make([]string, 0, 2)
+	markers := make([]string, 0, 2)
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimRight(line, "\r")
 		switch {
 		case strings.HasPrefix(line, "runtime.overlay="):
-			mode = strings.TrimPrefix(line, "runtime.overlay=")
+			modes = append(modes, strings.TrimPrefix(line, "runtime.overlay="))
 		case strings.HasPrefix(line, "runtime.overlay.marker="):
-			parsed.Marker = strings.TrimPrefix(line, "runtime.overlay.marker=")
+			markers = append(markers, strings.TrimPrefix(line, "runtime.overlay.marker="))
 		case strings.HasPrefix(line, "runtime.overlay.go="):
 			parsed.GoVersion = strings.TrimPrefix(line, "runtime.overlay.go=")
 		}
 	}
-	if mode == "" {
+	if len(modes) == 0 {
 		return ProvenanceOverlay{}, fmt.Errorf(
 			"runtime overlay: this provenance file records no runtime.overlay= key, so it does not say which overlay mode built the artifact. " +
 				"A framework cannot be verified against a plan nobody wrote down")
 	}
-	parsedMode, err := ParseMode(mode)
+	// Duplicates are refused for the same reason CheckGoFlagsHasNoOverlay refuses duplicated
+	// GOFLAGS: everyone who reads the first entry silently ignores the rest, so a second one is
+	// either dead text or a record written twice by two different builds.
+	if len(modes) > 1 {
+		return ProvenanceOverlay{}, fmt.Errorf(
+			"runtime overlay: this provenance file records runtime.overlay %d times (%s). Only one plan compiles an artifact, and a "+
+				"reader that takes the first entry would verify against a mode the build may not have used",
+			len(modes), strings.Join(modes, ", "))
+	}
+	if len(markers) > 1 {
+		return ProvenanceOverlay{}, fmt.Errorf(
+			"runtime overlay: this provenance file records runtime.overlay.marker %d times; exactly one plan may compile an artifact",
+			len(markers))
+	}
+	parsedMode, err := ParseMode(modes[0])
 	if err != nil {
 		return ProvenanceOverlay{}, err
 	}
 	parsed.Mode = parsedMode
-	if parsedMode != ModeBase && parsed.Marker == "" {
+	if len(markers) == 1 {
+		parsed.Marker = markers[0]
+	}
+	if parsedMode == ModeBase {
+		if parsed.Marker != "" {
+			return ProvenanceOverlay{}, fmt.Errorf(
+				"runtime overlay: provenance records mode base but also a marker (%s). Mode base compiles no overlay, so a marker "+
+					"here means the record and the build disagree", parsed.Marker)
+		}
+		return parsed, nil
+	}
+	if parsed.Marker == "" {
 		return ProvenanceOverlay{}, fmt.Errorf(
-			"runtime overlay: provenance records mode %s but no runtime.overlay.marker=, so there is no expected marker to check", mode)
+			"runtime overlay: provenance records mode %s but no runtime.overlay.marker=, so there is no expected marker to check", modes[0])
+	}
+	// The decisive consistency check: the marker names the mode it was generated for, and both
+	// fields are written by the same build step from the same plan.
+	//
+	// This used to be unchecked, so a record saying `runtime.overlay=both` beside a marker saying
+	// `mode=small` was accepted and the verifier then checked the artifact against the MARKER while
+	// printing the MODE: the wrong plan verified, the right one reported, and nothing failed.
+	if !strings.HasPrefix(parsed.Marker, MarkerPrefix) {
+		return ProvenanceOverlay{}, fmt.Errorf(
+			"runtime overlay: the recorded marker does not start with %q: %s", MarkerPrefix, parsed.Marker)
+	}
+	markerMode, hasMode := markerModeField(parsed.Marker)
+	if !hasMode || markerMode != parsedMode {
+		return ProvenanceOverlay{}, fmt.Errorf(
+			"runtime overlay: provenance records mode %s but its marker describes a different plan (%s). The two fields come from "+
+				"one build step, so a disagreement means the record was edited or the artifact was recorded twice; neither may be verified",
+			parsedMode, parsed.Marker)
 	}
 	return parsed, nil
+}
+
+// markerModeField reads the `mode=` field out of a marker string.
+//
+// It is a field scan rather than a substring test so a marker that ends at the mode - which the
+// unit tests use, and which an older marker shape could carry - is read the same way as one that
+// continues with parameters.
+func markerModeField(marker string) (Mode, bool) {
+	rest, ok := strings.CutPrefix(marker, MarkerPrefix)
+	if !ok {
+		return "", false
+	}
+	for _, field := range strings.Fields(rest) {
+		if value, ok := strings.CutPrefix(field, "mode="); ok {
+			return Mode(value), true
+		}
+	}
+	return "", false
 }
 
 // ExpectedMarker is the marker the recorded provenance says the slices should carry.

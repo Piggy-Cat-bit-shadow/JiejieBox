@@ -110,7 +110,15 @@ import (
 )
 
 // keepAlive defeats the dead-store elimination of the callback's small allocation.
-var keepAlive [][]byte
+//
+// It is guarded because the callback runs on every calling thread at once: appending to one slice
+// from several pthreads was a data race, and `go run -race` on this probe reported six of them. The
+// probe is what a stability claim rests on, so it has to be race-free before its numbers mean
+// anything.
+var (
+	keepAliveAccess sync.Mutex
+	keepAlive       [][]byte
+)
 
 //export goCallback
 func goCallback(id C.int) C.int {
@@ -118,10 +126,12 @@ func goCallback(id C.int) C.int {
 	// compiler can reduce to an arithmetic expression.
 	slice := make([]byte, 64)
 	slice[0] = byte(id)
+	keepAliveAccess.Lock()
 	keepAlive = append(keepAlive, slice)
 	if len(keepAlive) > 4096 {
 		keepAlive = keepAlive[:0]
 	}
+	keepAliveAccess.Unlock()
 	return id*7 + 1
 }
 
@@ -137,7 +147,7 @@ func main() {
 
 	baseline := readMemory()
 	fmt.Printf("baseline.stacks=%d\n", baseline["/memory/classes/heap/stacks:bytes"])
-	fmt.Printf("baseline.heap=%d\n", baseline["/memory/classes/heap/inuse:bytes"])
+	fmt.Printf("baseline.heap=%d\n", baseline["/memory/classes/heap/objects:bytes"])
 
 	if C.spawn_parked(C.int(threads)) != 0 {
 		fmt.Println("spawnFailed=1")
@@ -149,7 +159,7 @@ func main() {
 
 	alive := readMemory()
 	fmt.Printf("parked.stacks=%d\n", alive["/memory/classes/heap/stacks:bytes"])
-	fmt.Printf("parked.heap=%d\n", alive["/memory/classes/heap/inuse:bytes"])
+	fmt.Printf("parked.heap=%d\n", alive["/memory/classes/heap/objects:bytes"])
 	fmt.Printf("parked.threads=%d\n", threads)
 	fmt.Printf("parked.errors=%d\n", int(C.error_count()))
 
@@ -158,7 +168,7 @@ func main() {
 
 	after := readMemory()
 	fmt.Printf("after.stacks=%d\n", after["/memory/classes/heap/stacks:bytes"])
-	fmt.Printf("after.heap=%d\n", after["/memory/classes/heap/inuse:bytes"])
+	fmt.Printf("after.heap=%d\n", after["/memory/classes/heap/objects:bytes"])
 	fmt.Printf("after.errors=%d\n", int(C.error_count()))
 
 	// The concurrency half: many threads calling at once, each expecting its own answer. A wrongly
@@ -246,12 +256,19 @@ func traceEveryGoroutine() {
 func readMemory() map[string]uint64 {
 	samples := []metrics.Sample{
 		{Name: "/memory/classes/heap/stacks:bytes"},
-		{Name: "/memory/classes/heap/inuse:bytes"},
+		// `/memory/classes/heap/inuse:bytes` was here and this toolchain does not publish it; the
+		// loop below skipped it and every reader of the map then saw zero, which is how a census
+		// came to print "heap: 0 bytes" for a measurement it never took. Live object heap is the
+		// class that answers the question.
 		{Name: "/memory/classes/heap/objects:bytes"},
 	}
 	metrics.Read(samples)
 	values := make(map[string]uint64, len(samples))
 	for _, sample := range samples {
+		if sample.Value.Kind() == metrics.KindBad {
+			fmt.Printf("invalidMetric=%s\n", sample.Name)
+			os.Exit(2)
+		}
 		if sample.Value.Kind() == metrics.KindUint64 {
 			values[sample.Name] = sample.Value.Uint64()
 		}

@@ -121,7 +121,9 @@ func TestAHeldConnectionStaysWithinItsBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("holding sixty-four connections through the real relay is not a -short test")
 	}
-	destination, accepted, closedDestination := holdDestination(t)
+	// The destination stays open for the leak rounds below; `dropAccepted` ends each round without
+	// closing the listener, and cleanup closes both.
+	destination, accepted, dropAccepted := holdDestination(t)
 	socksAddress := startSOCKSBox(t)
 
 	before := sampleHeldConnections()
@@ -167,13 +169,89 @@ func TestAHeldConnectionStaysWithinItsBudget(t *testing.T) {
 	}
 
 	// The release half: the budget is only meaningful if closing returns to it. A held flow that
-	// leaves a goroutine or a buffer behind would show up as a residual after every connection is
-	// gone, and that is what a long NE session would accumulate.
+	// leaves a goroutine behind shows up as a residual after every connection is gone, and that is
+	// what a long NE session would accumulate.
 	for _, conn := range held {
 		_ = conn.Close()
 	}
 	held = held[:0]
-	closedDestination()
+	dropAccepted()
+	firstResidual := waitForSettled(t, before)
+	t.Logf("after one round: %d B of stacks and %d B of live heap above the baseline, goroutines back to %d",
+		int64(firstResidual.stacks)-int64(before.stacks), int64(firstResidual.heap)-int64(before.heap),
+		firstResidual.goroutines)
+
+	// One round proves the release path runs. It does not prove nothing accumulates: an object
+	// retained per connection - a pool entry that is never reused, a callback registered and not
+	// removed - leaves the goroutine count at rest and still grows the heap by 43 KiB a flow, so the
+	// check above would pass on a leaking relay.
+	//
+	// Two more identical rounds, each measured after the goroutines have come back down, and the
+	// second must not sit above the first by more than the noise floor. The tolerance is generous
+	// because the Go runtime does not return every span immediately and the connection objects churn;
+	// it is far below one buffered flow, which is the size of the leak it exists to catch.
+	const (
+		leakRounds = 2
+		// heapTolerance is what a per-connection RETAINED OBJECT would blow through: 43 KiB a flow is
+		// 2.7 MiB a round, and the measured round-to-round noise is ~60 KiB.
+		heapTolerance = 256 << 10
+		// stackTolerance has to allow one round's worth of PARKED starting stacks, which is upstream
+		// behaviour rather than a leak: an exited goroutine leaves its starting stack on the P's free
+		// list (the A3 overlay is what changes that), so the second round parks up to two starting
+		// stacks per flow. 8 KiB is the largest 64-bit starting stack (Windows); Linux starts at
+		// 2 KiB, so this is generous there and still finite - an unbounded per-round stack leak
+		// exceeds it every round.
+		stackTolerance = heldConnectionCount * 2 * 8 << 10
+	)
+	previous := firstResidual
+	expectedAccepts := heldConnectionCount
+	for round := 1; round <= leakRounds; round++ {
+		expectedAccepts += heldConnectionCount
+		cycle := make([]net.Conn, 0, heldConnectionCount)
+		for index := 0; index < heldConnectionCount; index++ {
+			conn, err := dialThroughSOCKS(socksAddress, destination)
+			if err != nil {
+				t.Fatalf("round %d connection %d: %v", round, index, err)
+			}
+			cycle = append(cycle, conn)
+		}
+		waitForAccepted(t, accepted, expectedAccepts)
+		time.Sleep(time.Second)
+		for _, conn := range cycle {
+			_ = conn.Close()
+		}
+		dropAccepted()
+		settled := waitForSettled(t, before)
+		heapGrowth := int64(settled.heap) - int64(previous.heap)
+		stackGrowth := int64(settled.stacks) - int64(previous.stacks)
+		t.Logf("round %d: live heap %+d B and stacks %+d B against the previous round's residual",
+			round, heapGrowth, stackGrowth)
+		if heapGrowth > heapTolerance {
+			t.Fatalf("live heap grew %d B across one open-and-close round of %d flows (tolerance %d). "+
+				"Nothing in the goroutine count would show this: an object retained per connection "+
+				"survives the close and accumulates for the life of the process",
+				heapGrowth, heldConnectionCount, heapTolerance)
+		}
+		if stackGrowth > stackTolerance {
+			t.Fatalf("goroutine stacks grew %d B across one open-and-close round of %d flows (tolerance %d): "+
+				"a copy's stack is being retired into a cache that never drains",
+				stackGrowth, heldConnectionCount, stackTolerance)
+		}
+		// A ceiling on the total, not just the increment: parking is bounded by the number of Ps, so a
+		// residual that keeps climbing past this is accumulation rather than a cache.
+		const stackCeiling = 4 << 20
+		if total := int64(settled.stacks) - int64(before.stacks); total > stackCeiling {
+			t.Fatalf("goroutine stacks are %d B above the baseline after %d open-and-close rounds "+
+				"(ceiling %d): the count came back but the memory did not", total, round+1, stackCeiling)
+		}
+		previous = settled
+	}
+}
+
+// waitForSettled waits until the relay has released every flow it was given and returns the
+// measurement taken once the goroutine count is back at the baseline.
+func waitForSettled(t *testing.T, before heldConnectionSample) heldConnectionSample {
+	t.Helper()
 	// The relay releases on its own schedule (a read returns, a copy finishes), so this waits for
 	// the process to come back rather than asserting an instant.
 	deadline := time.Now().Add(10 * time.Second)
@@ -181,11 +259,7 @@ func TestAHeldConnectionStaysWithinItsBudget(t *testing.T) {
 		runtime.GC()
 		residual := sampleHeldConnections()
 		if residual.goroutines <= before.goroutines {
-			t.Logf("after closing every connection: %d B of stacks and %d B of live heap above the "+
-				"baseline, goroutines back to %d",
-				int64(residual.stacks)-int64(before.stacks), int64(residual.heap)-int64(before.heap),
-				residual.goroutines)
-			break
+			return residual
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("%d goroutines are still running after every connection was closed: a held flow "+
@@ -198,6 +272,13 @@ func TestAHeldConnectionStaysWithinItsBudget(t *testing.T) {
 
 // holdDestination is a listener that accepts and then says nothing, so both relay directions park
 // in a read. It reports every accept so the test can wait for all the flows to be established.
+//
+// It returns a `dropAccepted` that closes the connections it has accepted WITHOUT closing the
+// listener, and the listener itself is closed by cleanup. The distinction is not cosmetic: the
+// relay half-closes the destination when the client goes away and keeps the other copy reading
+// until the destination closes too, so a round that closes only the client side leaves one
+// goroutine parked per flow by design. Dropping the destination side is how a real peer says "I am
+// done", and it is what lets the leak rounds measure a settled process instead of a hung one.
 func holdDestination(t *testing.T) (net.Addr, func() int, func()) {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -206,6 +287,9 @@ func holdDestination(t *testing.T) (net.Addr, func() int, func()) {
 	}
 	var mutex sync.Mutex
 	var connections []net.Conn
+	// accepted is cumulative and survives dropAccepted: the test waits for a new round on top of the
+	// previous ones, and a counter that reset with the connections could never reach the next target.
+	acceptedSoFar := 0
 	go func() {
 		for {
 			conn, acceptErr := listener.Accept()
@@ -214,16 +298,16 @@ func holdDestination(t *testing.T) (net.Addr, func() int, func()) {
 			}
 			mutex.Lock()
 			connections = append(connections, conn)
+			acceptedSoFar++
 			mutex.Unlock()
 		}
 	}()
 	count := func() int {
 		mutex.Lock()
 		defer mutex.Unlock()
-		return len(connections)
+		return acceptedSoFar
 	}
-	closeAll := func() {
-		_ = listener.Close()
+	dropAccepted := func() {
 		mutex.Lock()
 		defer mutex.Unlock()
 		for _, conn := range connections {
@@ -231,8 +315,11 @@ func holdDestination(t *testing.T) (net.Addr, func() int, func()) {
 		}
 		connections = nil
 	}
-	t.Cleanup(closeAll)
-	return listener.Addr(), count, closeAll
+	t.Cleanup(func() {
+		_ = listener.Close()
+		dropAccepted()
+	})
+	return listener.Addr(), count, dropAccepted
 }
 
 func waitForAccepted(t *testing.T, accepted func() int, want int) {

@@ -223,8 +223,10 @@ go test ./cmd/internal/runtimeoverlay/ -count=1 -run TestGroupBReleasesTheExtraM
 # which mode would the product build compile?
 go run ./cmd/internal/build_libbox -print-runtime-overlay ios/arm64,macos/arm64
 
-# attributing one item on a local build
-JJ_RUNTIME_OVERLAY=base  ./scripts/ci/build-apple-libbox.sh ios
+# attributing one item on a local build.
+# The public script refuses a BASE iOS framework because a product must never be built from one;
+# the A/B baseline therefore needs the explicit one-shot hatch, and nothing in CI sets it.
+LIBBOX_OVERLAY_ALLOW_BASE=1 JJ_RUNTIME_OVERLAY=base ./scripts/ci/build-apple-libbox.sh ios
 JJ_RUNTIME_OVERLAY=small ./scripts/ci/build-apple-libbox.sh ios
 JJ_RUNTIME_OVERLAY=both  ./scripts/ci/build-apple-libbox.sh ios
 ```
@@ -302,6 +304,14 @@ parks; linux-amd64; `GOMAXPROCS=2`)
   concurrent calls from 8 threads: no TLS corruption, no double free, no crash.
 - The cost is 9x per call (1.5 us), which is the price the analysis predicted (`minit`/`unminit`
   sigaltstack syscalls). §3.4 records the decision that ships it for iOS anyway, with the scope that keeps macOS out.
+- **What that 1.5 us is, and is not.** It is the wall-clock time of one `8 threads x 1500 calls`
+  loop divided by the calls: it includes the C threads' own loop overhead, the harness's accounting
+  and the contention between eight callers, and it is measured on linux-amd64, not on a device. It is
+  a like-for-like comparison between two builds of the same harness, which is what makes the 9x
+  meaningful, and it is NOT a single Swift->Go API latency. No measurement in this document is.
+- The probes that produced these numbers ran under `go run -race` after the review found races in
+  them (`sink` written from many goroutines, `keepAlive` appended from many pthreads); both are now
+  clean, and the numbers above are from the fixed probes.
 
 ### 4.5 Negative gates that were actually exercised
 
@@ -466,7 +476,12 @@ goroutine shows up at a realistic connection rate.
 ## 8. Rolling back
 
 * One flag: `JJ_RUNTIME_OVERLAY=base` (or `-runtime-overlay=base`) produces the toolchain's runtime
-  with no source edit, no shim and a provenance record that says `runtime.overlay=base`.
+  with no source edit, no shim and a provenance record that says `runtime.overlay=base`. Through
+  `scripts/ci/build-apple-libbox.sh` it also needs `LIBBOX_OVERLAY_ALLOW_BASE=1`, because that script
+  refuses a product build from a BASE iOS framework (§3.4); the pair is the local A/B baseline, and
+  no CI job sets either variable.
+* One step down is `JJ_RUNTIME_OVERLAY=small`, which keeps group A and withdraws group B without a
+  code change - the switch to reach for if a device run disagrees with the B-group decision.
 * One revert: `git revert <overlay commit>` removes the subsystem; nothing else depends on it. The
   build then compiles the toolchain's runtime, exactly as before this work.
 * No GOROOT is modified at any point, so there is no installation to restore and no state a failed

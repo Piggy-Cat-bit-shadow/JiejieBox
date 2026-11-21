@@ -66,15 +66,39 @@ Network Extension's footprint, and what is measured here is the relay, not the t
 | A node/instance separation | **not done** | The deferral's target is already named (wireguard 3×NumCPU+2 goroutines + a UDP socket per idle node, plus tailscale/openvpn/openconnect/masque). It moves `listen_port` binding and MTU validation from `Start` to first dial and needs a real TUN plus a signed Apple build to verify; the previous round refused it for the same reason. Changing it unverified would touch the semantics 40+ wireguard lifecycle tests protect. |
 | B per-held-flow cost | **shipped** | §2-§3. |
 | C probe-session release | **not done** | Needs a new adapter-level "probe finished" hook and session generation tracking; the judgement "this session has no user activity" can only be validated on a device, and a wrong one closes a flow the user is using. |
-| D burst buffer budget | **not done** | A global borrow budget would be a second budget next to ResourceGuard's admission, and the geometry is already 16 KiB on iOS with a bulk-grow path. Needs a burst measurement first. |
+| D burst buffer budget | **not done, and the earlier reasoning was wrong** | This document used to say a global borrow budget would be a second budget beside ResourceGuard's. It would not: `common/resourceguard/growth.go` already implements exactly that (`GrowthBudget`, with per-pressure-level flow and reserve caps, geometry-required exemptions, and permits released when a copy direction ends), and `route/conn.go` already wires it into the real relay per direction. The honest statement is that the mechanism exists and this round did not review it against Clash's shape; the questions that review should answer are listed in §4.1. |
 | E reload double peak | **not done** | Needs a real reload at 1000/10000-node scale. Measurable on this host, but it changes load ordering and rule completeness is the thing it must not break; left whole rather than half-done. |
 | F attribution | **half shipped** | The per-flow half is §2; the node half predates this. |
 
 The honest ranking of what is left is A first - it is the largest single win in the recorded
 inventory - and it is blocked on an environment that can run a Network Extension, not on analysis.
 
-## 5. Reproduce
+## 4.1 What the existing growth budget still needs reviewed
 
+`common/resourceguard/growth.go` + `route/conn.go`'s `growthThreshold` is the global borrow budget
+this document once claimed did not exist. It resolves per copy direction, refuses under pressure
+instead of widening, exempts a direction whose writer needs the larger buffer for framing, and
+releases the permit when the direction's copy ends. What that leaves open, in the order it is worth
+measuring:
+
+1. **The permit is taken before either copy starts**, so a held-and-quiet flow occupies one permit
+   per direction for its whole life. At 64 held flows that is 128 permits; whether the normal-level
+   `Flows + InteractiveReserve` cap reaches that with a real profile is unmeasured, and if it does,
+   the refusal lands on flows that would have been quiet anyway.
+2. **Growth is one-way.** `CopyWithIncreateBuffer` enlarges; nothing returns a grown connection to
+   the small geometry when the traffic stops, so a burst leaves large buffers attached until the
+   flow closes.
+3. **The geometry-required exemption is uncapped by design.** A direction that asks for
+   `CopyGrowthImmediate` is allowed and counted but not charged against the shared cap, so a
+   protocol with framing reasons can add resident buffers that the cap does not see. Its real peak
+   is unmeasured.
+4. **The cap's capacity is not derived from the NE budget.** The numbers in the growth plan come
+   from the tunnel's own sizing, not from anything that models a 50 MiB-class extension.
+
+None of the four is established as a defect; each is a question the existing mechanism can answer
+with the per-flow harness this round added, which is why they are written down rather than fixed.
+
+## 5. Reproduce
 ```sh
 go test -count=1 -run TestAHeldConnectionStaysWithinItsBudget -v .
 go test -tags with_low_memory -count=1 -run TestAHeldConnectionStaysWithinItsBudget -v .

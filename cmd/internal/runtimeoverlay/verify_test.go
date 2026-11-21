@@ -75,6 +75,79 @@ func TestVerdict(t *testing.T) {
 	}
 }
 
+// A record that disagrees with itself must be refused before any artifact is looked at. The
+// verifier used to check the artifact against the marker while printing the mode, so `both` beside
+// a `small` marker verified the small plan and reported the both plan.
+func TestProvenanceRefusesARecordThatDisagreesWithItself(t *testing.T) {
+	small, err := Resolve(ModeSmall, "ios/arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	both, err := Resolve(ModeBoth, "ios/arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contradictions := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "mode both beside a small marker",
+			content: "runtime.overlay=both\nruntime.overlay.marker=" + small.Marker() + "\n",
+			want:    "different plan",
+		},
+		{
+			name:    "mode small beside a both marker",
+			content: "runtime.overlay=small\nruntime.overlay.marker=" + both.Marker() + "\n",
+			want:    "different plan",
+		},
+		{
+			name:    "mode base beside a marker",
+			content: "runtime.overlay=base\nruntime.overlay.marker=" + small.Marker() + "\n",
+			want:    "mode base",
+		},
+		{
+			name:    "the marker is not a marker",
+			content: "runtime.overlay=small\nruntime.overlay.marker=something else entirely\n",
+			want:    "does not start with",
+		},
+		{
+			name:    "two modes recorded",
+			content: "runtime.overlay=small\nruntime.overlay=both\nruntime.overlay.marker=" + both.Marker() + "\n",
+			want:    "records runtime.overlay 2 times",
+		},
+		{
+			name:    "two markers recorded",
+			content: "runtime.overlay=small\nruntime.overlay.marker=" + small.Marker() + "\nruntime.overlay.marker=" + both.Marker() + "\n",
+			want:    "records runtime.overlay.marker 2 times",
+		},
+	}
+	for _, testCase := range contradictions {
+		_, err := ParseProvenanceOverlay(testCase.content)
+		if err == nil {
+			t.Fatalf("%s: accepted; the artifact would be verified against one plan and reported as another", testCase.name)
+		}
+		if !strings.Contains(err.Error(), testCase.want) {
+			t.Fatalf("%s: the refusal does not explain itself (%q): %v", testCase.name, testCase.want, err)
+		}
+	}
+	// And the honest records still parse, in every mode the builder can produce.
+	for _, plan := range []Plan{{Mode: ModeBase}, small, both} {
+		content := "runtime.overlay=" + string(plan.Mode) + "\n"
+		if plan.Enabled() {
+			content += "runtime.overlay.marker=" + plan.Marker() + "\n"
+		}
+		parsed, err := ParseProvenanceOverlay(content)
+		if err != nil {
+			t.Fatalf("mode %s: %v", plan.Mode, err)
+		}
+		if parsed.Mode != plan.Mode {
+			t.Fatalf("mode %s parsed as %s", plan.Mode, parsed.Mode)
+		}
+	}
+}
+
 func TestParseProvenanceOverlay(t *testing.T) {
 	provenance := strings.Join([]string{
 		"commit=bc943086c440dbfadc538ad5c3846923d0850395",

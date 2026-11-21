@@ -70,7 +70,7 @@ func stackBurst() {
 				for position := range pad {
 					pad[position] = byte(position)
 				}
-				sink = pad[0]
+				sink.Add(uint64(pad[0]))
 			}()
 		}
 		group.Wait()
@@ -78,19 +78,32 @@ func stackBurst() {
 }
 
 // sink defeats the dead-store elimination that would otherwise remove the frame the burst pads.
-var sink byte
+//
+// It is atomic because the bursts write it from many goroutines at once. A plain byte was a data
+// race, and `go run -race` on this probe reported it: the probe is what a performance and stability
+// claim rests on, so it must itself be race-free before its numbers mean anything.
+var sink atomic.Uint64
 
 func reportMemory() {
 	samples := []metrics.Sample{
 		{Name: "/memory/classes/heap/stacks:bytes"},
 		{Name: "/memory/classes/metadata/other:bytes"},
 		{Name: "/memory/classes/metadata/mspan/inuse:bytes"},
-		{Name: "/memory/classes/heap/inuse:bytes"},
+		// `/memory/classes/heap/inuse:bytes` used to be here. This toolchain does not publish it,
+		// and the loop below skipped unknown samples while every later reader of the map got zero -
+		// so the census printed "heap in use: 0 bytes" as if it had measured something. The class
+		// that answers the question is the live object heap.
+		{Name: "/memory/classes/heap/objects:bytes"},
 		{Name: "/memory/classes/heap/released:bytes"},
 		{Name: "/gc/heap/goal:bytes"},
 	}
 	metrics.Read(samples)
 	for _, sample := range samples {
+		if sample.Value.Kind() == metrics.KindBad {
+			// A name this toolchain does not publish is a bug in the probe, not a reading of zero.
+			fmt.Printf("invalidMetric=%s\n", sample.Name)
+			os.Exit(2)
+		}
 		if sample.Value.Kind() != metrics.KindUint64 {
 			continue
 		}
@@ -129,7 +142,7 @@ func measureGoroutineChurn() int64 {
 				defer group.Done()
 				var pad [512]byte
 				pad[0] = byte(done.Add(1))
-				sink = pad[0]
+				sink.Add(uint64(pad[0]))
 			}()
 		}
 		group.Wait()

@@ -75,18 +75,29 @@ func TestOverlayMovesTheRuntimeClassesItTargets(t *testing.T) {
 	upstream := run(false)
 	overlaid := run(true)
 
+	// Every class this test reasons about must be present in BOTH runs, and a class the toolchain
+	// does not publish must fail loudly instead of reading back as zero. The probe exits non-zero on
+	// an unknown name, so this loop is the second half of that guarantee: a metric that exists but
+	// was never printed is a probe change that would silently weaken the comparison below.
 	for _, key := range []string{
 		"/memory/classes/heap/stacks:bytes",
 		"/memory/classes/metadata/other:bytes",
+		"/memory/classes/heap/objects:bytes",
 	} {
-		if _, ok := upstream[key]; !ok {
-			t.Fatalf("the probe did not report %s", key)
+		for name, values := range map[string]map[string]int64{"upstream": upstream, "overlaid": overlaid} {
+			if _, ok := values[key]; !ok {
+				t.Fatalf("the %s run did not report %s; the comparison below would read zero for it", name, key)
+			}
 		}
+	}
+	if upstream["/memory/classes/heap/objects:bytes"] == 0 {
+		t.Fatalf("the upstream run reported no live object heap; the probe did not measure, so nothing here " +
+			"can be attributed to the overlay")
 	}
 	t.Logf("stack residency   : %d bytes upstream -> %d bytes overlaid", upstream["/memory/classes/heap/stacks:bytes"], overlaid["/memory/classes/heap/stacks:bytes"])
 	t.Logf("span-set metadata : %d bytes upstream -> %d bytes overlaid", upstream["/memory/classes/metadata/other:bytes"], overlaid["/memory/classes/metadata/other:bytes"])
 	t.Logf("mspan metadata    : %d bytes upstream -> %d bytes overlaid", upstream["/memory/classes/metadata/mspan/inuse:bytes"], overlaid["/memory/classes/metadata/mspan/inuse:bytes"])
-	t.Logf("heap in use       : %d bytes upstream -> %d bytes overlaid", upstream["/memory/classes/heap/inuse:bytes"], overlaid["/memory/classes/heap/inuse:bytes"])
+	t.Logf("live object heap  : %d bytes upstream -> %d bytes overlaid", upstream["/memory/classes/heap/objects:bytes"], overlaid["/memory/classes/heap/objects:bytes"])
 	t.Logf("goroutine churn   : %d ns/goroutine upstream -> %d ns/goroutine overlaid", upstream["churnPerGoroutineNs"], overlaid["churnPerGoroutineNs"])
 	t.Logf("goroutines        : %d upstream -> %d overlaid", upstream["goroutines"], overlaid["goroutines"])
 

@@ -63,7 +63,15 @@ func TestOverlayCompilesForEveryAppleSlice(t *testing.T) {
 			// files, so without the tag each build would compile the toolchain-equivalent file and
 			// the assembly edits would go unexercised. The `!ios` file's compilability is covered by
 			// TestProductOverlayCompilesForTheShippedSlices, which uses the real constraints.
-			args := []string{"build", "-overlay=" + overlay.JSONPath, "-tags", plan.onConstraint()}
+			//
+			// The slice's own tags are appended to the probe tag rather than only printed. They used
+			// to be used in the failure message alone, so the tvOS row tested a build that was not
+			// tagged `tvos` at all - the row claimed coverage it never had.
+			tags := plan.onConstraint()
+			if slice.tags != "" {
+				tags += "," + slice.tags
+			}
+			args := []string{"build", "-overlay=" + overlay.JSONPath, "-tags", tags}
 			args = append(args, "runtime")
 			command := exec.Command(goBinary, args...)
 			command.Dir = repoRoot(t)

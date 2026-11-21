@@ -108,7 +108,7 @@ func spanAttack(rounds int) {
 		runtime.GC()
 		fmt.Printf("round.%d.metadata.other=%d\n", round, metric("/memory/classes/metadata/other:bytes"))
 		fmt.Printf("round.%d.mspan.inuse=%d\n", round, metric("/memory/classes/metadata/mspan/inuse:bytes"))
-		fmt.Printf("round.%d.heap.inuse=%d\n", round, metric("/memory/classes/heap/inuse:bytes"))
+		fmt.Printf("round.%d.heap.objects=%d\n", round, metric("/memory/classes/heap/objects:bytes"))
 	}
 	fmt.Printf("sink=%d\n", sink.Load())
 }
@@ -188,6 +188,12 @@ func traceAll() {
 func metric(name string) uint64 {
 	sample := []metrics.Sample{{Name: name}}
 	metrics.Read(sample)
+	if sample[0].Value.Kind() == metrics.KindBad {
+		// A name this toolchain does not publish used to read back as 0, which looked like a
+		// measurement of zero bytes. It is a bug in the probe.
+		fmt.Printf("invalidMetric=%s\n", name)
+		os.Exit(2)
+	}
 	if sample[0].Value.Kind() != metrics.KindUint64 {
 		return 0
 	}
