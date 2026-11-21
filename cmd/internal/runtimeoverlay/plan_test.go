@@ -124,8 +124,14 @@ func TestMarkerNamesEveryPlannedValue(t *testing.T) {
 }
 
 func TestSliceIsIOSFamily(t *testing.T) {
-	ios := []string{"ios-arm64", "ios-arm64_x86_64-simulator", "tvos-arm64", "tvos-arm64_x86_64-simulator"}
-	notIOS := []string{"macos-arm64", "macos-arm64_x86_64", "maccatalyst-arm64", "xros-arm64"}
+	// maccatalyst compiles the `ios` tag (gomobile tags it ios,macos,maccatalyst), so it belongs in
+	// the family the marker is expected in; tvos and both simulators likewise.
+	catalyst := "maccatalyst-arm64"
+	if !SliceIsIOSFamily(catalyst) {
+		t.Fatalf("%s compiles the ios build constraint and must be expected to carry the marker", catalyst)
+	}
+	ios := []string{"ios-arm64", "ios-arm64_x86_64-simulator", "tvos-arm64", "tvos-arm64_x86_64-simulator", catalyst}
+	notIOS := []string{"macos-arm64", "macos-arm64_x86_64", "xros-arm64"}
 	for _, slice := range ios {
 		if !SliceIsIOSFamily(slice) {
 			t.Fatalf("%s must be an iOS-family slice", slice)
@@ -135,6 +141,11 @@ func TestSliceIsIOSFamily(t *testing.T) {
 		if SliceIsIOSFamily(slice) {
 			t.Fatalf("%s must NOT be treated as an iOS-family slice: the marker check would fail to notice a leak", slice)
 		}
+	}
+	// A Catalyst-only build is not a target this overlay was measured on, so it resolves to base
+	// even though a Catalyst SLICE in a mixed build does compile the overlay.
+	if HasIOSFamilyPlatform("maccatalyst/arm64") {
+		t.Fatal("a maccatalyst-only target must not acquire the overlay: that target has never been measured")
 	}
 }
 

@@ -279,15 +279,26 @@ func SplitTargetPlatforms(bindTarget string) []string {
 	return platforms
 }
 
-// SliceIsIOSFamily reports whether an xcframework slice directory name belongs to the
-// iOS family. The slice name is chosen by the toolchain (ios-arm64,
-// ios-arm64_x86_64-simulator, tvos-arm64, macos-arm64, ...), so this asks about the prefix the
-// toolchain emits rather than about a list of slices this repository happens to build: an
-// unexpected slice name must fail the marker check, not escape it.
+// SliceIsIOSFamily reports whether an xcframework slice directory name compiles the `ios` build
+// constraint, which is what decides whether the overlay is expected in it.
+//
+// The slice name is chosen by the toolchain (ios-arm64, ios-arm64_x86_64-simulator, tvos-arm64,
+// maccatalyst-arm64, macos-arm64, ...), so this asks about the prefix the toolchain emits rather
+// than about a list of slices this repository happens to build: an unexpected name must fail the
+// marker check, not escape it.
+//
+// maccatalyst is in this set because gomobile tags it `ios,macos,maccatalyst`
+// (cmd/gomobile/env.go:107), so a Catalyst slice that shares a build with an iOS slice DOES compile
+// the overlay's values and does carry the marker. Leaving it out would not make Catalyst safer; it
+// would make a Catalyst build fail with a "leaked constraint" message that is not true.
+// HasIOSFamilyPlatform deliberately does NOT include it: a Catalyst-only build compiles the
+// toolchain's runtime, because that target has never been measured.
 func SliceIsIOSFamily(slice string) bool {
 	lower := strings.ToLower(slice)
-	return strings.HasPrefix(lower, "ios-") ||
-		strings.HasPrefix(lower, "ios_") ||
-		strings.HasPrefix(lower, "tvos-") ||
-		strings.HasPrefix(lower, "tvos_")
+	for _, family := range []string{"ios-", "ios_", "tvos-", "tvos_", "maccatalyst-"} {
+		if strings.HasPrefix(lower, family) {
+			return true
+		}
+	}
+	return false
 }
