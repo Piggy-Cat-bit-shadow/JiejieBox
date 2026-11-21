@@ -105,6 +105,61 @@ func TestGroupBReleasesTheExtraMOfAThreadThatStopsCallingGo(t *testing.T) {
 	}
 }
 
+// The combination neither group's own test covers: group B's foreign threads calling into Go while
+// group A3 retires goroutines, with a traceback and a GC in the middle of it. Both changes are
+// invisible to each other in isolation - one owns m/g0/TLS, the other owns g stacks - so the only
+// way to know they compose is to make them run at the same time, under the one runtime that has
+// both, and check the callbacks still agree.
+func TestGroupsAAndBComposeUnderLoad(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the combination phase builds and runs a cgo program; -short skips it")
+	}
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("group B needs a pthread platform")
+	}
+	goBinary := goBinary(t)
+	plan, overlay, _ := buildOverlayForTest(t, ModeBoth)
+	if !plan.groupB() || plan.Params.FreeExitedStackBacklog == 0 {
+		t.Fatalf("this plan does not enable both groups: %+v", plan.Params)
+	}
+	probeDir := filepath.Join(t.TempDir(), "bprobe")
+	if err := os.MkdirAll(probeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.ReadFile(filepath.Join("testdata", "bprobe", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(probeDir, "main.go"), source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(probeDir, "go.mod"), []byte("module runtimeoverlaybprobe\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(goBinary, "run", "-overlay="+overlay.JSONPath, "-tags", plan.onConstraint(), ".")
+	command.Dir = probeDir
+	command.Env = append(os.Environ(),
+		"CGO_ENABLED=1", "GOFLAGS=", "GOTOOLCHAIN=local",
+		"BPROBE_THREADS=16", "BPROBE_GOMAXPROCS=4", "BPROBE_MIXED=1",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the combined probe failed: %v\n%s", err, output)
+	}
+	values := parseUintProbeOutput(t, string(output))
+	if values["done"] != 1 {
+		t.Fatalf("the combined probe did not finish: %+v", values)
+	}
+	for _, field := range []string{"parked.errors", "after.errors", "churn.errors", "mixed.errors"} {
+		if values[field] != 0 {
+			t.Fatalf("%s is %d: a call returned the wrong answer while the other group was changing the "+
+				"runtime underneath it\n%s", field, values[field], output)
+		}
+	}
+	t.Logf("mixed phase: %d bytes of stack resident with 8 foreign threads in Go and goroutines "+
+		"retiring under a GC + traceback", values["mixed.stacks"])
+}
+
 // parseUintProbeOutput reads key=value lines of unsigned integers.
 func parseUintProbeOutput(t *testing.T, output string) map[string]uint64 {
 	t.Helper()

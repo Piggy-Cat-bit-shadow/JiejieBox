@@ -105,6 +105,7 @@ import (
 	"runtime"
 	"runtime/metrics"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -181,6 +182,65 @@ func main() {
 	fmt.Printf("churn.nsPerCall=%d\n", churnElapsed.Nanoseconds()/(8*churnCalls))
 	afterChurn := readMemory()
 	fmt.Printf("churn.stacks=%d\n", afterChurn["/memory/classes/heap/stacks:bytes"])
+
+	// The combination phase: group B's foreign threads calling in WHILE group A3 retires
+	// goroutines, with a traceback and a GC in the middle. This is the pairing that neither group's
+	// own test covers - a callback returning as its m is dropped, concurrent with a P freeing stack
+	// spans, concurrent with a GC walking both.
+	if os.Getenv("BPROBE_MIXED") != "" {
+		mixedPhase()
+	}
+	fmt.Println("done=1")
+}
+
+func mixedPhase() {
+	C.reset_errors()
+	if C.spawn_churning(8) != 0 {
+		fmt.Println("spawnFailed=1")
+		os.Exit(1)
+	}
+	for round := 0; round < 40; round++ {
+		var group sync.WaitGroup
+		for index := 0; index < 32; index++ {
+			group.Add(1)
+			go func(index int) {
+				defer group.Done()
+				deep(index % 7 * 40)
+			}(index)
+		}
+		group.Wait()
+		if round%8 == 0 {
+			// A traceback walks every live goroutine while foreign threads are inside Go, and a GC
+			// runs across the callbacks: if an m or a stack were being released at the wrong moment,
+			// this is where it would be read.
+			traceEveryGoroutine()
+			runtime.GC()
+		}
+	}
+	C.join_all()
+	fmt.Printf("mixed.errors=%d\n", int(C.error_count()))
+	fmt.Printf("mixed.stacks=%d\n", readMemory()["/memory/classes/heap/stacks:bytes"])
+}
+
+//go:noinline
+func deep(depth int) {
+	var frame [256]byte
+	frame[0] = byte(depth)
+	frame[len(frame)-1] = byte(depth >> 3)
+	if depth == 0 {
+		return
+	}
+	deep(depth - 1)
+}
+
+func traceEveryGoroutine() {
+	buffer := make([]byte, 1<<20)
+	for {
+		if runtime.Stack(buffer, true) < len(buffer) {
+			return
+		}
+		buffer = make([]byte, len(buffer)*2)
+	}
 }
 
 func readMemory() map[string]uint64 {
