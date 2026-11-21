@@ -309,7 +309,13 @@ The push gate and the Apple pipeline ran on the commits this document describes:
 
   and the same run's `macos` job built and linked the macOS app against that framework.
 
-* The packed artifact of that run (`Libbox.xcframework.tar.gz`,
+* `Apple client` [run 44866303276](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44866303276)
+  on `e9690ad4b`, which is the last commit that touches a compiled file (everything after it is this
+  document): all four jobs green - `libbox` 10m16s with the same marker evidence, `ios` 11m34s and
+  `macos` 15m22s building both apps against that framework, `ios-selfsign` skipped by the dispatch
+  input.
+
+* The packed artifact of the earlier run (`Libbox.xcframework.tar.gz`,
   `f471d17c99f3166a3f72d0239a0b567c9f18238e37a17e7b180007c7fbc7a549`, `BUILD-INFO` recording
   `runtime_overlay: small` / `runtime_overlay_go: go1.27.4`) was downloaded, extracted, and re-checked
   by this package on a different machine, independently of the pipeline's own check:
@@ -324,6 +330,10 @@ The push gate and the Apple pipeline ran on the commits this document describes:
 
 That is "the overlay is in the iOS arm64 slice of the artifact the release would ship, and the macOS
 slice kept the official runtime", proven on the bytes rather than on the build log.
+
+Every push to this branch re-runs the push gate, so the documentation-only commits after
+`e9690ad4b` each have their own green `Verify` run; they change no compiled file, which is why the
+Apple pipeline was not re-dispatched for them.
 
 The pin's portability was checked the same way: the five runtime files hash identically in the
 `linux-amd64`, `darwin-arm64` and `windows-amd64` archives of Go 1.27.4, so one digest set covers
