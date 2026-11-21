@@ -59,12 +59,11 @@ func TestOverlayCompilesForEveryAppleSlice(t *testing.T) {
 	for _, mode := range []Mode{ModeSmall, ModeBoth} {
 		plan, overlay, _ := buildOverlayForTest(t, mode)
 		for _, slice := range targets {
-			args := []string{"build", "-overlay=" + overlay.JSONPath}
-			if plan.offConstraint() != "!ios" || slice.goos == "ios" {
-				// The probe retags the added files, so the tag must be selected explicitly for
-				// every target that should compile the overlay's values.
-				args = append(args, "-tags", plan.onConstraint())
-			}
+			// Every target selects the overlay's values explicitly: the probe retags both added
+			// files, so without the tag each build would compile the toolchain-equivalent file and
+			// the assembly edits would go unexercised. The `!ios` file's compilability is covered by
+			// TestProductOverlayCompilesForTheShippedSlices, which uses the real constraints.
+			args := []string{"build", "-overlay=" + overlay.JSONPath, "-tags", plan.onConstraint()}
 			args = append(args, "runtime")
 			command := exec.Command(goBinary, args...)
 			command.Dir = repoRoot(t)
