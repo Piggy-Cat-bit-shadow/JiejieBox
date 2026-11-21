@@ -66,6 +66,12 @@ on:
       # cmd/internal/build_shared; a change there must rebuild and re-test the daemon.
       - "cmd/internal/build_shared/**"
       - "cmd/internal/build_boxdd/**"
+      # The memory ledger and its budget gate live in this workflow, so a change to the instrument,
+      # to the budget it evaluates against, or to the study driver has to run it. Without these a
+      # tightened budget or a changed gate merges without ever being executed (measured: a commit
+      # touching only cmd/internal/memorystudy/** did not trigger this workflow).
+      - "cmd/internal/memorystudy/**"
+      - "scripts/dev/memory-study*"
       - "release/DEFAULT_BUILD_TAGS_WINDOWS"
       - "release/JIEJIE_VERSION"
       - ".github/workflows/windows-boxdd-tests.yml"
@@ -74,6 +80,8 @@ on:
       - "experimental/boxdd/**"
       - "cmd/internal/build_shared/**"
       - "cmd/internal/build_boxdd/**"
+      - "cmd/internal/memorystudy/**"
+      - "scripts/dev/memory-study*"
       - "release/DEFAULT_BUILD_TAGS_WINDOWS"
   workflow_dispatch:
 
@@ -120,11 +128,51 @@ jobs:
           $tags = (Get-Content -LiteralPath release/DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim() + ',with_purego'
           go build -tags $tags -o "$env:RUNNER_TEMP\memorystudy.exe" ./cmd/internal/memorystudy
 
+      - name: prove the gate can fail
+        shell: pwsh
+        run: |
+          # A gate that has never failed is not evidence that it can. The canary is a budget whose
+          # single REQUIRED rule asks for a metric nothing produces, so the rule must report failed
+          # evidence (not "skipped"), and the exit code must be non-zero: a zero exit here means the
+          # evaluator, the ledger reader or the failure path regressed into "always green".
+          $ErrorActionPreference = 'Stop'
+          $canary = Join-Path $env:RUNNER_TEMP "budget-impossible.json"
+          $canaryBudget = @{
+            schema_version = 'memorystudy-budget/1'
+            baseline       = @{ goos = 'windows'; goarch = 'amd64' }
+            rules          = @(
+              @{
+                id          = 'canary-impossible'
+                description = 'canary: required evidence that nothing produces must FAIL the gate'
+                case        = 'empty'
+                nodes       = 0
+                groups      = 0
+                node_proto  = 'direct'
+                gc_mode     = 'forced'
+                stage       = 'close'
+                metric      = 'readings.this_metric_does_not_exist'
+                max         = 1
+                required    = $true
+              }
+            )
+          }
+          $canaryBudget | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $canary -Encoding utf8
+          & "$env:RUNNER_TEMP\memorystudy.exe" -gate -runs 1 `
+              -output "$env:RUNNER_TEMP\canary-gate.jsonl" `
+              -budget $canary
+          if ($LASTEXITCODE -eq 0) {
+            throw "the canary budget PASSED: the gate can no longer fail, so every other verdict is worthless"
+          }
+          Write-Output "canary failed as required (exit $LASTEXITCODE)"
+
       - name: evaluate the budget
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:RUNNER_TEMP\memorystudy.exe" -gate -runs 1 `
+          # Three repetitions: the checked-in budget's baseline was derived from three, and the
+          # thresholds are per-repetition. One run against a three-run baseline is a different
+          # measurement (measured: 1 of 3 repetitions kept still reported 17 pass).
+          & "$env:RUNNER_TEMP\memorystudy.exe" -gate -runs 3 `
               -output "$env:RUNNER_TEMP\memory-gate.jsonl" `
               -budget cmd\internal\memorystudy\testdata\budget.json
           if ($LASTEXITCODE -ne 0) {
