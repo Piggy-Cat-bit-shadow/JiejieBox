@@ -111,6 +111,22 @@ and a 16 KiB stack (order 3) stops fitting the small-stack path and takes a page
 is upstream's documented intent for large stacks. macOS keeps 32 KiB because it compiles the `!ios`
 file.
 
+**This value is not a free parameter, and the compiler cannot tell.** Two runtime invariants bound
+it, both of which a plausible-looking number violates:
+
+* `stackinit` throws `"cache size must be a multiple of page size"` before `main` if
+  `_StackCacheSize & (physPageSize-1) != 0`. On every Apple arm64 target `physPageSize` is 16 KiB.
+  During the measurement round **8 KiB measured best** on this amd64 host, whose pages are 4 KiB -
+  and 8 KiB would have crashed every single iOS launch.
+* `stackpoolalloc` cuts one `_StackCacheSize` run of pages into `fixedStack<<order` stacks with
+  `for i := 0; i < _StackCacheSize; i += elemsize`. A block size that is not a multiple of every
+  reachable element size leaves the last stack straddling the end of its span, which is silent heap
+  corruption rather than a throw.
+
+`Params.Validate` refuses both, at generation time, with the reason; `TestParamsRejectValuesThatCompileAndThenThrow`
+pins the refusals and `TestGenerateRefusesAPlanWhoseStackCacheWouldThrow` proves the second entry
+point (`Generate`, which a caller can reach with a hand-built plan) checks too.
+
 ### 3.3 A3 - exited goroutine stacks (`src/runtime/proc.go`, `gfput`)
 
 Upstream:
@@ -338,6 +354,31 @@ Apple pipeline was not re-dispatched for them.
 The pin's portability was checked the same way: the five runtime files hash identically in the
 `linux-amd64`, `darwin-arm64` and `windows-amd64` archives of Go 1.27.4, so one digest set covers
 every machine this build runs on.
+
+### 4.7 Attack probes (added in the debug round)
+
+The measurements in §4.2-§4.4 answer "does it move the number". These answer "does it break when it
+is hit", and each was written as an attack on a specific invariant rather than as another happy-path
+run.
+
+| Probe | What it attacks | Result |
+|---|---|---|
+| `testdata/stress` mode `span`, at `GOMAXPROCS` 1/2/4/8 | 34 size classes × 24 repeats × twice the P count, so one size class accumulates far more spans than a 32-entry block holds, then everything is freed and collected, four rounds. Attacks the block-full/block-free path, spine doubling, and `pop`'s "claim the head, then read the span" race. | no corruption, no crash; `metadata/other` stable round over round at every P count (1.6-1.8 MiB, the A1 target class) |
+| `testdata/stress` mode `stack` | 30 rounds × 64 goroutines at ten different stack histories (0..240 frames deep), with `runtime.Stack(buf, true)` and a GC every four rounds. Attacks the freed-stack-while-traced case, the grow-then-free case, and the residency trend (a leak shows as growth that does not come back). | settled 393 KiB overlaid against 623 KiB on the toolchain runtime, and 376 KiB at round 29 - no upward trend, no crash |
+| `TestBuildCacheCannotServeTheOtherMode` | Alternates the overlay on/off to the SAME output path (`on, off, on, off`) and scans each binary. Attacks the assumption that the cache keys on the overlay's content. | the marker follows the flag every time; a stale runtime package cannot answer for the other mode |
+| `TestGroupsAAndBComposeUnderLoad` (`testdata/bprobe` `BPROBE_MIXED=1`) | 8 foreign pthreads calling into Go (12 000 calls) while 40 rounds × 32 goroutines retire under a traceback and a GC. The pairing neither group's own test covers: B owns `m`/`g0`/TLS, A3 owns `g` stacks, and both run in one runtime here. | every callback returned the value its C thread expected; 835 KiB resident during the mix |
+| `TestAnUnexpectedSliceDirectoryCannotEscapeTheCheck` | An xcframework directory whose name does not look like a slice, carrying a marker. | fails and names the directory (was silently skipped before) |
+| `TestCheckGoFlagsHasNoOverlay` / `TestPrepare...` | `GOFLAGS` carrying `-overlay`, and `GOFLAGS` appearing twice. | both refused, with the reason |
+
+Two of those found real defects in this subsystem rather than confirming it:
+
+* the slice check filtered directories by name shape, so an unexpected directory was never
+  inspected - a slice nobody looks at is a slice whose leaked marker cannot fail the build;
+* `CheckGoFlagsHasNoOverlay` read the first `GOFLAGS` entry and ignored the rest. `execve` keeps
+  duplicates and the go command reads the first, so a second assignment - from a wrapper, a CI `env:`
+  block, or the test itself - is silently dead. The test that pointed at it passed on the host with
+  no inherited `GOFLAGS` and failed on the host that exported an empty one, which is exactly the
+  direction a real CI would have taken.
 
 ## 5. What is deliberately NOT part of this
 
