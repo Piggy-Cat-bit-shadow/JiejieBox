@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/receivebudget"
 	"github.com/sagernet/sing-box/common/resourceguard"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -195,11 +196,16 @@ func newTransportSpec(ctx context.Context, label string, options option.MieruOut
 	if err != nil {
 		return nil, err
 	}
+	// The box's unread-payload budget travels in the construction context, exactly like the process
+	// admission policy below it. A box that installed none leaves the zero policy, which disables the
+	// mechanism and keeps this outbound byte-for-byte what it was before the budget existed.
+	budget, _ := receivebudget.FromContext(ctx)
 	return &transportSpec{
 		label:    label,
 		options:  options,
 		dialer:   rawDialer,
 		resolver: resolver,
+		budget:   budget,
 		// The process admission policy travels with the spec so the underlay adapter - the seam
 		// where the SDK's newUnderlay becomes a real socket - can bound its creation. It is nil on
 		// every platform without a budget, which keeps the old path.
@@ -293,6 +299,12 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	h.access.Unlock()
 	if closedDuringStart {
 		return E.New("mieru: outbound was closed while starting")
+	}
+	// The budget is a per-Box decision the operator cannot see in the outbound's JSON, so it is
+	// reported once, next to the client it applies to. The verdict is computed from the same parsed
+	// profile the client was built with, so the sentence and the enforcement cannot disagree.
+	if budget := h.primarySpec.budget; budget.UnreadPayloadBytes > 0 {
+		h.logger.Info("mieru receive budget ", budget.String(), receiveBudgetVerdict(h.primarySpec.options))
 	}
 	if fallbackEnabled {
 		h.logger.Info("mieru client started (fallback ", fallbackTransport, " enabled)")

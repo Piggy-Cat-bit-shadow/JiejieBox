@@ -18,6 +18,7 @@ import (
 	mierutp "github.com/enfein/mieru/v3/apis/trafficpattern"
 	mierucommon "github.com/enfein/mieru/v3/pkg/appctl/appctlcommon"
 	mierupb "github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
+	mieruprotocol "github.com/enfein/mieru/v3/pkg/protocol"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -352,6 +353,11 @@ func buildClientConfig(options option.MieruOutboundOptions, dialer apicommon.Dia
 // connection - parking it for one slow session would stall the others, which is the failure mode the
 // whole mechanism exists to avoid. A budget that cannot be honoured is not written at all, rather
 // than written and silently ignored.
+//
+// A positive value below the protocol's minimum is the one case that is neither honourable nor
+// refusable: Client.Store rejects it, and that rejection would turn a memory-tuning number into an
+// outbound that cannot be constructed at all. The smallest quota the protocol can enforce is used
+// instead, so the bound stays real and the tightest usable window is what an operator gets.
 func applyReceiveBudget(config *mieruclient.ClientConfig, budget receivebudget.Policy) bool {
 	if config == nil || config.Profile == nil || budget.UnreadPayloadBytes <= 0 {
 		return false
@@ -359,7 +365,11 @@ func applyReceiveBudget(config *mieruclient.ClientConfig, budget receivebudget.P
 	if config.Profile.GetMultiplexing().GetLevel() != mierupb.MultiplexingLevel_MULTIPLEXING_OFF {
 		return false
 	}
-	config.ReceiveByteQuota = budget.UnreadPayloadBytes
+	quota := budget.UnreadPayloadBytes
+	if quota < mieruprotocol.MinReceiveByteQuota {
+		quota = mieruprotocol.MinReceiveByteQuota
+	}
+	config.ReceiveByteQuota = quota
 	return true
 }
 
