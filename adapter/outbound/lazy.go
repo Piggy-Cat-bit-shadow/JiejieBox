@@ -151,7 +151,18 @@ type LazyOutbound[T any] struct {
 	builds int
 	// dialing counts hand-offs that are using the runtime right now. Eviction refuses while it is
 	// non-zero, so an expansion cannot be released under a dial that already obtained it.
+	//
+	// It is NOT the manager's lease. An outbound acquired through Manager.AcquireOutbound and held
+	// across a connection's life does not move this counter, so an eviction owner must take that
+	// lease into account itself (see Evict's contract). Closing that gap means teaching the manager
+	// lease to reach the object, which is a manager-contract change and deliberately not made here.
 	dialing int
+	// closing distinguishes a Close-in-flight retirement from an Evict-in-flight one. Both use
+	// LazyStateRetiring while their resources are being torn down, but only one of them is allowed
+	// to leave the object revivable: without this, a Close that lands inside Evict's unlocked
+	// teardown window returns nil and the node is rebuilt on the next demand - a terminal state that
+	// silently un-terminates itself.
+	closing bool
 	// highestStage is the furthest start stage the MANAGER has run on this object. A build that
 	// happens later replays every stage the manager already reached, exactly as Replace does for a
 	// replacement created after Start finished.
@@ -288,7 +299,14 @@ func (lz *LazyOutbound[T]) ListenPacket(ctx context.Context, destination M.Socks
 func (lz *LazyOutbound[T]) Close() error {
 	lz.access.Lock()
 	switch lz.state {
-	case LazyStateClosed, LazyStateRetiring:
+	case LazyStateClosed:
+		lz.access.Unlock()
+		return nil
+	case LazyStateRetiring:
+		// Two retirements share this state. If this Close started it, the teardown in flight will
+		// land on closed. If an EVICTION started it, this Close must still be terminal: mark it so
+		// the eviction's tail settles on closed instead of putting the node back to never-built.
+		lz.closing = true
 		lz.access.Unlock()
 		return nil
 	case LazyStateBuilding:
@@ -296,6 +314,7 @@ func (lz *LazyOutbound[T]) Close() error {
 		// builder that ignores its context cannot publish: buildRuntime checks `late` under this same
 		// lock before it assigns the runtime.
 		lz.state = LazyStateRetiring
+		lz.closing = true
 		cancel := lz.cancel
 		lz.access.Unlock()
 		if cancel != nil {
@@ -304,6 +323,7 @@ func (lz *LazyOutbound[T]) Close() error {
 		return nil
 	case LazyStateReady:
 		lz.state = LazyStateRetiring
+		lz.closing = true
 		runtime := lz.runtime
 		scope := lz.buildScope
 		cancel := lz.cancel
@@ -339,9 +359,17 @@ func (lz *LazyOutbound[T]) Close() error {
 // expanded again by the next demand - that is the whole point of eviction being safe here: a
 // recipe can always rebuild, and nothing about the expansion is an identity the caller holds.
 //
+// # What the caller must guarantee, and why this method cannot check it
+//
 // It must only be called for a protocol whose expansion holds no resource that outlives the
 // hand-off beyond what its Start registered on the scope (a pooled transport or multiplexer would
 // have to be drained first). The Trojan prototype satisfies that; the type does not enforce it.
+//
+// It must also only be called when no MANAGER lease is outstanding for this object. `dialing` covers
+// a hand-off in flight, not a connection that was handed out and is still open: Manager's lease
+// (`AcquireOutbound`) lives in the manager, and this type cannot see it. Until that lease reaches
+// the object - a manager-contract change, not a local fix - the eviction owner is the only place
+// that can respect it, and an owner that ignores it can close an expansion under a live connection.
 func (lz *LazyOutbound[T]) Evict() bool {
 	lz.access.Lock()
 	if lz.state != LazyStateReady || lz.dialing > 0 {
@@ -367,7 +395,13 @@ func (lz *LazyOutbound[T]) Evict() bool {
 	}
 	lz.access.Lock()
 	if lz.state == LazyStateRetiring {
-		lz.state = LazyStateNeverBuilt
+		// A Close that landed inside the teardown window wins: the object is terminal, and the next
+		// demand must not resurrect it.
+		if lz.closing {
+			lz.state = LazyStateClosed
+		} else {
+			lz.state = LazyStateNeverBuilt
+		}
 	}
 	lz.access.Unlock()
 	return true
@@ -387,6 +421,12 @@ func (lz *LazyOutbound[T]) acquireRuntime(ctx context.Context) (adapter.Outbound
 			lz.access.Unlock()
 			return runtime, nil
 		case LazyStateClosed, LazyStateRetiring:
+			// A demand that arrives while an eviction is tearing the expansion down is refused
+			// rather than made to wait: the eviction's teardown is the caller's to bound, and a
+			// demand parked behind it would turn a slow teardown into a stalled dial. The cost is
+			// that this narrow window rejects a demand for an object that is about to become
+			// buildable again; the next demand rebuilds. An eviction owner that cannot tolerate that
+			// has to retire through the manager, which can refuse to evict under a lease.
 			lz.access.Unlock()
 			return nil, os.ErrClosed
 		case LazyStateBuilding:
@@ -511,6 +551,10 @@ func (lz *LazyOutbound[T]) buildRuntime(lifetime context.Context, recipe T, buil
 			// Release whatever the partial start registered. A failed build must not leak, and a
 			// late build must not stay alive behind a closed node.
 			_ = buildScope.Close()
+		} else if late {
+			// A late result that registered nothing on a scope has no teardown to run, so close it
+			// the way the eager path would. Discarding it without Close is the leak this branch had.
+			_ = common.Close(runtime)
 		}
 		if late {
 			return nil, os.ErrClosed
