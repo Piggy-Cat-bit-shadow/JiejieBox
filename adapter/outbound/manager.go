@@ -26,6 +26,15 @@ type Manager struct {
 	// cannot interleave with another update or with the start itself. access still guards the
 	// maps and the slice; mutation is the coarser lock around "decide, construct, publish".
 	mutation sync.Mutex
+	// createAccess serialises Manager.Create against Manager.Start. It exists because Create must
+	// run the start stages of an object it publishes AFTER the manager has started, yet it must not
+	// take mutation to do it: mutation is held across a teardown (Remove and Release call release
+	// inside it), so a parked cleanup in one node would make every publication wait. Start takes
+	// mutation and then this lock for its whole body, which is exactly the serialisation Create
+	// needs: Start snapshots the published list and starts every member at the stage it reached, so
+	// a Create that published in between would be started twice at that stage. Lock order is
+	// mutation -> createAccess -> access; Create takes only createAccess, never mutation.
+	createAccess sync.Mutex
 	// graphAccess serialises every publication that can ADD an edge to the outbound graph: a node
 	// replacement, a removal's dependent scan, and a group's membership publication. It is
 	// deliberately narrower than mutation - Start holds mutation for its whole body, and a group's
@@ -281,6 +290,10 @@ func (m *Manager) Initialize(defaultOutboundFallback func() (adapter.Outbound, e
 func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	m.mutation.Lock()
 	defer m.mutation.Unlock()
+	// Also serialise Create: see createAccess. Held for the whole body so a late publication can
+	// neither be started twice by the loop below nor miss the stage this call installed.
+	m.createAccess.Lock()
+	defer m.createAccess.Unlock()
 	m.stage = stage
 	if m.lifecycle == nil {
 		m.lifecycle = adapter.NewLifecycleGroup(scope)
@@ -771,12 +784,46 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	if err != nil {
 		return err
 	}
+	// A manager that has already run a start stage must start a newly created object through the same
+	// stages, exactly as Replace does for a replacement. Two defects live in the alternative:
+	//
+	//   - the object never receives Start at all (an eager object created after startup is never
+	//     initialised), and
+	//   - it never enters the LifecycleGroup, so Manager.release has no scope to drain for it and
+	//     silently leaves its resources behind: LifecycleGroup.Remove returns nil for a component it
+	//     does not own, and release never falls back to a direct close.
+	//
+	// The lock is createAccess rather than mutation, and that is load bearing: mutation is held across
+	// a teardown, so taking it here would make a publication wait for an unrelated node's cleanup
+	// (MEASURED by TestAttackTeardownSerializationBoundary: Create parked behind a parked
+	// Remove). createAccess still serialises this function against Manager.Start, which owns the
+	// stage progression, and the start runs before publication so no dial observes an unstarted
+	// object.
+	m.createAccess.Lock()
+	defer m.createAccess.Unlock()
+	if m.lifecycle != nil {
+		if lifecycle, isLifecycle := outbound.(adapter.Lifecycle); isLifecycle {
+			name := "outbound/" + outbound.Type() + "[" + tag + "]"
+			for _, stage := range adapter.ListStartStages {
+				if stage > m.stage {
+					break
+				}
+				if err = m.lifecycle.Start(name, lifecycle, stage); err != nil {
+					// The partial start must not leak; the object was never published. Remove drains
+					// the scope it registered and closes what had started.
+					return E.Errors(err, m.lifecycle.Remove(lifecycle))
+				}
+			}
+		}
+	}
 	m.access.Lock()
-	defer m.access.Unlock()
 	// Re-check under the lock: the constructor runs outside it, so another goroutine may have
 	// installed this tag meanwhile. The loser releases what it built rather than leaking it.
 	if _, loaded := m.outboundByTag[tag]; loaded {
-		_ = common.Close(outbound)
+		m.access.Unlock()
+		// Released OUTSIDE m.access: m.release runs the object's teardown, and no cleanup may run with
+		// the namespace lock held (a cleanup that called back into the manager would deadlock).
+		m.release(outbound)
 		return E.New("outbound ", tag, " already exists")
 	}
 	m.outbounds = appendOutbound(m.outbounds, outbound)
@@ -784,6 +831,7 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
 	}
+	m.access.Unlock()
 	return nil
 }
 
@@ -1078,11 +1126,21 @@ func (m *Manager) leaseRelease(object adapter.Outbound) func() {
 }
 
 // releaseLease drops one in-flight user and closes the entry if it became closable.
+//
+// # Why this does NOT take mutation
+//
+// This is the DIAL COMPLETION path: every hand-off that obtained an object gives its lease back here.
+// mutation is held across a teardown (Remove and Release call release inside it), so taking it made a
+// dial that finished while ANY node was closing wait for that close. MEASURED deterministically
+// (TestAttackTeardownSerializationBoundary, a parked cleanup on one node): the release of an
+// UNRELATED object's hand-off was still blocked after 5 s. The count and the decision are made under
+// access, and the close is a teardown of an entry that is ALREADY out of the namespace, so neither
+// needs the verb lock: a concurrent Remove removed the tag before this entry existed as a retirement,
+// and the entry is marked released under access so exactly one caller closes it.
 func (m *Manager) releaseLease(object adapter.Outbound) {
 	if m == nil || object == nil {
 		return
 	}
-	m.mutation.Lock()
 	m.graphAccess.Lock()
 	m.access.Lock()
 	if count := m.users[object]; count > 1 {
@@ -1094,7 +1152,6 @@ func (m *Manager) releaseLease(object adapter.Outbound) {
 	if entry == nil || entry.released || m.users[object] != 0 || !entry.ready || m.externalReferenceLocked(entry.tag, entry.owner) {
 		m.access.Unlock()
 		m.graphAccess.Unlock()
-		m.mutation.Unlock()
 		return
 	}
 	entry.released = true
@@ -1106,7 +1163,6 @@ func (m *Manager) releaseLease(object adapter.Outbound) {
 	}
 	m.access.Unlock()
 	m.graphAccess.Unlock()
-	m.mutation.Unlock()
 	m.release(object)
 }
 

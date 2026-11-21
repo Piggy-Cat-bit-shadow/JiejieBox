@@ -45,9 +45,9 @@ func (g *LifecycleGroup) Start(name string, component Lifecycle, stage StartStag
 
 func (g *LifecycleGroup) Remove(component Lifecycle) error {
 	g.access.Lock()
-	defer g.access.Unlock()
 	scope := g.scopes[component]
 	if scope == nil {
+		g.access.Unlock()
 		return nil
 	}
 	delete(g.scopes, component)
@@ -57,6 +57,16 @@ func (g *LifecycleGroup) Remove(component Lifecycle) error {
 			break
 		}
 	}
+	g.access.Unlock()
+	// Close OUTSIDE the membership lock: this lock is taken by every Start and every Remove in the
+	// group, and Close runs the component's cleanups, which can park for as long as the component's
+	// teardown takes. Holding it across that drain made one slow node's teardown a global barrier:
+	// MEASURED (adapter/outbound, parked cleanup) a hand-off lease release for an UNRELATED object
+	// blocked in lifecycle.Remove waiting for this lock, so a dial completing during another node's
+	// teardown could not finish. The component is already out of the maps when the lock is dropped,
+	// so a concurrent Start for it would create a new scope rather than resume this one; the manager
+	// serialises Start and Remove for the same component itself (mutation, and createAccess for the
+	// late-publication path), so that resurrection is not reachable.
 	return scope.Close()
 }
 
