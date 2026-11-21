@@ -441,6 +441,10 @@ func (o *Overlay) ProvenanceLines() []string {
 		"runtime.overlay=" + string(o.Plan.Mode),
 		"runtime.overlay.go=" + o.Toolchain.GOVersion,
 		"runtime.overlay.goroot=" + o.Toolchain.GOROOT,
+		// The gomobile target the overlay was prepared for: it answers "which slices was this
+		// aimed at" without inferring it from the mode, which is the question a reader has when a
+		// framework has more slices than expected.
+		"runtime.overlay.bind_target=" + o.Plan.BindTarget,
 		"runtime.overlay.marker=" + o.Marker,
 	}
 	files := append([]GeneratedFile{}, o.Files...)
