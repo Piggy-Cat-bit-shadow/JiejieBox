@@ -210,14 +210,19 @@ jobs:
           fi
           echo "PASS: gofmt clean"
 
-      - name: a held flow costs one read buffer, not two
+      - name: a held flow and a half-closed flow both stay within their budget
         # The per-flow half of the memory census. `outbound_cold_cost_test.go` pins what a node that
-        # is configured and never dialled costs; this pins what a connection that IS held costs, at
-        # the geometry the artifact ships with: one `buf.BufferSize` read buffer plus 12 KiB of
-        # bookkeeping, two parked goroutines, and nothing left behind once the flows close.
+        # is configured and never dialled costs; these pin what a connection that IS held costs, at
+        # the geometry the artifact ships with, and that a flow which went through a half-close
+        # still delivers the other direction and releases like any other.
+        #
+        # The half-close half is here because an idle budget alone cannot see a broken relay:
+        # nothing is flowing, so nothing can be lost. A relay that turns CloseWrite into Close fails
+        # `TestAHalfClosedFlowStillDeliversTheOtherDirection` at the response, and one that forgets
+        # to propagate it fails at the EOF.
         #
         # Both geometries, because the budget is written in terms of `buf.BufferSize`: the default
-        # build is ~44 KiB per held flow and `with_low_memory` - what iOS and tvOS ship - is ~28 KiB.
+        # build is ~46 KiB per held flow and `with_low_memory` - what iOS and tvOS ship - is ~28 KiB.
         # A constant budget would be slack on one geometry and would hide a doubled buffer on the
         # other, which is the failure this exists to catch.
         #
@@ -225,8 +230,8 @@ jobs:
         # footprint, and what is measured here is the relay, not the tunnel device.
         run: |
           set -euo pipefail
-          go test -count=1 -timeout 300s -run 'TestAHeldConnectionStaysWithinItsBudget' -v .
-          go test -tags with_low_memory -count=1 -timeout 300s -run 'TestAHeldConnectionStaysWithinItsBudget' -v .
+          go test -count=1 -timeout 300s -run 'TestAHeldConnection|TestAHalfClosedFlow' -v .
+          go test -tags with_low_memory -count=1 -timeout 300s -run 'TestAHeldConnection|TestAHalfClosedFlow' -v .
 
       - name: client gitlinks match the ABI contract pins
         # The full libbox ABI gate needs cgo and the Darwin profile, so it runs in

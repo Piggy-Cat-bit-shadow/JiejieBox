@@ -78,4 +78,34 @@ inventory - and it is blocked on an environment that can run a Network Extension
 ```sh
 go test -count=1 -run TestAHeldConnectionStaysWithinItsBudget -v .
 go test -tags with_low_memory -count=1 -run TestAHeldConnectionStaysWithinItsBudget -v .
+go test -count=1 -run TestAHalfClosedFlowStillDeliversTheOtherDirection -v .
 ```
+
+## 6. The half-close gate, and why an idle budget cannot replace it
+
+`held_connection_cost_test.go` measures a connection that is held and **quiet**. That is the cheap
+state, and it is also the state in which a broken relay looks perfect: nothing is flowing, so nothing
+can be lost. `half_close_flow_test.go` covers the state a proxy is actually in every time an HTTP
+client finishes its request - the client half-closes, the server still has a response to send:
+
+```
+client writes a request, then CloseWrite  ->  destination sees the bytes and then EOF
+destination writes a response, then closes ->  client sees the bytes and then EOF
+```
+
+A relay that turns `CloseWrite` into a full `Close` fails at the response; one that forgets to
+propagate it fails at the EOF; one that leaks a copy fails the teardown check. None of the three
+would move a single byte of the idle budget. It passes on this tree, so it is a gate rather than a
+fix.
+
+## 7. What was audited and came back clean
+
+`common/httpclient/managed_transport.go` is the component the brief names for "closed must not
+resurrect", and it was read line by line for the epoch/close/reset race before anything was written.
+It already carries seven dedicated tests for exactly that invariant
+(`TestARequestAfterCloseDoesNotResurrectTheTransport`,
+`TestAResetAfterCloseDoesNotResurrectTheTransport`, `TestCloseIsIdempotentAndStillReportsOnce`, the
+`Reset`/epoch pair and the `CloseIdleConnections` pair), including the `closed` flag that makes
+"closed" a different answer from "not built yet" inside `rebuildAccess`. The `acquireEpoch` retry
+loop and the `marked`-before-`active` ordering in `retireEpoch` are both the correct shape. No defect
+found, and no test added: a second test for a covered invariant is maintenance, not evidence.
