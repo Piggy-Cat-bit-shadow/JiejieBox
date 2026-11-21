@@ -192,6 +192,7 @@ jobs:
             ./common/artifact ./common/badh2 ./common/badversion ./common/bufgeom \
             ./common/buildgate ./common/certificate ./common/configtx \
             ./common/convertor/adguard ./common/geosite ./common/interrupt \
+            ./common/quicpolicy ./common/receivebudget \
             ./common/runtimecoord ./common/sniff ./common/srs ./common/tlsfragment \
             ./common/trafficcontrol ./common/urltest \
             ./experimental/cachefile ./experimental/clashapi ./experimental/deprecated \
