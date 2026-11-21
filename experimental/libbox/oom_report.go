@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/common/trafficcontrol"
@@ -252,7 +254,23 @@ func writeWithoutColors(buffer *bytes.Buffer, message string) {
 	buffer.WriteString(message[start:])
 }
 
+// oomProfileDisabledNotice fires once per process when a report is written into a build whose linked
+// runtime startup policy disabled heap sampling.
+//
+// The shipped Apple policy now links `memprofilerate=0`, so `heap` and `allocs` are written and are
+// ALWAYS EMPTY. That is a deliberate trade, not a bug, and the one place it must not be silent is the
+// moment a post-mortem is produced: a reader who opens an empty heap profile has to be able to find
+// out why, without knowing which GODEBUG the framework was linked with.
+var oomProfileDisabledNotice sync.Once
+
 func writeOOMProfile(filePath string, name string) {
+	if runtime.MemProfileRate == 0 {
+		oomProfileDisabledNotice.Do(func() {
+			log.StdLogger().Warn("heap sampling is disabled at process start (linked runtime startup policy), " +
+				"so the OOM report's heap and allocs profiles are empty by design; a diagnostic build with " +
+				"memprofilerate=inherit records them")
+		})
+	}
 	err := oomprofile.WriteFile(filePath, name)
 	if err != nil {
 		return
