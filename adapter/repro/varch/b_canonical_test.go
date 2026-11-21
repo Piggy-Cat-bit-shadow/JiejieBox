@@ -1,3 +1,12 @@
+//go:build !with_naive_outbound
+
+// These tests decode the real mixed provider document with the product's own decoder, which needs the
+// full option registry (`include`). Under the `with_naive_outbound` profile that registry imports the
+// cronet native engine, and the Darwin tag profile that the race job uses cannot link its Linux
+// archive ("unknown architecture ... incompatible with i386:x86-64 output") - a property of the
+// native artifact, not of the code under test. The file is therefore excluded only from that profile;
+// the profile that actually ships on this host (DEFAULT_BUILD_TAGS_OTHERS, no naive) still runs it,
+// and the typed-value equivalence tests in this package run in every profile.
 package varch_test
 
 import (

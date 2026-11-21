@@ -1,3 +1,12 @@
+//go:build !with_naive_outbound
+
+// These tests decode the real mixed provider document with the product's own decoder, which needs the
+// full option registry (`include`). Under the `with_naive_outbound` profile that registry imports the
+// cronet native engine, and the Darwin tag profile that the race job uses cannot link its Linux
+// archive ("unknown architecture ... incompatible with i386:x86-64 output") - a property of the
+// native artifact, not of the code under test. The file is therefore excluded only from that profile;
+// the profile that actually ships on this host (DEFAULT_BUILD_TAGS_OTHERS, no naive) still runs it,
+// and the typed-value equivalence tests in this package run in every profile.
 // Package varch_test is the independent (non-author) reproduction/attack suite for the
 // B1/B2 architecture round. It is an external test package: it only uses exported API of
 // adapter, adapter/provider/nodestore and option, so it cannot accidentally agree with the
@@ -20,14 +29,6 @@ import (
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 )
-
-func evidenceRoot(t *testing.T) string {
-	t.Helper()
-	if root := os.Getenv("V_EVIDENCE"); root != "" {
-		return root
-	}
-	return `C:\Deepseek\JiejieBox-node-architecture-2026-11-22`
-}
 
 // decodeProviderFixture decodes the *actual bytes* the M fixture generator wrote for the
 // provider document (fixtures/mixed-provider-100/nodes.json) with the product's own decoder.
