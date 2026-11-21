@@ -56,9 +56,14 @@ const (
 	heldConnectionStackBudget = 32 << 10
 	// heldConnectionBookkeeping is what a held flow may cost on top of its one read buffer: the
 	// connection objects, the route snapshot, the SOCKS request, the cached reader's header, the
-	// timer and the two parked goroutines' bookkeeping. It is measured, not assumed - see the
-	// budget derivation below.
-	heldConnectionBookkeeping = 12 << 10
+	// timer and the two parked goroutines' bookkeeping.
+	//
+	// It is 14 KiB against a measured spread of about 90 bytes, because the residual is not the
+	// same on every platform: the same build measures 43.3 KiB per flow on Windows and 41.8 KiB on
+	// Linux, so a budget with 1.7 KiB of headroom would fail on a third platform for a reason that
+	// is not a regression. What the gate is for - a SECOND cached buffer, which adds 16 KiB on the
+	// mobile geometry and 32 KiB on the desktop one - is still caught with room to spare.
+	heldConnectionBookkeeping = 14 << 10
 	// heldConnectionGoroutineBudget is per connection. Two copies per held flow is the design; a
 	// third would mean a per-flow goroutine that is not the relay.
 	heldConnectionGoroutineBudget = 3.0
