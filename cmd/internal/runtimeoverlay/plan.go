@@ -225,11 +225,34 @@ type Plan struct {
 // the iOS-family runtime, a macOS-only framework must keep the official one, and silently
 // applying the edits to it is the leak this function's Enabled() check prevents.
 func Resolve(mode Mode, bindTarget string) (Plan, error) {
+	plan, err := planForMode(mode)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.BindTarget = bindTarget
+	if !HasIOSFamilyPlatform(bindTarget) {
+		// Not an error: `-platform macos/arm64` is a legitimate local build, and the honest
+		// answer for it is the official runtime. What must not happen is an iOS-family build
+		// silently skipping the overlay, which verify.go fails instead.
+		plan.Mode = ModeBase
+		plan.Params = upstreamParams()
+	}
+	return plan, nil
+}
+
+// planForMode is the mode's plan before any target is considered.
+//
+// It exists separately because the VERIFIER needs it: provenance records a mode and a marker, and
+// the only way to check that the two describe the same plan is to build the plan the mode implies
+// and compare the marker it would have produced. Deriving it through Resolve would need a target,
+// and a target decides whether the overlay applies at all - which is a different question from what
+// a recorded mode means.
+func planForMode(mode Mode) (Plan, error) {
 	parsed, err := ParseMode(string(mode))
 	if err != nil {
 		return Plan{}, err
 	}
-	plan := Plan{Mode: parsed, BindTarget: bindTarget}
+	plan := Plan{Mode: parsed}
 	switch parsed {
 	case ModeBase:
 		plan.Params = upstreamParams()
@@ -244,13 +267,6 @@ func Resolve(mode Mode, bindTarget string) (Plan, error) {
 	}
 	if err := plan.Params.Validate(); err != nil {
 		return Plan{}, err
-	}
-	if !HasIOSFamilyPlatform(bindTarget) {
-		// Not an error: `-platform macos/arm64` is a legitimate local build, and the honest
-		// answer for it is the official runtime. What must not happen is an iOS-family build
-		// silently skipping the overlay, which verify.go fails instead.
-		plan.Mode = ModeBase
-		plan.Params = upstreamParams()
 	}
 	return plan, nil
 }

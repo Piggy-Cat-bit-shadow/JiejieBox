@@ -28,6 +28,12 @@ Companion gate: `held_connection_cost_test.go` (repo root), run from an existing
 | `with_low_memory`, Linux/amd64 (CI) | 8 704 B | 25 420 B | 2.00 |
 | after every flow is closed | goroutines return to the baseline | — | — |
 
+**What the leak rounds do and do not prove.** Three rounds of 64 flows with a 256 KiB heap tolerance
+catch accumulation of the size a per-connection object leak produces (43 KiB a flow is 2.7 MiB a
+round); they do not prove the absence of a slow leak below that tolerance, and a leak that only
+appears after hundreds of rounds or under a different workload would not be seen here. The gate is a
+bounded check on the shape this round could measure, not a long-run leak proof.
+
 Repeat runs on one machine spread by about 90 bytes on the heap figure, so the number is the
 relay's and not a sample of noise.
 
@@ -63,15 +69,20 @@ Network Extension's footprint, and what is measured here is the relay, not the t
 
 | package | decision | why |
 |---|---|---|
-| A node/instance separation | **not done** | The deferral's target is already named (wireguard 3×NumCPU+2 goroutines + a UDP socket per idle node, plus tailscale/openvpn/openconnect/masque). It moves `listen_port` binding and MTU validation from `Start` to first dial and needs a real TUN plus a signed Apple build to verify; the previous round refused it for the same reason. Changing it unverified would touch the semantics 40+ wireguard lifecycle tests protect. |
+| A node/instance separation | **not done** | The target is named (wireguard 3×NumCPU+2 goroutines + a UDP socket per idle node, plus tailscale/openvpn/openconnect/masque). Moving `listen_port` binding and MTU validation from `Start` to first dial changes semantics 40+ wireguard lifecycle tests protect, so it needs its own round - but only the FINAL acceptance needs a device. Construction count, concurrent first creation, failure rollback and "no publication after Close" are host-testable first, and that is the order it should be done in. Whether it is next at all depends on the operator's actual profile: the recorded inventory measures what those heavyweight families cost WHEN PRESENT, not how often a real configuration carries them. |
 | B per-held-flow cost | **shipped** | §2-§3. |
-| C probe-session release | **not done** | Needs a new adapter-level "probe finished" hook and session generation tracking; the judgement "this session has no user activity" can only be validated on a device, and a wrong one closes a flow the user is using. |
+| C probe-session release | **not done** | Needs a new adapter-level "probe finished" hook and session generation tracking. The earlier note said the judgement could only be validated on a device; that was too strong, and this round corrects it. Ownership and races are host-testable first: a user `Dial` racing a probe-finished release, a callback from an old session generation, cancel and Close during a probe. What a device owns is the final behaviour under a real call pattern - not the reasoning about who may close what. |
 | D burst buffer budget | **not done, and the earlier reasoning was wrong** | This document used to say a global borrow budget would be a second budget beside ResourceGuard's. It would not: `common/resourceguard/growth.go` already implements exactly that (`GrowthBudget`, with per-pressure-level flow and reserve caps, geometry-required exemptions, and permits released when a copy direction ends), and `route/conn.go` already wires it into the real relay per direction. The honest statement is that the mechanism exists and this round did not review it against Clash's shape; the questions that review should answer are listed in §4.1. |
-| E reload double peak | **not done** | Needs a real reload at 1000/10000-node scale. Measurable on this host, but it changes load ordering and rule completeness is the thing it must not break; left whole rather than half-done. |
+| E reload double peak | **not done, not blocked** | Needs a real reload at 1000/10000-node scale. This host can measure it; it changes load ordering, and rule completeness is the thing it must not break, so it was left whole rather than half-done. That is a scope decision, not an environment limit. |
 | F attribution | **half shipped** | The per-flow half is §2; the node half predates this. |
 
-The honest ranking of what is left is A first - it is the largest single win in the recorded
-inventory - and it is blocked on an environment that can run a Network Extension, not on analysis.
+None of these three is blocked on analysis, and only their FINAL acceptance is blocked on a device:
+A, C and E each have a host-testable first half (ownership, races, rollback, construction counts) and
+a device-owned second half (real behaviour, `phys_footprint`). What order they are taken in should
+follow the operator's actual profile - A is the largest single win in the recorded inventory, but
+that inventory measures what the heavyweight node families cost WHEN PRESENT, not how often a real
+configuration carries them, so "A is next" is a decision for whoever reads the profiles, not a
+conclusion this document can draw.
 
 ## 4.1 What the existing growth budget still needs reviewed
 

@@ -287,42 +287,29 @@ func ParseProvenanceOverlay(content string) (ProvenanceOverlay, error) {
 		return ProvenanceOverlay{}, fmt.Errorf(
 			"runtime overlay: provenance records mode %s but no runtime.overlay.marker=, so there is no expected marker to check", modes[0])
 	}
-	// The decisive consistency check: the marker names the mode it was generated for, and both
-	// fields are written by the same build step from the same plan.
+	// The whole marker is compared, not just its mode field.
 	//
-	// This used to be unchecked, so a record saying `runtime.overlay=both` beside a marker saying
-	// `mode=small` was accepted and the verifier then checked the artifact against the MARKER while
-	// printing the MODE: the wrong plan verified, the right one reported, and nothing failed.
-	if !strings.HasPrefix(parsed.Marker, MarkerPrefix) {
+	// The mode-only check this replaced still accepted `mode=both ... dropExtraM=0`, and still
+	// accepted a marker that named both modes in two different fields because it read only the first
+	// one. Comparing against the marker the recorded mode IMPLIES covers all of it at once: a
+	// duplicated field, a missing parameter, a parameter that contradicts the mode, a marker from a
+	// different format version - every one of those changes the string.
+	//
+	// This does not prove the current artifacts are wrong; it closes the hole in the verifier, which
+	// is the thing that decides whether an artifact is accepted.
+	expectedPlan, err := planForMode(parsedMode)
+	if err != nil {
 		return ProvenanceOverlay{}, fmt.Errorf(
-			"runtime overlay: the recorded marker does not start with %q: %s", MarkerPrefix, parsed.Marker)
+			"runtime overlay: provenance records mode %s, which this build cannot describe: %w", parsedMode, err)
 	}
-	markerMode, hasMode := markerModeField(parsed.Marker)
-	if !hasMode || markerMode != parsedMode {
+	if expected := expectedPlan.Marker(); parsed.Marker != expected {
 		return ProvenanceOverlay{}, fmt.Errorf(
-			"runtime overlay: provenance records mode %s but its marker describes a different plan (%s). The two fields come from "+
-				"one build step, so a disagreement means the record was edited or the artifact was recorded twice; neither may be verified",
-			parsedMode, parsed.Marker)
+			"runtime overlay: the recorded marker is not the one mode %s implies.\n  recorded: %s\n  expected: %s\n"+
+				"The marker and the mode are written by one build step from one plan, so a difference means the record was edited, "+
+				"was assembled from two plans, or predates a marker-format change; none of those may be verified against an artifact",
+			parsedMode, parsed.Marker, expected)
 	}
 	return parsed, nil
-}
-
-// markerModeField reads the `mode=` field out of a marker string.
-//
-// It is a field scan rather than a substring test so a marker that ends at the mode - which the
-// unit tests use, and which an older marker shape could carry - is read the same way as one that
-// continues with parameters.
-func markerModeField(marker string) (Mode, bool) {
-	rest, ok := strings.CutPrefix(marker, MarkerPrefix)
-	if !ok {
-		return "", false
-	}
-	for _, field := range strings.Fields(rest) {
-		if value, ok := strings.CutPrefix(field, "mode="); ok {
-			return Mode(value), true
-		}
-	}
-	return "", false
 }
 
 // ExpectedMarker is the marker the recorded provenance says the slices should carry.

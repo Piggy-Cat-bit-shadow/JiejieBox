@@ -23,6 +23,7 @@ package main
 
 /*
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -30,10 +31,22 @@ extern int goCallback(int id);
 
 #define MAX_THREADS 512
 
+// The shared state between the Go main goroutine and the pthreads is C11 atomic, not `volatile`.
+//
+// `volatile` was here and it is not a synchronisation primitive: it stops the compiler from caching
+// a value in a register, and says nothing about ordering or about the memory model a second thread
+// observes. Go's race detector cannot see inside this translation unit either, so "the probe runs
+// clean under -race" said nothing about these three flags. Native ThreadSanitizer would, and it could
+// not run on the review host.
+//
+// ready_count is what replaces the fixed settle delay: a worker increments it after its callback
+// returns, so the Go side can wait for "all threads have called in" instead of sleeping for a while
+// and hoping.
 static pthread_t threads[MAX_THREADS];
-static volatile int thread_count = 0;
-static volatile int release_flag = 0;
-static volatile int errors = 0;
+static atomic_int thread_count = 0;
+static atomic_int ready_count = 0;
+static atomic_int release_flag = 0;
+static atomic_int errors = 0;
 
 // parked_after_callback is the shape under test: call Go once, then stay alive doing nothing.
 static void *parked_after_callback(void *arg) {
@@ -41,9 +54,10 @@ static void *parked_after_callback(void *arg) {
 	int want = id * 7 + 1;
 	int got = goCallback(id);
 	if (got != want) {
-		__sync_fetch_and_add(&errors, 1);
+		atomic_fetch_add(&errors, 1);
 	}
-	while (!release_flag) {
+	atomic_fetch_add(&ready_count, 1);
+	while (!atomic_load(&release_flag)) {
 		usleep(5000);
 	}
 	return 0;
@@ -56,39 +70,44 @@ static void *churning_thread(void *arg) {
 	int want = id * 7 + 1;
 	for (int i = 0; i < 1500; i++) {
 		if (goCallback(id) != want) {
-			__sync_fetch_and_add(&errors, 1);
+			atomic_fetch_add(&errors, 1);
 		}
 	}
+	atomic_fetch_add(&ready_count, 1);
 	return 0;
 }
 
 static int spawn_parked(int count) {
-	thread_count = 0;
-	release_flag = 0;
+	atomic_store(&thread_count, 0);
+	atomic_store(&ready_count, 0);
+	atomic_store(&release_flag, 0);
 	for (int i = 0; i < count; i++) {
 		if (pthread_create(&threads[i], 0, parked_after_callback, (void *)(long)(i + 1)) != 0) {
 			return -1;
 		}
-		thread_count++;
+		atomic_fetch_add(&thread_count, 1);
 	}
 	return 0;
 }
 
 static int spawn_churning(int count) {
-	thread_count = 0;
+	atomic_store(&thread_count, 0);
+	atomic_store(&ready_count, 0);
 	for (int i = 0; i < count; i++) {
 		if (pthread_create(&threads[i], 0, churning_thread, (void *)(long)(i + 1)) != 0) {
 			return -1;
 		}
-		thread_count++;
+		atomic_fetch_add(&thread_count, 1);
 	}
 	return 0;
 }
 
-static void release_parked(void) { release_flag = 1; }
+static void release_parked(void) { atomic_store(&release_flag, 1); }
+
+static int ready_threads(void) { return atomic_load(&ready_count); }
 
 static void join_all(void) {
-	for (int i = 0; i < thread_count; i++) {
+	for (int i = 0; i < atomic_load(&thread_count); i++) {
 		pthread_join(threads[i], 0);
 	}
 	thread_count = 0;
@@ -153,9 +172,19 @@ func main() {
 		fmt.Println("spawnFailed=1")
 		os.Exit(1)
 	}
-	// Long enough for every thread to have called in and parked, and for the runtime to have
-	// grown whatever it is going to grow.
-	time.Sleep(1500 * time.Millisecond)
+	// Wait until every thread has called in, instead of sleeping for a while and hoping. The wait is
+	// on a C11 atomic counter the workers increment after their callback returns, so the sample below
+	// is taken in the state the probe claims to measure - all threads parked, none still dialling -
+	// and a slow runner cannot turn a partially-filled sample into a per-thread figure.
+	ready := waitForReady(threads, 30*time.Second)
+	fmt.Printf("parked.ready=%d\n", ready)
+	if ready < threads {
+		fmt.Printf("notReady=%d\n", threads-ready)
+		os.Exit(2)
+	}
+	// One more moment for the runtime to have grown whatever a parked thread is going to grow; the
+	// counter says the calls have returned, not that their last allocation has settled.
+	time.Sleep(250 * time.Millisecond)
 
 	alive := readMemory()
 	fmt.Printf("parked.stacks=%d\n", alive["/memory/classes/heap/stacks:bytes"])
@@ -250,6 +279,21 @@ func traceEveryGoroutine() {
 			return
 		}
 		buffer = make([]byte, len(buffer)*2)
+	}
+}
+
+// waitForReady polls the C11 atomic counter the workers increment after their callback returns, and
+// returns the count it saw. A fixed sleep stood here before: it made the sample depend on the host,
+// and on a loaded runner it could measure a process where some threads had not called in yet - which
+// reads as "each parked thread costs less" for no reason anyone would notice.
+func waitForReady(target int, timeout time.Duration) int {
+	deadline := time.Now().Add(timeout)
+	for {
+		ready := int(C.ready_threads())
+		if ready >= target || time.Now().After(deadline) {
+			return ready
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

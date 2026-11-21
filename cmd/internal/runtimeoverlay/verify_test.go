@@ -95,12 +95,12 @@ func TestProvenanceRefusesARecordThatDisagreesWithItself(t *testing.T) {
 		{
 			name:    "mode both beside a small marker",
 			content: "runtime.overlay=both\nruntime.overlay.marker=" + small.Marker() + "\n",
-			want:    "different plan",
+			want:    "not the one mode",
 		},
 		{
 			name:    "mode small beside a both marker",
 			content: "runtime.overlay=small\nruntime.overlay.marker=" + both.Marker() + "\n",
-			want:    "different plan",
+			want:    "not the one mode",
 		},
 		{
 			name:    "mode base beside a marker",
@@ -110,7 +110,29 @@ func TestProvenanceRefusesARecordThatDisagreesWithItself(t *testing.T) {
 		{
 			name:    "the marker is not a marker",
 			content: "runtime.overlay=small\nruntime.overlay.marker=something else entirely\n",
-			want:    "does not start with",
+			want:    "not the one mode",
+		},
+		{
+			// The review's first residual: the mode field agreed, a parameter contradicted it.
+			name:    "mode both with group B turned off in the marker",
+			content: "runtime.overlay=both\nruntime.overlay.marker=" + strings.ReplaceAll(both.Marker(), "dropExtraM=1", "dropExtraM=0") + "\n",
+			want:    "not the one mode both implies",
+		},
+		{
+			// The review's second residual: two mode fields, and only the first was read.
+			name:    "a marker naming two modes",
+			content: "runtime.overlay=both\nruntime.overlay.marker=" + both.Marker() + " mode=small\n",
+			want:    "not the one mode",
+		},
+		{
+			name:    "a marker with a parameter missing",
+			content: "runtime.overlay=both\nruntime.overlay.marker=" + strings.ReplaceAll(both.Marker(), " spanSetInitSpineCap=16", "") + "\n",
+			want:    "not the one mode",
+		},
+		{
+			name:    "a marker whose parameter was edited",
+			content: "runtime.overlay=both\nruntime.overlay.marker=" + strings.ReplaceAll(both.Marker(), "stackCacheSize=16384", "stackCacheSize=32768") + "\n",
+			want:    "not the one mode",
 		},
 		{
 			name:    "two modes recorded",
@@ -149,12 +171,19 @@ func TestProvenanceRefusesARecordThatDisagreesWithItself(t *testing.T) {
 }
 
 func TestParseProvenanceOverlay(t *testing.T) {
+	// The marker has to be the real one for its mode now - the parser compares the whole string
+	// against what the mode implies, so a hand-abbreviated marker is a contradiction rather than a
+	// convenience. Build it from the plan the mode describes.
+	both, err := Resolve(ModeBoth, "ios/arm64,macos/arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
 	provenance := strings.Join([]string{
 		"commit=bc943086c440dbfadc538ad5c3846923d0850395",
 		"version=0.1.55",
-		"runtime.overlay=both",
+		"runtime.overlay=" + string(both.Mode),
 		"runtime.overlay.go=go1.27.4",
-		"runtime.overlay.marker=jiejiebox-ios-runtime-overlay/1 mode=both",
+		"runtime.overlay.marker=" + both.Marker(),
 		"tags.apple=with_quic,with_low_memory",
 	}, "\r\n")
 	parsed, err := ParseProvenanceOverlay(provenance)
@@ -164,7 +193,7 @@ func TestParseProvenanceOverlay(t *testing.T) {
 	if parsed.Mode != ModeBoth {
 		t.Fatalf("mode %s", parsed.Mode)
 	}
-	if parsed.ExpectedMarker() != "jiejiebox-ios-runtime-overlay/1 mode=both" {
+	if parsed.ExpectedMarker() != both.Marker() {
 		t.Fatalf("marker %q", parsed.ExpectedMarker())
 	}
 	if parsed.GoVersion != "go1.27.4" {
