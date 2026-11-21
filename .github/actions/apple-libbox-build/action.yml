@@ -98,6 +98,26 @@ runs:
           exit 1
         fi
 
+    - name: prove the iOS runtime overlay reached the framework
+      # The builder verifies the framework it just produced, and that check cannot survive the
+      # artifact leaving that process. This re-runs the SAME verification on the INSTALLED
+      # framework - the bytes about to be packed - and takes the expected plan from
+      # libbox.provenance rather than from a flag, so the claim is "these bytes match what the
+      # build recorded", not "the caller and the builder agree".
+      #
+      # It reads the marker out of the framework binary by byte search, not with nm: release
+      # libbox links with -s -w, so the symbol table is gone by this point.
+      shell: bash
+      env:
+        CLIENT_ROOT: ${{ inputs.client-root }}
+        INSTALL_DIR: ${{ inputs.install-dir }}
+      run: |
+        set -euo pipefail
+        install_dir="${INSTALL_DIR:-$CLIENT_ROOT}"
+        go run ./cmd/internal/verify_runtime_overlay \
+          -xcframework "$install_dir/Libbox.xcframework" \
+          -provenance libbox.provenance
+
     - name: pack the Libbox artifact
       # The manifest is what makes the artifact attributable to a commit; the artifact name is
       # informative only, and its consumers validate against the manifest.

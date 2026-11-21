@@ -123,6 +123,19 @@ pack() {
   fi
   [ -n "$build_tags" ] || fail \
     "no Apple build tags are available. Run the build through scripts/ci/build-apple-libbox.sh, or pass LIBBOX_BUILD_TAGS."
+  # The Go runtime overlay this framework was compiled with. Recorded, not required: an artifact
+  # built before the overlay existed has no key here, and refusing those would break the
+  # prebuilt-artifact path for no safety. What IS enforced is that the value travels with the
+  # artifact, so a reader can ask "was this framework built past the overlay" without rebuilding.
+  # The proof that the bytes match it happens in .github/actions/apple-libbox-build, before this
+  # pack, against the same installed framework.
+  local runtime_overlay runtime_overlay_go
+  runtime_overlay=""
+  runtime_overlay_go=""
+  if [ -f libbox.provenance ]; then
+    runtime_overlay="$(sed -n 's/^runtime\.overlay=//p' libbox.provenance | head -n 1 | tr -d '\r')"
+    runtime_overlay_go="$(sed -n 's/^runtime\.overlay\.go=//p' libbox.provenance | head -n 1 | tr -d '\r')"
+  fi
   for required_tag in with_trusttunnel with_awg; do
     case ",$build_tags," in
       *",$required_tag,"*)
@@ -160,6 +173,8 @@ xcode_version:         $xcode_version
 go_version:            $go_version
 slices:                $slices
 build_tags:            $build_tags
+runtime_overlay:       $runtime_overlay
+runtime_overlay_go:    $runtime_overlay_go
 gomobile_version:      $gomobile_version
 gomobile_source:       $gomobile_source
 workflow:              $workflow_ref
@@ -202,13 +217,13 @@ EOF
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$xcode_version" "$go_version" \
     "$(basename "$tarball")" "$artifact_sha" "$jj_version" "$slices" \
     "$gomobile_version" "$gomobile_source" "$workflow_ref" "$run_id" "$run_attempt" \
-    "$build_tags" <<'PY'
+    "$build_tags" "$runtime_overlay" "$runtime_overlay_go" <<'PY'
 import json
 import sys
 
 (path, parent, version, built, xcode, goversion, artifact, digest,
  jj_version, slices, gomobile_version, gomobile_source,
- workflow, run_id, run_attempt, build_tags) = sys.argv[1:17]
+ workflow, run_id, run_attempt, build_tags, runtime_overlay, runtime_overlay_go) = sys.argv[1:19]
 
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(
@@ -229,6 +244,11 @@ with open(path, "w", encoding="utf-8") as handle:
             # The capability set. Required by validate(), not merely recorded: without this field a
             # released Libbox can silently omit a protocol the release advertises.
             "build_tags": [tag for tag in build_tags.split(",") if tag],
+            # Provenance: which Go runtime overlay compiled this framework, empty for artifacts
+            # that predate it. Recorded, never matched by a consumer - the proof is taken before
+            # packing, against these same bytes.
+            "runtime_overlay": runtime_overlay,
+            "runtime_overlay_go": runtime_overlay_go,
             "gomobile_version": gomobile_version,
             "gomobile_source": gomobile_source,
             "workflow": workflow,

@@ -155,6 +155,29 @@ for required_tag in with_trusttunnel with_awg; do
 done
 echo "  capability tags: with_trusttunnel, with_awg present"
 
+# The Go runtime overlay is part of the product build, not a hidden experiment: the iOS-family
+# slices must compile it. Asserted against the builder's OWN resolution - the same function the
+# build calls - rather than against a mode written here, for the reason the tag gate above exists:
+# a second list is a second source of truth and the first thing it does is drift.
+#
+# A target with no iOS-family platform (a macOS-only framework) resolves to base by design and is
+# not an error: that build keeps the toolchain's runtime on purpose.
+resolved_overlay="$(go run ./cmd/internal/build_libbox -print-runtime-overlay "$targets")"
+case ",$targets," in
+  *,ios*)
+    case "$resolved_overlay" in
+      base)
+        echo "FAIL: the iOS Libbox would be built with mode base, so its Go runtime would be the" >&2
+        echo "      unmodified one and none of the small-process work would ship." >&2
+        echo "      resolved: $resolved_overlay for targets $targets" >&2
+        echo "      See docs/internal/ios-runtime-overlay.md before changing the default." >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
+echo "  runtime overlay mode: $resolved_overlay"
+
 # Where `build_libbox` actually leaves the framework. It binds to an absolute path inside its own
 # isolated working directory (`_libbox_build`) precisely so gomobile's default, which is relative
 # to a working directory that is no longer the module root, cannot scatter the artifact. This
