@@ -36,7 +36,7 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-20",
+  "recorded_at": "2026-11-21",
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
@@ -532,6 +532,33 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44748942895"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 44909336522,
+      "head_sha": "12a0729bc54d7375989b444b1726bcbc3d735974",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44909336522"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 44909336425,
+      "head_sha": "12a0729bc54d7375989b444b1726bcbc3d735974",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44909336425"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Maintenance ledger",
+      "run_id": 44909336964,
+      "head_sha": "12a0729bc54d7375989b444b1726bcbc3d735974",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44909336964"
     }
   ],
   "child_runs": [],
@@ -539,11 +566,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing",
       "branch": "dev",
-      "tip": "4abfaed41727e43d1d98f36385a86114925f8484",
-      "pin": "4abfaed41727",
+      "tip": "7246d061b907a01f42662a160bdd9d9522f0e7d8",
+      "pin": "7246d061b907",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-13"
+      "observed_at": "2026-11-21",
+      "note": "dev carries 077e91e badoption: Share compiled regular expressions across configs and 7246d06 its benchmarks: the option holds one canonical compiled *regexp.Regexp per expression through a weak-reference cache, Build returns the standard library's shallow copy so Longest stays per-holder, and cleanup is ABA-safe by entry identity. The pin was pushed by this window and a run at the new lock is recorded below."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
@@ -558,11 +586,11 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
-      "tip": "cdb57d74152e0f6fc2841c4efad20b1c0640954e",
-      "pin": "cdb57d74152e",
+      "tip": "6c2f9474081963415b976bda4a1bfad1586a8e9b",
+      "pin": "6c2f94740819",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-17",
+      "observed_at": "2026-11-21",
       "note": "main's tip sizes the socket at the four entry points that hand a conn to quic-go, through the quic-go helper that checks the datagram type first; the obfuscated hysteria/hysteria2 paths and the realm punch conn are covered, and the per-hop port-hopping calls stay."
     },
     {
@@ -607,11 +635,11 @@
     {
       "repo": "Piggy-Cat-bit-shadow/mieru",
       "branch": "main",
-      "tip": "04259b115daf474f2cc0c2fde21c6e309186eaed",
-      "pin": "04259b115daf",
+      "tip": "44aaf9582106fb576d296c132afd23f6ae97df6e",
+      "pin": "44aaf9582106",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-17",
+      "observed_at": "2026-11-21",
       "note": "Added to the observation set in window 03: the module is consumed by go.mod but had no recorded tip."
     },
     {
