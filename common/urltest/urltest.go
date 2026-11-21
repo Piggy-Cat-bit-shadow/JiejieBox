@@ -21,12 +21,6 @@ type scopedHistoryKey struct {
 	Scope MeasurementScope
 }
 
-// displayRecord is one tag's most recent successful measurement.
-type displayRecord struct {
-	History adapter.URLTestHistory
-	Scope   MeasurementScope
-}
-
 // HistoryStorage holds node measurements in two INDEPENDENT layers.
 //
 // # display
@@ -67,7 +61,24 @@ type HistoryStorage struct {
 	// It is maintained by BOTH manual probes and automatic health checks, because both are a
 	// legitimate "last successful measurement". It is never removed by a failure: a failed probe
 	// against one URL says nothing about the last success against another.
-	displayHistory map[string]displayRecord
+	//
+	// # Why the display layer does not keep the target that produced the measurement
+	//
+	// It used to store a displayRecord{History, Scope}. The Scope was write-only: no accessor exposes
+	// it (LoadURLTestHistory returns the history alone), no policy reads it (selection and skipping
+	// use the health layer with their own scope), and no teardown path needs it (DeleteURLTestHistory
+	// removes by tag, DeleteHealthHistory deliberately leaves the display entry alone, and
+	// DeleteURLTestHistoryFor has no display counterpart at all). It was a target identity retained
+	// for no reader.
+	//
+	// MEASURED on this host (history_cost_ledger_test.go, 10 000 display entries, one target): the
+	// layer cost 144 B/entry, roughly 80 B of it that dead identity - 32 bytes in every record plus a
+	// per-entry copy of the target URL. The tag is the display layer's identity; the target belongs
+	// to the health layer, where it is read.
+	//
+	// The ordering rule is unchanged: display still keeps the NEWEST success, whatever target it came
+	// from, and a failure still never removes it.
+	displayHistory map[string]adapter.URLTestHistory
 
 	// healthHistory is per (tag, target) and is what selection and skipping read.
 	//
@@ -75,6 +86,30 @@ type HistoryStorage struct {
 	// against an arbitrary URL must never become selection evidence, and must never grow this map
 	// without bound.
 	healthHistory map[scopedHistoryKey]adapter.URLTestHistory
+
+	// sharedScopes makes the IMMUTABLE target identity of a stored key one string pair, shared by
+	// every entry that names the same target, instead of one copy per entry.
+	//
+	// A MeasurementScope is canonically normalised (see ParseMeasurementTarget), so equal content is
+	// equal identity: two spellings of one endpoint are one scope. The store path, however, receives
+	// a scope built from a FRESH parse on every probe, so a node's key used to retain its own copy of
+	// the target URL - the same bytes N times for N measured nodes. This cache keeps the first copy
+	// and hands it back for later entries. MEASURED at 10 000 nodes, one target: the health layer's
+	// per-entry cost was 144 B of map space plus 48 B of URL copy; sharing removes the copy.
+	//
+	// It is a BOUNDED, lazily allocated slice rather than a map: a real configuration has a handful
+	// of targets, and a map large enough to matter would itself cost more than it saves on a
+	// configuration whose targets are all distinct (measured: a 64-entry map added ~10 KB to the
+	// 1 000-distinct-target case while sharing nothing past the 64th). Past the bound a scope is
+	// simply stored as it arrived - sharing is an optimisation, never a condition of correctness, so
+	// an unshared key still compares equal by value.
+	sharedScopes []MeasurementScope
+	// sharedCursor is the round-robin victim once the cache is full.
+	sharedCursor int
+	// lastSharedScope is the one-entry fast path for the overwhelmingly common shape: one target,
+	// stored once per measured node. It answers without scanning the cache at all.
+	lastSharedScope MeasurementScope
+	hasLastShared   bool
 
 	// closed makes Close terminal. A measurement that finishes afterwards must not write.
 	closed bool
@@ -113,6 +148,14 @@ type HistoryStorage struct {
 // provider nodes must not grow them without limit; reclaiming them moves the incarnation, which is
 // what keeps the reclamation safe (see epochIncarnation).
 const maxEvidenceEpochEntries = 4096
+
+// maxSharedScopes bounds the shared-target cache.
+//
+// It is a bound, not a capacity: a real configuration has a handful of URLTest targets and Clash
+// delay URLs, so 16 leaves room for every configured target plus manual diagnostics. The cache is a
+// slice, so its worst-case cost is 16 scopes' string headers (512 bytes on 64-bit) - small enough
+// that a configuration with thousands of distinct diagnostic targets pays it without noticing.
+const maxSharedScopes = 16
 
 // EvidenceOwnership is the authority a measurement holds to change one node's evidence.
 //
@@ -200,7 +243,7 @@ func (s *HistoryStorage) CommitAgainstEvidence(tag string, scope MeasurementScop
 
 func NewHistoryStorage() *HistoryStorage {
 	return &HistoryStorage{
-		displayHistory: make(map[string]displayRecord),
+		displayHistory: make(map[string]adapter.URLTestHistory),
 		healthHistory:  make(map[scopedHistoryKey]adapter.URLTestHistory),
 		tagCounts:      make(map[string]uint32),
 		scopeCounts:    make(map[scopedHistoryKey]uint32),
@@ -236,7 +279,7 @@ func (s *HistoryStorage) LoadURLTestHistory(tag string) *adapter.URLTestHistory 
 		return nil
 	}
 	// A copy: the caller must not be able to mutate stored state through the pointer.
-	history := record.History
+	history := record
 	return &history
 }
 
@@ -270,7 +313,12 @@ func (s *HistoryStorage) LoadURLTestHistoryFor(tag string, scope MeasurementScop
 //
 // A failure is simply not recorded. It must never remove the previous success, because failing URL B
 // does not disprove a success against URL A.
-func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope, history *adapter.URLTestHistory) {
+//
+// The scope is part of the CALL, not of the record: the display layer is keyed by tag and neither
+// exposes nor retains the target (see displayHistory). It stays in the signature so a caller cannot
+// pass a different argument to the owned and unowned forms of the same write, and because
+// StoreDisplayHistoryOwned genuinely reads it for the ownership check.
+func (s *HistoryStorage) StoreDisplayHistory(tag string, _ MeasurementScope, history *adapter.URLTestHistory) {
 	if s == nil || history == nil {
 		return
 	}
@@ -279,14 +327,14 @@ func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope,
 		s.access.Unlock()
 		return
 	}
-	s.storeDisplayLocked(tag, scope, history)
+	s.storeDisplayLocked(tag, history)
 	s.access.Unlock()
 	s.notifyUpdated()
 }
 
 // storeDisplayLocked writes one display record, rejecting older evidence. Caller holds the lock.
-func (s *HistoryStorage) storeDisplayLocked(tag string, scope MeasurementScope, history *adapter.URLTestHistory) {
-	if existing, loaded := s.displayHistory[tag]; loaded && existing.History.Time.After(history.Time) {
+func (s *HistoryStorage) storeDisplayLocked(tag string, history *adapter.URLTestHistory) {
+	if existing, loaded := s.displayHistory[tag]; loaded && existing.Time.After(history.Time) {
 		// Older evidence for the same node: the newer entry wins.
 		//
 		// An attempt is stamped with the moment it STARTED, so a probe that was already running
@@ -295,7 +343,7 @@ func (s *HistoryStorage) storeDisplayLocked(tag string, scope MeasurementScope, 
 		// be the last writer and would undo the newer measurement.
 		return
 	}
-	s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
+	s.displayHistory[tag] = *history
 }
 
 // StoreHealthHistory records an automatic health measurement, in both layers.
@@ -380,11 +428,49 @@ func (s *HistoryStorage) bumpTagEpochLocked(tag string) {
 
 // bumpScopeEpochLocked records a (node, target) evidence drop. Caller holds the write lock.
 func (s *HistoryStorage) bumpScopeEpochLocked(tag string, scope MeasurementScope) {
-	key := scopedHistoryKey{Tag: tag, Scope: scope}
+	// The counter is four bytes; the KEY is the expensive part (tag header, URL and status strings).
+	// Sharing the scope is what stops a failed round over N members from retaining N copies of one
+	// target URL in a table that holds no measurement at all.
+	key := scopedHistoryKey{Tag: tag, Scope: s.shareScopeLocked(scope)}
 	if s.evidenceEntryCountLocked() >= maxEvidenceEpochEntries || s.scopeCounts[key] == math.MaxUint32 {
 		s.reclaimEpochBookLocked()
 	}
 	s.scopeCounts[key]++
+}
+
+// shareScopeLocked returns a scope whose strings can be shared by every entry that names the same
+// target. Caller holds the write lock.
+//
+// It is an OPTIMISATION only: an unshared scope compares equal to a shared one by value, so a map
+// store/delete/lookup built from a freshly parsed scope still addresses the same entry. That is why
+// the read paths do not call this - they do not need to, and a lookup should not pay for a cache it
+// does not populate.
+//
+// The fast path (one target: the shape every URLTest group has) is a struct comparison against the
+// last shared scope and touches no slice at all.
+func (s *HistoryStorage) shareScopeLocked(scope MeasurementScope) MeasurementScope {
+	if s.hasLastShared && s.lastSharedScope == scope {
+		return s.lastSharedScope
+	}
+	for _, shared := range s.sharedScopes {
+		if shared == scope {
+			s.lastSharedScope = shared
+			s.hasLastShared = true
+			return shared
+		}
+	}
+	if len(s.sharedScopes) < maxSharedScopes {
+		s.sharedScopes = append(s.sharedScopes, scope)
+	} else {
+		// Full: replace the oldest slot. Evicting a scope cannot hurt correctness: the entries that
+		// reference it keep their own string headers, so they still compare equal by value; the
+		// slot is only the source of future sharing.
+		s.sharedScopes[s.sharedCursor] = scope
+		s.sharedCursor = (s.sharedCursor + 1) % maxSharedScopes
+	}
+	s.lastSharedScope = scope
+	s.hasLastShared = true
+	return scope
 }
 
 // StoreHealthHistoryOwned stores a health measurement only while the probe's ownership still holds.
@@ -420,12 +506,15 @@ func (s *HistoryStorage) StoreHealthHistoryOwned(tag string, scope MeasurementSc
 
 // storeHealthLocked writes one health measurement into BOTH layers. Caller holds the write lock.
 func (s *HistoryStorage) storeHealthLocked(tag string, scope MeasurementScope, history *adapter.URLTestHistory) (healthUpdated bool, displayUpdated bool) {
-	if existing, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded || isNewerEvidence(history.Time, existing.Time) {
-		s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}] = *history
+	// Share the target identity BEFORE it becomes a map key: the key outlives the probe that built
+	// it, and a fresh parse per probe would otherwise retain one copy of the same URL per entry.
+	key := scopedHistoryKey{Tag: tag, Scope: s.shareScopeLocked(scope)}
+	if existing, loaded := s.healthHistory[key]; !loaded || isNewerEvidence(history.Time, existing.Time) {
+		s.healthHistory[key] = *history
 		healthUpdated = true
 	}
-	if existing, loaded := s.displayHistory[tag]; !loaded || isNewerEvidence(history.Time, existing.History.Time) {
-		s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
+	if existing, loaded := s.displayHistory[tag]; !loaded || isNewerEvidence(history.Time, existing.Time) {
+		s.displayHistory[tag] = *history
 		displayUpdated = true
 	}
 	return
@@ -446,7 +535,7 @@ func (s *HistoryStorage) StoreDisplayHistoryOwned(tag string, scope MeasurementS
 		s.access.Unlock()
 		return false
 	}
-	s.storeDisplayLocked(tag, scope, history)
+	s.storeDisplayLocked(tag, history)
 	s.access.Unlock()
 	s.notifyUpdated()
 	return true
@@ -672,6 +761,14 @@ func (s *HistoryStorage) Close() error {
 	// stamp is compared.
 	clear(s.tagCounts)
 	clear(s.scopeCounts)
+	// The shared target cache is a CACHE with no semantic value: every stored key keeps its own
+	// equal-by-value copy if it ever needs one, so dropping it here releases the strings without
+	// changing a single comparison.
+	clear(s.sharedScopes)
+	s.sharedScopes = nil
+	s.sharedCursor = 0
+	s.lastSharedScope = MeasurementScope{}
+	s.hasLastShared = false
 	s.updateHooks = nil
 	return nil
 }
