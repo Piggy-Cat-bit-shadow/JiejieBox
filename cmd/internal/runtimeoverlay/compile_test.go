@@ -154,7 +154,61 @@ func TestOnAndOffFilesAreSymmetrical(t *testing.T) {
 	}
 }
 
-// A generated file must satisfy the same gofmt rules the rest of the tree does, so a diff of a
+// The marker has to be findable in a REAL binary, after the flags the release build actually
+// uses. This is the property the whole verification rests on and the one a unit test on strings
+// cannot show: release libbox links with `-ldflags "-s -w -buildid="`, which drops the symbol
+// table, and a marker only a symbol table could show would be unverifiable in the artifact that
+// matters.
+func TestMarkerSurvivesAStrippedLink(t *testing.T) {
+	goBinary := goBinary(t)
+	plan, overlay, _ := buildOverlayForTest(t, ModeSmall)
+
+	dir := t.TempDir()
+	program := "package main\n\nfunc main() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module markerprobe\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := func(name string, withOverlayValues bool) string {
+		output := filepath.Join(dir, name)
+		args := []string{"build", "-overlay=" + overlay.JSONPath, "-ldflags", "-s -w -buildid=", "-o", output}
+		if withOverlayValues {
+			args = append(args, "-tags", plan.onConstraint())
+		}
+		args = append(args, ".")
+		command := exec.Command(goBinary, args...)
+		command.Dir = dir
+		command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=", "GOTOOLCHAIN=local")
+		if combined, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("build %s: %v\n%s", name, err, combined)
+		}
+		return output
+	}
+
+	stripped := build("with-overlay", true)
+	anyMarker, wantedPresent, err := scanBinaryMarkers(stripped, plan.Marker())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !anyMarker || !wantedPresent {
+		t.Fatalf("the marker is not findable in a -s -w binary (%v/%v), so the release verification "+
+			"could not work on the artifact it exists for", anyMarker, wantedPresent)
+	}
+
+	upstream := build("without-overlay", false)
+	anyMarker, wantedPresent, err = scanBinaryMarkers(upstream, plan.Marker())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if anyMarker || wantedPresent {
+		t.Fatal("a build that did not select the overlay's values carries a marker; the two added " +
+			"files are not selecting cleanly and the negative check would be meaningless")
+	}
+}
+
+// The generated source must satisfy the same gofmt rules the rest of the tree does, so a diff of a
 // patched GOROOT is readable and a future `gofmt -w` distinction is not the first sign that the
 // generator drifted. The files are read back from a real Generate, so this checks what is
 // written rather than what the composer intended to write.
