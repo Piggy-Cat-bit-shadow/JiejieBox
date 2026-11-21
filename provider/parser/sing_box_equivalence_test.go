@@ -87,6 +87,16 @@ func TestParseBoxSubscriptionMatchesTheWholeDocumentReader(t *testing.T) {
 		{"invalid utf8", string([]byte{'{', '"', 'o', 'u', 't', 'b', 'o', 'u', 'n', 'd', 's', '"', ':', '[', '"', 0xff, 0xfe, '"', ']', '}'})},
 		{"truncated inside element", `{"outbounds": [{"type": "trojan", "tag":`},
 		{"unterminated array", `{"outbounds": [{"type": "block", "tag": "a"}`},
+		// Duplicate TOP-LEVEL keys: the whole-document reader decoded the object into a struct, so a
+		// later occurrence replaced an earlier one and only the winning value was type-checked. These
+		// three rows are the ones an eager streaming decoder gets wrong: validating the first
+		// occurrence rejects a document whose later duplicate makes it valid, which changes the
+		// accepted set rather than an error message.
+		{"duplicate outbounds, early invalid", `{"outbounds":5,"outbounds":[{"type":"trojan","tag":"a","server":"203.0.113.1","server_port":443,"password":"p"}]}`},
+		{"duplicate outbounds, late invalid", `{"outbounds":[{"type":"trojan","tag":"a","server":"203.0.113.1","server_port":443,"password":"p"}],"outbounds":5}`},
+		{"duplicate endpoints, early invalid", `{"endpoints":5,"endpoints":[],"outbounds":[{"type":"trojan","tag":"a","server":"203.0.113.1","server_port":443,"password":"p"}]}`},
+		{"duplicate endpoints, late invalid", `{"outbounds":[],"endpoints":[],"endpoints":5}`},
+		{"duplicate outbounds, valid then valid with different value", `{"outbounds":[{"type":"block","tag":"first"}],"outbounds":[{"type":"block","tag":"second"}]}`},
 	}
 	// The streaming decoder rejects every case below exactly like the frozen reader, but the message
 	// is allowed to differ for the documented reasons: a malformed `endpoints` value is reported by
@@ -94,15 +104,16 @@ func TestParseBoxSubscriptionMatchesTheWholeDocumentReader(t *testing.T) {
 	// document-relative row/column, and trailing content after a complete document is reported by the
 	// token reader instead of the whole-document validator.
 	errorTextMayDiffer := map[string]string{
-		"empty":                    "truncated document: the whole-document validator reported the end of input",
-		"whitespace":               "truncated document: the whole-document validator reported the end of input",
-		"broken json":              "truncated document: the whole-document validator reported the end of input",
-		"unterminated array":       "truncated document: the whole-document validator reported the end of input",
-		"truncated inside element": "truncated document inside an element: the streaming decoder reports io.ErrUnexpectedEOF",
-		"endpoints not array":      "a typed array decode reports the value, not the document field",
-		"invalid utf8":             "the element reader reports the byte through a different path",
-		"trailing garbage":         "the token reader reports the trailing byte, the validator reported position",
-		"two documents":            "the token reader reports the second value, the validator reported position",
+		"empty":                             "truncated document: the whole-document validator reported the end of input",
+		"whitespace":                        "truncated document: the whole-document validator reported the end of input",
+		"broken json":                       "truncated document: the whole-document validator reported the end of input",
+		"unterminated array":                "truncated document: the whole-document validator reported the end of input",
+		"truncated inside element":          "truncated document inside an element: the streaming decoder reports io.ErrUnexpectedEOF",
+		"endpoints not array":               "a typed array decode reports the value, not the document field",
+		"duplicate endpoints, late invalid": "same as `endpoints not array`: a typed array decode reports the value, not the document field",
+		"invalid utf8":                      "the element reader reports the byte through a different path",
+		"trailing garbage":                  "the token reader reports the trailing byte, the validator reported position",
+		"two documents":                     "the token reader reports the second value, the validator reported position",
 	}
 	for _, testCase := range cases {
 		testCase := testCase

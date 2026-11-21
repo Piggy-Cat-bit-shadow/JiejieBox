@@ -82,6 +82,18 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 		// The historical message, including "nil" for a null document.
 		return document, E.New("expected json object start, but starts with ", token)
 	}
+	// The two typed fields are buffered RAW and decoded after the object closes, so a duplicated
+	// top-level key keeps the last-value-wins behaviour the previous whole-document reader had.
+	// Eager per-occurrence decoding would validate the FIRST `outbounds` and reject a document whose
+	// later duplicate replaces it - a change in the accepted set, not in an error message. The
+	// buffer is one raw slice of the winning value, not a generic tree, which is where the saving
+	// this decoder exists for comes from.
+	var (
+		outboundsRaw json.RawMessage
+		endpointsRaw json.RawMessage
+		hasOutbounds bool
+		hasEndpoints bool
+	)
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
@@ -93,17 +105,19 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 		}
 		switch key {
 		case "outbounds":
-			outbounds, err := decodeOutboundsValue(ctx, decoder)
-			if err != nil {
+			var raw json.RawMessage
+			if err := decoder.Decode(&raw); err != nil {
 				return document, err
 			}
-			document.Outbounds = outbounds
+			outboundsRaw = raw
+			hasOutbounds = true
 		case "endpoints":
-			endpoints, err := decodeEndpointsValue(ctx, decoder)
-			if err != nil {
+			var raw json.RawMessage
+			if err := decoder.Decode(&raw); err != nil {
 				return document, err
 			}
-			document.Endpoints = endpoints
+			endpointsRaw = raw
+			hasEndpoints = true
 		default:
 			// An unknown top-level key is ignored by the typed schema; skip its value without
 			// materialising it into a tree.
@@ -118,12 +132,38 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 	}
 	trailing, err := decoder.Token()
 	if err == io.EOF {
-		return document, nil
-	}
-	if err != nil {
+		trailing = nil
+	} else if err != nil {
 		return document, err
 	}
-	return document, E.New("invalid character after top-level value: ", trailing)
+	if trailing != nil {
+		return document, E.New("invalid character after top-level value: ", trailing)
+	}
+	if hasOutbounds {
+		outbounds, err := decodeOutboundsRaw(ctx, outboundsRaw)
+		if err != nil {
+			return document, err
+		}
+		document.Outbounds = outbounds
+	}
+	if hasEndpoints {
+		endpoints, err := decodeEndpointsRaw(ctx, endpointsRaw)
+		if err != nil {
+			return document, err
+		}
+		document.Endpoints = endpoints
+	}
+	return document, nil
+}
+
+// decodeOutboundsRaw decodes the winning `outbounds` value from its raw bytes.
+func decodeOutboundsRaw(ctx context.Context, raw json.RawMessage) ([]option.Outbound, error) {
+	return decodeOutboundsValue(ctx, json.NewDecoderContext(ctx, bytes.NewReader(raw)))
+}
+
+// decodeEndpointsRaw decodes the winning `endpoints` value from its raw bytes.
+func decodeEndpointsRaw(ctx context.Context, raw json.RawMessage) ([]option.Endpoint, error) {
+	return decodeEndpointsValue(ctx, json.NewDecoderContext(ctx, bytes.NewReader(raw)))
 }
 
 // decodeOutboundsValue reads the `outbounds` value from the decoder and returns the provider's node
