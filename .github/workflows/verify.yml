@@ -373,6 +373,28 @@ jobs:
         # tolerate; it does not weaken the assertion.
         run: go test -count=1 -p 1 ./cmd/internal/...
 
+      - name: the Apple startup policy is composed by the builder, not restated in YAML
+        # The Apple build now links a runtime startup policy through -print-startup-policy's own
+        # composer. Asserting the string here would answer a different question and would be the
+        # first thing to drift, so this asks the builder. The second case is the one that matters:
+        # `-X runtime.godebugDefault=` REPLACES go.mod's computed default, so a policy build that
+        # dropped the TLS compatibility list would send a different ClientHello on every slice.
+        run: |
+          set -euo pipefail
+          base="$(go run ./cmd/internal/build_libbox -print-startup-policy)"
+          want="multipathtcp=0,tlssha1=1,tlssecpmlkem=0,tracebacklabels=0,x509sslcertoverrideplatform=0"
+          if [ "$base" != "$want" ]; then
+            echo "FAIL: the default startup policy is '$base', want '$want'" >&2
+            exit 1
+          fi
+          candidate="$(JJ_APPLE_STARTUP_POLICY=memprofilerate=off,adaptivestackstart=off go run ./cmd/internal/build_libbox -print-startup-policy)"
+          want="$want,memprofilerate=0,adaptivestackstart=0"
+          if [ "$candidate" != "$want" ]; then
+            echo "FAIL: the candidate startup policy is '$candidate', want '$want'" >&2
+            exit 1
+          fi
+          echo "PASS: the startup policy composer keeps the compatibility defaults and appends the candidate"
+
       - name: mirrored runtime structures match the pinned toolchain
         # The 0.1.52 Network Extension crash was this class of defect, and nothing in this file
         # would have caught it. `experimental/libbox/internal/oomprofile` mirrors

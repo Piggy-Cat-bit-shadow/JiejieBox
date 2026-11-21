@@ -90,7 +90,7 @@ func init() {
 	// before any init() and cannot be changed afterwards, and one framework is shared by the app and
 	// the extension.
 	flag.StringVar(&startupPolicyFlag, "startup-policy", "",
-		`runtime startup defaults: memprofilerate=inherit|off|<bytes>,adaptivestackstart=inherit|on|off (default: the reviewed default, or $JJ_APPLE_STARTUP_POLICY)`)
+		`runtime startup defaults: memprofilerate=inherit|off|<bytes>,adaptivestackstart=inherit|on|off (default: the reviewed default, or $JJ_APPLE_STARTUP_POLICY). memprofilerate=off removes the OOM report's heap and allocs profiles outright - their history cannot be recovered by sampling later - so it is a diagnostic trade, not a free saving`)
 	// flag.BoolVar(&withTailscale, "with-tailscale", false, "build tailscale for iOS and tvOS")
 }
 
