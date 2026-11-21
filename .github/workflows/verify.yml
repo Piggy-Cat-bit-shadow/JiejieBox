@@ -363,7 +363,15 @@ jobs:
         # decide which //go:linkname pulls need -checklinkname=0, and
         # TestProfileTagFilesDoNotClaimChecklinkname0 requires the profile tag files to stop claiming
         # that flag. Together they are what keeps a bare `go build ./...` linkable.
-        run: go test -count=1 ./cmd/internal/...
+        #
+        # -p 1 is deliberate. The cgo extra-M probe (bprobe_test.go) measures how much stack 48
+        # parked threads make the runtime grow in an upstream build against an overlaid one, and it
+        # compares the two ratios; a package running `go build` on testdata in parallel with it
+        # (cmd/internal/build_shared does) skews the overlaid arm, which then lands exactly on the
+        # half-way boundary and trips an assertion whose premise is "far less". Serialising the
+        # packages costs a couple of minutes and removes the contention the measurement cannot
+        # tolerate; it does not weaken the assertion.
+        run: go test -count=1 -p 1 ./cmd/internal/...
 
       - name: mirrored runtime structures match the pinned toolchain
         # The 0.1.52 Network Extension crash was this class of defect, and nothing in this file
