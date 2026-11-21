@@ -53,6 +53,7 @@ func TestTheShippedSDKRefusesASessionOnAClosedUnderlay(t *testing.T) {
 		1280,
 		block,
 		nil,
+		protocol.StreamUnderlayOptions{},
 	)
 	if err != nil {
 		t.Fatalf("NewStreamUnderlay: %v", err)

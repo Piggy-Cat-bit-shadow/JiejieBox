@@ -355,6 +355,8 @@ func New(options Options) (*Box, error) {
 	// the gate this is a PER BOX decision read from the construction context, so two boxes in one
 	// process cannot see each other's answer and an embedder's own policy is never overwritten.
 	ctx = withNetworkExtensionQUICReceiveWindows(ctx)
+	// And the unread-payload budget for the protocols that can stop reading instead of allocating.
+	ctx = withNetworkExtensionReceiveBudget(ctx)
 	// One packet-up upload budget for the whole Box. The XHTTP transport asks the
 	// construction context for it when the first client is built (the client is created
 	// inside the vless outbound constructor, which is why the provider travels through

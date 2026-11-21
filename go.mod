@@ -453,4 +453,9 @@ replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8
 
 replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261120123305-b74ada19da50
 
-replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261116170915-04259b115daf
+// The 2026-11-21 pin (44aaf95) adds a per-session unread-payload byte counter that covers
+// recvChan, recvBuf, recvQueue and unreadBuf, releases it only as Read consumes bytes, and returns
+// it on every drop, duplicate, close and late-delivery path; and a byte quota that pauses the
+// EXCLUSIVE stream underlay's reader instead of allocating more. Library default stays disabled;
+// common/receivebudget is what turns it on, per Box.
+replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261121125055-44aaf9582106

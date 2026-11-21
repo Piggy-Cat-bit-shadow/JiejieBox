@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/sagernet/sing-box/common/receivebudget"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -340,6 +341,37 @@ func buildClientConfig(options option.MieruOutboundOptions, dialer apicommon.Dia
 		},
 	}
 	return config, nil
+}
+
+// applyReceiveBudget writes the box's unread-payload budget into the client config and reports
+// whether it took effect.
+//
+// The budget is enforced by pausing the reader of an EXCLUSIVE stream underlay, so it is only
+// written on a profile that multiplexes OFF. Two reasons, and the second is the important one: the
+// SDK refuses the combination, and a shared underlay's reader is shared by every session on that
+// connection - parking it for one slow session would stall the others, which is the failure mode the
+// whole mechanism exists to avoid. A budget that cannot be honoured is not written at all, rather
+// than written and silently ignored.
+func applyReceiveBudget(config *mieruclient.ClientConfig, budget receivebudget.Policy) bool {
+	if config == nil || config.Profile == nil || budget.UnreadPayloadBytes <= 0 {
+		return false
+	}
+	if config.Profile.GetMultiplexing().GetLevel() != mierupb.MultiplexingLevel_MULTIPLEXING_OFF {
+		return false
+	}
+	config.ReceiveByteQuota = budget.UnreadPayloadBytes
+	return true
+}
+
+// receiveBudgetVerdict explains, for the outbound's log line, whether a budget reaches this
+// outbound's reader. It reads the same parsed profile the connection will use, so the log cannot
+// disagree with the configuration.
+func receiveBudgetVerdict(options option.MieruOutboundOptions) string {
+	multiplexing, err := parseMultiplexing(options.Multiplexing)
+	if err == nil && multiplexing.GetLevel() == mierupb.MultiplexingLevel_MULTIPLEXING_OFF {
+		return " (the exclusive stream reader pauses at the budget)"
+	}
+	return " (not applied: only an exclusive stream reader can be paused, and multiplexing is not off)"
 }
 
 // buildServerConfig validates the inbound options and produces the official

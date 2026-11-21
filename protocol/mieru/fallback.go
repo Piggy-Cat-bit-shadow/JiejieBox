@@ -13,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/receivebudget"
 	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -690,6 +691,9 @@ func newTransportRuntime(spec *transportSpec) (*transportRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The box's unread-payload budget, when it can be honoured by this profile. A budget that this
+	// profile cannot take is not written at all; the outbound's log line says which case it was.
+	applyReceiveBudget(config, spec.budget)
 	client := mieruclient.NewClient()
 	if err = client.Store(config); err != nil {
 		return nil, fmt.Errorf("mieru: store %s client config: %w", spec.label, err)
@@ -774,4 +778,7 @@ type transportSpec struct {
 	// guard is the process admission policy for the underlay's real socket creation. Nil on a
 	// build without a budget.
 	guard *resourceguard.Guard
+	// budget is the box's unread-payload budget. The zero policy disables the mechanism, which is
+	// what every platform without a Network Extension budget gets.
+	budget receivebudget.Policy
 }

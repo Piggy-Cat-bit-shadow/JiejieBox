@@ -26,10 +26,8 @@ package box
 import (
 	"context"
 
-	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/quicpolicy"
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing/service"
 )
 
 // withNetworkExtensionQUICReceiveWindows installs the Network Extension receive-window policy
@@ -38,9 +36,7 @@ func withNetworkExtensionQUICReceiveWindows(ctx context.Context) context.Context
 	if _, installed := quicpolicy.FromContext(ctx); installed {
 		return ctx
 	}
-	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
-	underNetworkExtension := platformInterface != nil && platformInterface.UnderNetworkExtension()
-	windows, applies := networkExtensionQUICReceiveWindows(C.IsIos, underNetworkExtension)
+	windows, applies := networkExtensionQUICReceiveWindows(C.IsIos, networkExtensionBox(ctx))
 	if !applies {
 		return ctx
 	}
