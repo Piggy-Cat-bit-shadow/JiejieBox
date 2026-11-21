@@ -164,7 +164,14 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 		}
 		document.Outbounds = outbounds
 	}
-	if hasEndpoints {
+	// The previous reader re-serialised the document with badjson, whose marshaller DROPS any object
+	// or array that is empty all the way down. An `endpoints` value like `{}` or `[{}]` therefore
+	// never reached the typed decode: the document was accepted and the value ignored. Those values
+	// carry no sensible endpoint (a real one has a non-empty `type` string, so it is never "empty"),
+	// so the accepted set can be preserved exactly by treating an all-empty value as absent. A
+	// NON-empty but malformed value (`5`, `[{"type":1}]`, `[null]`) was rejected before and stays
+	// rejected.
+	if hasEndpoints && !jsonValueIsEmpty(endpointsRaw) {
 		endpoints, err := decodeEndpointsRaw(ctx, endpointsRaw)
 		if err != nil {
 			return document, err
@@ -172,6 +179,65 @@ func decodeSingBoxDocument(ctx context.Context, content string) (SingBoxDocument
 		document.Endpoints = endpoints
 	}
 	return document, nil
+}
+
+// jsonValueIsEmpty reports whether a raw JSON value is the kind of value the previous reader's
+// marshaller elided: an object with no entries, or an array whose elements are all empty the same
+// way. Scalars and null are NOT empty (badjson only implements IsEmpty for objects and arrays, and a
+// null entry is kept).
+func jsonValueIsEmpty(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch trimmed[0] {
+	case '{', '[':
+	default:
+		return false
+	}
+	decoder := json.NewDecoderContext(context.Background(), bytes.NewReader(trimmed))
+	return jsonValueIsEmptyDecoder(decoder)
+}
+
+// jsonValueIsEmptyDecoder consumes one complete value from decoder and reports whether it is empty
+// in the badjson sense. It assumes the value is well-formed JSON (the decoder that produced the raw
+// bytes already accepted it).
+func jsonValueIsEmptyDecoder(decoder *json.Decoder) bool {
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	delim, isDelim := token.(json.Delim)
+	if !isDelim {
+		return false
+	}
+	switch delim {
+	case '{':
+		for decoder.More() {
+			if _, err = decoder.Token(); err != nil { // the key
+				return false
+			}
+			if !jsonValueIsEmptyDecoder(decoder) {
+				return false
+			}
+		}
+		if _, err = decoder.Token(); err != nil { // the closing brace
+			return false
+		}
+		return true
+	case '[':
+		for decoder.More() {
+			if !jsonValueIsEmptyDecoder(decoder) {
+				return false
+			}
+		}
+		if _, err = decoder.Token(); err != nil { // the closing bracket
+			return false
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // outboundsAbsentOrNull reports the historical short-circuit: when the document had no `outbounds`
