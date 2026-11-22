@@ -5,6 +5,7 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -106,6 +107,37 @@ func TestReplaceOwnedBatchKeepsThePreviousObjectsWhenOneVerdictIsRefused(t *test
 	require.Zero(t, oldA.closed.Load(), "the refused object's predecessor must stay open")
 	currentB, _ := manager.Outbound("p/b")
 	require.NotSame(t, oldB, currentB, "the other item of the call must be published")
+}
+
+// TestReplaceOwnedBatchRollsBackWhenTheUnionVerdictIsRefused reaches the all-or-nothing branch the
+// edge-free path is built around: a refused verdict about the union must release every candidate and
+// leave the table, the slice and the previous objects untouched. An edge-free set cannot close a
+// cycle, so the production path reaches this branch only through a cross-kind refusal; the test
+// injects the refusal through the same seam the exported method fills with validateGraphLocked.
+func TestReplaceOwnedBatchRollsBackWhenTheUnionVerdictIsRefused(t *testing.T) {
+	registry := &graphRegistry{}
+	manager := NewManager(registry, nil, "")
+	old := &graphNode{tag: "p/a"}
+	installOutbound(t, manager, old)
+	hook := observable.NewSubscriber[struct{}](8)
+	t.Cleanup(func() { _ = hook.Close() })
+	manager.AddGraphUpdateHook(hook)
+	subscription, _ := hook.Subscription()
+	drainEvents(subscription)
+
+	refusal := errors.New("union verdict refused")
+	outcomes := manager.replaceOwnedBatch(context.Background(), nil, batchLogger(),
+		[]batch.Replacement{leafReplacement("p/a")}, "p",
+		func(graphProposal) error { return refusal })
+	require.Len(t, outcomes, 1)
+	require.ErrorIs(t, outcomes[0], refusal)
+
+	current, _ := manager.Outbound("p/a")
+	require.Same(t, old, current, "a refused union must publish nothing")
+	require.Zero(t, old.closed.Load(), "the previous object must stay open")
+	require.Len(t, registry.created, 1, "the refused candidate is the only constructed object")
+	require.EqualValues(t, 1, registry.created[0].closed.Load(), "the refused candidate is released")
+	require.Zero(t, pendingEvents(subscription), "a refused union must not emit a graph event")
 }
 
 // TestReplaceOwnedBatchKeepsTheDefaultSelection moves the default outbound with the object behind

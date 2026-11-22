@@ -49,6 +49,13 @@ import (
 //     mutation -> graphAccess -> access; construction and Start run outside access, and the
 //     returned close list is released after every lock is dropped.
 func (m *Manager) ReplaceOwnedBatch(ctx context.Context, router adapter.Router, logger log.ContextLogger, items []batch.Replacement, owner string) []error {
+	return m.replaceOwnedBatch(ctx, router, logger, items, owner, m.validateGraphLocked)
+}
+
+// replaceOwnedBatch is ReplaceOwnedBatch with the graph verdict injected, so the rollback a refused
+// union triggers can be tested directly. The exported entry point always passes validateGraphLocked;
+// no caller can substitute a weaker check.
+func (m *Manager) replaceOwnedBatch(ctx context.Context, router adapter.Router, logger log.ContextLogger, items []batch.Replacement, owner string, validate func(graphProposal) error) []error {
 	outcomes := make([]error, len(items))
 	if owner == "" {
 		for index := range outcomes {
@@ -93,7 +100,7 @@ func (m *Manager) ReplaceOwnedBatch(ctx context.Context, router adapter.Router, 
 			proposal.replace[prepared.item.Tag] = prepared.object
 		}
 		m.graphAccess.Lock()
-		if err := m.validateGraphLocked(proposal); err != nil {
+		if err := validate(proposal); err != nil {
 			// All-or-nothing: the verdict is about the union of the replacements, so publishing a
 			// subset would publish a graph that was never validated. Every built object is released
 			// and every previous object stays published.

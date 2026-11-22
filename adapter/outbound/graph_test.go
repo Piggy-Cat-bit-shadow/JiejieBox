@@ -101,7 +101,11 @@ func (g *graphGroup) setMembers(members []string, selected string) {
 	g.access.Unlock()
 }
 
-type graphRegistry struct{}
+type graphRegistry struct {
+	// created records every object the registry builds, so a test can assert that a refused batch
+	// released its candidates instead of publishing or leaking them.
+	created []*graphNode
+}
 
 func (r *graphRegistry) CreateOptions(string) (any, bool) { return &graphNodeOptions{}, true }
 func (r *graphRegistry) OptionTypes() []string            { return []string{"test"} }
@@ -111,7 +115,9 @@ func (r *graphRegistry) CreateOutbound(_ context.Context, _ adapter.Router, _ lo
 	if value, isValue := options.(*graphNodeOptions); isValue {
 		dependencies = value.Dependencies
 	}
-	return &graphNode{tag: tag, dependencies: dependencies}, nil
+	node := &graphNode{tag: tag, dependencies: dependencies}
+	r.created = append(r.created, node)
+	return node, nil
 }
 
 func newGraphManager(t *testing.T) *Manager {
