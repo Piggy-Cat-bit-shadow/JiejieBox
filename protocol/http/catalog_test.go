@@ -17,6 +17,7 @@ func TestCatalogEncodeDecodeCorpus(t *testing.T) {
 	corpus := []*option.HTTPOutboundOptions{
 		{
 			ServerOptions: option.ServerOptions{Server: "192.0.2.1", ServerPort: 8080},
+			Version:       1,
 			Username:      "user",
 			Password:      "pass",
 		},
@@ -79,6 +80,7 @@ func TestCatalogBuildsRuntime(t *testing.T) {
 func httpCatalogOptions() *option.HTTPOutboundOptions {
 	options := &option.HTTPOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "192.0.2.1", ServerPort: 443},
+		Version:       1,
 	}
 	return options
 }

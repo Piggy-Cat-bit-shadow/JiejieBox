@@ -3,6 +3,7 @@ package socks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound/catalog"
@@ -25,13 +26,14 @@ type catalogSocks struct{}
 func (catalogSocks) Type() string { return C.TypeSOCKS }
 
 type catalogSocksWire struct {
-	Server     string              `json:"server"`
-	ServerPort uint16              `json:"server_port"`
-	Version    string              `json:"version,omitempty"`
-	Username   string              `json:"username,omitempty"`
-	Password   string              `json:"password,omitempty"`
-	Network    catalog.NetworkList `json:"network"`
-	Dialer     catalog.Dialer      `json:"dialer"`
+	VersionWire int                 `json:"record_version"`
+	Server      string              `json:"server"`
+	ServerPort  uint16              `json:"server_port"`
+	Version     string              `json:"version,omitempty"`
+	Username    string              `json:"username,omitempty"`
+	Password    string              `json:"password,omitempty"`
+	Network     catalog.NetworkList `json:"network"`
+	Dialer      catalog.Dialer      `json:"dialer"`
 }
 
 func (catalogSocks) Encode(ctx context.Context, options any) ([]byte, catalog.Facts, bool) {
@@ -40,13 +42,14 @@ func (catalogSocks) Encode(ctx context.Context, options any) ([]byte, catalog.Fa
 		return nil, catalog.Facts{}, false
 	}
 	wire := catalogSocksWire{
-		Server:     socksOptions.Server,
-		ServerPort: socksOptions.ServerPort,
-		Version:    socksOptions.Version,
-		Username:   socksOptions.Username,
-		Password:   socksOptions.Password,
-		Network:    catalog.WrapNetworkList(socksOptions.Network),
-		Dialer:     catalog.WrapDialer(socksOptions.DialerOptions),
+		VersionWire: 1,
+		Server:      socksOptions.Server,
+		ServerPort:  socksOptions.ServerPort,
+		Version:     socksOptions.Version,
+		Username:    socksOptions.Username,
+		Password:    socksOptions.Password,
+		Network:     catalog.WrapNetworkList(socksOptions.Network),
+		Dialer:      catalog.WrapDialer(socksOptions.DialerOptions),
 	}
 	payload, err := json.Marshal(wire)
 	if err != nil {
@@ -62,6 +65,9 @@ func (catalogSocks) Build(ctx context.Context, router adapter.Router, logger log
 	var wire catalogSocksWire
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		return nil, err
+	}
+	if wire.VersionWire != 1 {
+		return nil, fmt.Errorf("socks catalog: unsupported record version %d", wire.VersionWire)
 	}
 	return NewOutbound(ctx, router, logger, tag, wire.value())
 }
@@ -108,7 +114,7 @@ func catalogEligible(ctx context.Context, options *option.SOCKSOutboundOptions) 
 	if options.ServerIsDomain() {
 		// The eager constructor resolves the authority here and may return a configuration error.
 		// Deferring that error to the first dial would move the error stage, so this node falls back.
-		if _, err := dialer.ResolveAuthority(ctx, nil, false); err != nil {
+		if _, err := dialer.ResolveAuthority(ctx, nil, true); err != nil {
 			return false
 		}
 	}

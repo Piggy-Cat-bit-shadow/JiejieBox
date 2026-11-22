@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound/catalog"
@@ -10,6 +11,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	transporthttp "github.com/sagernet/sing-box/transport/http"
 	"github.com/sagernet/sing/common/json/badoption"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -26,6 +28,7 @@ type catalogHTTP struct{}
 func (catalogHTTP) Type() string { return C.TypeHTTP }
 
 type catalogHTTPWire struct {
+	VersionWire            int                 `json:"record_version"`
 	Server                 string              `json:"server"`
 	ServerPort             uint16              `json:"server_port"`
 	Username               string              `json:"username,omitempty"`
@@ -54,6 +57,7 @@ func (catalogHTTP) Encode(ctx context.Context, options any) ([]byte, catalog.Fac
 		return nil, catalog.Facts{}, false
 	}
 	wire := catalogHTTPWire{
+		VersionWire:            1,
 		Server:                 httpOptions.Server,
 		ServerPort:             httpOptions.ServerPort,
 		Username:               httpOptions.Username,
@@ -89,6 +93,9 @@ func (catalogHTTP) Build(ctx context.Context, router adapter.Router, logger log.
 	var wire catalogHTTPWire
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		return nil, err
+	}
+	if wire.VersionWire != 1 {
+		return nil, fmt.Errorf("http catalog: unsupported record version %d", wire.VersionWire)
 	}
 	return NewOutbound(ctx, router, logger, tag, wire.value())
 }
@@ -144,7 +151,22 @@ func catalogEligible(ctx context.Context, options *option.HTTPOutboundOptions) b
 	if options == nil || options.Server == "" {
 		return false
 	}
-	if options.Version != 0 && options.Version != 1 {
+	// Admit HTTP/1.x only. Version 0 is NOT HTTP/1: with no path and no Host header the
+	// transport resolves it to HTTP/2, whose options are not in the record. Rejecting by the
+	// EFFECTIVE version (and any non-zero HTTP/2 option bag) is what prevents a silent option drop.
+	host := options.Headers.Build().Get("Host")
+	if transporthttp.ResolveVersion(options.Version, options.Path, host) != 1 {
+		return false
+	}
+	if options.HTTP2Options != (option.HTTP2Options{}) {
+		return false
+	}
+	if options.Path != "" && host != "" {
+		// The eager constructor refuses this combination; admitting it would move the error to dial.
+		return false
+	}
+	if options.DisableVersionFallback && (options.TLS == nil || !options.TLS.Enabled) {
+		// The eager client reports "HTTP/2 requires TLS" for this shape.
 		return false
 	}
 	if options.DialerOptions.Detour != "" ||
@@ -191,7 +213,7 @@ func catalogEligible(ctx context.Context, options *option.HTTPOutboundOptions) b
 		}
 	}
 	if options.ServerIsDomain() {
-		if _, err := dialer.ResolveAuthority(ctx, nil, false); err != nil {
+		if _, err := dialer.ResolveAuthority(ctx, nil, true); err != nil {
 			return false
 		}
 	}

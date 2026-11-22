@@ -3,6 +3,7 @@ package trojan
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound/catalog"
@@ -47,6 +48,9 @@ func (catalogTrojan) Build(ctx context.Context, router adapter.Router, logger lo
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		return nil, err
 	}
+	if wire.VersionWire != 1 {
+		return nil, fmt.Errorf("trojan catalog: unsupported record version %d", wire.VersionWire)
+	}
 	return NewOutbound(ctx, router, logger, tag, wire.value().outboundOptions())
 }
 
@@ -54,10 +58,11 @@ func (catalogTrojan) Build(ctx context.Context, router adapter.Router, logger lo
 // is checked by a corpus test that decodes it and compares the reconstructed options with the
 // original; a field added to lazyRecipe without being added here fails that test.
 type catalogRecipe struct {
-	Server     string              `json:"server"`
-	ServerPort uint16              `json:"server_port"`
-	Password   string              `json:"password"`
-	Network    catalog.NetworkList `json:"network"`
+	VersionWire int                 `json:"record_version"`
+	Server      string              `json:"server"`
+	ServerPort  uint16              `json:"server_port"`
+	Password    string              `json:"password"`
+	Network     catalog.NetworkList `json:"network"`
 
 	TLSEngine           string             `json:"tls_engine,omitempty"`
 	TLSDisableSNI       bool               `json:"tls_disable_sni,omitempty"`
@@ -73,6 +78,7 @@ type catalogRecipe struct {
 
 func catalogRecipeFrom(recipe lazyRecipe) catalogRecipe {
 	return catalogRecipe{
+		VersionWire:         1,
 		Server:              recipe.server,
 		ServerPort:          recipe.serverPort,
 		Password:            recipe.password,

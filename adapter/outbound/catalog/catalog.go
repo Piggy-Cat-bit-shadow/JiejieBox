@@ -38,6 +38,13 @@ var ErrClosed = errors.New("node catalog: store is closed")
 // ErrEmpty is returned for a zero-length record; a caller falls back to the eager path.
 var ErrEmpty = errors.New("node catalog: empty record")
 
+// ErrTooLarge is returned before copying a record larger than MaxRecordBytes.
+var ErrTooLarge = errors.New("node catalog: record is too large")
+
+// MaxRecordBytes bounds one record before it is copied or indexed. A record is a protocol wire
+// for a single node, so 1 MiB is far above any admitted shape and still bounded.
+const MaxRecordBytes = 1 << 20
+
 // Stats is the accounting the measurement and the tests read.
 type Stats struct {
 	Records  int
@@ -131,6 +138,9 @@ func (s *Store) Put(owner string, protocol string, payload []byte) (Ref, error) 
 	}
 	if len(payload) == 0 {
 		return Ref{}, ErrEmpty
+	}
+	if len(payload) > MaxRecordBytes {
+		return Ref{}, ErrTooLarge
 	}
 	hash := sha256.Sum256(payload)
 	s.mu.Lock()

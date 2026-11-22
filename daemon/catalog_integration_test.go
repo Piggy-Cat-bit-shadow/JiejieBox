@@ -37,7 +37,7 @@ func TestNodeCatalogIsInstalledOnStaticAndProviderNodes(t *testing.T) {
 		staticNodes += catalogSocksNode(fmt.Sprintf("s%d", i), 20000+i)
 	}
 	for i := 0; i < httpCount; i++ {
-		staticNodes += fmt.Sprintf(`,{"type": "http", "tag": "h%d", "server": "127.0.0.1", "server_port": %d}`, i, 21000+i)
+		staticNodes += fmt.Sprintf(`,{"type": "http", "tag": "h%d", "server": "127.0.0.1", "server_port": %d, "version": 1}`, i, 21000+i)
 	}
 	for i := 0; i < trojanCount; i++ {
 		staticNodes += fmt.Sprintf(`,{"type": "trojan", "tag": "t%d", "server": "127.0.0.1", "server_port": %d, "password": "secret", "tls": {"enabled": true, "server_name": "example.com"}}`, i, 22000+i)

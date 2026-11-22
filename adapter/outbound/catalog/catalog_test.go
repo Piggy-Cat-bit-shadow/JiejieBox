@@ -2,6 +2,7 @@ package catalog_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"strconv"
@@ -349,4 +350,43 @@ func TestDescriptorPublishesServerIsDomainFact(t *testing.T) {
 	require.True(t, handled)
 	require.True(t, object.(interface{ ResolvesDomainServer() bool }).ResolvesDomainServer())
 	require.NoError(t, object.(interface{ Close() error }).Close())
+}
+
+// TestManagerReplacementReleasesCatalogRecords is V-01/C04 on the real manager release path:
+// Start installs the lifecycle group, Create/ReplaceOwned go through the catalog constructor, and
+// CompletePublication closes the replaced object's scope. 100 single-node replacements must keep
+// the record/ref count flat.
+func TestManagerReplacementReleasesCatalogRecords(t *testing.T) {
+	registry := outbound.NewRegistry()
+	socks.RegisterOutbound(registry)
+	manager := outbound.NewManager(registry, nil, "")
+	manager.Initialize(func() (adapter.Outbound, error) {
+		return &catalogBlockingOutbound{Adapter: outbound.NewAdapter("direct", "direct", []string{network.NetworkTCP}, nil)}, nil
+	})
+	store := catalog.NewStore()
+	manager.SetDeferredOutboundConstructor(catalog.NewConstructor(store, socks.CatalogProtocol()).Deferred)
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	require.NoError(t, manager.Start(adapter.StartStateInitialize, scope))
+
+	const nodes = 3
+	for i := 0; i < nodes; i++ {
+		options := socksOptionsAt(i)
+		options.ServerPort = uint16(20000 + i)
+		require.NoError(t, manager.Create(context.Background(), nil, log.NewNOPFactory().Logger(),
+			fmt.Sprintf("n%d", i), C.TypeSOCKS, options))
+	}
+	require.Equal(t, nodes, store.Stats().Records)
+
+	for round := 0; round < 100; round++ {
+		options := socksOptionsAt(0)
+		options.ServerPort = uint16(30000 + round)
+		require.NoError(t, manager.ReplaceOwned(context.Background(), nil, log.NewNOPFactory().Logger(),
+			"n0", C.TypeSOCKS, options, "prov"))
+		require.NoError(t, manager.CompletePublication("prov", []string{"n0"}))
+		require.Equal(t, nodes, store.Stats().Records, "round %d leaked a record", round)
+		require.Equal(t, nodes, store.Stats().Refs, "round %d leaked a reference", round)
+	}
+	require.NoError(t, scope.Close())
+	store.Close()
+	require.Zero(t, store.Stats().Records)
 }
