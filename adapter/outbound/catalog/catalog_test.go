@@ -306,3 +306,47 @@ func TestCloseDuringBuildDoesNotPublishAndFreesTheRecord(t *testing.T) {
 	require.False(t, built)
 	require.Zero(t, store.Stats().Records, "the builder's retained reference is the only owner and it released")
 }
+
+// TestLifecycleScopeCloseReleasesTheRecord is the production release path: the manager closes a
+// component by closing its scope, not by calling Close itself. A descriptor whose Start did not
+// register its own Close would leak the record here (the unit tests that call Close directly would
+// still pass), so this test drives the scope.
+func TestLifecycleScopeCloseReleasesTheRecord(t *testing.T) {
+	store := catalog.NewStore()
+	constructor := catalog.NewConstructor(store, socks.CatalogProtocol())
+	object, handled, err := constructor.Deferred(context.Background(), nil, log.NewNOPFactory().Logger(), "scope", C.TypeSOCKS, socksOptions(), "")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, 1, store.Stats().Records)
+
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	require.NoError(t, object.(adapter.Lifecycle).Start(adapter.StartStateInitialize, scope))
+	require.NoError(t, scope.Close())
+	require.Zero(t, store.Stats().Records, "the scope drain must release the descriptor's record")
+	require.Zero(t, store.Stats().Refs)
+}
+
+type domainFactProtocol struct{}
+
+func (domainFactProtocol) Type() string { return "domain-fact" }
+
+func (domainFactProtocol) Encode(context.Context, any) ([]byte, catalog.Facts, bool) {
+	return []byte("domain"), catalog.Facts{Network: []string{network.NetworkTCP}, ServerIsDomain: true}, true
+}
+
+func (domainFactProtocol) Build(ctx context.Context, _ adapter.Router, _ log.ContextLogger, tag string, _ []byte) (adapter.Outbound, error) {
+	return &catalogBlockingOutbound{Adapter: outbound.NewAdapter("domain-fact", tag, []string{network.NetworkTCP}, nil)}, nil
+}
+
+// TestDescriptorPublishesServerIsDomainFact: the fact is not only computed for the record, it must
+// be visible on the published Adapter. A false answer hides a resolver edge from static validation
+// and the cross-kind cycle check.
+func TestDescriptorPublishesServerIsDomainFact(t *testing.T) {
+	store := catalog.NewStore()
+	constructor := catalog.NewConstructor(store, domainFactProtocol{})
+	object, handled, err := constructor.Deferred(context.Background(), nil, log.NewNOPFactory().Logger(), "domain", "domain-fact", nil, "")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.True(t, object.(interface{ ResolvesDomainServer() bool }).ResolvesDomainServer())
+	require.NoError(t, object.(interface{ Close() error }).Close())
+}

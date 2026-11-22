@@ -117,4 +117,12 @@ func TestNodeCatalogIsInstalledOnStaticAndProviderNodes(t *testing.T) {
 	_, dialErr := object.DialContext(ctxDial, "tcp", destination)
 	require.Error(t, dialErr)
 	require.Equal(t, 1, box.DeferredExpansionCount(), "the used node is now expanded")
+
+	// The production release path is the scope drain: every descriptor must release its record when
+	// the Box closes, not only when a test calls Close directly.
+	require.NoError(t, service.CloseService())
+	closed := box.CatalogStats()
+	require.True(t, closed.Closed, "the store is closed after the scope drain")
+	require.Zero(t, closed.Records, "every descriptor released its record")
+	require.Zero(t, closed.Refs)
 }

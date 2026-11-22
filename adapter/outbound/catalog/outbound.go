@@ -7,6 +7,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 )
 
 // Facts are the static facts the descriptor must answer without expanding the node.
@@ -85,7 +86,10 @@ func (c *Constructor) Deferred(ctx context.Context, router adapter.Router, logge
 		return nil, false, nil
 	}
 	handle := Handle{ref: ref}
-	ownerAdapter := outbound.NewAdapter(outboundType, tag, facts.Network, facts.Dependencies)
+	// An admitted shape has no detour/resolver dependency (eligibility excludes them), so an
+	// empty dialer options value is exact here. The ServerIsDomain fact MUST be published: the
+	// cross-kind cycle and static validation read it, and a false answer hides a resolver edge.
+	ownerAdapter := outbound.NewAdapterWithDialerOptions(outboundType, tag, facts.Network, option.DialerOptions{}, facts.ServerIsDomain)
 	deferred := outbound.NewLazyOutbound[Handle](ownerAdapter, logger, ctx, handle,
 		func(buildContext context.Context, buildHandle Handle) (adapter.Outbound, error) {
 			// A build can outlive the descriptor's Close (Close cancels but does not wait for an
@@ -128,6 +132,22 @@ type descriptor struct {
 	ref       Ref
 	once      sync.Once
 	multiplex bool
+}
+
+// Start runs the embedded lifecycle AND registers the descriptor's own Close on the same scope.
+// The embedded LazyOutbound registers only its own Close; the manager releases a component by
+// closing its scope, so without this the record reference would never be released in production
+// (the unit tests that call Close directly would not see it). The two cleanups are idempotent and
+// run in reverse registration order: the descriptor releases the record, then the Lazy close is a
+// no-op.
+func (d *descriptor) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if err := d.LazyOutbound.Start(stage, scope); err != nil {
+		return err
+	}
+	if stage == adapter.StartStateInitialize && scope != nil {
+		scope.AddNamed("outbound/catalog["+d.Tag()+"]", d.Close)
+	}
+	return nil
 }
 
 // Close releases the descriptor's record reference after the state machine has stopped publishing.
