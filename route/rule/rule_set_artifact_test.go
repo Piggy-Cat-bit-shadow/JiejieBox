@@ -244,6 +244,12 @@ func TestALateRefreshDoesNotReplaceANewerOne(t *testing.T) {
 		firstResult <- ruleSet.fetch(ctx, true)
 	}()
 	<-firstStarted
+	// Both refreshes are ordered by the time they STARTED (manifest.Created), and the first one has
+	// captured its timestamp by the time the server signals. Waiting past a clock tick makes the
+	// second refresh start strictly later, so the assertion below tests that ordering rather than
+	// which of two equal timestamps the store happened to rank first (equal Created values are an
+	// unstable tie and made this test flake on Windows).
+	time.Sleep(10 * time.Millisecond)
 
 	require.NoError(t, ruleSet.fetch(ctx, true), "the newer refresh publishes")
 	require.True(t, remoteRuleSetMatches(t, ruleSet, "192.168.1.1"))
