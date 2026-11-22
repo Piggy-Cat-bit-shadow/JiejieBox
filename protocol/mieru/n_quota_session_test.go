@@ -20,9 +20,12 @@ package mieru
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -171,6 +174,64 @@ func newQuotaClient(t *testing.T, port uint16, multiplexing string, policy *rece
 	}
 	spec, err := newTransportSpec(ctx, "quota-probe", options)
 	require.NoError(t, err)
+	runtime, err := newTransportRuntime(spec)
+	require.NoError(t, err)
+	require.NoError(t, runtime.start())
+	t.Cleanup(func() { _ = runtime.stop() })
+	return runtime
+}
+
+// crossSessionUnderlayBudget is the number of real underlay sockets the cross-session test admits.
+// One socket is what makes its oracle deterministic: every successful second dial must have reused
+// the slow session's underlay, and a rejected dial is the mux trying to leave the shared connection.
+// The rejection is retried, never silently measured on another connection.
+const crossSessionUnderlayBudget = 1
+
+// crossSessionUnderlayAttempts bounds the retries; the mux reuses an existing underlay with
+// probability factor/(factor+1) = 2/3 for the middle profile, so failing all 8 attempts is ~1e-4.
+const crossSessionUnderlayAttempts = 8
+
+// errUnderlayBudgetExhausted is returned by underlayBudgetDialer when the mux asks for one more real
+// underlay socket than the test admits.
+var errUnderlayBudgetExhausted = errors.New("mieru test: underlay socket budget exhausted")
+
+// underlayBudgetDialer admits a fixed number of real underlay sockets and rejects the rest. The SDK
+// creates a new underlay only when the mux does not reuse an existing one, so a rejection is the
+// observable "the mux tried to leave the shared connection" signal. It is the same seam the
+// production serverDialer exposes to the admission tests: the client is still built through
+// newTransportSpec + newTransportRuntime, only the innermost socket creation is bounded.
+type underlayBudgetDialer struct {
+	inner N.Dialer
+	limit int
+
+	mu    sync.Mutex
+	dials int
+}
+
+func (d *underlayBudgetDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	d.mu.Lock()
+	if d.dials >= d.limit {
+		d.mu.Unlock()
+		return nil, errUnderlayBudgetExhausted
+	}
+	d.dials++
+	d.mu.Unlock()
+	return d.inner.DialContext(ctx, network, destination)
+}
+
+func (d *underlayBudgetDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return d.inner.ListenPacket(ctx, destination)
+}
+
+// newQuotaClientWithUnderlayBudget builds the same production client as newQuotaClient, but the
+// innermost dialer admits at most budget real underlay sockets.
+func newQuotaClientWithUnderlayBudget(t *testing.T, port uint16, multiplexing string, budget int) *transportRuntime {
+	t.Helper()
+	options := outboundOptionsForPort(port, "tcp", "alice", "alice-password")
+	options.Multiplexing = multiplexing
+	spec, err := newTransportSpec(context.Background(), "quota-probe", options)
+	require.NoError(t, err)
+	spec.dialer = &underlayBudgetDialer{inner: spec.dialer, limit: budget}
 	runtime, err := newTransportRuntime(spec)
 	require.NoError(t, err)
 	require.NoError(t, runtime.start())
@@ -387,7 +448,7 @@ func TestASlowSessionMustNotStallAConcurrentSession(t *testing.T) {
 	const slowPushLength = 10 << 20
 	router, port := startQuotaInbound(t, slowPushLength, slowPushChunk)
 
-	runtime := newQuotaClient(t, port, "middle", nil)
+	runtime := newQuotaClientWithUnderlayBudget(t, port, "middle", crossSessionUnderlayBudget)
 	require.Zero(t, runtime.config.ReceiveByteQuota,
 		"a shared reader must not carry a quota")
 
@@ -421,16 +482,24 @@ func TestASlowSessionMustNotStallAConcurrentSession(t *testing.T) {
 		return session, nil
 	}
 
-	// The mux may place the second session on a fresh connection (its underlay pick is random), and
-	// round trips on another connection would not exercise the shared reader. Retry until a session
-	// lands on the parked session's connection; `LocalAddr` is the proxy connection, so equal values
-	// mean one shared underlay. Failing to place it only weakens the round-trip oracle - never the
-	// termination assertion below - so the last probe is kept as a fallback instead of skipping.
+	// The mux picks an existing underlay only probabilistically, so a second dial may ask the dialer
+	// for a fresh connection. The dialer admits one socket, so that attempt fails with
+	// errUnderlayBudgetExhausted instead of quietly measuring a different connection; the test then
+	// retries until the second session really shares the slow session's underlay. Every successful
+	// attempt is logged, so `-count` runs can prove the shared-reader oracle was exercised every time,
+	// and exhausting the attempts fails the test instead of passing without it.
 	stalledAt := slowRoute.accepted.Load()
 	var fastSession *mieruprotocol.Session
-	for attempt := 0; attempt < 8 && fastSession == nil; attempt++ {
+	freshConnectionAttempts := 0
+	for attempt := 1; attempt <= crossSessionUnderlayAttempts; attempt++ {
 		probe, err := dial(M.ParseSocksaddr("198.51.100.20:80"), 10*time.Second)
 		if err != nil {
+			if errors.Is(err, errUnderlayBudgetExhausted) || strings.Contains(err.Error(), errUnderlayBudgetExhausted.Error()) {
+				freshConnectionAttempts++
+				t.Logf("attempt %d/%d: the mux asked for a fresh connection (not admitted); retrying on the shared underlay",
+					attempt, crossSessionUnderlayAttempts)
+				continue
+			}
 			t.Fatalf("cross-session head-of-line blocking on a shared underlay: while one session was "+
 				"parked at %d bytes (gauge %d), establishing a second session failed with %q. The shared "+
 				"underlay's single reader is blocked by the one session that cannot consume its receive "+
@@ -438,16 +507,21 @@ func TestASlowSessionMustNotStallAConcurrentSession(t *testing.T) {
 				"the reader loop in pkg/protocol/underlay_stream.go)",
 				stalledAt, slowGauge, err)
 		}
-		if probe.LocalAddr().String() == slowSession.LocalAddr().String() {
-			fastSession = probe
-			break
+		if probe.LocalAddr().String() != slowSession.LocalAddr().String() {
+			require.NoError(t, probe.Close(), "closing a probe session that landed on another connection")
+			t.Logf("attempt %d/%d: the second session landed on another connection; retrying",
+				attempt, crossSessionUnderlayAttempts)
+			continue
 		}
 		fastSession = probe
+		t.Logf("shared-reader round trips exercised on attempt %d/%d (%d fresh-connection attempts skipped)",
+			attempt, crossSessionUnderlayAttempts, freshConnectionAttempts)
+		break
 	}
-	require.NotNil(t, fastSession, "no second session was established after the first one stalled")
-
-	if fastSession.LocalAddr().String() != slowSession.LocalAddr().String() {
-		t.Logf("the mux placed the second session on another connection; the shared-reader round trips are not exercised in this run")
+	if fastSession == nil {
+		t.Fatalf("the mux did not place the second session on the slow session's shared underlay within "+
+			"%d attempts; the cross-session oracle was not exercised, so this run proves nothing",
+			crossSessionUnderlayAttempts)
 	}
 
 	for round := 0; round < 20; round++ {
