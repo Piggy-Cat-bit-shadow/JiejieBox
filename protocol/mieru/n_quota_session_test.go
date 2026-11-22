@@ -369,56 +369,21 @@ func TestReceiveQuotaCloseReleasesAParkedReader(t *testing.T) {
 }
 
 // TestASlowSessionMustNotStallAConcurrentSession is P16: with upstream multiplexing (two sessions per
-
-// crossSessionBlockingIsFixed records whether the pinned mieru fork has stopped blocking a shared
-// underlay's single reader on one session's full receive queue. It is false at this pin: the reproducer
-// below fails deterministically (twice, same byte counts) and the finding is recorded with its evidence
-// in C:\Deepseek\.debug-post-0.1.55-2026-11-22\reports\N-datapath.md. The test is kept runnable - flip
-// this to true once the fork carries the fix - instead of being deleted, because the regression is the
-// only thing that can prove the fix.
-const crossSessionBlockingIsFixed = false
-
-// closeSlowSession drains a parked session far enough that the shared underlay's reader can run
-// again. It exists so the test can prove the CAUSE of a cross-session stall, not just its presence:
-// the same operation is retried after the slow session stops being the blocker.
-func drainSlowSession(t *testing.T, session *mieruprotocol.Session, route *pushRoute, length int64) int64 {
-	t.Helper()
-	require.NoError(t, session.SetReadDeadline(time.Now().Add(quotaDrainDeadline)))
-	defer session.SetReadDeadline(time.Time{})
-	buffer := make([]byte, quotaPushChunk)
-	var offset int64
-	for offset < length {
-		size := int64(len(buffer))
-		if remaining := length - offset; remaining < size {
-			size = remaining
-		}
-		read, err := io.ReadFull(session, buffer[:size])
-		require.NoError(t, err, "draining the slow session at offset %d", offset)
-		for index := int64(0); index < int64(read); index++ {
-			require.Equal(t, quotaPayload(offset+index), buffer[index], "byte %d is wrong", offset+index)
-		}
-		offset += int64(read)
-	}
-	return offset
-}
-
-// TestASlowSessionMustNotStallAConcurrentSession is P16: with upstream multiplexing (two sessions per
 // underlay) one session whose application stopped reading must not stop another session's traffic.
 //
-// `multiplexing: middle` is what makes two sessions share one underlay in the SDK, and the budget must
-// be absent from this profile by construction - a shared reader may never be parked by one session,
-// which is exactly why applyReceiveBudget refuses to write a quota here. The test asserts that
-// refusal, so the profile it exercises is the profile its name claims.
+// `multiplexing: middle` is what makes sessions share an underlay in the SDK, and the budget must be
+// absent from this profile by construction - a shared reader may never be parked by one session, which
+// is exactly why applyReceiveBudget refuses to write a quota here. The test asserts that refusal, so
+// the profile it exercises is the profile its name claims.
 //
-// The oracle is the second session, established AFTER the first one's window has closed: a session that
-// cannot be established, or cannot complete a round trip, while the other session's application is
-// simply slow, is a cross-session head-of-line block. The failure path measures the cause instead of
-// asserting it: it drains the slow session and retries the identical operation, so a diagnostic run
-// distinguishes "the shared reader is parked by the slow session" from "the fake server is broken".
+// What the protocol may do with a session that cannot keep up on a shared underlay is fail that
+// session, not wait for it: its bounded receive queue fills only when the application has stopped
+// reading, and waiting there would stall the single reader that carries every other session. The
+// regression therefore has two parts: while one session is overloaded another session on the same
+// connection must be establishable and must complete round trips, and the overloaded session must end
+// (its already queued prefix stays readable, then reads return EOF) instead of parking its reader
+// forever.
 func TestASlowSessionMustNotStallAConcurrentSession(t *testing.T) {
-	if !crossSessionBlockingIsFixed {
-		t.Skip("known defect at the pinned mieru fork: a shared stream underlay's single reader is blocked by one session's full receive queue, which stalls every other session on the connection. Reproducer and evidence: reports/N-datapath.md (P16). Set crossSessionBlockingIsFixed = true once the fork pin carries the fix.")
-	}
 	const slowPushLength = 10 << 20
 	router, port := startQuotaInbound(t, slowPushLength, slowPushChunk)
 
@@ -431,46 +396,59 @@ func TestASlowSessionMustNotStallAConcurrentSession(t *testing.T) {
 	pushed, slowGauge := awaitParked(t, slowRoute, slowSession.UnreadPayloadBytes)
 	t.Logf("slow session: server wrote %d of %d, gauge max %d, gauge now %d",
 		pushed, int64(slowPushLength), slowGauge, slowSession.UnreadPayloadBytes())
-	require.Greater(t, pushed, int64(0), "the slow session must have reached its window")
+	require.Greater(t, pushed, int64(0), "the slow session must have reached its receive window")
 	require.Less(t, pushed, int64(slowPushLength), "the slow session must be parked for this case")
 
-	dialFast := func(timeout time.Duration) (*mieruprotocol.Session, *pushRoute, error) {
-		netAddr, err := toNetAddrSpec(M.ParseSocksaddr("198.51.100.20:80"), N.NetworkTCP)
+	// dial opens one session and consumes its routed connection, keeping the fake server's route
+	// channel aligned with the dials.
+	dial := func(destination M.Socksaddr, timeout time.Duration) (*mieruprotocol.Session, error) {
+		netAddr, err := toNetAddrSpec(destination, N.NetworkTCP)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		dialCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		conn, dialErr := runtime.client.DialContext(dialCtx, netAddr)
-		if dialErr != nil {
-			return nil, nil, dialErr
+		conn, err := runtime.client.DialContext(dialCtx, netAddr)
+		if err != nil {
+			return nil, err
 		}
 		session, isSession := conn.(*mieruprotocol.Session)
 		if !isSession {
-			return nil, nil, fmt.Errorf("unexpected connection type %T", conn)
+			_ = conn.Close()
+			return nil, fmt.Errorf("unexpected connection type %T", conn)
 		}
-		route := nextRoute(t, router)
-		return session, route, nil
+		nextRoute(t, router)
+		return session, nil
 	}
 
+	// The mux may place the second session on a fresh connection (its underlay pick is random), and
+	// round trips on another connection would not exercise the shared reader. Retry until a session
+	// lands on the parked session's connection; `LocalAddr` is the proxy connection, so equal values
+	// mean one shared underlay. Failing to place it only weakens the round-trip oracle - never the
+	// termination assertion below - so the last probe is kept as a fallback instead of skipping.
 	stalledAt := slowRoute.accepted.Load()
-	fastSession, _, dialErr := dialFast(quotaDialTimeout)
-	if dialErr != nil {
-		// Diagnose the cause: the same dial, after the slow session is no longer the blocker.
-		drained := drainSlowSession(t, slowSession, slowRoute, slowPushLength)
-		retried, _, retryErr := dialFast(quotaDialTimeout)
-		if retryErr == nil {
-			_ = retried.Close()
+	var fastSession *mieruprotocol.Session
+	for attempt := 0; attempt < 8 && fastSession == nil; attempt++ {
+		probe, err := dial(M.ParseSocksaddr("198.51.100.20:80"), 10*time.Second)
+		if err != nil {
+			t.Fatalf("cross-session head-of-line blocking on a shared underlay: while one session was "+
+				"parked at %d bytes (gauge %d), establishing a second session failed with %q. The shared "+
+				"underlay's single reader is blocked by the one session that cannot consume its receive "+
+				"queue (mieru fork: pkg/protocol/underlay_base.go deliverSegmentToSession, called from "+
+				"the reader loop in pkg/protocol/underlay_stream.go)",
+				stalledAt, slowGauge, err)
 		}
-		t.Fatalf("cross-session head-of-line blocking on a shared underlay: while one session was "+
-			"parked at %d bytes (gauge %d), establishing a second session failed with %q; after draining "+
-			"%d bytes of the parked session the identical dial returned err=%v. The shared underlay's "+
-			"reader is blocked by the one session that cannot consume its receive queue "+
-			"(mieru fork: pkg/protocol/underlay_base.go deliverSegmentToSession, called from the single "+
-			"reader loop in pkg/protocol/underlay_stream.go)",
-			stalledAt, slowGauge, dialErr, drained, retryErr)
+		if probe.LocalAddr().String() == slowSession.LocalAddr().String() {
+			fastSession = probe
+			break
+		}
+		fastSession = probe
 	}
-	t.Cleanup(func() { _ = fastSession.Close() })
+	require.NotNil(t, fastSession, "no second session was established after the first one stalled")
+
+	if fastSession.LocalAddr().String() != slowSession.LocalAddr().String() {
+		t.Logf("the mux placed the second session on another connection; the shared-reader round trips are not exercised in this run")
+	}
 
 	for round := 0; round < 20; round++ {
 		payload := make([]byte, 1024)
@@ -479,23 +457,54 @@ func TestASlowSessionMustNotStallAConcurrentSession(t *testing.T) {
 		}
 		require.NoError(t, fastSession.SetDeadline(time.Now().Add(10*time.Second)))
 		_, err := fastSession.Write(payload)
-		require.NoError(t, err, "round trip %d: the fast session must be writable while the slow one is parked", round)
+		require.NoError(t, err, "round trip %d: the second session must be writable", round)
 		echoed := make([]byte, len(payload))
 		_, err = io.ReadFull(fastSession, echoed)
-		require.NoError(t, err, "round trip %d: the fast session must be readable while the slow one is parked", round)
+		require.NoError(t, err, "round trip %d: the second session must be readable", round)
 		require.Equal(t, payload, echoed, "round trip %d: echoed bytes must be identical", round)
 		require.Equal(t, stalledAt, slowRoute.accepted.Load(),
-			"round trip %d: the fast session's progress must not require the slow session to advance", round)
+			"round trip %d: the second session's progress must not require the parked session to advance", round)
 	}
-	t.Logf("20 fast round trips completed while the slow session stayed parked at %d bytes", stalledAt)
+	t.Logf("20 second-session round trips completed while the slow session stayed parked at %d bytes", stalledAt)
 
-	// The slow session must still be intact: draining it returns the whole stream, in order.
-	after := drainSession(t, slowSession, slowPushLength)
-	require.Equal(t, int64(0), after, "the slow session's accounting must return to zero after draining")
-	select {
-	case <-slowRoute.pushDone:
-	case <-time.After(quotaTestDeadline):
-		t.Fatal("the slow push never finished after the slow session drained")
+	// The overloaded session must be failed instead of parked: everything the protocol already queued
+	// stays readable, then reads end with EOF. Before the fork fix the same read consumed the whole
+	// 10 MiB stream (the shared reader resumed as soon as the application read) and never reached EOF.
+	require.NoError(t, slowSession.SetReadDeadline(time.Now().Add(10*time.Second)))
+	buffer := make([]byte, quotaPushChunk)
+	var consumed int64
+	var readErr error
+	for {
+		var read int
+		read, readErr = slowSession.Read(buffer)
+		for index := 0; index < read; index++ {
+			require.Equal(t, quotaPayload(consumed+int64(index)), buffer[index],
+				"byte %d read from the overloaded session is not the pushed stream", consumed+int64(index))
+		}
+		consumed += int64(read)
+		if readErr != nil {
+			break
+		}
 	}
-	require.Equal(t, int64(slowPushLength), slowRoute.accepted.Load())
+	require.ErrorIs(t, readErr, io.EOF,
+		"the overloaded session must be closed, not left parked: a shared reader may not wait for it")
+	require.Equal(t, int64(0), slowSession.UnreadPayloadBytes(),
+		"the closed session's accounting must return to zero after its queued prefix is read")
+	require.Greater(t, consumed, int64(0), "payload queued before the overload must remain readable")
+	require.Less(t, consumed, int64(slowPushLength),
+		"the overloaded session must not deliver the whole pushed stream")
+	t.Logf("the overloaded session ended after %d readable bytes", consumed)
+
+	// The shared connection and its remaining session survive the failed one.
+	payload := make([]byte, 1024)
+	for index := range payload {
+		payload[index] = byte(index)
+	}
+	require.NoError(t, fastSession.SetDeadline(time.Now().Add(10*time.Second)))
+	_, err := fastSession.Write(payload)
+	require.NoError(t, err, "the shared connection must stay usable after the overloaded session failed")
+	echoed := make([]byte, len(payload))
+	_, err = io.ReadFull(fastSession, echoed)
+	require.NoError(t, err, "the shared connection must stay readable after the overloaded session failed")
+	require.Equal(t, payload, echoed)
 }

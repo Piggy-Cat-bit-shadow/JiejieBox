@@ -72,8 +72,8 @@ github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-2026111614524
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-20261116145241-b9f445ddb1f4/go.mod h1:ts5M2haURD7Uepvo7UX5YD9JJv7+vhC927510iZvuDE=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261116145241-b9f445ddb1f4 h1:aCUe8YasGatzATVt65BqNGOKEFCM5EW/MFkSTDLe8NA=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261116145241-b9f445ddb1f4/go.mod h1:iajNlQswlGAK3cTLI/XRWtnSyOWkqITn6pfxlMIG2Q0=
-github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261121125055-44aaf9582106 h1:CSHI9VatwuFThRcMG8Kuap/knOhn6u2/w/lBDWhcQdA=
-github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261121125055-44aaf9582106/go.mod h1:zJBUCsi5rxyvHM8fjFf+GLaEl4OEjjBXr1s5F6Qd3hM=
+github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261122050203-0f0e75089c3b h1:GxhCnEOUl7uPfKNa2hE+d3UTZlUZQF/nqZbh192WAxI=
+github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261122050203-0f0e75089c3b/go.mod h1:zJBUCsi5rxyvHM8fjFf+GLaEl4OEjjBXr1s5F6Qd3hM=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261116151243-d51ec71bf0dd h1:jctRPUA65hXb6vroDD+kkStA0R9YpyI3aPBtnXTXfqU=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261116151243-d51ec71bf0dd/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261121123313-7246d061b907 h1:bvyxl1MbpJiKvT8GGcGvV73ubwwm2yCupmGGBaYpCAM=
