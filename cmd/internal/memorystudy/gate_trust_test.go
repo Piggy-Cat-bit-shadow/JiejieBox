@@ -15,9 +15,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// The gate compares the budget's platform with the host it runs on, so fixtures that must be
+// COMPATIBLE have to name the host platform: the Linux push runner otherwise refuses a budget
+// written on Windows before the rule under test is reached. The mismatch case names any platform
+// that is NOT the host, so it stays a mismatch on every runner.
+func hostGOOS() string   { return runtime.GOOS }
+func hostGOARCH() string { return runtime.GOARCH }
+
+func otherPlatform() (string, string) {
+	if runtime.GOOS == "windows" {
+		return "linux", "amd64"
+	}
+	return "windows", "amd64"
+}
 
 func ruleByID(t *testing.T, budget budgetFile, id string) budgetRule {
 	t.Helper()
@@ -338,8 +353,8 @@ func TestToolchainTagFixtureAndPlatformMismatchesAreRefused(t *testing.T) {
 	head := strings.Repeat("c", 40)
 	baseline := budgetBaseline{
 		SourceSHA:      strings.Repeat("b", 40),
-		GOOS:           "windows",
-		GOARCH:         "amd64",
+		GOOS:           hostGOOS(),
+		GOARCH:         hostGOARCH(),
 		GoVersion:      "go1.27.4",
 		Tags:           []string{"with_purego,with_quic"},
 		FixtureVersion: fixtureVersion,
@@ -349,8 +364,8 @@ func TestToolchainTagFixtureAndPlatformMismatchesAreRefused(t *testing.T) {
 	manifest := budgetFile{SchemaVersion: budgetSchemaVersion, Baseline: baseline, Provenance: provenance}
 	summary := cleanLedger(head)
 	summary.GoVersion = "go1.27.4"
-	summary.GOOS = "windows"
-	summary.GOARCH = "amd64"
+	summary.GOOS = hostGOOS()
+	summary.GOARCH = hostGOARCH()
 	summary.Tags = []string{"with_quic", "with_purego"}
 	summary.FixtureVersion = fixtureVersion
 	summary.Runs = []string{"candidate-run"}
@@ -387,7 +402,7 @@ func TestToolchainTagFixtureAndPlatformMismatchesAreRefused(t *testing.T) {
 	}{
 		{"toolchain", func(b *budgetFile, s *ledgerSummary) { s.GoVersion = "go1.26.1" }, "incompatible toolchain"},
 		{"build tags", func(b *budgetFile, s *ledgerSummary) { s.Tags = []string{"with_purego"} }, "incompatible build tags"},
-		{"platform", func(b *budgetFile, s *ledgerSummary) { s.GOOS, s.GOARCH = "linux", "amd64" }, "incompatible platform"},
+		{"platform", func(b *budgetFile, s *ledgerSummary) { s.GOOS, s.GOARCH = otherPlatform() }, "incompatible platform"},
 		{"fixture version", func(b *budgetFile, s *ledgerSummary) { s.FixtureVersion = "memorystudy-fixture/2" }, "incompatible fixture"},
 		{"fixture document", func(b *budgetFile, s *ledgerSummary) {
 			b.Provenance.FixtureDigests = map[string]string{specSignature(gateSpecs(false)[0]): "aaaa"}
@@ -425,13 +440,13 @@ func TestBudgetDerivedFromTheCandidateCannotCertifyIt(t *testing.T) {
 	runs := []string{"run-1", "run-2"}
 	summary := cleanLedger(head)
 	summary.GoVersion = "go1.27.4"
-	summary.GOOS = "windows"
-	summary.GOARCH = "amd64"
+	summary.GOOS = hostGOOS()
+	summary.GOARCH = hostGOARCH()
 	summary.Tags = []string{"with_purego"}
 	summary.FixtureVersion = fixtureVersion
 	summary.Runs = runs
 	baseline := budgetBaseline{
-		SourceSHA: head, GOOS: "windows", GOARCH: "amd64", GoVersion: "go1.27.4",
+		SourceSHA: head, GOOS: hostGOOS(), GOARCH: hostGOARCH(), GoVersion: "go1.27.4",
 		Tags: []string{"with_purego"}, FixtureVersion: fixtureVersion, Runs: runs,
 	}
 	derived := budgetFile{SchemaVersion: budgetSchemaVersion,
@@ -561,8 +576,8 @@ func TestWriteBudgetRunsTheSameCompletenessCheckAsTheGate(t *testing.T) {
 // TestWriteBudgetWithoutAManifestMintsOnlyADerivedBudget: -from is an audit convenience, not a way
 // to promote the candidate ledger into a reference.
 func TestWriteBudgetWithoutAManifestMintsOnlyADerivedBudget(t *testing.T) {
-	summary := ledgerSummary{SHA: strings.Repeat("c", 40), GoVersion: "go1.27.4", GOOS: "windows",
-		GOARCH: "amd64", Tags: []string{"with_purego"}, FixtureVersion: fixtureVersion,
+	summary := ledgerSummary{SHA: strings.Repeat("c", 40), GoVersion: "go1.27.4", GOOS: hostGOOS(),
+		GOARCH: hostGOARCH(), Tags: []string{"with_purego"}, FixtureVersion: fixtureVersion,
 		FixtureDigests: map[string]string{}}
 	planned := gateSpecs(false)
 	manifest := manifestFromLedger(summary, 18, "reference.jsonl", strings.Repeat("a", 64), 3, planned)
