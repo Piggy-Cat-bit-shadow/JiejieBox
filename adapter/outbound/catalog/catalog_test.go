@@ -209,3 +209,37 @@ func TestMalformedRecordFailsBeyondTheRecord(t *testing.T) {
 	_, err := protocol.Build(context.Background(), nil, log.NewNOPFactory().Logger(), "bad", []byte("{not-json"))
 	require.Error(t, err)
 }
+
+// TestHundredSingleNodeUpdatesDoNotGrow is the long-form C04: one node changes per round for 100
+// rounds. Record count and reference count must stay flat; unchanged nodes keep their generation and
+// are never copied into a new generation.
+func TestHundredSingleNodeUpdatesDoNotGrow(t *testing.T) {
+	const nodes = 1000
+	store := catalog.NewStore()
+	refs := make([]catalog.Ref, nodes)
+	for i := range refs {
+		ref, err := store.Put("nodes", C.TypeSOCKS, []byte("node-"+strconv.Itoa(i)))
+		require.NoError(t, err)
+		refs[i] = ref
+	}
+	generations := make([]uint64, nodes)
+	for i := range refs {
+		generations[i] = refs[i].Generation()
+	}
+	for round := 0; round < 100; round++ {
+		index := round % nodes
+		replacement, err := store.Put("nodes", C.TypeSOCKS, []byte("node-"+strconv.Itoa(index)+"-r"+strconv.Itoa(round)))
+		require.NoError(t, err)
+		refs[index].Release()
+		refs[index] = replacement
+		require.Equal(t, nodes, store.Stats().Records, "round %d must not add a record", round)
+		require.Equal(t, nodes, store.Stats().Refs, "round %d must not add a reference", round)
+	}
+	for i := 900; i < nodes; i++ {
+		require.Equal(t, generations[i], refs[i].Generation(), "an unchanged node keeps its generation")
+	}
+	for i := range refs {
+		refs[i].Release()
+	}
+	require.Zero(t, store.Stats().Records)
+}
