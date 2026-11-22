@@ -2,7 +2,6 @@ package clashapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -247,33 +246,89 @@ func snapshotProxyEntries(server *Server) ([]proxyEntry, error) {
 		positions = nil
 	}
 
-	// MarshalJSON of the old object graph could fail in exactly one place: a history entry whose
-	// time is outside the RFC 3339 range encodable by time.Time.MarshalJSON. Everything else in the
-	// document is a string, a bool or a []string. The condition is checked here, before the response
-	// head and before the first byte, so the endpoint keeps the old 500-instead-of-body behaviour
-	// instead of emitting a truncated document.
-	if invalid := invalidProxyHistory(entries); invalid != nil {
-		if _, err := json.Marshal(invalid); err != nil {
-			return nil, err
-		}
-		// Unreachable: the year range above is the only failure mode of time.Time.MarshalJSON.
+	// MarshalJSON of the old object graph could fail in exactly one place: the encoding of a history
+	// entry's time.Time. Everything else in the document is a string, a bool or a []string. The
+	// condition is checked here, before the response head and before the first byte, so the endpoint
+	// keeps the old 500-instead-of-body behaviour instead of emitting a truncated document.
+	//
+	// The check must be as strict as the encoder that will actually run, which is why it delegates to
+	// the same formatter instead of testing for one remembered failure mode; see validateProxyHistories.
+	if err := validateProxyHistories(entries); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
 
-// invalidProxyHistory returns the first history entry that encoding/json cannot encode.
-func invalidProxyHistory(entries []proxyEntry) *adapter.URLTestHistory {
+// validateProxyHistories returns the error encoding/json reports for the first history entry the
+// streamed writer cannot encode.
+//
+// # Why the cheap check is exact
+//
+// The only failure mode in this document is a history entry's time.Time. time.Time.MarshalJSON
+// formats through time.appendStrictRFC3339 (time/format_rfc3339.go), and time.Time.AppendText reaches
+// the same function through appendTo. A successful AppendText therefore means MarshalJSON will
+// succeed, and a failed one means it will fail: the validation is an exact mirror, not a heuristic.
+//
+// Testing only the year - which an earlier version did - was wrong: appendStrictRFC3339 also rejects
+// a timezone hour outside [0,23], and a time.Time can legally carry a 24h offset while its year is in
+// range. Such an entry escaped the pre-check, and the streamed handler had already written 200 and a
+// partial document when encoding it failed.
+//
+// AppendText's error text is not returned, because its "Time.AppendText: " prefix is not the message
+// the legacy handler produced. When the cheap check fails the legacy encoders are re-run over that
+// one card - see legacyProxyHistoryError - and their error is returned.
+//
+// The RFC 3339Nano text is at most 35 bytes, so the stack scratch covers every value that can succeed;
+// only an already-invalid value (for example a year with more than four digits) makes append grow it,
+// and that is the failure path.
+func validateProxyHistories(entries []proxyEntry) error {
+	var scratch [40]byte
 	for index := range entries {
 		history := entries[index].history
 		if history == nil {
 			continue
 		}
-		// time.Time.MarshalJSON fails when the year is outside [0, 9999].
-		if year := history.Time.Year(); year < 0 || year > 9999 {
-			return history
+		if _, err := history.Time.AppendText(scratch[:0]); err != nil {
+			if encodeErr := legacyProxyHistoryError(entries[index].key, history); encodeErr != nil {
+				return encodeErr
+			}
+			// The encoder accepted the value after all: there is nothing to report, and the stream
+			// will run the same encoding successfully.
 		}
 	}
 	return nil
+}
+
+// legacyProxyHistoryError returns the exact error the pre-streaming handler produced for a card whose
+// history cannot be encoded.
+//
+// # Why a bare json.Marshal(history) is not enough
+//
+// The old handler marshalled a badjson object graph - response object -> `proxies` object -> node card
+// -> []*adapter.URLTestHistory - and encoding/json wraps every Marshaler error with the type that
+// produced it. The wire-visible legacy 500 body therefore carried two *badjson.JSONObject prefixes
+// before the time error:
+//
+//	json: error calling MarshalJSON for type *badjson.JSONObject: json: error calling MarshalJSON for
+//	type *badjson.JSONObject: json: error calling MarshalJSON for type time.Time:
+//	Time.MarshalJSON: timezone hour outside of range [0,23]
+//
+// A bare json.Marshal(history) reports only the innermost prefix (and under the Go 1.27 encoder it
+// names the type as *time.Time), so returning its error would change the body bytes. Re-running the
+// same small graph here puts the same encoders in the same nesting: the message is produced by them,
+// not assembled from string prefixes, so it cannot silently drift from the legacy oracle.
+//
+// This runs only after a history time has been proved unencodable and processes a single card, so the
+// normal path never builds an object graph.
+func legacyProxyHistoryError(key string, history *adapter.URLTestHistory) error {
+	var nodeCard badjson.JSONObject
+	nodeCard.Put("history", []*adapter.URLTestHistory{history})
+	var proxyMap badjson.JSONObject
+	proxyMap.Put(key, &nodeCard)
+	var responseMap badjson.JSONObject
+	responseMap.Put("proxies", &proxyMap)
+	_, err := responseMap.MarshalJSON()
+	return err
 }
 
 func getProxies(server *Server) func(w http.ResponseWriter, r *http.Request) {
