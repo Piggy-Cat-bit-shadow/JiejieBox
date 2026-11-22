@@ -93,6 +93,12 @@ func TestNodeCatalogIsInstalledOnStaticAndProviderNodes(t *testing.T) {
 		tags = append(tags, object.Tag())
 	}
 	t.Logf("outbound tags: %v", tags)
+	// The provider can publish its store records before the manager tag lookup is complete; wait
+	// for the tag itself before the metadata walk, not only for the record count.
+	require.Eventually(t, func() bool {
+		_, ok := box.Outbound().Outbound("nodes/p0")
+		return ok
+	}, 10*time.Second, 10*time.Millisecond, "the provider tag must be published")
 	for _, tag := range []string{"s0", "s19", "h0", "t0", "nodes/p0", "nodes/p19"} {
 		object, loaded := box.Outbound().Outbound(tag)
 		require.True(t, loaded, tag)
