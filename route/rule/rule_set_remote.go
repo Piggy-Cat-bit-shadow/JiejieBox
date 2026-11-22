@@ -74,6 +74,11 @@ type RemoteRuleSet struct {
 	// next publish replaces it or the set closes, so a collector can never remove the bytes a
 	// live rule set still needs.
 	artifactLease *artifact.Version
+	// derivedCache reuses the compiled SRSM of the exact bytes a source version holds, so a warm
+	// start or a 200 of unchanged content does not parse and convert the document again. It is nil
+	// when this platform does not serve rule sets from a mapping or when no persistent store is
+	// available; every use is guarded, and it can only make a load cheaper, never change its result.
+	derivedCache *derivedRuleSetCache
 	// generation orders overlapping refreshes: a fetch that started before another one must not
 	// publish after the newer one committed. It is compared immediately before the live rules are
 	// swapped in.
@@ -197,6 +202,12 @@ func (s *RemoteRuleSet) openArtifactStore() {
 	}
 	s.artifactStore = store
 	s.artifactKey = artifactKeyFor(s.tag, s.url)
+	// The derived cache shares the source store (one directory, one lease table) and is active only
+	// where a rule set is served from a mapping, which today is iOS. It is initialised here, next to
+	// the store it uses, so every caller that opens the store gets the same behaviour.
+	if mmapRuleSetPlatform {
+		s.derivedCache = &derivedRuleSetCache{ctx: s.ctx, store: store, logger: s.logger}
+	}
 }
 
 // artifactKeyFor names the store entry for one rule set: the tag (sanitised, because it becomes a
@@ -285,7 +296,24 @@ func (s *RemoteRuleSet) restoreStoredRuleSet() (bool, error) {
 
 // publishStoredVersion builds one stored version and installs its rules, lease and reference in a
 // single commit.
+//
+// The stored bytes are the authority, and their digest/size are already verified by the store. A
+// derived conversion of exactly those bytes is tried first: a hit builds the rules from the mapping
+// without reading or parsing the source. Any failure of the hit is about THIS Box's context (an
+// option it refuses), so it falls back to the source; a miss parses the source and publishes the
+// conversion for the next start.
 func (s *RemoteRuleSet) publishStoredVersion(version *artifact.Version) error {
+	storedManifest := version.Manifest()
+	derived := s.remoteDerivedIdentity(storedManifest.Digest, storedManifest.Size)
+	if mapped, hit := s.openDerivedRuleSet(derived); hit {
+		rules, metadata, buildErr := s.buildRulesFrom(mapped)
+		if buildErr == nil {
+			return s.commitGeneration(0, rules, metadata, version)
+		}
+		// The conversion is of these exact bytes, so this is not cache corruption: leave the
+		// artifact for a Box whose context accepts it and load the source for this one.
+		s.logger.Debug(E.Cause(buildErr, "derived rule-set is unusable for rule-set ", s.tag, ", re-parsing the source"))
+	}
 	content, err := os.ReadFile(version.Path())
 	if err != nil {
 		return E.Cause(err, "read stored rule-set")
@@ -294,7 +322,7 @@ func (s *RemoteRuleSet) publishStoredVersion(version *artifact.Version) error {
 	if err != nil {
 		return err
 	}
-	rules, metadata, err := s.buildRules(ruleSet)
+	rules, metadata, err := s.buildRulesFor(ruleSet, derived)
 	if err != nil {
 		return err
 	}
@@ -344,15 +372,37 @@ func (s *RemoteRuleSet) restoreCachedRuleSet() bool {
 		s.logger.Info("cached rule-set was downloaded from another URL, will refetch")
 		return false
 	}
-	ruleSet, err := s.decodeRuleSet(savedSet.Content)
-	if err != nil {
-		s.logger.Warn(E.Cause(err, "restore cached rule-set, will refetch"))
-		return false
+	// The cached bytes are a stable source identity even before they are migrated into the artifact
+	// store, so the conversion of exactly these bytes can be reused here too. A derived hit skips
+	// the parse; the migration commit below still publishes the source version.
+	content := savedSet.Content
+	sum := sha256.Sum256(content)
+	derived := s.remoteDerivedIdentity(hex.EncodeToString(sum[:]), int64(len(content)))
+	var (
+		rules    []adapter.HeadlessRule
+		metadata adapter.RuleSetMetadata
+		built    bool
+	)
+	if mapped, hit := s.openDerivedRuleSet(derived); hit {
+		builtRules, buildMetadata, buildErr := s.buildRulesFrom(mapped)
+		if buildErr == nil {
+			rules, metadata, built = builtRules, buildMetadata, true
+		} else {
+			s.logger.Debug(E.Cause(buildErr, "derived rule-set is unusable for rule-set ", s.tag, ", re-parsing the cached source"))
+		}
 	}
-	rules, metadata, err := s.buildRules(ruleSet)
-	if err != nil {
-		s.logger.Warn(E.Cause(err, "restore cached rule-set, will refetch"))
-		return false
+	if !built {
+		ruleSet, err := s.decodeRuleSet(content)
+		if err != nil {
+			s.logger.Warn(E.Cause(err, "restore cached rule-set, will refetch"))
+			return false
+		}
+		builtRules, buildMetadata, buildErr := s.buildRulesFor(ruleSet, derived)
+		if buildErr != nil {
+			s.logger.Warn(E.Cause(buildErr, "restore cached rule-set, will refetch"))
+			return false
+		}
+		rules, metadata = builtRules, buildMetadata
 	}
 	if s.artifactStore != nil {
 		manifest := s.newArtifactManifest()
@@ -514,6 +564,7 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 // decodeRuleSet parses the downloaded bytes according to the declared format. It touches no live
 // state: a candidate that fails here has published nothing.
 func (s *RemoteRuleSet) decodeRuleSet(content []byte) (option.PlainRuleSetCompat, error) {
+	remoteDerivedCounters.sourceDecodes.Add(1)
 	switch s.options.Format {
 	case C.RuleSetFormatSource:
 		return json.UnmarshalExtended[option.PlainRuleSetCompat](content)
@@ -524,10 +575,42 @@ func (s *RemoteRuleSet) decodeRuleSet(content []byte) (option.PlainRuleSetCompat
 	}
 }
 
-// buildRules turns a parsed document into the headless rules and metadata the router serves. This
-// is the validation step: nothing is visible until it succeeds.
-func (s *RemoteRuleSet) buildRules(ruleSet option.PlainRuleSetCompat) ([]adapter.HeadlessRule, adapter.RuleSetMetadata, error) {
-	plainRuleSet, err := mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet).Upgrade()
+// remoteDerivedIdentity returns the derived identity of one exact source version, or nil when the
+// derived path is not active.
+func (s *RemoteRuleSet) remoteDerivedIdentity(digest string, size int64) *derivedSource {
+	if s.derivedCache == nil {
+		return nil
+	}
+	return remoteDerivedSource(s.tag, s.artifactKey, derivedFormatName(s.options.Format), digest, size)
+}
+
+// openDerivedRuleSet tries the persisted conversion of one exact source version.
+//
+// The artifact store verified the artifact bytes and the derived manifest pins the same source
+// digest, size and format, so a hit really is the conversion of these bytes; every context-dependent
+// check still runs in buildRulesFrom. A hit transfers the store lease to the mapping (released when
+// the last matcher is collected); a miss leaves nothing to release.
+func (s *RemoteRuleSet) openDerivedRuleSet(source *derivedSource) (option.PlainRuleSetCompat, bool) {
+	if s.derivedCache == nil || source == nil {
+		return option.PlainRuleSetCompat{}, false
+	}
+	mapped, hit := s.derivedCache.open(source)
+	if hit {
+		remoteDerivedCounters.hits.Add(1)
+		remoteDerivedTestPoint("derived-hit")
+		return mapped, true
+	}
+	remoteDerivedCounters.misses.Add(1)
+	remoteDerivedTestPoint("derived-miss")
+	return option.PlainRuleSetCompat{}, false
+}
+
+// buildRulesFrom turns already-prepared options into the live rules and metadata. It is the shared
+// tail of every load: a derived hit passes the mapped options straight here, so a hit performs no
+// source decode, no SRSM write and no second mapping, but the same Upgrade, rule construction and
+// metadata validation still run for THIS Box.
+func (s *RemoteRuleSet) buildRulesFrom(ruleSet option.PlainRuleSetCompat) ([]adapter.HeadlessRule, adapter.RuleSetMetadata, error) {
+	plainRuleSet, err := ruleSet.Upgrade()
 	if err != nil {
 		return nil, adapter.RuleSetMetadata{}, err
 	}
@@ -544,6 +627,31 @@ func (s *RemoteRuleSet) buildRules(ruleSet option.PlainRuleSetCompat) ([]adapter
 		return nil, adapter.RuleSetMetadata{}, err
 	}
 	return rules, metadata, nil
+}
+
+// buildRules is the original path: hand the options to the platform's mmap helper and build from the
+// result. It is used when the derived path is inactive (non-iOS, no store) or when a conversion could
+// not be written.
+func (s *RemoteRuleSet) buildRules(ruleSet option.PlainRuleSetCompat) ([]adapter.HeadlessRule, adapter.RuleSetMetadata, error) {
+	remoteDerivedCounters.heapBuilds.Add(1)
+	return s.buildRulesFrom(mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet))
+}
+
+// buildRulesFor builds a freshly parsed document. With the derived path active the SRSM is written
+// once, published as the conversion of these bytes, and the same file is mapped for this load -
+// instead of a temp write that is thrown away. A failure to prepare the temp file falls back to the
+// original helper, so the cache can only add work it can afford, never fail a load.
+func (s *RemoteRuleSet) buildRulesFor(ruleSet option.PlainRuleSetCompat, derived *derivedSource) ([]adapter.HeadlessRule, adapter.RuleSetMetadata, error) {
+	if s.derivedCache != nil && derived != nil {
+		file, ok := writeRuleSetMmapFile(s.ctx, s.logger, s.tag, ruleSet)
+		if ok {
+			defer file.Close()
+			remoteDerivedCounters.srsmWrites.Add(1)
+			s.derivedCache.publish(derived, ruleSet.Version, file)
+			return s.buildRulesFrom(mapRuleSetMmapFile(s.logger, s.tag, file, ruleSet))
+		}
+	}
+	return s.buildRules(ruleSet)
 }
 
 // loadBinaryStream parses a binary rule-set straight from the response body.
@@ -572,6 +680,7 @@ func (s *RemoteRuleSet) buildRules(ruleSet option.PlainRuleSetCompat) ([]adapter
 // net/http return the connection to the idle pool, but the updater closes idle connections after
 // every non-initial refresh anyway; the framing check is the load-bearing reason.)
 func (s *RemoteRuleSet) loadBinaryStream(body io.ReadCloser, generation uint64) error {
+	remoteDerivedCounters.sourceDecodes.Add(1)
 	ruleSet, err := srs.Read(body, false)
 	if err != nil {
 		return err
@@ -801,7 +910,32 @@ var maxRemoteRuleSetSize int64 = 64 << 20
 // hashing it, and this function parses it from the staged file. Only after the format, compression
 // tail and build checks pass does Publish make it visible, and the generation commit installs the
 // rules, lease and reference together.
+//
+// With the derived path active, the staged digest identifies the exact downloaded bytes, so a
+// conversion of the same bytes is tried BEFORE the source is parsed: a hit builds the rules from the
+// mapping and still publishes the source artifact (the source remains the authority), while a miss
+// parses as before and publishes the conversion for the next fetch.
 func (s *RemoteRuleSet) publishStaged(staged *artifact.StagedVersion, generation uint64) error {
+	stagedManifest := staged.Manifest()
+	derived := s.remoteDerivedIdentity(stagedManifest.Digest, stagedManifest.Size)
+	if mapped, hit := s.openDerivedRuleSet(derived); hit {
+		rules, metadata, buildErr := s.buildRulesFrom(mapped)
+		if buildErr == nil {
+			remoteDerivedTestPoint("before-source-publish")
+			version, publishErr := staged.Publish()
+			if publishErr != nil {
+				return publishErr
+			}
+			remoteDerivedTestPoint("before-commit")
+			if commitErr := s.commitGeneration(generation, rules, metadata, version); commitErr != nil {
+				version.Release()
+				return commitErr
+			}
+			s.collectArtifacts()
+			return nil
+		}
+		s.logger.Debug(E.Cause(buildErr, "derived rule-set is unusable for rule-set ", s.tag, ", re-parsing the source"))
+	}
 	var (
 		ruleSet option.PlainRuleSetCompat
 		err     error
@@ -812,6 +946,7 @@ func (s *RemoteRuleSet) publishStaged(staged *artifact.StagedVersion, generation
 			staged.Discard()
 			return openErr
 		}
+		remoteDerivedCounters.sourceDecodes.Add(1)
 		ruleSet, err = srs.Read(file, false)
 		if err == nil {
 			// The parser stops at the end of the zlib stream; drain the rest so a body shorter
@@ -830,15 +965,17 @@ func (s *RemoteRuleSet) publishStaged(staged *artifact.StagedVersion, generation
 		staged.Discard()
 		return err
 	}
-	rules, metadata, err := s.buildRules(ruleSet)
+	rules, metadata, err := s.buildRulesFor(ruleSet, derived)
 	if err != nil {
 		staged.Discard()
 		return err
 	}
+	remoteDerivedTestPoint("before-source-publish")
 	version, err := staged.Publish()
 	if err != nil {
 		return err
 	}
+	remoteDerivedTestPoint("before-commit")
 	if err = s.commitGeneration(generation, rules, metadata, version); err != nil {
 		version.Release()
 		return err

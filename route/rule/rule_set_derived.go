@@ -172,6 +172,25 @@ func localDerivedSource(tag string, path string, format string, digest string, s
 	}
 }
 
+// remoteDerivedSource builds the identity for one remote document.
+//
+// The key scopes pruning to this rule set and format: `artifactKey` is the source store key, which
+// already contains the tag and a digest of the source URL, so re-pointing a tag at another URL or
+// declaring another format never reuses the previous conversion. The digest is the EXACT bytes the
+// source artifact store verified; a URL, ETag or modification time is ownership information, never
+// proof that the content is the same.
+func remoteDerivedSource(tag string, artifactKey string, format string, digest string, size int64) *derivedSource {
+	identity := "remote\x00" + format + "\x00" + artifactKey
+	sum := sha256.Sum256([]byte(identity))
+	return &derivedSource{
+		key:    "derived-remote-" + hex.EncodeToString(sum[:8]),
+		format: format,
+		digest: digest,
+		size:   size,
+		tag:    tag,
+	}
+}
+
 // derivedFormatName canonicalises the declared format: an empty format means "source" to the
 // loader, so it must not be a second identity for the same file.
 func derivedFormatName(format string) string {
