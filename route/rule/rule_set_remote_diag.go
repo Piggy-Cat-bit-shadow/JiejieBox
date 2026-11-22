@@ -51,6 +51,12 @@ var remoteDerivedTestHook func(point string)
 // nil; the loader re-hashes the bytes it uses, so a rewrite is detected rather than trusted.
 var remoteStagedTestHook func(path string)
 
+// derivedOpenTestHook, when non-nil, runs after open() has snapshotted a version's manifest and
+// before it decides to discard a never-usable generation. A test can repair the same artifact in that
+// window and prove the late discard re-reads the state instead of deleting the repaired record.
+// Production is nil.
+var derivedOpenTestHook func(point string)
+
 func remoteDerivedTestPoint(point string) {
 	if remoteDerivedTestHook != nil {
 		remoteDerivedTestHook(point)

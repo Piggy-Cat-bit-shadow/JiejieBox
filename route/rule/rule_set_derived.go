@@ -373,6 +373,9 @@ func (c *derivedRuleSetCache) open(source *derivedSource) (option.PlainRuleSetCo
 		return option.PlainRuleSetCompat{}, false
 	}
 	manifest := version.Manifest()
+	if derivedOpenTestHook != nil {
+		derivedOpenTestHook("manifest-snapshot")
+	}
 	if !derivedManifestMatches(manifest, source) {
 		// Another source's conversion, or one written before this identity rule existed. Serving it
 		// would run stale rules, which is the one thing a cache must not do - so it is a miss.
