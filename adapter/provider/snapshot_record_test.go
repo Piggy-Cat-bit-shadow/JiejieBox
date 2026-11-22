@@ -36,11 +36,20 @@ type recordNodeOptions struct {
 type recordNode struct {
 	outbound.Adapter
 	options recordNodeOptions
+	closes  *atomic.Int32
 }
 
 func (n *recordNode) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage == adapter.StartStateInitialize {
-		scope.Add(func() error { return nil })
+		// The scope callback is the only way a manager-held object is told it is done: Manager.release
+		// drains the component's scope through LifecycleGroup.Remove. Counting it here is what lets a
+		// close-protocol test prove an object was released, and prove it was released exactly once.
+		scope.Add(func() error {
+			if n.closes != nil {
+				n.closes.Add(1)
+			}
+			return nil
+		})
 	}
 	if stage == adapter.StartStateStart && n.options.Fail {
 		return errors.New("failed candidate")
@@ -56,10 +65,41 @@ func (*recordNode) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, e
 	return nil, errors.New("unsupported")
 }
 
+// recordHooks are the deterministic barriers the close-protocol tests install. They are scoped to one
+// fixture, so two tests (or a future parallel one) never share a hook, and they are read under a
+// mutex because the constructor runs on the apply goroutine while the test goroutine may install a
+// later hook.
+type recordHooks struct {
+	access sync.Mutex
+	build  func(ctx context.Context, tag string) error
+}
+
+func (h *recordHooks) setBuild(build func(ctx context.Context, tag string) error) {
+	h.access.Lock()
+	h.build = build
+	h.access.Unlock()
+}
+
+func (h *recordHooks) runBuild(ctx context.Context, tag string) error {
+	h.access.Lock()
+	build := h.build
+	h.access.Unlock()
+	if build == nil {
+		return nil
+	}
+	return build(ctx, tag)
+}
+
 type recordFixture struct {
 	provider *Adapter
 	manager  *outbound.Manager
 	builds   *atomic.Int32
+	closes   *atomic.Int32
+	hooks    *recordHooks
+	// tolerateCloseError lets a test whose provider Close is EXPECTED to report a bounded drain
+	// failure still use the fixture cleanup. Default false keeps the "teardown must succeed"
+	// assertion for every other test.
+	tolerateCloseError bool
 }
 
 func newRecordFixture(t *testing.T) *recordFixture {
@@ -69,9 +109,14 @@ func newRecordFixture(t *testing.T) *recordFixture {
 	logger := factory.Logger()
 	registry := outbound.NewRegistry()
 	var builds atomic.Int32
-	outbound.Register[recordNodeOptions](registry, "record", func(_ context.Context, _ adapter.Router, _ log.ContextLogger, tag string, options recordNodeOptions) (adapter.Outbound, error) {
+	var closes atomic.Int32
+	hooks := &recordHooks{}
+	outbound.Register[recordNodeOptions](registry, "record", func(ctx context.Context, _ adapter.Router, _ log.ContextLogger, tag string, options recordNodeOptions) (adapter.Outbound, error) {
 		builds.Add(1)
-		return &recordNode{Adapter: outbound.NewAdapter("record", tag, []string{"tcp"}, nil), options: options}, nil
+		if err := hooks.runBuild(ctx, tag); err != nil {
+			return nil, err
+		}
+		return &recordNode{Adapter: outbound.NewAdapter("record", tag, []string{"tcp"}, nil), options: options, closes: &closes}, nil
 	})
 	endpointManager := endpoint.NewManager(endpoint.NewRegistry())
 	manager := outbound.NewManager(registry, endpointManager, "")
@@ -84,8 +129,15 @@ func newRecordFixture(t *testing.T) *recordFixture {
 	}
 	adapterInstance := NewAdapter(ctx, nil, manager, factory, logger, "subscription", "inline", option.ProviderHealthCheckOptions{})
 	require.NoError(t, adapterInstance.Start())
-	t.Cleanup(func() { require.NoError(t, adapterInstance.Close()) })
-	return &recordFixture{provider: &adapterInstance, manager: manager, builds: &builds}
+	fixture := &recordFixture{provider: &adapterInstance, manager: manager, builds: &builds, closes: &closes, hooks: hooks}
+	t.Cleanup(func() {
+		if fixture.tolerateCloseError {
+			_ = adapterInstance.Close()
+			return
+		}
+		require.NoError(t, adapterInstance.Close())
+	})
+	return fixture
 }
 
 func recordNodes(revisions map[string]int, failing map[string]bool, detours map[string]string) []option.Outbound {

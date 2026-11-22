@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +18,35 @@ import (
 	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 )
+
+// providerPhase is the provider's terminal state machine. It is guarded by Adapter.publishAccess;
+// there is no lock-free read of it on the publication path, because Read-then-act would be exactly
+// the TOCTOU the phase exists to remove.
+type providerPhase uint8
+
+const (
+	// providerPhaseOpen is the only phase in which an apply may commit a publication.
+	providerPhaseOpen providerPhase = iota
+	// providerPhaseClosing is set by Close before it cancels and drains. A publisher that observes it
+	// refuses, and an in-flight apply is expected to unwind through its cancellation checks.
+	providerPhaseClosing
+	// providerPhaseClosed is the terminal phase. No provider publication can be committed after it,
+	// and the snapshot has been (or is being) retired.
+	providerPhaseClosed
+)
+
+// defaultCloseDrainTimeout bounds how long Close waits for an apply that was already running when
+// it began. The provider context is cancelled BEFORE the wait, and UpdateNodes checks it between
+// nodes, so the ordinary case drains in one in-flight manager call. The bound exists for the
+// pathological case - a constructor or Start that ignores cancellation - where waiting forever
+// would turn provider teardown into a deadlock. When it expires the provider is sealed anyway, the
+// apply reclaims its own candidates when it unwedges, and the remaining manager releases are
+// finished by a reclamation goroutine.
+const defaultCloseDrainTimeout = 10 * time.Second
+
+// errProviderClosed is the refusal every publication path returns once the provider reached its
+// terminal state.
+var errProviderClosed = E.New("provider is closed")
 
 // Adapter is the part every provider shares: it owns the outbounds the provider has published, the
 // update callbacks the groups subscribe to, and the optional health check.
@@ -77,6 +108,35 @@ type Adapter struct {
 	pendingAccess sync.Mutex
 	pendingTags   map[string]bool
 
+	// publishAccess is the terminal publication gate. It guards phase and every point at which the
+	// provider COMMITS a publication (the outbounds map, the record snapshot, and the pending
+	// bookkeeping). Close takes the write side for the terminal transition, so a publisher either
+	// committed before the transition - and is then torn down by Close - or observes the terminal
+	// phase and refuses. A manager replacement is deliberately NOT made under this lock: the
+	// construction inside Replace can block, and Close must not wait for it. Such a replacement is
+	// a PROVISIONAL candidate owned by the apply until it passes this gate; when the gate is closed
+	// the apply reclaims the candidate itself. See UpdateNodes and Close.
+	publishAccess sync.RWMutex
+	phase         providerPhase
+	// applyWork counts UpdateNodes calls that passed the gate at their entry. Close cancels the
+	// provider context first and then waits for it with a bound, so an apply that honours the
+	// cancellation cannot keep Close waiting past one in-flight manager call.
+	applyWork sync.WaitGroup
+	// closeDone is closed when the (first) Close performed its terminal transition. A second Close
+	// waits for it and reports the same result, which keeps teardown idempotent.
+	closeDone chan struct{}
+	closeErr  error
+	// closeDrainTimeout bounds the wait for an apply that was already inside UpdateNodes.
+	// Production leaves the default; a test that deliberately blocks a constructor may shorten it.
+	closeDrainTimeout time.Duration
+	// testAfterNodeInstall and testBeforeCommit are deterministic barrier seams for the close
+	// protocol tests. They run only when installed by a test; production leaves them nil. They
+	// exist because the two windows this protocol closes - "a replacement was installed, the
+	// provider has not published it yet" and "the batch is complete, the snapshot is not swapped
+	// yet" - cannot be hit dependably by scheduling.
+	testAfterNodeInstall func(tag string)
+	testBeforeCommit     func()
+
 	link     string
 	enabled  bool
 	timeout  time.Duration
@@ -98,15 +158,17 @@ func NewAdapter(ctx context.Context, router adapter.Router, outbound adapter.Out
 	dynamicOutbound, _ := outbound.(adapter.DynamicOutboundManager)
 	ctx, cancel := context.WithCancel(ctx)
 	return Adapter{
-		cancel:       cancel,
-		pendingTags:  make(map[string]bool),
-		ctx:          ctx,
-		outbound:     dynamicOutbound,
-		router:       router,
-		logFactory:   logFactory,
-		logger:       logger,
-		providerType: providerType,
-		providerTag:  providerTag,
+		cancel:            cancel,
+		pendingTags:       make(map[string]bool),
+		closeDone:         make(chan struct{}),
+		closeDrainTimeout: defaultCloseDrainTimeout,
+		ctx:               ctx,
+		outbound:          dynamicOutbound,
+		router:            router,
+		logFactory:        logFactory,
+		logger:            logger,
+		providerType:      providerType,
+		providerTag:       providerTag,
 
 		enabled:  options.Enabled,
 		link:     options.URL,
@@ -230,6 +292,14 @@ func (a *Adapter) UpdateGroups() error {
 	// retirement wait for objects that round did not actually replace.
 	a.updateAccess.Lock()
 	defer a.updateAccess.Unlock()
+	// A callback round publishes group membership and ends the retirement wait, so it belongs to the
+	// provider's publication lifetime: Close must drain it like an apply, and a round that starts
+	// after the terminal transition is refused. This is also what keeps Close from clearing the
+	// retired/pending bookkeeping under a callback round that would write it back.
+	if !a.beginApply() {
+		return E.New("provider ", a.providerTag, ": ", errProviderClosed)
+	}
+	defer a.endApply()
 	a.callbackAccess.Lock()
 	callbacks := make([]adapter.ProviderUpdateCallback, 0, a.callbacks.Len())
 	for element := a.callbacks.Front(); element != nil; element = element.Next() {
@@ -340,6 +410,91 @@ func (a *Adapter) retryRetired() {
 	a.retiredAccess.Unlock()
 }
 
+// beginApply registers an apply with the publication gate. The phase test and the registration are
+// ONE critical section with Close's terminal transition: an apply is either counted before Close
+// starts draining (and is therefore waited for), or it observes the non-open phase and constructs
+// nothing. The test at the entry is an optimisation, not the authority - every publication point
+// tests the phase again under the same gate.
+func (a *Adapter) beginApply() bool {
+	a.publishAccess.Lock()
+	defer a.publishAccess.Unlock()
+	if a.phase != providerPhaseOpen {
+		return false
+	}
+	a.applyWork.Add(1)
+	return true
+}
+
+// endApply releases the apply's registration. It must run exactly once for a beginApply that
+// returned true, including on every error path.
+func (a *Adapter) endApply() {
+	a.applyWork.Done()
+}
+
+// publicationOpen reports whether the provider is still accepting a publication. It is only a
+// predicate: a caller that then publishes must hold the gate across the publication itself, which
+// is what makes it authoritative rather than a check-then-act race.
+func (a *Adapter) publicationOpen() bool {
+	a.publishAccess.RLock()
+	defer a.publishAccess.RUnlock()
+	return a.phase == providerPhaseOpen
+}
+
+// phaseState is the test/diagnostic read of the terminal state machine.
+func (a *Adapter) phaseState() providerPhase {
+	a.publishAccess.RLock()
+	defer a.publishAccess.RUnlock()
+	return a.phase
+}
+
+// waitForApplyDrain waits, bounded, until every apply registered through beginApply has returned.
+// The caller has already moved the phase out of open under publishAccess, so no new apply can
+// register: WaitGroup.Add is never concurrent with this Wait.
+func (a *Adapter) waitForApplyDrain() bool {
+	done := make(chan struct{})
+	go func() {
+		a.applyWork.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(a.closeDrainTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// releasePublishedTag unlinks and closes one of the provider's manager objects. A missing tag is
+// not a teardown failure: a late apply that observed the terminal phase reclaims its own candidate,
+// so the object may already be gone. Closing an object twice is prevented by the manager's unlink
+// critical section - only the caller that actually unlinked a tag releases that object.
+func (a *Adapter) releasePublishedTag(tag string) error {
+	if a.outbound == nil {
+		return nil
+	}
+	if releaser, isReleaser := a.outbound.(adapter.DynamicOutboundReleaser); isReleaser {
+		return releaser.Release(tag)
+	}
+	return a.outbound.Remove(tag)
+}
+
+// finishRetiredPublication runs the manager's ownership barrier for the tags this provider still
+// owns. During a refresh the barrier is driven by UpdateGroups after the callbacks; at close there
+// is no later round, so it is this provider's last chance to release the objects it parked. A user
+// lease that is still outstanding keeps its object open and the manager releases it at lease end,
+// exactly as during a refresh.
+func (a *Adapter) finishRetiredPublication(tags []string) {
+	publisher, isPublisher := a.outbound.(adapter.OwnedDynamicOutboundManager)
+	if !isPublisher || len(tags) == 0 {
+		return
+	}
+	if err := publisher.CompletePublication(a.providerTag, tags); err != nil && a.logger != nil {
+		a.logger.Error(err, "complete outbound publication at close")
+	}
+}
+
 func (a *Adapter) Close() error {
 	a.workerAccess.Lock()
 	a.closed = true
@@ -349,39 +504,116 @@ func (a *Adapter) Close() error {
 	if a.ticker != nil {
 		a.ticker.Stop()
 	}
+
+	// Terminal transition, in two steps. The closing phase is published first, after the provider
+	// context was cancelled, so an apply that is already running can observe the cancellation and
+	// unwind while Close drains it. The closed phase is published only after the drain, and it is
+	// taken under the same gate every publication point uses.
+	a.publishAccess.Lock()
+	if a.phase != providerPhaseOpen {
+		done := a.closeDone
+		a.publishAccess.Unlock()
+		<-done
+		return a.closeErr
+	}
+	a.phase = providerPhaseClosing
+	a.publishAccess.Unlock()
+
+	drained := a.waitForApplyDrain()
+	if !drained && a.logger != nil {
+		a.logger.Warn("provider ", a.providerTag, ": an in-flight update did not return within ",
+			a.closeDrainTimeout, "; the provider is sealed and late candidates will be reclaimed")
+	}
+
+	a.publishAccess.Lock()
+	a.phase = providerPhaseClosed
 	a.outboundsAccess.Lock()
 	outbounds := a.outbounds
 	a.outbounds = nil
 	a.outboundsByTag = nil
 	a.outboundsAccess.Unlock()
-	if a.outbound == nil {
-		// No dynamic manager: the provider never published anything, so there is nothing to
-		// unlink. Reported as success rather than a nil dereference during teardown.
+	a.retiredAccess.Lock()
+	retired := a.retired
+	a.retired = nil
+	a.retiredAccess.Unlock()
+	a.pendingAccess.Lock()
+	pending := make([]string, 0, len(a.pendingTags))
+	for tag := range a.pendingTags {
+		pending = append(pending, tag)
+	}
+	a.pendingTags = make(map[string]bool)
+	a.pendingAccess.Unlock()
+	a.publishAccess.Unlock()
+
+	teardown := func() error {
+		var err error
+		for _, ob := range outbounds {
+			// Teardown ordering: this provider is closed BEFORE the outbound manager and its groups,
+			// so a membership-aware Remove would refuse every node this provider still feeds.
+			// Release is the ordering-aware verb for exactly that moment; see
+			// adapter.DynamicOutboundReleaser.
+			releaseErr := a.releasePublishedTag(ob.Tag())
+			if releaseErr != nil && !errors.Is(releaseErr, os.ErrInvalid) {
+				err = E.Append(err, releaseErr, func(err error) error {
+					return E.Cause(err, "close outbound [", ob.Tag(), "]")
+				})
+			}
+		}
+		for _, ob := range retired {
+			// Objects an earlier apply asked the manager to unlink but could not (a group still named
+			// them) are released here: at teardown there is no membership left to protect, and
+			// leaving them would keep the provider's objects alive past its own Close.
+			releaseErr := a.releasePublishedTag(ob.Tag())
+			if releaseErr != nil && !errors.Is(releaseErr, os.ErrInvalid) {
+				err = E.Append(err, releaseErr, func(err error) error {
+					return E.Cause(err, "close retired outbound [", ob.Tag(), "]")
+				})
+			}
+		}
+		tags := make([]string, 0, len(outbounds)+len(pending))
+		for _, ob := range outbounds {
+			tags = append(tags, ob.Tag())
+		}
+		tags = append(tags, pending...)
+		a.finishRetiredPublication(tags)
+		return err
+	}
+
+	var closeErr error
+	switch {
+	case a.outbound == nil:
+		// No dynamic manager: the provider never published anything, so there is nothing to unlink.
+		// Reported as success rather than a nil dereference during teardown.
 		a.closeSnapshot()
-		return nil
+	case drained:
+		closeErr = teardown()
+		// The records are retired only after every outbound they described has been released: the
+		// store must not close before its last legitimate reader, and releasing the nodes is what
+		// proves the provider itself is done reading. A lease held from outside still keeps its
+		// generation alive.
+		a.closeSnapshot()
+	default:
+		// An apply is still inside a manager call that ignored cancellation. The snapshot can be
+		// retired now: publication points test the closed phase, so it cannot be replaced. The
+		// manager verbs go to a goroutine because Release/Remove take the manager's mutation lock,
+		// which the stuck replacement is holding - waiting for it here is the unbounded Close this
+		// branch exists to prevent.
+		a.closeSnapshot()
+		go func() {
+			_ = teardown()
+		}()
 	}
-	var err error
-	for _, ob := range outbounds {
-		var removeErr error
-		// Teardown ordering: this provider is closed BEFORE the outbound manager and its groups, so
-		// a membership-aware Remove would refuse every node this provider still feeds. Release is
-		// the ordering-aware verb for exactly that moment; see adapter.DynamicOutboundReleaser.
-		if releaser, isReleaser := a.outbound.(adapter.DynamicOutboundReleaser); isReleaser {
-			removeErr = releaser.Release(ob.Tag())
-		} else {
-			removeErr = a.outbound.Remove(ob.Tag())
-		}
-		if removeErr != nil {
-			err = E.Append(err, removeErr, func(err error) error {
-				return E.Cause(err, "close outbound [", ob.Tag(), "]")
-			})
-		}
+
+	if !drained {
+		closeErr = E.Errors(closeErr, E.New("provider ", a.providerTag,
+			": an in-flight update did not stop within ", a.closeDrainTimeout,
+			"; the provider was sealed and its outbounds are reclaimed in the background"))
 	}
-	// The records are retired only after every outbound they described has been released: the store
-	// must not close before its last legitimate reader, and releasing the nodes is what proves the
-	// provider itself is done reading. A lease held from outside still keeps its generation alive.
-	a.closeSnapshot()
-	return err
+	a.publishAccess.Lock()
+	a.closeErr = closeErr
+	close(a.closeDone)
+	a.publishAccess.Unlock()
+	return closeErr
 }
 
 // CheckDownloadPath refuses a download path that can only be completed by THIS provider's own

@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"errors"
+	"os"
 	"reflect"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -32,6 +34,13 @@ type updateNode struct {
 func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	a.updateAccess.Lock()
 	defer a.updateAccess.Unlock()
+	if !a.beginApply() {
+		// The provider reached its terminal state before this call was even registered. This is the
+		// fast refusal; the authoritative decisions are the phase tests below, under the same gate
+		// Close takes for its terminal transition.
+		return E.New("provider ", a.providerTag, ": ", errProviderClosed)
+	}
+	defer a.endApply()
 	if a.outbound == nil {
 		return E.New("outbound manager does not support dynamic outbounds")
 	}
@@ -129,6 +138,15 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 		}
 	}
 	var updateErr error
+	// installed are the tags whose manager objects this apply has installed but not yet committed to
+	// the provider. They are the apply's PROVISIONAL candidates: the manager swap that created them
+	// is not a provider publication until the terminal gate below accepts it, so an apply that is
+	// refused there reclaims them here instead of publishing them.
+	installed := make([]string, 0, len(ordered))
+	abort := func(cause error) error {
+		a.abandonUpdate(installed, cause)
+		return E.Errors(updateErr, cause)
+	}
 	for _, node := range ordered {
 		ctx := adapter.WithContext(a.ctx, &adapter.InboundContext{Outbound: node.tag})
 		current, exists := a.outbound.Outbound(node.tag)
@@ -182,6 +200,11 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 			records[node.tag] = payload
 			continue
 		}
+		if ctxErr := a.ctx.Err(); ctxErr != nil {
+			// Close cancelled the provider before this node was constructed. The whole batch is
+			// abandoned: the nodes installed so far are reclaimed, nothing is published.
+			return abort(E.Cause(ctxErr, "provider update cancelled"))
+		}
 		err := a.replaceOutbound(ctx, a.router, a.logFactory.NewLogger("outbound/"+node.kind+"["+node.tag+"]"), node.tag, node.kind, node.options)
 		if err != nil {
 			updateErr = E.Errors(updateErr, E.Cause(err, node.tag))
@@ -192,6 +215,16 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 			// carried forward by publishAppliedSnapshot, so the next refresh compares against the
 			// configuration that actually produced the live object, not against the rejected one.
 			continue
+		}
+		installed = append(installed, node.tag)
+		if hook := a.testAfterNodeInstall; hook != nil {
+			hook(node.tag)
+		}
+		// The manager already published the object, but the provider has not. This test is the
+		// authoritative decision for every candidate: if Close moved the phase, the candidate is
+		// reclaimed and nothing about the provider changes.
+		if !a.publicationOpen() {
+			return abort(E.New("provider ", a.providerTag, ": update abandoned: ", errProviderClosed))
 		}
 		if exists {
 			// Same-tag replacement: the manager parked the previous object. It may only be closed
@@ -229,6 +262,20 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 				" node record(s) could not be canonically encoded and will be rebuilt on every refresh; first: ", cause)
 		}
 	}
+	if hook := a.testBeforeCommit; hook != nil {
+		hook()
+	}
+	// The publication gate. Everything the provider publishes as one apply - the removals of the
+	// previous set, the retired hand-off, the outbounds map and the record snapshot - happens under
+	// this lock, and the phase is tested in the same critical section: Close's terminal transition
+	// takes the write side, so a batch either commits entirely before it (and Close tears it down)
+	// or is refused entirely and its candidates are reclaimed. There is no window in which a check
+	// and a publication can straddle the transition.
+	a.publishAccess.Lock()
+	if a.phase != providerPhaseOpen {
+		a.publishAccess.Unlock()
+		return abort(E.New("provider ", a.providerTag, ": update refused: ", errProviderClosed))
+	}
 	// Remember what could not be unlinked. A group that still names a retired node keeps it LIVE:
 	// closing it under the selector that may still dial it is the defect this hand-off removes.
 	// UpdateGroups retries after the callbacks have rebuilt the memberships.
@@ -246,6 +293,7 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	a.outbounds, a.outboundsByTag = outbounds, outByTag
 	a.outboundsAccess.Unlock()
 	a.publishAppliedSnapshot(nextRefs, records, outByTag)
+	a.publishAccess.Unlock()
 	if a.enabled && a.history != nil {
 		a.run(func() { a.HealthCheck(a.ctx) })
 	}
@@ -256,6 +304,28 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 		a.completePublication()
 	}
 	return updateErr
+}
+
+// abandonUpdate reclaims the manager objects an apply installed before the terminal gate refused
+// the publication. Nothing about the provider changes: the published outbounds map and the record
+// snapshot still describe the previous successful apply, and the candidates never enter either.
+//
+// A missing tag is expected, not an error: Close may have released the same tag concurrently
+// because the tag was already part of the provider's published set. The manager's unlink critical
+// section decides which caller actually removed the object, and only that caller closes it, so
+// this path cannot close an object twice. The ownership barrier afterwards releases the previous
+// object the manager parked for a same-tag replacement; a lease still held by a dial keeps that
+// object open until the lease ends, exactly as during a refresh.
+func (a *Adapter) abandonUpdate(installed []string, cause error) {
+	if len(installed) == 0 {
+		return
+	}
+	for _, tag := range installed {
+		if err := a.releasePublishedTag(tag); err != nil && !errors.Is(err, os.ErrInvalid) && a.logger != nil {
+			a.logger.Error(err, "reclaim abandoned provider outbound [", tag, "]: ", cause)
+		}
+	}
+	a.finishRetiredPublication(installed)
 }
 
 // nonNilOptions normalises an interface holding a typed nil pointer to a nil interface. Dependency
