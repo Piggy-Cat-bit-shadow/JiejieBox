@@ -141,6 +141,13 @@ type runSpec struct {
 	GCMode       string   `json:"gc_mode"`
 	HeldFlows    int      `json:"held_flows"`
 	TrafficBytes int      `json:"traffic_bytes"`
+	// ChangedNodes is the K axis: how many nodes of the provider document carry a different
+	// configuration in the CHANGED refresh. nil means the historical behaviour, "every node moved",
+	// which is what the earlier 1000/3000-node runs measured and what the old trigger description
+	// wrongly called "one node". An explicit 0 is a real case (the document is byte-identical to
+	// the published one) and must stay distinguishable from "the flag was not given", which is why
+	// this is a pointer: a zero value cannot say which of the two it is.
+	ChangedNodes *int `json:"changed_nodes,omitempty"`
 }
 
 // identity is what the run was: source revision, toolchain, build configuration, and the runtime

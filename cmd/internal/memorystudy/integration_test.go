@@ -461,9 +461,9 @@ func TestBudgetFileRoundTrip(t *testing.T) {
 	if budget.Provenance.LedgerSHA256 == "" || len(budget.Provenance.FixtureDigests) == 0 {
 		t.Fatalf("the checked-in budget does not bind its ledger and fixture: %+v", budget.Provenance)
 	}
-	if budget.Provenance.Repetitions != 3 {
-		t.Fatalf("the checked-in budget was derived from %d repetition(s); the gate runs three",
-			budget.Provenance.Repetitions)
+	if budget.Provenance.Repetitions < 3 {
+		t.Fatalf("the checked-in budget was derived from %d repetition(s); the gate runs three and a "+
+			"reference must not be weaker than the run it certifies", budget.Provenance.Repetitions)
 	}
 	if budget.Baseline.FixtureVersion != fixtureVersion {
 		t.Fatalf("the checked-in budget describes fixture %q, this binary generates %q",

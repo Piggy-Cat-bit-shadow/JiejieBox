@@ -43,6 +43,7 @@ func run(args []string, stdout io.Writer) error {
 	command.StringVar(&flags.gcMode, "gc", "forced", "reading discipline: natural | forced | both (each is its own process)")
 	command.IntVar(&flags.heldFlows, "held-flows", 4, "flows held open through the relay for -activity traffic")
 	command.IntVar(&flags.trafficBytes, "traffic-bytes", 64<<10, "payload bytes pushed through each flow")
+	command.IntVar(&flags.changedNodes, "changed-nodes", -1, "provider refresh K axis: how many nodes change in the CHANGED document (-1 keeps the historical all-nodes change; 0 is a byte-identical document)")
 
 	command.IntVar(&flags.runs, "runs", 1, "independent repetitions of the planned case list")
 	command.StringVar(&flags.output, "output", "-", "merged JSONL path (- for stdout); per-run raw files go to <path>.d/")
@@ -138,6 +139,14 @@ func runChildMode(flags *runFlags, stdout io.Writer) error {
 		GCMode:       flags.gcMode,
 		HeldFlows:    flags.heldFlows,
 		TrafficBytes: flags.trafficBytes,
+	}
+	// The child rebuilds the spec from its own command line, so the K axis has to be restored here
+	// too. Dropping it here would make the child measure K=N while its ledger said K=1 (or K=0),
+	// which is exactly the kind of quiet mislabelling the axis exists to prevent.
+	if changed, changedErr := changedNodesFromFlags(flags); changedErr != nil {
+		return changedErr
+	} else if changed != nil {
+		spec.ChangedNodes = changed
 	}
 	activity, err := parseActivityList(flags.activity)
 	if err != nil {

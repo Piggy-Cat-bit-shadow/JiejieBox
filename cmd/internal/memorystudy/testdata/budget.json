@@ -1,8 +1,8 @@
 {
   "schema_version": "memorystudy-budget/2",
   "baseline": {
-    "captured_at": "2026-11-22T05:07:01Z",
-    "source_sha": "4eb12dde45914aee30da75148494b3ab9ef10316",
+    "captured_at": "2026-11-22T05:44:17Z",
+    "source_sha": "f963b45d243eef3811a3a47d70de4ef29841b78a",
     "source_dirty": true,
     "goos": "windows",
     "goarch": "amd64",
@@ -12,38 +12,50 @@
     ],
     "fixture_version": "memorystudy-fixture/1",
     "runs": [
-      "20261122T050638Z-4ca58e-00-empty-n0-g0-direct-static-none-forced-6f3b",
-      "20261122T050638Z-4ca58e-00-empty-n0-g0-direct-static-none-natural-5f11",
-      "20261122T050638Z-4ca58e-00-ordinary-n0-g0-trojan-static-none-forced-6607",
-      "20261122T050638Z-4ca58e-00-ordinary-n100-g2-trojan-static-none-forced-deaa",
-      "20261122T050638Z-4ca58e-00-empty-n0-g0-direct-static-traffic-forced-d7a8",
-      "20261122T050638Z-4ca58e-00-ordinary-n8-g2-direct-static-probe-forced-b669",
-      "20261122T050638Z-4ca58e-01-empty-n0-g0-direct-static-none-forced-cab3",
-      "20261122T050638Z-4ca58e-01-empty-n0-g0-direct-static-none-natural-cdbf",
-      "20261122T050638Z-4ca58e-01-ordinary-n0-g0-trojan-static-none-forced-1d09",
-      "20261122T050638Z-4ca58e-01-ordinary-n100-g2-trojan-static-none-forced-b76c",
-      "20261122T050638Z-4ca58e-01-empty-n0-g0-direct-static-traffic-forced-5f2e",
-      "20261122T050638Z-4ca58e-01-ordinary-n8-g2-direct-static-probe-forced-5df5",
-      "20261122T050638Z-4ca58e-02-empty-n0-g0-direct-static-none-forced-e7c2",
-      "20261122T050638Z-4ca58e-02-empty-n0-g0-direct-static-none-natural-7a13",
-      "20261122T050638Z-4ca58e-02-ordinary-n0-g0-trojan-static-none-forced-8de5",
-      "20261122T050638Z-4ca58e-02-ordinary-n100-g2-trojan-static-none-forced-dd49",
-      "20261122T050638Z-4ca58e-02-empty-n0-g0-direct-static-traffic-forced-8ed8",
-      "20261122T050638Z-4ca58e-02-ordinary-n8-g2-direct-static-probe-forced-1d86"
+      "20261122T054310Z-72a721-00-empty-n0-g0-direct-static-none-forced-5bd4",
+      "20261122T054310Z-72a721-00-empty-n0-g0-direct-static-none-natural-0133",
+      "20261122T054310Z-72a721-00-ordinary-n0-g0-trojan-static-none-forced-7d40",
+      "20261122T054310Z-72a721-00-ordinary-n100-g2-trojan-static-none-forced-9491",
+      "20261122T054310Z-72a721-00-empty-n0-g0-direct-static-traffic-forced-afe0",
+      "20261122T054310Z-72a721-00-ordinary-n8-g2-direct-static-probe-forced-f8f3",
+      "20261122T054310Z-72a721-01-empty-n0-g0-direct-static-none-forced-e160",
+      "20261122T054310Z-72a721-01-empty-n0-g0-direct-static-none-natural-2909",
+      "20261122T054310Z-72a721-01-ordinary-n0-g0-trojan-static-none-forced-a5b2",
+      "20261122T054310Z-72a721-01-ordinary-n100-g2-trojan-static-none-forced-c5af",
+      "20261122T054310Z-72a721-01-empty-n0-g0-direct-static-traffic-forced-b035",
+      "20261122T054310Z-72a721-01-ordinary-n8-g2-direct-static-probe-forced-55fb",
+      "20261122T054310Z-72a721-02-empty-n0-g0-direct-static-none-forced-2c4f",
+      "20261122T054310Z-72a721-02-empty-n0-g0-direct-static-none-natural-6cd4",
+      "20261122T054310Z-72a721-02-ordinary-n0-g0-trojan-static-none-forced-f88f",
+      "20261122T054310Z-72a721-02-ordinary-n100-g2-trojan-static-none-forced-ad5c",
+      "20261122T054310Z-72a721-02-empty-n0-g0-direct-static-traffic-forced-4f11",
+      "20261122T054310Z-72a721-02-ordinary-n8-g2-direct-static-probe-forced-d7ec",
+      "20261122T054310Z-72a721-03-empty-n0-g0-direct-static-none-forced-8d2d",
+      "20261122T054310Z-72a721-03-empty-n0-g0-direct-static-none-natural-1cbe",
+      "20261122T054310Z-72a721-03-ordinary-n0-g0-trojan-static-none-forced-72c7",
+      "20261122T054310Z-72a721-03-ordinary-n100-g2-trojan-static-none-forced-ef60",
+      "20261122T054310Z-72a721-03-empty-n0-g0-direct-static-traffic-forced-f4d8",
+      "20261122T054310Z-72a721-03-ordinary-n8-g2-direct-static-probe-forced-c35a",
+      "20261122T054310Z-72a721-04-empty-n0-g0-direct-static-none-forced-8b72",
+      "20261122T054310Z-72a721-04-empty-n0-g0-direct-static-none-natural-3cd4",
+      "20261122T054310Z-72a721-04-ordinary-n0-g0-trojan-static-none-forced-b16c",
+      "20261122T054310Z-72a721-04-ordinary-n100-g2-trojan-static-none-forced-bcf9",
+      "20261122T054310Z-72a721-04-empty-n0-g0-direct-static-traffic-forced-2b15",
+      "20261122T054310Z-72a721-04-ordinary-n8-g2-direct-static-probe-forced-e395"
     ],
     "notes": [
       "thresholds are derived from the runs listed in baseline.runs; they are not copied from another project and they are not a device footprint",
       "re-derive with: memorystudy -write-budget \u003cpath\u003e -from \u003cbaseline.jsonl\u003e -runs \u003cn\u003e (a reference budget additionally needs -reference-manifest)",
-      "provenance: kind=reference, ledger_sha256=733f7e58637b2cceee1747233fef2ecf33a30140aa876ed7be0c5c5ce8989974, 3 repetitions x 6 specs"
+      "provenance: kind=reference, ledger_sha256=7f1fc3d4a3aed1c1612ba85039d53f42be6ba34c1ccd404ee774b36d8be93340, 5 repetitions x 6 specs"
     ]
   },
   "provenance": {
     "kind": "reference",
-    "ledger_path": "C:\\Deepseek\\JiejieBox-closeout-2026-11-22\\samples\\gate-reference-3runs.jsonl",
-    "ledger_sha256": "733f7e58637b2cceee1747233fef2ecf33a30140aa876ed7be0c5c5ce8989974",
-    "manifest_path": "C:\\Deepseek\\JiejieBox-closeout-2026-11-22\\samples\\gate-reference-3runs.jsonl.manifest.json",
-    "manifest_sha256": "66b94d5931dd904fd3f11ce86bcca6926a586cf9e2970b405a49961dfb8bbe03",
-    "repetitions": 3,
+    "ledger_path": "C:\\Deepseek\\JiejieBox-closeout-2026-11-22\\samples\\M2-gate-reference-5runs.jsonl",
+    "ledger_sha256": "7f1fc3d4a3aed1c1612ba85039d53f42be6ba34c1ccd404ee774b36d8be93340",
+    "manifest_path": "C:\\Deepseek\\JiejieBox-closeout-2026-11-22\\samples\\M2-gate-reference-5runs.jsonl.manifest.json",
+    "manifest_sha256": "dd79e9bbbec6d8049b321255cb9f1188e88ec37e21fa250a7fc20191dcc6e2b7",
+    "repetitions": 5,
     "specs": 6,
     "fixture_digests": {
       "empty|0|0|direct|static|none|forced|4|65536": "16384270afc0318336f20acb62a6a28c358ab6f1f9ab342b5efb174ebc461707",
@@ -68,12 +80,14 @@
       "gc_mode": "forced",
       "stage": "earliest_observable",
       "metric": "readings.go.live_heap_bytes",
-      "max": 2679640,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2122872..2143712; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 2656830,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 2104792..2125464; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        2124056,
-        2122872,
-        2143712
+        2125464,
+        2125336,
+        2121152,
+        2104792,
+        2115544
       ],
       "required": true
     },
@@ -90,12 +104,14 @@
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.go.live_heap_bytes",
-      "max": 3068240,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2453216..2454592; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 3063240,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 2427920..2450592; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        2453216,
-        2453568,
-        2454592
+        2442568,
+        2450336,
+        2450592,
+        2427920,
+        2450368
       ],
       "required": true
     },
@@ -112,12 +128,14 @@
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.go.total_bytes",
-      "max": 24998710,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 15296760..19998968; threshold = ceil(max(observed)*1.25, observed+65536) with 65536 of noise allowance",
+      "max": 25439030,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 15304952..20351224; threshold = ceil(max(observed)*1.25, observed+65536) with 65536 of noise allowance",
       "observed": [
-        19998968,
-        19761400,
-        15296760
+        16075000,
+        15550712,
+        15616248,
+        20351224,
+        15304952
       ],
       "required": true
     },
@@ -135,8 +153,10 @@
       "stage": "idle_0s",
       "metric": "readings.goroutines.current",
       "max": 34,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 27..27; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 27..27; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
+        27,
+        27,
         27,
         27,
         27
@@ -156,12 +176,14 @@
       "gc_mode": "forced",
       "stage": "construct",
       "metric": "deltas.from_previous.live_heap_bytes",
-      "max": 30688,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 17512..22496; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
+      "max": 25640,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 17384..17448; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
       "observed": [
-        17512,
-        17512,
-        22496
+        17416,
+        17384,
+        17400,
+        17448,
+        17384
       ],
       "required": true
     },
@@ -179,8 +201,10 @@
       "stage": "run_end",
       "metric": "readings.goroutines.current",
       "max": 30,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 24..24; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 24..24; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
+        24,
+        24,
         24,
         24,
         24
@@ -200,12 +224,14 @@
       "gc_mode": "forced",
       "stage": "run_end",
       "metric": "deltas.from_entry.live_heap_bytes",
-      "max": 287080,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 209784..229664; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 292280,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 216328..233824; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        228112,
-        229664,
-        209784
+        216328,
+        224032,
+        228440,
+        222176,
+        233824
       ],
       "required": true
     },
@@ -222,12 +248,14 @@
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.go.live_heap_bytes",
-      "max": 3067540,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2452784..2454032; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 3063560,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 2428640..2450848; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        2452784,
-        2454032,
-        2453504
+        2450848,
+        2428640,
+        2445432,
+        2450320,
+        2442952
       ],
       "required": true
     },
@@ -244,12 +272,14 @@
       "gc_mode": "forced",
       "stage": "construct",
       "metric": "deltas.from_entry.live_heap_per_node_bytes",
-      "max": 7210,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 5755..5768; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
+      "max": 7272,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 5710..5817; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
       "observed": [
-        5755,
-        5768,
-        5757
+        5814,
+        5725,
+        5774,
+        5817,
+        5710
       ],
       "required": true
     },
@@ -266,12 +296,14 @@
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "deltas.from_entry.live_heap_per_node_bytes",
-      "max": 8845,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 7019..7076; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
+      "max": 8957,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 7039..7165; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
       "observed": [
-        7037,
-        7019,
-        7076
+        7141,
+        7154,
+        7094,
+        7165,
+        7039
       ],
       "required": true
     },
@@ -289,8 +321,10 @@
       "stage": "idle_0s",
       "metric": "readings.goroutines.current",
       "max": 34,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 27..27; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 27..27; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
+        27,
+        27,
         27,
         27,
         27
@@ -310,11 +344,13 @@
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.process.threads",
-      "max": 27,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 19..21; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "max": 28,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 20..22; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
         21,
-        19,
+        21,
+        21,
+        22,
         20
       ],
       "required": true
@@ -333,8 +369,10 @@
       "stage": "probe",
       "metric": "probe.succeeded",
       "max": 10,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 8..8; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 8..8; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
+        8,
+        8,
         8,
         8,
         8
@@ -354,12 +392,14 @@
       "gc_mode": "natural",
       "stage": "idle_1s",
       "metric": "deltas.from_previous.heap_objects_bytes",
-      "max": 8192,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 0..0; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
+      "max": 40960,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 0..8192; threshold = ceil(max(observed)*1.25, observed+32768) with 32768 of noise allowance",
       "observed": [
+        8192,
+        8192,
         0,
-        0,
-        0
+        8192,
+        8192
       ],
       "required": true
     },
@@ -377,12 +417,14 @@
       "stage": "traffic_held",
       "metric": "deltas.from_previous.live_heap_bytes",
       "per": "spec.held_flows",
-      "max": 56320,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 43896..45056; threshold = ceil(max(observed)*1.25, observed+2048) with 2048 of noise allowance",
+      "max": 58433,
+      "basis": "derived from 5 baseline run(s) of THIS tree: observed 44084..46746; threshold = ceil(max(observed)*1.25, observed+2048) with 2048 of noise allowance",
       "observed": [
-        45056,
-        43912,
-        43896
+        44104,
+        46490,
+        44084,
+        44236,
+        46746
       ],
       "required": true
     },
@@ -400,8 +442,10 @@
       "stage": "traffic_verified",
       "metric": "traffic.verified",
       "min": 1,
-      "basis": "business check, not a budget: 3 of 3 baseline run(s) satisfied it; the minimum is the definition of the fixture, not a measurement threshold",
+      "basis": "business check, not a budget: 5 of 5 baseline run(s) satisfied it; the minimum is the definition of the fixture, not a measurement threshold",
       "observed": [
+        1,
+        1,
         1,
         1,
         1
@@ -422,8 +466,10 @@
       "stage": "traffic_verified",
       "metric": "traffic.half_close_propagated",
       "min": 1,
-      "basis": "business check, not a budget: 3 of 3 baseline run(s) satisfied it; the minimum is the definition of the fixture, not a measurement threshold",
+      "basis": "business check, not a budget: 5 of 5 baseline run(s) satisfied it; the minimum is the definition of the fixture, not a measurement threshold",
       "observed": [
+        1,
+        1,
         1,
         1,
         1

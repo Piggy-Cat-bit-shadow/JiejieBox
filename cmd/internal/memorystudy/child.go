@@ -409,9 +409,16 @@ func (c *childRun) writeProviderDocument() error {
 }
 
 // runProviderRefreshStages drives the product's own publication transaction twice: once with the
-// node document it already published, and once with a document whose every node changed.
+// node document it already published, and once with a document whose nodes moved.
 //
-// # What this measures, and what it does not
+// # The K axis
+//
+// How many nodes move is spec.ChangedNodes: nil is the historical "every node's port moved", which
+// is what the earlier 1000/3000-node numbers measured and what the old report wrongly described as
+// "one node". An explicit K moves the first K nodes and leaves the rest byte-identical, so K=0
+// isolates the parse/compare cost from the rebuild cost and K=N reproduces the historical number.
+// The stage note records which case ran, because a ledger line that cannot say K is a line that
+// gets quoted as "a one-node refresh" again.
 //
 // Both refreshes go through adapter.Provider.UpdateNodes + UpdateGroups, which is the transaction the
 // local provider's reloadFile itself calls. They are driven with a freshly parsed document rather
@@ -469,6 +476,7 @@ func (c *childRun) runProviderRefreshStages() {
 	// generation is retired through the same hand-off a real subscription update uses. The document
 	// bytes are generated here rather than written to the provider's path because this measures the
 	// transaction, not the file watcher.
+	c.note("provider refresh K: " + changedNodesDescription(c.spec))
 	changed := generateProviderDocument(c.spec, 1)
 	changedOptions, err := parser.ParseSubscription(c.ctx, string(changed), nil, fixtureProviderTag)
 	if err != nil {
@@ -491,6 +499,7 @@ func (c *childRun) runProviderRefreshStages() {
 	// A second changed publication, with a different address again. The pair answers the question a
 	// single measurement cannot: is the retained cost of a replacement a one-time high-water mark,
 	// or does it grow with every refresh?
+	c.note("provider refresh K: " + changedNodesDescription(c.spec))
 	again := generateProviderDocument(c.spec, 2)
 	againOptions, err := parser.ParseSubscription(c.ctx, string(again), nil, fixtureProviderTag)
 	if err != nil {
@@ -506,6 +515,16 @@ func (c *childRun) runProviderRefreshStages() {
 		return
 	}
 	c.record(stageProviderRefreshChangedAgain)
+}
+
+// changedNodesDescription describes the K axis in the stage note. The historical case is named
+// explicitly rather than printed as "K=-1": the point of the field is that a reader can tell
+// "every node moved" from "ten nodes moved" without reading the flag default.
+func changedNodesDescription(spec runSpec) string {
+	if spec.ChangedNodes == nil {
+		return fmt.Sprintf("all %d nodes changed (historical trigger; NOT a one-node refresh)", spec.Nodes)
+	}
+	return fmt.Sprintf("%d of %d nodes changed", *spec.ChangedNodes, spec.Nodes)
 }
 
 // readProviderDocument re-reads the provider file the product reads, rather than a harness copy.

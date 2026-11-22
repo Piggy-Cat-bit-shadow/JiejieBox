@@ -32,6 +32,10 @@ type runFlags struct {
 	heldFlows    int
 	trafficBytes int
 
+	// changedNodes is the K axis of the provider refresh. -1 is the default and means the
+	// historical behaviour (every node's port moves); 0 and up is an explicit count.
+	changedNodes int
+
 	runs   int
 	output string
 	csv    string
@@ -91,6 +95,11 @@ func planSpecs(flags *runFlags) ([]runSpec, error) {
 		PostIdle:     flags.postIdle,
 		HeldFlows:    flags.heldFlows,
 		TrafficBytes: flags.trafficBytes,
+	}
+	if changed, changedErr := changedNodesFromFlags(flags); changedErr != nil {
+		return nil, changedErr
+	} else if changed != nil {
+		base.ChangedNodes = changed
 	}
 	specs := make([]runSpec, 0, len(gcModes))
 	for _, mode := range gcModes {
@@ -176,7 +185,28 @@ func parseActivityList(raw string) ([]string, error) {
 	return activities, nil
 }
 
-// session is one invocation of the runner: a set of child runs plus the artefacts they produced.
+// changedNodesFromFlags resolves the K axis the caller actually asked for.
+//
+// The zero value of runFlags is NOT a request for K=0: a hand-built flags value (a test, or an
+// embedder calling the planner) leaves every int at 0, and treating that as "a byte-identical
+// changed document" would silently attach a K axis to a static case and be refused. Only an
+// EXPLICIT -changed-nodes 0 means K=0, which is why the provided set participates; a positive value
+// is unambiguous without it, and -1 is the historical "every node changed".
+func changedNodesFromFlags(flags *runFlags) (*int, error) {
+	if flags.changedNodes < -1 {
+		return nil, fmt.Errorf("-changed-nodes must be -1 (every node) or a non-negative count, got %d", flags.changedNodes)
+	}
+	if flags.changedNodes > 0 {
+		changed := flags.changedNodes
+		return &changed, nil
+	}
+	if flags.changedNodes == 0 && flags.provided != nil && flags.provided["changed-nodes"] {
+		changed := 0
+		return &changed, nil
+	}
+	return nil, nil
+}
+
 type session struct {
 	flags    *runFlags
 	stamp    string
@@ -386,7 +416,17 @@ func childArguments(spec runSpec, runID string) []string {
 		"-gc", spec.GCMode,
 		"-held-flows", strconv.Itoa(spec.HeldFlows),
 		"-traffic-bytes", strconv.Itoa(spec.TrafficBytes),
+		"-changed-nodes", changedNodesArgument(spec),
 	}
+}
+
+// changedNodesArgument renders the K axis for the child. nil stays the historical -1 ("every node
+// moved") rather than being dropped, so the child's own spec echo always says which case it ran.
+func changedNodesArgument(spec runSpec) string {
+	if spec.ChangedNodes == nil {
+		return "-1"
+	}
+	return strconv.Itoa(*spec.ChangedNodes)
 }
 
 // childEnvironment applies the startup policy the run asks for.

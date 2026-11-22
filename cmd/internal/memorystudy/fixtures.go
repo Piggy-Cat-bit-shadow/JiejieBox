@@ -210,9 +210,22 @@ func generateFixtureWithProvider(spec runSpec, inboundPort uint16, probeURL stri
 
 // generateProviderDocument renders the node document a local provider reads.
 //
-// portOffset shifts every node's port; a refresh that re-reads the same bytes is the "unchanged"
-// case and a refresh with a different offset rebuilds every node, which is what makes the two
+// portOffset shifts a node's port; a refresh that re-reads the same bytes is the "unchanged" case
+// and a refresh with a different offset rebuilds the nodes it moved, which is what makes the two
 // readings a controlled A/B rather than two names for the same work.
+//
+// # The K axis
+//
+// spec.ChangedNodes is how many nodes move. nil is the historical behaviour - every node's port
+// changes - and is preserved by construction so the old samples keep their meaning; an explicit K
+// moves only the first K nodes (index < K) and leaves every other node's bytes exactly as the
+// published document had them. K=0 therefore produces a document that is byte-identical to the
+// unchanged one, which isolates the parse/compare half of a refresh from the rebuild half, and
+// K=N reproduces the historical "all nodes changed" cost. The changed nodes are a PREFIX rather
+// than a random sample so two runs of the same spec are comparable without seeding a generator,
+// and so the node-index-to-cost relationship stays monotone. Note that the provider's port is
+// 20000+index%1000, so for K=N the port values still repeat every 1000 nodes; that is the
+// historical fixture and is deliberately unchanged.
 func generateProviderDocument(spec runSpec, portOffset int) []byte {
 	builder := &strings.Builder{}
 	builder.Grow(32 + spec.Nodes*180)
@@ -221,7 +234,11 @@ func generateProviderDocument(spec runSpec, portOffset int) []byte {
 		if index > 0 {
 			builder.WriteString(`,`)
 		}
-		writeNode(builder, spec.NodeProto, fmt.Sprintf("node-%05d", index), index, portOffset)
+		offset := portOffset
+		if spec.ChangedNodes != nil && index >= *spec.ChangedNodes {
+			offset = 0
+		}
+		writeNode(builder, spec.NodeProto, fmt.Sprintf("node-%05d", index), index, offset)
 	}
 	builder.WriteString(`]}`)
 	return []byte(builder.String())
@@ -432,6 +449,17 @@ func normalizeSpec(spec runSpec) (runSpec, error) {
 		// "missing outbound and provider tags". The zero-node case exists to put the origin on the
 		// per-node slope, and a group cannot be part of that origin.
 		spec.Groups = 0
+	}
+	if spec.ChangedNodes != nil {
+		// The K axis only describes a provider refresh: there is no "changed document" for a static
+		// configuration, and a K larger than the document would silently be clamped to N, which is
+		// exactly the kind of quiet resize that makes two ledgers incomparable.
+		if spec.ConfigSource != "provider" {
+			return spec, fmt.Errorf("-changed-nodes only applies to -config-source provider, got %q", spec.ConfigSource)
+		}
+		if *spec.ChangedNodes < 0 || *spec.ChangedNodes > spec.Nodes {
+			return spec, fmt.Errorf("-changed-nodes must be in [0, nodes] (nodes %d), got %d", spec.Nodes, *spec.ChangedNodes)
+		}
 	}
 	if spec.GCMode != "natural" && spec.GCMode != "forced" {
 		return spec, fmt.Errorf("unknown -gc %q (want natural or forced)", spec.GCMode)
