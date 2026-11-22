@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound/batch"
 	"github.com/sagernet/sing-box/adapter/provider/nodestore"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -123,7 +124,6 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	}
 	active := a.activeOutboundTags()
 	outByTag := make(map[string]adapter.Outbound, len(outOpts))
-	replaced := make(map[string]bool, len(outOpts))
 	// records is the canonical payload of every tag whose object this apply freshly published. A
 	// tag that keeps its previous object (unchanged, or a failed replacement) carries its previous
 	// record forward instead of being re-encoded.
@@ -147,76 +147,34 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 		a.abandonUpdate(installed, cause)
 		return E.Errors(updateErr, cause)
 	}
-	for _, node := range ordered {
-		ctx := adapter.WithContext(a.ctx, &adapter.InboundContext{Outbound: node.tag})
-		current, exists := a.outbound.Outbound(node.tag)
-		owned := a.hasAppliedRecord(node.tag)
-		// A rendered tag that already belongs to a static outbound (or to another provider) is not
-		// this provider's to replace. Taking it would silently remove a node the user wrote in the
-		// configuration, which is the one outcome the tag prefix exists to prevent.
-		if exists && !owned {
-			updateErr = E.Errors(updateErr, E.Cause(E.New("outbound tag is already in use outside this provider"), node.tag))
-			continue
-		}
-		// A node that names a member replaced earlier in this update must be rebuilt even when its
-		// own options are unchanged. Its dialer holds the member object it resolved through
-		// `sync.Once`, so keeping it would keep sending that node's traffic through the object the
-		// update just retired - the replacement would be published and never used.
-		rebuildDependent := false
-		for _, dependency := range node.dependencies {
-			if replaced[dependency] {
-				rebuildDependent = true
-				break
+
+	// plannedNode is one node this apply must rebuild, with the decision material already computed by
+	// the decision pass below. The payload is computed at most once per node: it is both the
+	// comparison key and the retained record, and encoding it twice would charge the refresh for a
+	// second conversion the product itself does not do.
+	type plannedNode struct {
+		node        updateNode
+		current     adapter.Outbound
+		exists      bool
+		payload     nodestore.Payload
+		payloadOK   bool
+		payloadRead bool
+	}
+	payloadFor := func(planned *plannedNode) (nodestore.Payload, bool) {
+		if !planned.payloadRead {
+			planned.payloadRead = true
+			if encoded, err := nodestore.Encode(*planned.node.outbound); err == nil {
+				planned.payload, planned.payloadOK = encoded, true
 			}
 		}
-		// The canonical encoding is the comparison key and the retained record at the same time, so
-		// it is computed once and only when a decision needs it. A value the encoder refuses is
-		// never treated as equal: the node is rebuilt, which is the safe direction. Note that this
-		// is the ONLY use of the encoding for the decision; there is no JSON round-trip whose byte
-		// equality would stand in for value equality.
-		var (
-			payload     nodestore.Payload
-			payloadOK   bool
-			payloadRead bool
-		)
-		nodePayload := func() (nodestore.Payload, bool) {
-			if !payloadRead {
-				payloadRead = true
-				if encoded, err := nodestore.Encode(*node.outbound); err == nil {
-					payload, payloadOK = encoded, true
-				}
-			}
-			return payload, payloadOK
-		}
-		unchanged := false
-		if !rebuildDependent && exists && active[node.tag] {
-			if encoded, ok := nodePayload(); ok && a.appliedMatches(node.tag, encoded) {
-				unchanged = true
-			}
-		}
-		if unchanged {
-			// Unchanged: do not touch the live object, and do not count it as a failure.
-			outByTag[node.tag] = current
-			records[node.tag] = payload
-			continue
-		}
-		if ctxErr := a.ctx.Err(); ctxErr != nil {
-			// Close cancelled the provider before this node was constructed. The whole batch is
-			// abandoned: the nodes installed so far are reclaimed, nothing is published.
-			return abort(E.Cause(ctxErr, "provider update cancelled"))
-		}
-		err := a.replaceOutbound(ctx, a.router, a.logFactory.NewLogger("outbound/"+node.kind+"["+node.tag+"]"), node.tag, node.kind, node.options)
-		if err != nil {
-			updateErr = E.Errors(updateErr, E.Cause(err, node.tag))
-			if exists && active[node.tag] {
-				outByTag[node.tag] = current
-			}
-			// A failed replacement keeps the previous object published. Its previous record is
-			// carried forward by publishAppliedSnapshot, so the next refresh compares against the
-			// configuration that actually produced the live object, not against the rejected one.
-			continue
-		}
-		installed = append(installed, node.tag)
+		return planned.payload, planned.payloadOK
+	}
+
+	// finish performs the provider-side bookkeeping for one successfully installed candidate. The
+	// manager has already published the object; this is where the provider decides whether that
+	// publication may become its own.
+	finish := func(planned *plannedNode) error {
+		node := planned.node
 		if hook := a.testAfterNodeInstall; hook != nil {
 			hook(node.tag)
 		}
@@ -224,16 +182,19 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 		// authoritative decision for every candidate: if Close moved the phase, the candidate is
 		// reclaimed and nothing about the provider changes.
 		if !a.publicationOpen() {
-			return abort(E.New("provider ", a.providerTag, ": update abandoned: ", errProviderClosed))
+			return E.New("provider ", a.providerTag, ": update abandoned: ", errProviderClosed)
 		}
-		if exists {
+		if planned.exists {
 			// Same-tag replacement: the manager parked the previous object. It may only be closed
 			// after the group callbacks below rebuilt their memberships from this provider's list.
 			a.markPendingReplacement(node.tag)
 		}
-		replaced[node.tag] = true
-		current, _ = a.outbound.Outbound(node.tag)
-		if encoded, ok := nodePayload(); ok {
+		// A measurement is a fact about ONE object, and the history is keyed by TAG. A subscription
+		// that keeps the tag and points it at a different server is the ordinary case, so the delay
+		// stored for the replaced object must go with it (see replaceOutbound).
+		a.history.DeleteURLTestHistory(node.tag)
+		current, _ := a.outbound.Outbound(node.tag)
+		if encoded, ok := payloadFor(planned); ok {
 			records[node.tag] = encoded
 		} else {
 			// The value cannot be canonically compared. Keep ownership with a record that can never
@@ -252,7 +213,153 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 			records[node.tag] = nodestore.Opaque()
 		}
 		outByTag[node.tag] = current
+		return nil
 	}
+
+	// replaced records the tags this apply ACTUALLY replaced. It is what makes a dependent rebuild:
+	// a node that names a replaced member must be rebuilt even when its own options are unchanged,
+	// because its dialer resolved the member object once and keeping it would keep sending traffic
+	// through the object the update just retired.
+	replaced := make(map[string]bool, len(ordered))
+	// pending is the CURRENT batch segment: candidates whose replacement has been decided but not
+	// published. A dependency that is still pending has no outcome yet, so the segment is published
+	// BEFORE the dependent is even decided. That keeps two contracts at once: a dependent is rebuilt
+	// only when its dependency really was replaced (a failed replacement leaves the dependent
+	// untouched), and a constructor that resolves a detour at construction time sees the object that
+	// is actually published - which is what the per-node path guaranteed.
+	pending := make([]plannedNode, 0, len(ordered))
+	pendingTags := make(map[string]bool, len(ordered))
+
+	// flush prepares, validates and publishes the current segment. For an outbound manager that
+	// supports it, the whole segment is ONE provider publication: one graph validation, one table
+	// swap, one graph-update notification. The per-item error handling below is the same either way.
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if replacer, canBatch := a.outbound.(batch.OwnedReplacer); canBatch {
+			items := make([]batch.Replacement, len(pending))
+			for index := range pending {
+				planned := &pending[index]
+				items[index] = batch.Replacement{
+					Tag:     planned.node.tag,
+					Type:    planned.node.kind,
+					Options: planned.node.options,
+					// The per-node context and logger are the ones the edge-bearing path would use:
+					// a constructor must not be able to tell whether it was part of a batch.
+					Context: adapter.WithContext(a.ctx, &adapter.InboundContext{Outbound: planned.node.tag}),
+					Logger:  a.logFactory.NewLogger("outbound/" + planned.node.kind + "[" + planned.node.tag + "]"),
+				}
+			}
+			outcomes := replacer.ReplaceOwnedBatch(a.ctx, a.router, a.logger, items, a.providerTag)
+			// EVERY candidate the manager published is provisional, including the ones whose
+			// provider-side bookkeeping below never runs because the phase closed mid-batch. The
+			// reclaim list therefore has to be complete before the first phase test, not appended
+			// one successful node at a time.
+			for index := range pending {
+				if outcomes[index] == nil {
+					installed = append(installed, pending[index].node.tag)
+				}
+			}
+			for index := range pending {
+				planned := &pending[index]
+				if err := outcomes[index]; err != nil {
+					updateErr = E.Errors(updateErr, E.Cause(err, planned.node.tag))
+					// A failed replacement keeps the previous object published. Its previous record
+					// is carried forward by publishAppliedSnapshot, so the next refresh compares
+					// against the configuration that actually produced the live object.
+					if planned.exists && active[planned.node.tag] {
+						outByTag[planned.node.tag] = planned.current
+					}
+					continue
+				}
+				if err := finish(planned); err != nil {
+					return err
+				}
+				replaced[planned.node.tag] = true
+			}
+		} else {
+			for index := range pending {
+				planned := &pending[index]
+				node := planned.node
+				err := a.replaceOutbound(adapter.WithContext(a.ctx, &adapter.InboundContext{Outbound: node.tag}),
+					a.router, a.logFactory.NewLogger("outbound/"+node.kind+"["+node.tag+"]"),
+					node.tag, node.kind, node.options)
+				if err != nil {
+					updateErr = E.Errors(updateErr, E.Cause(err, node.tag))
+					if planned.exists && active[node.tag] {
+						outByTag[node.tag] = planned.current
+					}
+					continue
+				}
+				installed = append(installed, node.tag)
+				if err = finish(planned); err != nil {
+					return err
+				}
+				replaced[node.tag] = true
+			}
+		}
+		pending = pending[:0]
+		clear(pendingTags)
+		return nil
+	}
+
+	for _, node := range ordered {
+		current, exists := a.outbound.Outbound(node.tag)
+		owned := a.hasAppliedRecord(node.tag)
+		// A rendered tag that already belongs to a static outbound (or to another provider) is not
+		// this provider's to replace. Taking it would silently remove a node the user wrote in the
+		// configuration, which is the one outcome the tag prefix exists to prevent.
+		if exists && !owned {
+			updateErr = E.Errors(updateErr, E.Cause(E.New("outbound tag is already in use outside this provider"), node.tag))
+			continue
+		}
+		// A dependency still waiting in this segment has no outcome yet. Publish the segment first,
+		// then decide this node against what was actually installed.
+		waiting := false
+		for _, dependency := range node.dependencies {
+			if pendingTags[dependency] {
+				waiting = true
+				break
+			}
+		}
+		if waiting {
+			if err := flush(); err != nil {
+				return abort(err)
+			}
+		}
+		planned := plannedNode{node: node, current: current, exists: exists}
+		rebuildDependent := false
+		for _, dependency := range node.dependencies {
+			if replaced[dependency] {
+				rebuildDependent = true
+				break
+			}
+		}
+		unchanged := false
+		if !rebuildDependent && exists && active[node.tag] {
+			if encoded, ok := payloadFor(&planned); ok && a.appliedMatches(node.tag, encoded) {
+				unchanged = true
+			}
+		}
+		if unchanged {
+			// Unchanged: do not touch the live object, and do not count it as a failure.
+			outByTag[node.tag] = current
+			records[node.tag] = planned.payload
+			continue
+		}
+		if ctxErr := a.ctx.Err(); ctxErr != nil {
+			// Close cancelled the provider before this node was constructed. The whole batch is
+			// abandoned: the nodes installed so far are reclaimed, nothing is published.
+			return abort(E.Cause(ctxErr, "provider update cancelled"))
+		}
+		pending = append(pending, planned)
+		pendingTags[node.tag] = true
+	}
+	if err := flush(); err != nil {
+		return abort(err)
+	}
+
 	if count := a.opaqueRecords.Load(); count > 0 {
 		// One line per apply, not per node: a persistent encoder refusal is a bug, and a log flood
 		// would hide it. The count is cumulative; the cause is the first one observed.

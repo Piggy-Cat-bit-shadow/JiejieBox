@@ -885,20 +885,63 @@ func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log
 	if err != nil {
 		return err
 	}
-	if m.lifecycle != nil {
-		if lifecycle, isLifecycle := outbound.(adapter.Lifecycle); isLifecycle {
-			name := "outbound/" + outbound.Type() + "[" + tag + "]"
-			for _, stage := range adapter.ListStartStages {
-				if stage > m.stage {
-					break
-				}
-				if err = m.lifecycle.Start(name, lifecycle, stage); err != nil {
-					// Release the partial start, then leave the old object untouched.
-					return E.Errors(err, m.lifecycle.Remove(lifecycle))
-				}
-			}
+	if err = m.startReplacement(outbound, tag); err != nil {
+		return err
+	}
+	closeNow, sweep, err := m.commitReplacement(tag, outbound, owner)
+	if err != nil {
+		// The new object was constructed and started; it must not leak, and the old node must stay.
+		m.release(outbound)
+		return err
+	}
+	for _, object := range closeNow {
+		m.release(object)
+	}
+	for _, object := range sweep {
+		m.release(object)
+	}
+	// A replacement is a graph change even when the tag did not move: the OBJECT behind the tag is
+	// new, and a consumer that keys anything by object identity - the opportunity to keep idle
+	// connections included - must be told to re-read it. Emitted after every lock above is released.
+	m.notifyGraphUpdated()
+	return nil
+}
+
+// startReplacement runs the lifecycle stages a replacement must receive before it may be published.
+//
+// The stages are bounded by m.stage: a replacement created after the Box finished starting must not
+// receive a stage the Box has already left, and one created during the start must receive every
+// stage the manager has reached. A failed stage removes what the object registered before the error
+// is returned, so a partial start cannot leak; the caller must NOT publish the object.
+func (m *Manager) startReplacement(outbound adapter.Outbound, tag string) error {
+	if m.lifecycle == nil {
+		return nil
+	}
+	lifecycle, isLifecycle := outbound.(adapter.Lifecycle)
+	if !isLifecycle {
+		return nil
+	}
+	name := "outbound/" + outbound.Type() + "[" + tag + "]"
+	for _, stage := range adapter.ListStartStages {
+		if stage > m.stage {
+			break
+		}
+		if err := m.lifecycle.Start(name, lifecycle, stage); err != nil {
+			// Release the partial start, then leave the old object untouched.
+			return E.Errors(err, m.lifecycle.Remove(lifecycle))
 		}
 	}
+	return nil
+}
+
+// commitReplacement validates the prospective graph and publishes one replacement. The caller must
+// hold m.mutation and must have started the object already.
+//
+// It returns the previous objects that may be closed immediately (a non-owner replacement) and the
+// ready retired entries a namespace mutation made closable. Both are closed by the caller OUTSIDE
+// every lock: m.release runs the object's teardown, and no cleanup may run with the namespace lock
+// held.
+func (m *Manager) commitReplacement(tag string, outbound adapter.Outbound, owner string) (closeNow, sweep []adapter.Outbound, err error) {
 	// The prospective graph is validated BEFORE the swap, under the graph lock, so an invalid
 	// replacement leaves the previous node published and serving.
 	//
@@ -913,9 +956,7 @@ func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log
 		replace: map[string]adapter.Outbound{tag: outbound},
 	}); err != nil {
 		m.graphAccess.Unlock()
-		// The new object was constructed and started; it must not leak, and the old node must stay.
-		m.release(outbound)
-		return err
+		return nil, nil, err
 	}
 	m.access.Lock()
 	old := m.outboundByTag[tag]
@@ -933,7 +974,6 @@ func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log
 	} else if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
 	}
-	var closeNow, sweep []adapter.Outbound
 	if old != nil {
 		if owner == "" {
 			// A caller that is not an owner-managed publisher keeps the historical behaviour: the
@@ -946,17 +986,7 @@ func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log
 	sweep = m.takeSweepableRetiredLocked()
 	m.access.Unlock()
 	m.graphAccess.Unlock()
-	for _, object := range closeNow {
-		m.release(object)
-	}
-	for _, object := range sweep {
-		m.release(object)
-	}
-	// A replacement is a graph change even when the tag did not move: the OBJECT behind the tag is
-	// new, and a consumer that keys anything by object identity - the opportunity to keep idle
-	// connections included - must be told to re-read it. Emitted after every lock above is released.
-	m.notifyGraphUpdated()
-	return nil
+	return closeNow, sweep, nil
 }
 
 // retiredOutbound is a replaced object parked until no new dial can obtain it.
