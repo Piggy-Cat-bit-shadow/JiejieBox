@@ -2,12 +2,14 @@ package catalog_test
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/adapter/outbound/catalog"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -242,4 +244,65 @@ func TestHundredSingleNodeUpdatesDoNotGrow(t *testing.T) {
 		refs[i].Release()
 	}
 	require.Zero(t, store.Stats().Records)
+}
+
+type blockingProtocol struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingProtocol) Type() string { return "blocking" }
+
+func (p *blockingProtocol) Encode(context.Context, any) ([]byte, catalog.Facts, bool) {
+	return []byte("blocking"), catalog.Facts{Network: []string{network.NetworkTCP}}, true
+}
+
+func (p *blockingProtocol) Build(ctx context.Context, _ adapter.Router, _ log.ContextLogger, _ string, _ []byte) (adapter.Outbound, error) {
+	close(p.started)
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return &catalogBlockingOutbound{Adapter: outbound.NewAdapter("blocking", "blocking", []string{network.NetworkTCP}, nil)}, nil
+}
+
+type catalogBlockingOutbound struct {
+	outbound.Adapter
+}
+
+func (o *catalogBlockingOutbound) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
+	return nil, net.ErrClosed
+}
+
+func (o *catalogBlockingOutbound) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
+	return nil, net.ErrClosed
+}
+
+// TestCloseDuringBuildDoesNotPublishAndFreesTheRecord is C02 at the catalog layer: Close while the
+// builder is parked must not publish the runtime, and the record must stay alive only until the
+// builder's own retained reference returns.
+func TestCloseDuringBuildDoesNotPublishAndFreesTheRecord(t *testing.T) {
+	protocol := &blockingProtocol{started: make(chan struct{}), release: make(chan struct{})}
+	store := catalog.NewStore()
+	constructor := catalog.NewConstructor(store, protocol)
+	object, handled, err := constructor.Deferred(context.Background(), nil, log.NewNOPFactory().Logger(), "blocking", "blocking", nil, "")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, 1, store.Stats().Records)
+
+	dialed := make(chan error, 1)
+	go func() {
+		_, dialErr := object.DialContext(context.Background(), network.NetworkTCP, M.SocksaddrFrom(netip.MustParseAddr("127.0.0.1"), 1))
+		dialed <- dialErr
+	}()
+	<-protocol.started
+	require.NoError(t, object.(interface{ Close() error }).Close())
+	close(protocol.release)
+	require.Error(t, <-dialed, "a build that lost the Close race must not be published")
+	_, built := object.(interface {
+		Built() (adapter.Outbound, bool)
+	}).Built()
+	require.False(t, built)
+	require.Zero(t, store.Stats().Records, "the builder's retained reference is the only owner and it released")
 }
