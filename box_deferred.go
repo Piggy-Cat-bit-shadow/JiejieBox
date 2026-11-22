@@ -26,7 +26,6 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound/catalog"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/protocol/http"
-	"github.com/sagernet/sing-box/protocol/socks"
 	"github.com/sagernet/sing-box/protocol/trojan"
 )
 
@@ -38,7 +37,6 @@ import (
 // constructor the manager may consult.
 func withDeferredOutbounds(manager *outbound.Manager, store *catalog.Store) {
 	catalogConstructor := catalog.NewConstructor(store,
-		socks.CatalogProtocol(),
 		http.CatalogProtocol(),
 	)
 	// Trojan keeps its existing Lazy recipe: the measured B->C increment for a unique-node

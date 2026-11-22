@@ -390,3 +390,89 @@ func TestManagerReplacementReleasesCatalogRecords(t *testing.T) {
 	store.Close()
 	require.Zero(t, store.Stats().Records)
 }
+
+// TestManagerReplacementKeepsOldRecordUntilLeaseEnds is C01/C10 at the record layer: an old
+// connection/hand-off holds a manager lease; ReplaceOwned+CompletePublication must not close the
+// old object (or free its record) until that lease ends. The new generation serves in parallel.
+func TestManagerReplacementKeepsOldRecordUntilLeaseEnds(t *testing.T) {
+	registry := outbound.NewRegistry()
+	socks.RegisterOutbound(registry)
+	manager := outbound.NewManager(registry, nil, "")
+	manager.Initialize(func() (adapter.Outbound, error) {
+		return &catalogBlockingOutbound{Adapter: outbound.NewAdapter("direct", "direct", []string{network.NetworkTCP}, nil)}, nil
+	})
+	store := catalog.NewStore()
+	manager.SetDeferredOutboundConstructor(catalog.NewConstructor(store, socks.CatalogProtocol()).Deferred)
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	require.NoError(t, manager.Start(adapter.StartStateInitialize, scope))
+
+	oldOptions := socksOptionsAt(0)
+	oldOptions.ServerPort = 21000
+	require.NoError(t, manager.ReplaceOwned(context.Background(), nil, log.NewNOPFactory().Logger(), "n0", C.TypeSOCKS, oldOptions, "prov"))
+	require.NoError(t, manager.CompletePublication("prov", []string{"n0"}))
+	oldObject, loaded := manager.Outbound("n0")
+	require.True(t, loaded)
+	releaseOld, ok := manager.AcquireOutbound(oldObject)
+	require.True(t, ok, "a live hand-off leases the old object")
+	require.Equal(t, 1, store.Stats().Records)
+
+	newOptions := socksOptionsAt(0)
+	newOptions.ServerPort = 22000
+	require.NoError(t, manager.ReplaceOwned(context.Background(), nil, log.NewNOPFactory().Logger(), "n0", C.TypeSOCKS, newOptions, "prov"))
+	require.NoError(t, manager.CompletePublication("prov", []string{"n0"}))
+	require.Equal(t, 2, store.Stats().Records, "the old record stays while its object is leased")
+	newObject, loaded := manager.Outbound("n0")
+	require.True(t, loaded)
+	require.NotSame(t, oldObject, newObject, "the tag already points at the new generation")
+
+	releaseOld()
+	require.NoError(t, manager.CompletePublication("prov", []string{"n0"}))
+	require.Equal(t, 1, store.Stats().Records, "after the last hand-off the old record is freed")
+	require.NoError(t, scope.Close())
+	store.Close()
+	require.Zero(t, store.Stats().Records)
+}
+
+// TestTwoStoresDoNotShareRecords is C03 at the ownership layer: two Box-sized stores, the same
+// bytes, independent records; closing one leaves the other's record readable and buildable.
+func TestTwoStoresDoNotShareRecords(t *testing.T) {
+	first := catalog.NewStore()
+	second := catalog.NewStore()
+	firstRef, err := first.Put("", C.TypeSOCKS, []byte("same"))
+	require.NoError(t, err)
+	secondRef, err := second.Put("", C.TypeSOCKS, []byte("same"))
+	require.NoError(t, err)
+	require.NotEqual(t, firstRef.StoreID(), secondRef.StoreID())
+	first.Close()
+	firstRef.Release()
+	require.False(t, firstRef.Valid())
+	require.True(t, secondRef.Valid(), "closing one Box store must not affect the other")
+	require.Equal(t, []byte("same"), secondRef.Payload())
+	secondRef.Release()
+	second.Close()
+}
+
+// TestConcurrentFirstDialBuildsOnce is P04: several goroutines demand the same never-built node; the
+// existing single-flight must produce exactly one runtime and every caller must get a result.
+func TestConcurrentFirstDialBuildsOnce(t *testing.T) {
+	store := catalog.NewStore()
+	constructor := catalog.NewConstructor(store, socks.CatalogProtocol())
+	object, handled, err := constructor.Deferred(context.Background(), nil, log.NewNOPFactory().Logger(), "once", C.TypeSOCKS, socksOptions(), "")
+	require.NoError(t, err)
+	require.True(t, handled)
+	const callers = 8
+	results := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_, dialErr := object.DialContext(ctx, network.NetworkTCP, M.SocksaddrFrom(netip.MustParseAddr("127.0.0.1"), 1))
+			results <- dialErr
+		}()
+	}
+	for i := 0; i < callers; i++ {
+		require.Error(t, <-results)
+	}
+	require.Equal(t, 1, object.(builderCounter).Builds(), "single-flight must build once")
+	require.NoError(t, object.(interface{ Close() error }).Close())
+}

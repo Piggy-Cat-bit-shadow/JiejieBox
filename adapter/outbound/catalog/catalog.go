@@ -275,3 +275,11 @@ func (r Ref) Generation() uint64 {
 	}
 	return r.rec.generation
 }
+
+// StoreID names the store that owns the record. Two Boxes intentionally have different ids.
+func (r Ref) StoreID() uint64 {
+	if r.store == nil {
+		return 0
+	}
+	return r.store.id
+}

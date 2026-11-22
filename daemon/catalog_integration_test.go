@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestNodeCatalogIsInstalledOnStaticAndProviderNodes(t *testing.T) {
 		if len(providerNodes) > 0 {
 			providerNodes += ","
 		}
-		providerNodes += catalogSocksNode(fmt.Sprintf("p%d", i), 30000+i)
+		providerNodes += fmt.Sprintf(`{"type": "http", "tag": "p%d", "server": "127.0.0.1", "server_port": %d, "version": 1}`, i, 30000+i)
 	}
 	document := `{"outbounds": [` + providerNodes + `]}`
 
@@ -78,8 +79,9 @@ func TestNodeCatalogIsInstalledOnStaticAndProviderNodes(t *testing.T) {
 	box := instance.Box()
 	require.NotNil(t, box)
 
+	t.Logf("stats after start: %+v", box.CatalogStats())
 	require.Eventually(t, func() bool {
-		return box.CatalogStats().Records == socksCount+httpCount+providerCount
+		return box.CatalogStats().Records == httpCount+providerCount
 	}, 10*time.Second, 10*time.Millisecond, "every static and provider node must get one shared record")
 	stats := box.CatalogStats()
 	require.False(t, stats.Closed)
@@ -94,25 +96,26 @@ func TestNodeCatalogIsInstalledOnStaticAndProviderNodes(t *testing.T) {
 	for _, tag := range []string{"s0", "s19", "h0", "t0", "nodes/p0", "nodes/p19"} {
 		object, loaded := box.Outbound().Outbound(tag)
 		require.True(t, loaded, tag)
-		if tag == "h0" {
-			require.Equal(t, "http", object.Type())
-		} else if tag == "t0" {
+		switch {
+		case tag == "t0":
 			require.Equal(t, "trojan", object.Type())
-		} else {
+		case strings.HasPrefix(tag, "h") || strings.HasPrefix(tag, "nodes/p"):
+			require.Equal(t, "http", object.Type())
+		default:
 			require.Equal(t, "socks", object.Type())
 		}
 		require.Equal(t, tag, object.Tag())
 		require.Equal(t, []string{"tcp", "udp"}, object.Network())
 	}
 	require.Zero(t, box.DeferredExpansionCount(), "a metadata walk must not expand a catalog node")
-	require.Equal(t, socksCount+httpCount+providerCount, box.CatalogStats().Records)
+	require.Equal(t, httpCount+providerCount, box.CatalogStats().Records)
 
 	// The first dial materializes through the existing Lazy state machine. The local port is closed,
 	// so the dial fails, but the build must have run and the node remains a ready expansion.
 	destination := M.SocksaddrFrom(netip.MustParseAddr("127.0.0.1"), 1)
 	ctxDial, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	object, loaded := box.Outbound().Outbound("s0")
+	object, loaded := box.Outbound().Outbound("h0")
 	require.True(t, loaded)
 	_, dialErr := object.DialContext(ctxDial, "tcp", destination)
 	require.Error(t, dialErr)
