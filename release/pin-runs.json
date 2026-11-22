@@ -36,7 +36,7 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-22",
+  "recorded_at": "2026-11-23",
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
@@ -568,6 +568,15 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44995713916"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Maintenance ledger",
+      "run_id": 45083784629,
+      "head_sha": "ea4b9c24b4d6db4a82a14be7c721371a4f3fb6b2",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/45083784629"
     }
   ],
   "child_runs": [],
@@ -595,12 +604,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
-      "tip": "6c2f9474081963415b976bda4a1bfad1586a8e9b",
-      "pin": "6c2f94740819",
+      "tip": "a1125fe504820e36db11bd854c323932f30561af",
+      "pin": "a1125fe50482",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-21",
-      "note": "main's tip sizes the socket at the four entry points that hand a conn to quic-go, through the quic-go helper that checks the datagram type first; the obfuscated hysteria/hysteria2 paths and the realm punch conn are covered, and the per-hop port-hopping calls stay."
+      "observed_at": "2026-11-23",
+      "note": "main adds hysteria2 clientConn.CloseWrite: QUIC FIN without CancelRead, so client TCP half-close can read the response; Mieru remains without a half-close primitive."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/quic-go",
