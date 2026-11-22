@@ -8,6 +8,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-func mmapFile(file *os.File, size int) ([]byte, func(), error) {
+func mmapFile(file *os.File, size int, removeFile bool) ([]byte, func(), error) {
 	return nil, nil, E.New("rule-set mmap is not supported on this platform")
 }

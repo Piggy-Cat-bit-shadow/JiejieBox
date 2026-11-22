@@ -36,6 +36,10 @@ type LocalRuleSet struct {
 	watcher    *fswatch.Watcher
 	callbacks  list.List[adapter.RuleSetUpdateCallback]
 	refs       atomic.Int32
+	// derivedCache reuses the compiled form of this file across reloads on platforms that serve
+	// rule-sets from a mapping. It is nil where the platform does not, and every use is guarded:
+	// the cache can only make a load cheaper, never make it fail.
+	derivedCache *derivedRuleSetCache
 }
 
 func NewLocalRuleSet(ctx context.Context, logger logger.Logger, tag string, options option.RuleSet) (*LocalRuleSet, error) {
@@ -56,6 +60,9 @@ func NewLocalRuleSet(ctx context.Context, logger logger.Logger, tag string, opti
 	} else {
 		filePath := filemanager.BasePath(ctx, strings.ReplaceAll(options.LocalOptions.Path, C.RuleSetTagPlaceholder, tag))
 		filePath, _ = filepath.Abs(filePath)
+		if mmapRuleSetPlatform {
+			ruleSet.derivedCache = newDerivedRuleSetCache(ctx, logger)
+		}
 		err := ruleSet.reloadFile(filePath)
 		if err != nil {
 			return nil, err
@@ -110,8 +117,36 @@ func (s *LocalRuleSet) StartContext(ctx context.Context, startContext *adapter.H
 
 func (s *LocalRuleSet) reloadFile(path string) error {
 	var ruleSet option.PlainRuleSetCompat
+	// derived is the exact source identity when this platform can reuse a compiled artifact. It
+	// stays nil elsewhere, so computing a digest is not even attempted.
+	var derived *derivedSource
 	switch s.fileFormat {
 	case C.RuleSetFormatSource, "":
+		// On a platform with the derived path the digest is taken from the FILE, not from a
+		// materialised copy: reading a large source JSON into memory just to hash it would put the
+		// whole document back on the warm path's peak, which is the cost this cache exists to
+		// avoid. The document is read below only when the cache missed.
+		if s.derivedCache != nil {
+			sourceFile, openErr := filemanager.Open(s.ctx, path)
+			if openErr != nil {
+				return openErr
+			}
+			digest, size, hashErr := hashOpenFile(sourceFile)
+			_ = sourceFile.Close()
+			if hashErr != nil {
+				return hashErr
+			}
+			derived = localDerivedSource(s.tag, path, derivedFormatName(s.fileFormat), digest, size)
+			if mapped, hit := s.derivedCache.open(derived); hit {
+				if err := s.reloadMappedRuleSet(mapped); err == nil {
+					return nil
+				} else {
+					// Verified bytes this build still cannot build rules from: fall through to the
+					// source, which is the authoritative path.
+					s.logger.Debug(E.Cause(err, "derived rule-set is unusable, re-parsing the source"))
+				}
+			}
+		}
 		content, err := filemanager.ReadFile(s.ctx, path)
 		if err != nil {
 			return err
@@ -126,6 +161,23 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 			return err
 		}
 		defer setFile.Close()
+		if s.derivedCache != nil {
+			// One sequential pass over the compressed source; the parser reads it again. It is the
+			// price of knowing WHICH bytes a conversion belongs to, and it is skipped on platforms
+			// without the derived path.
+			digest, size, hashErr := hashOpenFile(setFile)
+			if hashErr != nil {
+				return hashErr
+			}
+			derived = localDerivedSource(s.tag, path, derivedFormatName(s.fileFormat), digest, size)
+			if mapped, hit := s.derivedCache.open(derived); hit {
+				if err = s.reloadMappedRuleSet(mapped); err == nil {
+					return nil
+				} else {
+					s.logger.Debug(E.Cause(err, "derived rule-set is unusable, re-parsing the source"))
+				}
+			}
+		}
 		ruleSet, err = srs.Read(setFile, false)
 		if err != nil {
 			return err
@@ -133,7 +185,38 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 	default:
 		return E.New("unknown rule-set format: ", s.fileFormat)
 	}
-	plainRuleSet, err := mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet).Upgrade()
+	return s.reloadParsedRuleSet(derived, ruleSet)
+}
+
+// reloadMappedRuleSet publishes a rule-set whose matchers are backed by a persisted mapping. The
+// slice swap inside reloadRules only happens after every rule and the metadata validate, so a
+// failure here has published nothing and the caller can safely fall back to the source.
+func (s *LocalRuleSet) reloadMappedRuleSet(mapped option.PlainRuleSetCompat) error {
+	plainRuleSet, err := mapped.Upgrade()
+	if err != nil {
+		return E.Cause(err, "upgrade derived rule-set")
+	}
+	return s.reloadRules(plainRuleSet.Rules)
+}
+
+// reloadParsedRuleSet finishes a load that had to read the source: it converts the parsed options to
+// the form this platform serves (mapping them, on platforms that do), and, on a cold miss,
+// publishes the conversion as a derived artifact for the next load.
+func (s *LocalRuleSet) reloadParsedRuleSet(derived *derivedSource, ruleSet option.PlainRuleSetCompat) error {
+	mapped := ruleSet
+	if s.derivedCache != nil {
+		file, ok := writeRuleSetMmapFile(s.ctx, s.logger, s.tag, ruleSet)
+		if ok {
+			defer file.Close()
+			// Publish before mapping: the store streams the very bytes the mapping will use, so a
+			// cold load writes the conversion twice (temp + store copy) instead of three times.
+			s.derivedCache.publish(derived, ruleSet.Version, file)
+			mapped = mapRuleSetMmapFile(s.logger, s.tag, file, ruleSet)
+		}
+	} else {
+		mapped = mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet)
+	}
+	plainRuleSet, err := mapped.Upgrade()
 	if err != nil {
 		return err
 	}

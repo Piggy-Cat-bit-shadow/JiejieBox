@@ -4,41 +4,28 @@ package rule
 
 import (
 	"context"
-	"io"
-	"os"
 
-	"github.com/sagernet/sing-box/common/srs"
 	"github.com/sagernet/sing-box/option"
-	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/sagernet/sing/service/filemanager"
 )
 
+// mmapRuleSetPlatform activates the compiled-artifact path. It is true only where the product
+// already serves rule-sets from an mmap: the derived artifact is a persisted form of exactly the
+// temp mapping this build makes, so enabling it here changes WHEN the conversion is paid, not HOW
+// a rule-set is represented. On every other platform the rules are heap-resident, and introducing
+// a mapping there would be a different product change (steady heap, page-cache and file lifetime on
+// Android/desktop), not a reuse of an existing one.
+//
+// It is a variable rather than a constant so the Unix-only integration tests can exercise the real
+// path on a host that can map; production assigns it in this file and never changes it.
+var mmapRuleSetPlatform = true
+
+// mmapRuleSet converts a heap rule-set into the transient mmap form this platform serves.
 func mmapRuleSet(ctx context.Context, logger logger.Logger, tag string, ruleSet option.PlainRuleSetCompat) option.PlainRuleSetCompat {
-	file, err := filemanager.CreateTemp(ctx, "rule-set-*.mmap")
-	if err != nil {
-		logger.Warn(E.Cause(err, "create rule-set mmap file ", tag))
+	file, ok := writeRuleSetMmapFile(ctx, logger, tag, ruleSet)
+	if !ok {
 		return ruleSet
 	}
 	defer file.Close()
-	mmap, err := writeAndMmapRuleSet(file, ruleSet)
-	if err != nil {
-		filemanager.Remove(ctx, file.Name())
-		logger.Warn(E.Cause(err, "mmap rule-set ", tag))
-		return ruleSet
-	}
-	logger.Debug("mmap rule-set ", tag)
-	return mmap
-}
-
-func writeAndMmapRuleSet(file *os.File, ruleSet option.PlainRuleSetCompat) (option.PlainRuleSetCompat, error) {
-	err := srs.WriteMmap(file, ruleSet)
-	if err != nil {
-		return ruleSet, err
-	}
-	_, err = file.Seek(0, io.SeekStart)
-	if err != nil {
-		return ruleSet, err
-	}
-	return srs.ReadMmap(file)
+	return mapRuleSetMmapFile(logger, tag, file, ruleSet)
 }
