@@ -6,8 +6,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/service"
+
+	"github.com/sagernet/sing-box/log"
 	N "github.com/sagernet/sing/common/network"
 
 	"github.com/stretchr/testify/require"
@@ -81,4 +84,35 @@ func socksCatalogOptions() *option.SOCKSOutboundOptions {
 	}
 	options.Version = "5"
 	return options
+}
+
+type catalogFakeDNSTransportManager struct{ adapter.DNSTransportManager }
+
+func (catalogFakeDNSTransportManager) Transports() []adapter.DNSTransport {
+	return []adapter.DNSTransport{nil, nil}
+}
+
+func (catalogFakeDNSTransportManager) Transport(string) (adapter.DNSTransport, bool) {
+	return nil, false
+}
+
+type catalogFakeNetworkManager struct{ adapter.NetworkManager }
+
+func (catalogFakeNetworkManager) DefaultOptions() adapter.NetworkOptions {
+	return adapter.NetworkOptions{}
+}
+
+// TestCatalogRefusesDomainServerWithoutResolver: with two DNS transports and no default resolver,
+// the eager dialer refuses a domain server at construction. The catalog must refuse it at the same
+// stage, not admit it and fail on the first dial.
+func TestCatalogRefusesDomainServerWithoutResolver(t *testing.T) {
+	ctx := service.ContextWithDefaultRegistry(context.Background())
+	service.MustRegister[adapter.DNSTransportManager](ctx, catalogFakeDNSTransportManager{})
+	service.MustRegister[adapter.NetworkManager](ctx, catalogFakeNetworkManager{})
+	options := &option.SOCKSOutboundOptions{
+		ServerOptions: option.ServerOptions{Server: "example.com", ServerPort: 1080},
+		Version:       "5",
+	}
+	_, _, ok := CatalogProtocol().Encode(ctx, options)
+	require.False(t, ok, "missing domain resolver must fall back to eager")
 }

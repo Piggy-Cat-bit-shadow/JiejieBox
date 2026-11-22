@@ -49,6 +49,7 @@ func TestCatalogRefusesIneligibleHTTPShapes(t *testing.T) {
 	base := func() *option.HTTPOutboundOptions {
 		return &option.HTTPOutboundOptions{
 			ServerOptions: option.ServerOptions{Server: "192.0.2.1", ServerPort: 8080},
+			Version:       1,
 		}
 	}
 	cases := map[string]func(*option.HTTPOutboundOptions){
