@@ -160,6 +160,7 @@ func socksOptionsAt(index int) *option.SOCKSOutboundOptions {
 func httpOptionsAt(index int) *option.HTTPOutboundOptions {
 	return &option.HTTPOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "192.0.2.2", ServerPort: uint16(10000 + index)},
+		Version:       1,
 	}
 }
 
