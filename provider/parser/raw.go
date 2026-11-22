@@ -25,6 +25,11 @@ func parseRawSubscription(content string) ([]option.Outbound, error) {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	linkList := strings.SplitSeq(content, "\n")
 	for linkLine := range linkList {
+		// A subscription line is a substring of the whole document. url.Parse and the link
+		// parsers keep substrings of their input, so parsing the line in place would make every
+		// node option pin the entire document allocation (including an ignored padding tail).
+		// Copy only this line: small fields may alias a per-node allocation, never the document.
+		linkLine = strings.Clone(linkLine)
 		server, err := ParseSubscriptionLink(linkLine)
 		if err != nil {
 			continue

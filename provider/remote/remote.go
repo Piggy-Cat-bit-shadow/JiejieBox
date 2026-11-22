@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -748,10 +749,7 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 			// uses as LastUpdated. It is only safe when this provider actually has a document: a
 			// spurious 304 before any content was loaded would otherwise replace a valid cache file
 			// with `{"outbounds":null}`.
-			content, _ := json.Marshal(option.Options{
-				Outbounds: s.lastOutOpts,
-			})
-			if err := s.saveCacheFile(hasInfo, info, content); err != nil {
+			if err := s.saveCacheFile(hasInfo, info, s.writeCacheDocument); err != nil {
 				report.AncillaryError = s.redact(err.Error())
 				return report, E.Cause(err, "save outbound provider cache file")
 			}
@@ -819,31 +817,32 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 	// fails, the tag stays behind so the next refresh downloads the body again.
 	newEtag := resp.Header.Get("Etag")
 	cacheSaved := true
-	if s.path != "" || s.cacheFile != nil {
-		content, _ := json.Marshal(option.Options{
-			Outbounds: s.lastOutOpts,
-		})
-		if s.path != "" {
-			if err = s.saveCacheFile(hasInfo, info, content); err != nil {
-				report.AncillaryError = s.redact(err.Error())
-				return report, E.Cause(err, "save outbound provider cache file")
-			}
-		} else if hasInfo {
-			content = append([]byte(infoStr+"\n"), content...)
+	if s.path != "" {
+		if err = s.saveCacheFile(hasInfo, info, s.writeCacheDocument); err != nil {
+			report.AncillaryError = s.redact(err.Error())
+			return report, E.Cause(err, "save outbound provider cache file")
 		}
-		if s.cacheFile != nil {
-			saveSub := &adapter.SavedBinary{
-				LastUpdated: time.Now(),
-				LastEtag:    newEtag,
-				URLHash:     s.urlHash[:],
+	}
+	if s.cacheFile != nil {
+		saveSub := &adapter.SavedBinary{
+			LastUpdated: time.Now(),
+			LastEtag:    newEtag,
+			URLHash:     s.urlHash[:],
+		}
+		if s.path == "" {
+			content, encodeErr := s.encodeCacheDocument()
+			if encodeErr != nil {
+				report.AncillaryError = s.redact(encodeErr.Error())
+				return report, E.Cause(encodeErr, "encode outbound provider cache file")
 			}
-			if s.path == "" {
-				saveSub.Content = content
+			if hasInfo {
+				content = append([]byte(infoStr+"\n"), content...)
 			}
-			if err = s.cacheFile.SaveSubscription(s.Tag(), saveSub); err != nil {
-				s.logger.Error("save outbound provider cache file: ", err)
-				cacheSaved = false
-			}
+			saveSub.Content = content
+		}
+		if err = s.cacheFile.SaveSubscription(s.Tag(), saveSub); err != nil {
+			s.logger.Error("save outbound provider cache file: ", err)
+			cacheSaved = false
 		}
 	}
 	s.infoMu.Lock()
@@ -990,8 +989,77 @@ func (s *ProviderRemote) loopUpdate() {
 	}
 }
 
-func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionInfo, contentRaw []byte) error {
-	content := contentRaw
+// writeCacheDocument is the streaming form of the path cache document. It is used with
+// saveCacheFile so a 10000-node document is encoded directly into the temp file instead of being
+// materialised as one []byte first. The encoder's trailing newline is accepted by the load path and
+// keeps the cached file a normal JSON document.
+func (s *ProviderRemote) writeCacheDocument(writer io.Writer) error {
+	if len(s.lastOutOpts) == 0 {
+		_, err := io.WriteString(writer, "{\"outbounds\":null}\n")
+		return err
+	}
+	if _, err := io.WriteString(writer, "{\"outbounds\":["); err != nil {
+		return err
+	}
+	// Marshal a bounded slice at a time. The project JSON implementation is fast and pooled, but
+	// its public entry point returns a whole []byte; 256 nodes keeps the temp buffer small while
+	// still using the same custom marshalers as the one-shot path.
+	const chunkSize = 1024
+	for start := 0; start < len(s.lastOutOpts); start += chunkSize {
+		end := start + chunkSize
+		if end > len(s.lastOutOpts) {
+			end = len(s.lastOutOpts)
+		}
+		encoded, err := json.Marshal(option.Options{Outbounds: s.lastOutOpts[start:end]})
+		if err != nil {
+			return err
+		}
+		const prefix = "{\"outbounds\":"
+		if len(encoded) <= len(prefix) || string(encoded[:len(prefix)]) != prefix || encoded[len(encoded)-1] != '}' {
+			return E.New("cache document: unexpected options encoding")
+		}
+		if start > 0 {
+			if _, err = io.WriteString(writer, ","); err != nil {
+				return err
+			}
+		}
+		inner := encoded[len(prefix) : len(encoded)-1]
+		if _, err = writer.Write(inner[1 : len(inner)-1]); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(writer, "]}\n")
+	return err
+}
+
+// encodeCacheDocument is only for the adapter.CacheFile interface, whose value contract is []byte;
+// the path cache never uses it.
+func (s *ProviderRemote) encodeCacheDocument() ([]byte, error) {
+	var buffer bytes.Buffer
+	if err := s.writeCacheDocument(&buffer); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionInfo, encode func(io.Writer) error) error {
+	dir := filepath.Dir(s.path)
+	if err := filemanager.MkdirAll(s.ctx, dir, 0o755); err != nil {
+		return err
+	}
+	// Write-then-rename in the same directory: a crash between the two leaves the previous cache
+	// intact instead of a half-written document that the next start would have to reject. The temp
+	// name is fixed, so a leftover from an interrupted write is overwritten rather than accumulating.
+	tempPath := s.path + ".tmp"
+	file, err := filemanager.OpenFile(s.ctx, tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+	if err != nil {
+		return err
+	}
+	cleanup := func() {
+		_ = file.Close()
+		_ = filemanager.Remove(s.ctx, tempPath)
+	}
+	writer := bufio.NewWriterSize(file, 64*1024)
 	if hasInfo {
 		infoStr := fmt.Sprint(
 			"# upload=", info.Upload,
@@ -999,23 +1067,28 @@ func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionIn
 			"; total=", info.Total,
 			"; expire=", info.Expire,
 			";")
-		content = append([]byte(infoStr+"\n"), content...)
+		if _, err = writer.WriteString(infoStr + "\n"); err != nil {
+			cleanup()
+			return err
+		}
 	}
-	dir := filepath.Dir(s.path)
-	err := filemanager.MkdirAll(s.ctx, dir, 0o755)
-	if err != nil {
+	if err = encode(writer); err != nil {
+		cleanup()
 		return err
 	}
-	// Write-then-rename in the same directory: a crash between the two leaves the previous cache
-	// intact instead of a half-written document that the next start would have to reject. The temp
-	// name is fixed, so a leftover from an interrupted write is overwritten rather than accumulating.
-	tempPath := s.path + ".tmp"
-	err = filemanager.WriteFile(s.ctx, tempPath, content, 0o666)
-	if err != nil {
+	if err = writer.Flush(); err != nil {
+		cleanup()
 		return err
 	}
-	err = filemanager.Rename(s.ctx, tempPath, s.path)
-	if err != nil {
+	if err = file.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		_ = filemanager.Remove(s.ctx, tempPath)
+		return err
+	}
+	if err = filemanager.Rename(s.ctx, tempPath, s.path); err != nil {
 		_ = filemanager.Remove(s.ctx, tempPath)
 		return err
 	}
