@@ -220,6 +220,60 @@ func TestRepublishingIdenticalBytesReplacesTheProvenance(t *testing.T) {
 	require.FileExists(t, loaded.Path(), "replacing the manifest must not touch the artifact bytes")
 }
 
+// TestDiscardIfEvaluatesTheManifestAtRemovalTime pins the reason DiscardIf exists: a caller's
+// decision can be taken on a manifest snapshot that another publisher replaces for the SAME bytes
+// before the removal runs. The predicate must therefore be evaluated at removal time, under the
+// lease lock, not against the snapshot the caller saw.
+func TestDiscardIfEvaluatesTheManifestAtRemovalTime(t *testing.T) {
+	store, err := Open(t.TempDir())
+	require.NoError(t, err)
+
+	stale := manifestFor(0, "")
+	stale.Dependencies = []string{"source-sha256=same"}
+	first, err := store.Commit("derived", stale, bytes.NewReader([]byte("same")))
+	require.NoError(t, err)
+	id := first.ID()
+	first.Release()
+
+	// A concurrent publisher corrects the account for the SAME bytes: the version directory and the
+	// digest do not change, only the manifest does.
+	corrected := manifestFor(0, "")
+	corrected.Dependencies = []string{"source-sha256=same", "identity-generation=2"}
+	second, err := store.Commit("derived", corrected, bytes.NewReader([]byte("same")))
+	require.NoError(t, err)
+	second.Release()
+	require.Equal(t, first.Path(), second.Path(), "the correction is the same physical version")
+
+	// A reader that decided on the OLD snapshot must not delete the corrected version.
+	require.NoError(t, store.DiscardIf("derived", id, func(manifest Manifest) bool {
+		return len(manifest.Dependencies) == 1
+	}))
+	loaded, err := store.Load("derived")
+	require.NoError(t, err, "the corrected account must survive a stale discard decision")
+	require.Equal(t, corrected.Dependencies, loaded.Manifest().Dependencies)
+	loaded.Release()
+
+	// The same call DOES remove the version when the state the caller decided on is still current.
+	require.NoError(t, store.DiscardIf("derived", id, func(manifest Manifest) bool {
+		return len(manifest.Dependencies) == 2
+	}))
+	_, err = store.Load("derived")
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+// TestDiscardIfRespectsALease keeps the pre-existing lease rule: a discard never removes a version a
+// reader still holds.
+func TestDiscardIfRespectsALease(t *testing.T) {
+	store, err := Open(t.TempDir())
+	require.NoError(t, err)
+	version, err := store.Commit("derived", manifestFor(0, ""), bytes.NewReader([]byte("held")))
+	require.NoError(t, err)
+	defer version.Release()
+
+	require.NoError(t, store.DiscardIf("derived", version.ID(), func(Manifest) bool { return true }))
+	require.FileExists(t, version.Path(), "a leased version must not be removed")
+}
+
 // TestRepublishingTheSameProvenanceKeepsThePublicationTime makes the replacement conditional: an
 // unchanged account must not rewrite the manifest, so the version keeps the timestamp that ranks it
 // against other versions.

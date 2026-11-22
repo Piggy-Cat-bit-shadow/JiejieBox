@@ -157,6 +157,19 @@ func (st *StagedVersion) Discard() {
 // Discard removes one unleased version by digest, if it exists. A recovery uses it to replace a
 // version whose bytes were damaged instead of publishing over an entry it cannot verify.
 func (s *Store) Discard(key string, id string) error {
+	return s.DiscardIf(key, id, nil)
+}
+
+// DiscardIf removes one unleased version by digest when predicate accepts its manifest.
+//
+// The predicate is evaluated against the manifest read UNDER the lease lock, immediately before the
+// decision to remove, so a publisher that replaced the manifest for the same artifact bytes in the
+// meantime is observed instead of overwritten. That matters for a caller that has already decided,
+// from an earlier snapshot, that a version is in a state it may drop (for example "written before
+// this build's cache identity generation"): a digest alone cannot tell the stale account from the
+// corrected account for the same bytes, and a digest-only removal would delete a version another
+// producer has just repaired. A nil predicate is the plain digest-only removal of Discard.
+func (s *Store) DiscardIf(key string, id string, predicate func(Manifest) bool) error {
 	if s == nil || id == "" {
 		return nil
 	}
@@ -168,6 +181,8 @@ func (s *Store) Discard(key string, id string) error {
 		}
 		return err
 	}
+	s.lease.access.Lock()
+	defer s.lease.access.Unlock()
 	for _, entry := range entries {
 		if !entry.IsDir() || len(entry.Name()) < 2 || entry.Name()[0] != 'v' {
 			continue
@@ -177,7 +192,13 @@ func (s *Store) Discard(key string, id string) error {
 		if readErr != nil || manifest.Digest != id {
 			continue
 		}
-		s.removeIfUnleased(full)
+		if predicate != nil && !predicate(manifest) {
+			continue
+		}
+		if s.lease.counts[full] > 0 {
+			continue
+		}
+		_ = os.RemoveAll(full)
 	}
 	return nil
 }

@@ -332,7 +332,7 @@ func (c *derivedRuleSetCache) open(source *derivedSource) (option.PlainRuleSetCo
 		unusable := !derivedIdentityCurrent(manifest)
 		version.Release()
 		if unusable {
-			c.discard(source.key, id)
+			c.discardUnusableGeneration(source.key, id)
 		}
 		derivedCacheCounters.misses.Add(1)
 		return option.PlainRuleSetCompat{}, false
@@ -386,6 +386,27 @@ func (c *derivedRuleSetCache) discard(key string, id string) {
 		return
 	}
 	if err := c.store.Discard(key, id); err != nil {
+		c.logger.Debug(E.Cause(err, "discard derived rule-set"))
+	}
+}
+
+// discardUnusableGeneration removes a version only while its manifest still proves that this build
+// can never use it.
+//
+// The decision was taken on a manifest snapshot read before the caller released its lease, and a
+// digest alone cannot distinguish that stale account from a corrected account for the SAME artifact
+// bytes: a concurrent publish of the identical bytes replaces the manifest of the very same version
+// (see the artifact store's publication contract). The predicate is therefore evaluated again by the
+// store under the lease lock, immediately before removal, so a version that was corrected in the
+// meantime is preserved instead of being deleted by a digest-only removal.
+func (c *derivedRuleSetCache) discardUnusableGeneration(key string, id string) {
+	if c == nil || id == "" {
+		return
+	}
+	err := c.store.DiscardIf(key, id, func(manifest artifact.Manifest) bool {
+		return !derivedIdentityCurrent(manifest)
+	})
+	if err != nil {
 		c.logger.Debug(E.Cause(err, "discard derived rule-set"))
 	}
 }

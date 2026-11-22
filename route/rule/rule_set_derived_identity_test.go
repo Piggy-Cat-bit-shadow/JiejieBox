@@ -557,6 +557,47 @@ func TestDerivedRuleSetNoManifestNamesBytesItDidNotParse(t *testing.T) {
 		&adapter.InboundContext{Domain: "before01.example"}))
 }
 
+// TestDerivedRuleSetStaleDiscardDecisionKeepsTheCorrectedVersion reproduces the race the state
+// predicate closes: a loader decides from an old-generation manifest snapshot that the version may
+// be dropped, and a concurrent publish repairs the SAME artifact bytes (same digest, same version
+// directory) before the removal runs. A digest-only removal would delete the freshly corrected
+// version; the store re-reads the manifest under its lease lock, so the correction survives.
+func TestDerivedRuleSetStaleDiscardDecisionKeepsTheCorrectedVersion(t *testing.T) {
+	enableDerivedRuleSetPlatform(t)
+	resetDerivedCacheDiagnostics()
+	ctx, base := derivedTestContext(t)
+	path := filepath.Join(t.TempDir(), "stale-discard.json")
+	source := derivedJSONDomainSource("stale-discard.example")
+	digest, size := derivedContentDigest(source)
+	identity := localDerivedSource("stale-discard", path, C.RuleSetFormatSource, digest, size)
+
+	store, err := artifact.Open(filepath.Join(base, derivedStoreDirectory))
+	require.NoError(t, err)
+	cache := &derivedRuleSetCache{ctx: ctx, store: store, logger: logger.NOP()}
+
+	// The pre-fix account of these exact bytes.
+	compiled := encodeDerivedMmapRuleSet(t, parseDerivedJSONSource(t, source))
+	stale, err := store.Commit(identity.key, oldStyleDerivedManifest(t, cache, identity, C.RuleSetVersionCurrent), bytes.NewReader(compiled))
+	require.NoError(t, err)
+	id := stale.ID()
+	stale.Release()
+
+	// A concurrent load publishes the corrected account for the SAME bytes; only the manifest changes.
+	corrected, err := store.Commit(identity.key, cache.derivedManifest(identity, C.RuleSetVersionCurrent), bytes.NewReader(compiled))
+	require.NoError(t, err)
+	corrected.Release()
+	require.Equal(t, stale.Path(), corrected.Path(), "the correction is one physical version")
+
+	// The reader had decided on the stale snapshot; the removal must re-check the state.
+	cache.discardUnusableGeneration(identity.key, id)
+	require.Len(t, derivedVersions(t, base, identity.key), 1,
+		"a discard decided on a stale generation must not delete the corrected account")
+	loaded, err := store.Load(identity.key)
+	require.NoError(t, err)
+	require.Contains(t, loaded.Manifest().Dependencies, "identity-generation="+strconv.Itoa(derivedIdentityGeneration))
+	loaded.Release()
+}
+
 // TestDerivedRuleSetFutureLegacyManifestStillMigrates covers the clock-skew boundary the other
 // migration tests do not: the pre-fix manifest's Created is AHEAD of this host's clock.
 //
