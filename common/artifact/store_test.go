@@ -274,6 +274,39 @@ func TestDiscardIfRespectsALease(t *testing.T) {
 	require.FileExists(t, version.Path(), "a leased version must not be removed")
 }
 
+// TestNewestCreatedReadsManifestsOnly pins the logical-clock probe: it must report the largest
+// Created among the versions this build could load, ignore another build's manifest, and be cheap
+// (manifests only, no artifact bytes, no lease).
+func TestNewestCreatedReadsManifestsOnly(t *testing.T) {
+	store, err := Open(t.TempDir())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), store.NewestCreated("absent"))
+
+	commit := func(body string, created int64) {
+		t.Helper()
+		manifest := manifestFor(0, "")
+		manifest.Created = created
+		version, commitErr := store.Commit("key", manifest, strings.NewReader(body))
+		require.NoError(t, commitErr)
+		version.Release()
+	}
+	commit("first", 100)
+	commit("second", 300)
+	commit("third", 200)
+	require.Equal(t, int64(300), store.NewestCreated("key"),
+		"the newest stamp on disk, not the most recently committed one")
+
+	// A version another build wrote is not one this build can load, so it must not set the clock.
+	foreign := manifestFor(0, "")
+	foreign.Platform = "plan9"
+	foreign.Created = 1 << 60
+	version, err := store.Commit("key", foreign, strings.NewReader("foreign"))
+	require.NoError(t, err)
+	version.Release()
+	require.Equal(t, int64(300), store.NewestCreated("key"),
+		"an incompatible version must not drive this build's clock")
+}
+
 // TestRepublishingTheSameProvenanceKeepsThePublicationTime makes the replacement conditional: an
 // unchanged account must not rewrite the manifest, so the version keeps the timestamp that ranks it
 // against other versions.

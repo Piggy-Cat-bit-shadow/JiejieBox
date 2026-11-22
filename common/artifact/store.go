@@ -260,6 +260,40 @@ func (s *Store) LoadExact(key string, id string) (*Version, error) {
 	return nil, os.ErrNotExist
 }
 
+// NewestCreated returns the largest Created value among the versions of key that this build could
+// load, or 0 when the key has none.
+//
+// It reads manifests only and takes no lease, so it is cheap enough to be called on a publication
+// path. A producer whose ordering is a logical clock (rather than a claim about wall time) uses it to
+// publish strictly after everything already on disk: Load ranks versions by Created, so a version
+// published at wall time after a backward clock correction - or one that has to outrank a stale
+// version whose timestamp is ahead of the clock - would otherwise never become the newest one and
+// would be collected as the non-newest version, leaving the cache permanently cold.
+func (s *Store) NewestCreated(key string) int64 {
+	if s == nil {
+		return 0
+	}
+	keyDir := filepath.Join(s.dir, key)
+	entries, err := os.ReadDir(keyDir)
+	if err != nil {
+		return 0
+	}
+	newest := int64(0)
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), tempPrefix) {
+			continue
+		}
+		manifest, readErr := readManifest(filepath.Join(keyDir, entry.Name()))
+		if readErr != nil || !compatible(manifest) {
+			continue
+		}
+		if manifest.Created > newest {
+			newest = manifest.Created
+		}
+	}
+	return newest
+}
+
 // loadOnce is one listing pass. `vanished` reports that a version this pass had listed was
 // removed before its lease could be taken, which makes another pass worth doing.
 func (s *Store) loadOnce(key string) (version *Version, vanished bool, err error) {
