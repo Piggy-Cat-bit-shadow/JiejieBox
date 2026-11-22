@@ -41,6 +41,11 @@ var ErrEmpty = errors.New("node catalog: empty record")
 // ErrTooLarge is returned before copying a record larger than MaxRecordBytes.
 var ErrTooLarge = errors.New("node catalog: record is too large")
 
+// ErrTooManyScopes is returned when a store has interned every uint16 owner/protocol id. It is
+// a fail-closed refusal: reusing an id after wraparound would mix two owners' records, which is
+// strictly worse than falling back to the eager path for the new node.
+var ErrTooManyScopes = errors.New("node catalog: owner/protocol id space exhausted")
+
 // MaxRecordBytes bounds one record before it is copied or indexed. A record is a protocol wire
 // for a single node, so 1 MiB is far above any admitted shape and still bounded.
 const MaxRecordBytes = 1 << 20
@@ -60,6 +65,7 @@ type Stats struct {
 // per-record header is the difference between the catalog beating an inline recipe and not.
 type record struct {
 	generation uint64
+	key        recordKey
 	ownerID    uint16
 	protocolID uint16
 	payload    []byte
@@ -83,7 +89,7 @@ type Ref struct {
 
 // Store is one Box's shared record space.
 type Store struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	id        uint64
 	records   map[recordKey]*record
 	owners    map[string]uint16
@@ -108,24 +114,30 @@ func NewStore() *Store {
 	}
 }
 
-func (s *Store) internOwner(owner string) uint16 {
+func (s *Store) internOwner(owner string) (uint16, error) {
 	if id, found := s.owners[owner]; found {
-		return id
+		return id, nil
+	}
+	if len(s.ownerName) >= 1<<16 {
+		return 0, ErrTooManyScopes
 	}
 	id := uint16(len(s.ownerName))
 	s.owners[owner] = id
 	s.ownerName = append(s.ownerName, owner)
-	return id
+	return id, nil
 }
 
-func (s *Store) internProtocol(protocol string) uint16 {
+func (s *Store) internProtocol(protocol string) (uint16, error) {
 	if id, found := s.protocols[protocol]; found {
-		return id
+		return id, nil
+	}
+	if len(s.protoName) >= 1<<16 {
+		return 0, ErrTooManyScopes
 	}
 	id := uint16(len(s.protoName))
 	s.protocols[protocol] = id
 	s.protoName = append(s.protoName, protocol)
-	return id
+	return id, nil
 }
 
 // Put stores payload once per (owner, protocol, bytes) and returns a new reference. Identical bytes
@@ -148,12 +160,21 @@ func (s *Store) Put(owner string, protocol string, payload []byte) (Ref, error) 
 	if s.closed {
 		return Ref{}, ErrClosed
 	}
-	key := recordKey{hash: hash, owner: s.internOwner(owner), protocol: s.internProtocol(protocol)}
+	ownerID, err := s.internOwner(owner)
+	if err != nil {
+		return Ref{}, err
+	}
+	protocolID, err := s.internProtocol(protocol)
+	if err != nil {
+		return Ref{}, err
+	}
+	key := recordKey{hash: hash, owner: ownerID, protocol: protocolID}
 	if existing, found := s.records[key]; found && existing.refs.Load() > 0 {
 		existing.refs.Add(1)
 		return Ref{store: s, rec: existing, generation: existing.generation}, nil
 	}
 	rec := &record{
+		key:        key,
 		generation: s.nextGen,
 		ownerID:    key.owner,
 		protocolID: key.protocol,
@@ -228,26 +249,31 @@ func (r Ref) Release() {
 	}
 	store := r.store
 	store.mu.Lock()
-	for key, rec := range store.records {
-		if rec == r.rec {
-			delete(store.records, key)
-			store.released.Add(1)
-			break
-		}
-	}
-	store.mu.Unlock()
+	delete(store.records, r.rec.key)
+	store.released.Add(1)
 	r.rec.payload = nil
+	store.mu.Unlock()
 }
 
 // Valid reports whether the reference still names a live record of the generation it was made for.
 func (r Ref) Valid() bool {
-	return r.rec != nil && r.generation == r.rec.generation && r.rec.refs.Load() > 0 && r.rec.payload != nil
+	if r.rec == nil || r.store == nil {
+		return false
+	}
+	r.store.mu.RLock()
+	defer r.store.mu.RUnlock()
+	return r.generation == r.rec.generation && r.rec.refs.Load() > 0 && r.rec.payload != nil
 }
 
 // Payload returns the immutable bytes after re-checking the record's identity. The caller must hold
 // a reference for the duration of its use; a descriptor does, and a builder Retains for its build.
 func (r Ref) Payload() []byte {
-	if !r.Valid() {
+	if r.rec == nil || r.store == nil {
+		return nil
+	}
+	r.store.mu.RLock()
+	defer r.store.mu.RUnlock()
+	if r.generation != r.rec.generation || r.rec.refs.Load() <= 0 || r.rec.payload == nil {
 		return nil
 	}
 	return r.rec.payload
@@ -259,6 +285,8 @@ func (r Ref) Owner() string {
 	if r.rec == nil || r.store == nil {
 		return ""
 	}
+	r.store.mu.RLock()
+	defer r.store.mu.RUnlock()
 	return r.store.ownerName[r.rec.ownerID]
 }
 
@@ -266,6 +294,8 @@ func (r Ref) Protocol() string {
 	if r.rec == nil || r.store == nil {
 		return ""
 	}
+	r.store.mu.RLock()
+	defer r.store.mu.RUnlock()
 	return r.store.protoName[r.rec.protocolID]
 }
 

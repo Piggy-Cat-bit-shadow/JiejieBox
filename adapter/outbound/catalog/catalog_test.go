@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -475,4 +476,46 @@ func TestConcurrentFirstDialBuildsOnce(t *testing.T) {
 	}
 	require.Equal(t, 1, object.(builderCounter).Builds(), "single-flight must build once")
 	require.NoError(t, object.(interface{ Close() error }).Close())
+}
+
+// TestStoreRefusesOwnerIDExhaustion: owner/protocol are compact uint16 ids. Reusing an id after
+// wraparound would make two owners share a record, so the store must refuse a new scope at the
+// boundary instead. Existing IDs and records stay valid.
+func TestStoreRefusesOwnerIDExhaustion(t *testing.T) {
+	store := catalog.NewStore()
+	for index := 0; index < 1<<16; index++ {
+		ref, err := store.Put(fmt.Sprintf("owner-%d", index), C.TypeSOCKS, []byte{byte(index), byte(index >> 8), 1})
+		require.NoError(t, err, "owner %d", index)
+		ref.Release()
+	}
+	_, err := store.Put("owner-overflow", C.TypeSOCKS, []byte("x"))
+	require.ErrorIs(t, err, catalog.ErrTooManyScopes)
+	require.Equal(t, 0, store.Stats().Records)
+}
+
+// TestOwnerAndProtocolReadsDoNotRaceWithIntern: Put interns a new owner/protocol under the store
+// lock; a builder may read its record's owner/protocol concurrently. The getters must take the
+// read lock, or the slice append is a data race (and can return a torn name).
+func TestOwnerAndProtocolReadsDoNotRaceWithIntern(t *testing.T) {
+	store := catalog.NewStore()
+	ref, err := store.Put("owner-0", C.TypeSOCKS, []byte("x"))
+	require.NoError(t, err)
+	var group sync.WaitGroup
+	for index := 0; index < 64; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for round := 0; round < 100; round++ {
+				require.Equal(t, "owner-0", ref.Owner())
+				require.Equal(t, C.TypeSOCKS, ref.Protocol())
+			}
+		}()
+	}
+	for index := 0; index < 1000; index++ {
+		other, putErr := store.Put(fmt.Sprintf("owner-%d", index+1), C.TypeSOCKS, []byte{byte(index)})
+		require.NoError(t, putErr)
+		other.Release()
+	}
+	group.Wait()
+	ref.Release()
 }
