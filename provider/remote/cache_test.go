@@ -192,3 +192,28 @@ func TestSaveCacheFileRejectsAnEmptyDocument(t *testing.T) {
 	require.Error(t, provider.saveCacheFile(false, adapter.SubscriptionInfo{}, nil))
 	require.NoFileExists(t, provider.path)
 }
+
+// TestProviderRemoteNotModifiedWithoutRecordRefreshesPath: a cachefile SERVICE with no record
+// cannot supply LastUpdated, so the path mtime still has to be refreshed; the code must key on the
+// record, not on the service.
+func TestProviderRemoteNotModifiedWithoutRecordRefreshesPath(t *testing.T) {
+	t.Parallel()
+	path := t.TempDir() + "/provider.json"
+	original := `{"outbounds": [{"type": "test", "tag": "old"}]}`
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Etag", `"v1"`)
+		writer.WriteHeader(http.StatusNotModified)
+	}))
+	t.Cleanup(server.Close)
+	provider, _ := newRemoteHarness(t, server.URL)
+	provider.httpClient = server.Client()
+	provider.path = path
+	provider.lastOutOpts = benchmarkOutbounds(2)
+	provider.cacheFile = &staticSubscriptionCache{}
+	require.NoError(t, provider.fetch(context.Background(), true))
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotEqual(t, original, string(after), "without a record the path mtime must still be refreshed")
+	require.Contains(t, string(after), `"outbounds"`)
+}

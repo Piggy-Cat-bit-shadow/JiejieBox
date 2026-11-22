@@ -314,6 +314,7 @@ func (s *ProviderRemote) snapshotPublishedNodesContent(content []byte) {
 		var err error
 		content, err = s.cacheDocumentBytes()
 		if err != nil {
+			s.logger.Warn(E.Cause(err, "encode provider snapshot"))
 			return
 		}
 	}
@@ -743,9 +744,11 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 		s.subscriptionInfo = info
 		s.lastUpdated = time.Now()
 		s.infoMu.Unlock()
+		hasCacheRecord := false
 		if s.cacheFile != nil {
 			saveSub := s.cacheFile.LoadSubscription(s.Tag())
 			if saveSub != nil {
+				hasCacheRecord = true
 				if s.path == "" && hasInfo {
 					index := bytes.IndexByte(saveSub.Content, '\n')
 					if index != -1 {
@@ -765,7 +768,7 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 		// It is only safe to rewrite when this provider actually has a document: a spurious 304
 		// before any content was loaded would otherwise replace a valid cache file with
 		// `{"outbounds":null}`.
-		if s.path != "" && s.lastOutOpts != nil && s.cacheFile == nil {
+		if s.path != "" && s.lastOutOpts != nil && !hasCacheRecord {
 			content, encodeErr := s.cacheDocumentBytes()
 			if encodeErr != nil {
 				report.AncillaryError = s.redact(encodeErr.Error())
