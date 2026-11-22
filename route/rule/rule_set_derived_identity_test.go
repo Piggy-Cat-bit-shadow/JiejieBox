@@ -556,3 +556,49 @@ func TestDerivedRuleSetNoManifestNamesBytesItDidNotParse(t *testing.T) {
 	require.False(t, matchAnyHeadlessRule([]adapter.HeadlessRule{headless},
 		&adapter.InboundContext{Domain: "before01.example"}))
 }
+
+// TestDerivedRuleSetFutureLegacyManifestStillMigrates covers the clock-skew boundary the other
+// migration tests do not: the pre-fix manifest's Created is AHEAD of this host's clock.
+//
+// The store ranks versions by Created and Load returns the newest one, so without dropping the
+// refused version every load would refuse it, publish a correctly attributed version with a smaller
+// stamp, and the next Collect would delete that correct version as the non-newest one - the cache
+// would never warm again while the stale entry stayed "newest". Correctness (never serving the stale
+// bytes) is asserted as everywhere; this test additionally requires the migration to COMPLETE.
+func TestDerivedRuleSetFutureLegacyManifestStillMigrates(t *testing.T) {
+	enableDerivedRuleSetPlatform(t)
+	resetDerivedCacheDiagnostics()
+	ctx, base := derivedTestContext(t)
+	path := filepath.Join(t.TempDir(), "legacy-future.json")
+	sourceA := derivedJSONDomainSource("future-a.example")
+	sourceB := derivedJSONDomainSource("future-b.example")
+	require.NoError(t, os.WriteFile(path, sourceA, 0o600))
+
+	store, err := artifact.Open(filepath.Join(base, derivedStoreDirectory))
+	require.NoError(t, err)
+	cache := &derivedRuleSetCache{ctx: ctx, store: store, logger: logger.NOP()}
+	digestA, sizeA := derivedContentDigest(sourceA)
+	identityA := localDerivedSource("legacy-future", path, C.RuleSetFormatSource, digestA, sizeA)
+	compiledFromB := encodeDerivedMmapRuleSet(t, parseDerivedJSONSource(t, sourceB))
+	manifest := oldStyleDerivedManifest(t, cache, identityA, C.RuleSetVersionCurrent)
+	// The stale entry claims to have been published an hour from now, e.g. after a clock correction.
+	manifest.Created = time.Now().Add(time.Hour).UnixNano()
+	poisoned, err := store.Commit(identityA.key, manifest, bytes.NewReader(compiledFromB))
+	require.NoError(t, err)
+	poisoned.Release()
+
+	ruleSet := newDerivedRuleSet(t, ctx, "legacy-future", path, C.RuleSetFormatSource)
+	requireDomainMatch(t, ruleSet, "future-a.example", true)
+	requireDomainMatch(t, ruleSet, "future-b.example", false)
+
+	// The refused version must not keep shadowing the corrected one: the next load is a hit.
+	require.NoError(t, ruleSet.reloadFile(path))
+	requireDomainMatch(t, ruleSet, "future-a.example", true)
+	hits, _, publishes, failures := derivedCacheDiagnostics()
+	require.EqualValues(t, 1, hits,
+		"the migration must complete even when the stale manifest's timestamp is in the future")
+	require.EqualValues(t, 1, publishes)
+	require.Zero(t, failures)
+	require.Len(t, derivedVersions(t, base, identityA.key), 1)
+	requireEveryDerivedManifestNames(t, base, identityA.key, digestA, sizeA)
+}

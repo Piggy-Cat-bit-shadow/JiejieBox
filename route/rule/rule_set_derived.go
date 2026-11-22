@@ -253,14 +253,29 @@ func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVers
 	)
 }
 
+// derivedIdentityCurrent reports whether a manifest was written under the identity rule this build
+// enforces. A version that is not is never usable by this build, for ANY source: the generation
+// names the meaning of the source digest, so an artifact from before the rule cannot be validated.
+func derivedIdentityCurrent(manifest artifact.Manifest) bool {
+	want := "identity-generation=" + strconv.Itoa(derivedIdentityGeneration)
+	for _, dependency := range manifest.Dependencies {
+		if dependency == want {
+			return true
+		}
+	}
+	return false
+}
+
 // derivedManifestMatches tests the exact source identity. Only lines that pin BYTES are accepted:
 // a tag or a creation time must never make a stale conversion look current. The identity-generation
 // line is required, so an artifact written before the "identity is the parsed bytes" rule existed is
 // a miss no matter what its source-sha256 says - refusing that hit is the only way to stop serving
 // a conversion whose provenance was measured on a different snapshot.
 func derivedManifestMatches(manifest artifact.Manifest, source *derivedSource) bool {
+	if !derivedIdentityCurrent(manifest) {
+		return false
+	}
 	wanted := []string{
-		"identity-generation=" + strconv.Itoa(derivedIdentityGeneration),
 		"source-sha256=" + source.digest,
 		"source-size=" + strconv.FormatInt(source.size, 10),
 		"source-format=" + source.format,
@@ -299,9 +314,26 @@ func (c *derivedRuleSetCache) open(source *derivedSource) (option.PlainRuleSetCo
 	}
 	manifest := version.Manifest()
 	if !derivedManifestMatches(manifest, source) {
-		// Another source's conversion. It stays on disk until the owner publishes the new one;
-		// serving it would run stale rules, which is the one thing a cache must not do.
+		// Another source's conversion, or one written before this identity rule existed. Serving it
+		// would run stale rules, which is the one thing a cache must not do - so it is a miss.
+		//
+		// A version of ANOTHER source is left in place: it is a valid conversion of that source, and
+		// a load of this one that fails (an unparseable edit) must not destroy the last good
+		// conversion - the store deliberately keeps the newest version as crash recovery.
+		//
+		// A version this build can NEVER use (no identity generation) is different, and is removed
+		// when no live mapping leases it. Load ranks versions by Created, so if such a version's
+		// timestamp is ahead of this host's clock it would stay "newest" forever: every load would
+		// refuse it, publish a correctly attributed version with a smaller stamp, and the next
+		// Collect would delete that correct version as the non-newest one, so the migration would
+		// never complete and the cache would never warm again. Dropping only the never-usable case
+		// completes the migration without discarding a usable conversion.
+		id := version.ID()
+		unusable := !derivedIdentityCurrent(manifest)
 		version.Release()
+		if unusable {
+			c.discard(source.key, id)
+		}
 		derivedCacheCounters.misses.Add(1)
 		return option.PlainRuleSetCompat{}, false
 	}
