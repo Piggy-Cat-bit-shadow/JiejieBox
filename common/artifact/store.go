@@ -71,6 +71,14 @@ type Manifest struct {
 	Size         int64    `json:"size"`
 	Digest       string   `json:"digest"`
 	Created      int64    `json:"created"`
+	// Published marks Created as the caller's AUTHORITATIVE ordering value even when the identical
+	// bytes are already published. Ordinarily Created is a publication timestamp: republishing
+	// unchanged bytes keeps the first account (see sameProvenance), because the timestamp is not
+	// provenance. A producer whose order is a logical clock (the derived rule-set cache, which must
+	// outrank a future-dated or clock-skewed version) is not claiming when the conversion happened;
+	// it is claiming where this version must sort, so its new stamp has to replace the old one.
+	// It is not serialized: it is an instruction to this publication, not part of what the artifact is.
+	Published bool `json:"-"`
 }
 
 // Version is one leased, valid artifact.
@@ -581,7 +589,13 @@ func (s *Store) publishVersion(tempDir string, versionDir string, manifest Manif
 func replaceManifest(dir string, manifest Manifest) error {
 	existing, existingErr := readManifest(dir)
 	if existingErr == nil && sameProvenance(existing, manifest) {
-		return nil
+		if !manifest.Published || existing.Created == manifest.Created {
+			return nil
+		}
+		// The caller's order is a logical clock (see Manifest.Published), not a claim about when this
+		// conversion happened: adopt its stamp even though the account is otherwise unchanged. Without
+		// this the newer stamp would be silently dropped, the version would stay older than the one it
+		// must outrank, and the cache could never warm.
 	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {

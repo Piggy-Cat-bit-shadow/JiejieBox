@@ -307,6 +307,43 @@ func TestNewestCreatedReadsManifestsOnly(t *testing.T) {
 		"an incompatible version must not drive this build's clock")
 }
 
+// TestPublishedStampReplacesAnOlderStamp pins the logical-clock escape hatch: a producer that marks
+// the manifest as Published must have its newer stamp adopted for identical bytes, while an ordinary
+// republish keeps the first account. Without this the derived cache would silently keep an old
+// position and could never outrank a future-dated version.
+func TestPublishedStampReplacesAnOlderStamp(t *testing.T) {
+	store, err := Open(t.TempDir())
+	require.NoError(t, err)
+
+	old := manifestFor(0, "")
+	old.Created = 100
+	first, err := store.Commit("derived", old, strings.NewReader("same"))
+	require.NoError(t, err)
+	firstPath := first.Path()
+	first.Release()
+
+	newer := manifestFor(0, "")
+	newer.Created = 500
+	newer.Published = true
+	second, err := store.Commit("derived", newer, strings.NewReader("same"))
+	require.NoError(t, err)
+	require.Equal(t, firstPath, second.Path(), "a stamp update is the same physical version")
+	require.Equal(t, int64(500), second.Manifest().Created, "the published stamp must win")
+	second.Release()
+	loaded, err := store.Load("derived")
+	require.NoError(t, err)
+	require.Equal(t, int64(500), loaded.Manifest().Created)
+	loaded.Release()
+
+	// Control: without the marker an ordinary republish is not a new publication.
+	ordinary := manifestFor(0, "")
+	ordinary.Created = 900
+	third, err := store.Commit("derived", ordinary, strings.NewReader("same"))
+	require.NoError(t, err)
+	defer third.Release()
+	require.Equal(t, int64(500), third.Manifest().Created)
+}
+
 // TestRepublishingTheSameProvenanceKeepsThePublicationTime makes the replacement conditional: an
 // unchanged account must not rewrite the manifest, so the version keeps the timestamp that ranks it
 // against other versions.

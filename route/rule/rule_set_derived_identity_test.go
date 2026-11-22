@@ -689,3 +689,52 @@ func TestDerivedRuleSetFutureLegacyManifestStillMigrates(t *testing.T) {
 	require.Len(t, derivedVersions(t, base, identityA.key), 1)
 	requireEveryDerivedManifestNames(t, base, identityA.key, digestA, sizeA)
 }
+
+// TestDerivedRuleSetRepublishedStampOutranks covers the interaction between the logical publication
+// clock and the artifact store's "identical provenance is not a new publication" rule: a conversion
+// whose bytes are already on disk with an older stamp must still adopt the newer stamp, or a
+// future-dated version would keep outranking it forever and a pinned/rollback load would miss on
+// every start.
+func TestDerivedRuleSetRepublishedStampOutranks(t *testing.T) {
+	enableDerivedRuleSetPlatform(t)
+	ctx, base := derivedTestContext(t)
+	store, err := artifact.Open(filepath.Join(base, derivedStoreDirectory))
+	require.NoError(t, err)
+	cache := &derivedRuleSetCache{ctx: ctx, store: store, logger: logger.NOP()}
+	sourceA := derivedJSONDomainSource("stamp-a.example")
+	sourceB := derivedJSONDomainSource("stamp-b.example")
+	path := filepath.Join(base, "source.json")
+	digestA, sizeA := derivedContentDigest(sourceA)
+	digestB, sizeB := derivedContentDigest(sourceB)
+	identityA := localDerivedSource("stamp", path, C.RuleSetFormatSource, digestA, sizeA)
+	identityB := localDerivedSource("stamp", path, C.RuleSetFormatSource, digestB, sizeB)
+	compiledA := encodeDerivedMmapRuleSet(t, parseDerivedJSONSource(t, sourceA))
+	compiledB := encodeDerivedMmapRuleSet(t, parseDerivedJSONSource(t, sourceB))
+	future := time.Now().Add(time.Hour).UnixNano()
+	publishAt := func(identity *derivedSource, content []byte, created int64) {
+		version, commitErr := store.Commit(identity.key,
+			cache.derivedManifest(identity, C.RuleSetVersionCurrent, created), bytes.NewReader(content))
+		require.NoError(t, commitErr)
+		version.Release()
+	}
+	publishAt(identityA, compiledA, time.Now().Add(-time.Hour).UnixNano())
+	publishAt(identityB, compiledB, future)
+
+	// Republish A's exact bytes through the production publication path: its logical stamp must be
+	// adopted over the old one, so it becomes the newest version and a later load can hit it.
+	file, err := os.CreateTemp(t.TempDir(), "stamp-*.srsm")
+	require.NoError(t, err)
+	_, err = file.Write(compiledA)
+	require.NoError(t, err)
+	cache.publish(identityA, C.RuleSetVersionCurrent, file)
+	_ = file.Close()
+
+	loaded, err := store.Load(identityA.key)
+	require.NoError(t, err)
+	require.Contains(t, loaded.Manifest().Dependencies, "source-sha256="+digestA)
+	require.Greater(t, loaded.Manifest().Created, future,
+		"the republished conversion must outrank the future-dated version")
+	loaded.Release()
+	_, hit := cache.open(identityA)
+	require.True(t, hit, "the republished conversion must be serveable")
+}

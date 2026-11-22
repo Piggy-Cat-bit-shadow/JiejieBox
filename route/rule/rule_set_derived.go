@@ -275,6 +275,10 @@ func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVers
 		"cache-key="+source.key,
 		"tag="+source.tag,
 	)
+	// The derived cache's stamp is a logical clock (see nextPublicationTime): it must replace an
+	// older stamp for the same bytes, or a version that has to outrank a future-dated account would
+	// keep its old position and the cache could never warm.
+	manifest.Published = true
 	if created != 0 {
 		manifest.Created = created
 	}
