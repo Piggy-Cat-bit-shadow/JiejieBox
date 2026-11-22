@@ -36,7 +36,7 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-21",
+  "recorded_at": "2026-11-22",
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
@@ -559,6 +559,15 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44909336964"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 44995713916,
+      "head_sha": "1ade18ec86134df937ce399a88fb792ca26f20f2",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/44995713916"
     }
   ],
   "child_runs": [],
@@ -635,12 +644,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/mieru",
       "branch": "main",
-      "tip": "44aaf9582106fb576d296c132afd23f6ae97df6e",
-      "pin": "44aaf9582106",
+      "tip": "0f0e75089c3bc6bee865fe7766c12ca453ac9db5",
+      "pin": "0f0e75089c3b",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-21",
-      "note": "Added to the observation set in window 03: the module is consumed by go.mod but had no recorded tip."
+      "observed_at": "2026-11-22",
+      "note": "Moved by the 15 closeout: the fork commit fixes the shared-underlay head-of-line blocking (bounded per-session queue, overflow closes that session instead of blocking the single reader). The parent recorded its Android Core run at this lock."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/cronet-go",
