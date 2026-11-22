@@ -109,6 +109,12 @@ func TestNodeCatalogIsInstalledOnStaticAndProviderNodes(t *testing.T) {
 	}
 	require.Zero(t, box.DeferredExpansionCount(), "a metadata walk must not expand a catalog node")
 	require.Equal(t, httpCount+providerCount, box.CatalogStats().Records)
+	// The provider can publish its records before the manager tag lookup is complete; wait for
+	// the tag itself, not only the store count, or the metadata walk races the publication.
+	require.Eventually(t, func() bool {
+		_, ok := box.Outbound().Outbound("nodes/p0")
+		return ok
+	}, 10*time.Second, 10*time.Millisecond, "the provider tag must be published")
 
 	// The first dial materializes through the existing Lazy state machine. The local port is closed,
 	// so the dial fails, but the build must have run and the node remains a ready expansion.
