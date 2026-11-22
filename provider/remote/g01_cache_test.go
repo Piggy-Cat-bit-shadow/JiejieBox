@@ -3,11 +3,11 @@ package remote
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"io"
+	stdjson "encoding/json"
+	singjson "github.com/sagernet/sing/common/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -32,14 +32,14 @@ func benchmarkOutbounds(nodes int) []option.Outbound {
 	return outbounds
 }
 
-func BenchmarkCacheDocumentStream(b *testing.B) {
+func BenchmarkCacheDocumentBytes(b *testing.B) {
 	for _, nodes := range []int{1000, 10000} {
 		b.Run(strconv.Itoa(nodes), func(b *testing.B) {
 			provider := &ProviderRemote{lastOutOpts: benchmarkOutbounds(nodes)}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if err := provider.writeCacheDocument(io.Discard); err != nil {
+				if _, err := provider.cacheDocumentBytes(); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -47,43 +47,41 @@ func BenchmarkCacheDocumentStream(b *testing.B) {
 	}
 }
 
-func BenchmarkCacheDocumentMarshal(b *testing.B) {
+func BenchmarkCacheDocumentDoubleMarshal(b *testing.B) {
 	for _, nodes := range []int{1000, 10000} {
 		b.Run(strconv.Itoa(nodes), func(b *testing.B) {
 			outbounds := benchmarkOutbounds(nodes)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := json.Marshal(option.Options{Outbounds: outbounds}); err != nil {
+				first, err := singjson.Marshal(option.Options{Outbounds: outbounds})
+				if err != nil {
 					b.Fatal(err)
 				}
+				second, err := singjson.Marshal(option.Options{Outbounds: outbounds})
+				if err != nil {
+					b.Fatal(err)
+				}
+				runtime.KeepAlive(first)
+				runtime.KeepAlive(second)
 			}
 		})
 	}
 }
 
-func TestSaveCacheFileStreamsWithInfoAndCleansUpOnError(t *testing.T) {
+func TestSaveCacheFileWritesAtomicDocument(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "provider.json")
-	provider := &ProviderRemote{
-		ctx:         context.Background(),
-		path:        path,
-		lastOutOpts: benchmarkOutbounds(2),
-	}
+	provider := &ProviderRemote{ctx: context.Background(), path: path, lastOutOpts: benchmarkOutbounds(2)}
+	content, err := provider.cacheDocumentBytes()
+	require.NoError(t, err)
 	info := adapter.SubscriptionInfo{Upload: 1, Download: 2, Total: 3, Expire: 4}
-	require.NoError(t, provider.saveCacheFile(true, info, provider.writeCacheDocument))
-	content, err := os.ReadFile(path)
+	require.NoError(t, provider.saveCacheFile(true, info, content))
+	got, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.Contains(t, string(content), "# upload=1; download=2; total=3; expire=4;\n")
-	firstNewline := bytes.IndexByte(content, '\n')
+	require.Contains(t, string(got), "# upload=1; download=2; total=3; expire=4;\n")
+	firstNewline := bytes.IndexByte(got, '\n')
 	require.Greater(t, firstNewline, 0)
-	require.True(t, json.Valid(content[firstNewline+1:]), "the document after the info line must be valid JSON")
-
-	original := content
-	encodeErr := errors.New("injected encode failure")
-	require.ErrorIs(t, provider.saveCacheFile(false, info, func(io.Writer) error { return encodeErr }), encodeErr)
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, original, after, "a failed stream must keep the previous cache file")
-	require.NoFileExists(t, path+".tmp", "a failed stream must not leave the temp file behind")
+	require.True(t, stdjson.Valid(got[firstNewline+1:]))
+	require.NoFileExists(t, path+".tmp", "the successful write must rename the temp file away")
 }

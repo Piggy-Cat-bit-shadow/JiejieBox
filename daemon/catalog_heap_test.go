@@ -32,9 +32,13 @@ type catalogHeapRow struct {
 }
 
 func TestCatalogBoxHeapSample(t *testing.T) {
-	nodes, err := strconv.Atoi(os.Getenv("CATALOG_HEAP_NODES"))
-	if err != nil || nodes <= 0 {
-		t.Skip("set CATALOG_HEAP_NODES to run the Box heap harness")
+	rawNodes := os.Getenv("CATALOG_HEAP_NODES")
+	if rawNodes == "" {
+		t.Skip("set CATALOG_HEAP_NODES to run the Box heap harness (0 is the empty Box)")
+	}
+	nodes, err := strconv.Atoi(rawNodes)
+	if err != nil || nodes < 0 {
+		t.Skip("CATALOG_HEAP_NODES must be a non-negative integer")
 	}
 	arm := os.Getenv("CATALOG_HEAP_ARM")
 	protocol := os.Getenv("CATALOG_HEAP_PROTOCOL")
@@ -54,11 +58,15 @@ func TestCatalogBoxHeapSample(t *testing.T) {
 			fmt.Fprintf(&outbounds, `{"type":"socks","tag":"n%d","server":"192.0.2.1","server_port":%d,"version":"5"}`, i, 10000+i)
 		}
 	}
+	outboundList := outbounds.String()
+	if outboundList != "" {
+		outboundList += ","
+	}
 	profile := fmt.Sprintf(`{
   "log": {"disabled": true},
-  "outbounds": [%s, {"type":"direct","tag":"direct"}],
+  "outbounds": [%s{"type":"direct","tag":"direct"}],
   "route": {"final": "direct"}
-}`, outbounds.String())
+}`, outboundList)
 
 	started := time.Now()
 	ctx := crossSystemContext(t, t.TempDir(), nil)
