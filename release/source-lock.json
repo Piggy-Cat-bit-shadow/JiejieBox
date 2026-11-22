@@ -65,9 +65,9 @@
     },
     {
       "module": "github.com/enfein/mieru/v3",
-      "pinned": "44aaf9582106",
+      "pinned": "0f0e75089c3b",
       "target": "github.com/Piggy-Cat-bit-shadow/mieru/v3",
-      "version": "v3.39.1-0.20261121125055-44aaf9582106"
+      "version": "v3.39.1-0.20261122050203-0f0e75089c3b"
     },
     {
       "module": "github.com/sagernet/cronet-go",
