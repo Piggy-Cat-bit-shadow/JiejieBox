@@ -686,3 +686,26 @@ func sortUint(values []uint64) {
 		}
 	}
 }
+
+// TestDerivedSourceFormatWarmReload pins the source-format branch of the derived cache: a warm
+// reload of a JSON source must come from the published artifact rather than a second parse, serve
+// exactly the same matches, and the digest must belong to the bytes that were compiled (the
+// identity/parse same-open-file rule in reloadFile).
+func TestDerivedSourceFormatWarmReload(t *testing.T) {
+	enableDerivedRuleSetPlatform(t)
+	root := t.TempDir()
+	path := filepath.Join(root, "rules.json")
+	encoded, err := singjson.MarshalContext(context.Background(), option.PlainRuleSetCompat{
+		Version: C.RuleSetVersionCurrent,
+		Options: measureKindRuleSet("domain", 2_000, 0),
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, encoded, 0o644))
+	ctx := measureContext(filepath.Join(root, "store"))
+	first := measureNewLocalRuleSet(t, ctx, path, C.RuleSetFormatSource)
+	require.NotNil(t, first.derivedCache)
+	require.NotEmpty(t, first.currentRules())
+	second := measureNewLocalRuleSet(t, ctx, path, C.RuleSetFormatSource)
+	require.Equal(t, len(first.currentRules()), len(second.currentRules()))
+	measureCheck(t, second.currentRules(), "domain", 2_000, 0)
+}

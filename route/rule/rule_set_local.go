@@ -2,6 +2,7 @@ package rule
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -117,6 +118,7 @@ func (s *LocalRuleSet) StartContext(ctx context.Context, startContext *adapter.H
 
 func (s *LocalRuleSet) reloadFile(path string) error {
 	var ruleSet option.PlainRuleSetCompat
+	var err error
 	// derived is the exact source identity when this platform can reuse a compiled artifact. It
 	// stays nil elsewhere, so computing a digest is not even attempted.
 	var derived *derivedSource
@@ -126,30 +128,46 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 		// materialised copy: reading a large source JSON into memory just to hash it would put the
 		// whole document back on the warm path's peak, which is the cost this cache exists to
 		// avoid. The document is read below only when the cache missed.
+		var content []byte
 		if s.derivedCache != nil {
+			// The digest and the parse must read the SAME open file. Hashing one descriptor and
+			// then re-opening the path lets a replacement between the two parse the new bytes and
+			// publish them under the old digest, which would serve rules that do not belong to the
+			// source. hashOpenFile rewinds; a hit closes the file without reading the body, and a
+			// miss reads that same descriptor.
 			sourceFile, openErr := filemanager.Open(s.ctx, path)
 			if openErr != nil {
 				return openErr
 			}
 			digest, size, hashErr := hashOpenFile(sourceFile)
-			_ = sourceFile.Close()
 			if hashErr != nil {
+				_ = sourceFile.Close()
 				return hashErr
 			}
 			derived = localDerivedSource(s.tag, path, derivedFormatName(s.fileFormat), digest, size)
 			if mapped, hit := s.derivedCache.open(derived); hit {
-				if err := s.reloadMappedRuleSet(mapped); err == nil {
+				if reloadErr := s.reloadMappedRuleSet(mapped); reloadErr == nil {
+					_ = sourceFile.Close()
 					return nil
 				} else {
 					// Verified bytes this build still cannot build rules from: fall through to the
-					// source, which is the authoritative path.
-					s.logger.Debug(E.Cause(err, "derived rule-set is unusable, re-parsing the source"))
+					// source, which is the authoritative path. The descriptor is still at offset 0
+					// because hashing rewound it and nothing was read since.
+					s.logger.Debug(E.Cause(reloadErr, "derived rule-set is unusable, re-parsing the source"))
 				}
 			}
-		}
-		content, err := filemanager.ReadFile(s.ctx, path)
-		if err != nil {
-			return err
+			var readErr error
+			content, readErr = io.ReadAll(sourceFile)
+			_ = sourceFile.Close()
+			if readErr != nil {
+				return readErr
+			}
+		} else {
+			var readErr error
+			content, readErr = filemanager.ReadFile(s.ctx, path)
+			if readErr != nil {
+				return readErr
+			}
 		}
 		ruleSet, err = json.UnmarshalExtended[option.PlainRuleSetCompat](content)
 		if err != nil {
