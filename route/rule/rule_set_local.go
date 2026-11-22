@@ -116,6 +116,14 @@ func (s *LocalRuleSet) StartContext(ctx context.Context, startContext *adapter.H
 	return nil
 }
 
+// localReloadWindowTestHook is a TEST-ONLY seam placed at the exact interleaving window this cache
+// is sensitive to: it runs immediately after the first hashing pass over the source file and before
+// any byte of that file is read for parsing, so a test can edit or replace the file between the
+// digest that names it and the bytes the parser receives. Production leaves it nil; when nil it
+// changes nothing. It exists so the in-place-write scenario is covered by a permanent repo test
+// instead of a patched copy of this file.
+var localReloadWindowTestHook func(path string)
+
 func (s *LocalRuleSet) reloadFile(path string) error {
 	var ruleSet option.PlainRuleSetCompat
 	var err error
@@ -145,22 +153,35 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 				return hashErr
 			}
 			derived = localDerivedSource(s.tag, path, derivedFormatName(s.fileFormat), digest, size)
-			if mapped, hit := s.derivedCache.open(derived); hit {
-				if reloadErr := s.reloadMappedRuleSet(mapped); reloadErr == nil {
-					_ = sourceFile.Close()
-					return nil
-				} else {
-					// Verified bytes this build still cannot build rules from: fall through to the
-					// source, which is the authoritative path. The descriptor is still at offset 0
-					// because hashing rewound it and nothing was read since.
-					s.logger.Debug(E.Cause(reloadErr, "derived rule-set is unusable, re-parsing the source"))
-				}
+			if localReloadWindowTestHook != nil {
+				localReloadWindowTestHook(path)
 			}
+			if s.reloadFromDerived(derived) {
+				_ = sourceFile.Close()
+				return nil
+			}
+			// The bytes read below are the bytes that are ABOUT to be parsed, so they define the
+			// identity that may be published. The tee measures them while ReadAll reads them: the
+			// cold path still performs one hashing pass plus one parse read, not three passes.
+			identity := newDerivedIdentity()
 			var readErr error
-			content, readErr = io.ReadAll(sourceFile)
+			content, readErr = io.ReadAll(io.TeeReader(sourceFile, identity))
 			_ = sourceFile.Close()
 			if readErr != nil {
 				return readErr
+			}
+			if !identity.matches(digest, size) {
+				// The first pass named different bytes from the ones just read: an in-place edit
+				// landed inside the window. Rebuild the identity from the bytes that are about to
+				// be parsed and look the cache up once more under it. The retry is bounded to ONE
+				// attempt because the identity is a pure function of bytes this load already holds
+				// in `content`; no later lookup could observe a different answer, and the parse
+				// below is the only remaining choice. Publishing under the first-pass identity is
+				// now impossible: `derived` no longer names it.
+				derived = localDerivedSource(s.tag, path, derivedFormatName(s.fileFormat), identity.digest(), identity.size)
+				if s.reloadFromDerived(derived) {
+					return nil
+				}
 			}
 		} else {
 			var readErr error
@@ -179,6 +200,15 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 			return err
 		}
 		defer setFile.Close()
+		// parserSource is what the parser sees. On the derived path it is a tee that measures every
+		// byte the parser consumes, so the identity is a by-product of the parse read rather than
+		// another pass over the file.
+		var parserSource io.Reader = setFile
+		var (
+			firstDigest string
+			firstSize   int64
+			identity    *derivedIdentity
+		)
 		if s.derivedCache != nil {
 			// One sequential pass over the compressed source; the parser reads it again. It is the
 			// price of knowing WHICH bytes a conversion belongs to, and it is skipped on platforms
@@ -187,23 +217,63 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 			if hashErr != nil {
 				return hashErr
 			}
+			firstDigest, firstSize = digest, size
 			derived = localDerivedSource(s.tag, path, derivedFormatName(s.fileFormat), digest, size)
-			if mapped, hit := s.derivedCache.open(derived); hit {
-				if err = s.reloadMappedRuleSet(mapped); err == nil {
-					return nil
-				} else {
-					s.logger.Debug(E.Cause(err, "derived rule-set is unusable, re-parsing the source"))
-				}
+			if localReloadWindowTestHook != nil {
+				localReloadWindowTestHook(path)
 			}
+			if s.reloadFromDerived(derived) {
+				return nil
+			}
+			identity = newDerivedIdentity()
+			parserSource = io.TeeReader(setFile, identity)
 		}
-		ruleSet, err = srs.Read(setFile, false)
+		ruleSet, err = srs.Read(parserSource, false)
 		if err != nil {
 			return err
+		}
+		if identity != nil {
+			// srs.Read drains the zlib stream and verifies its Adler-32, so a successful parse
+			// means the compressed stream was complete. Bytes after the zlib trailer are not part of
+			// the rules, but they ARE part of the identity of this load: the drain below feeds them
+			// to the same hasher instead of dropping them silently, so any change to them changes
+			// the identity. This continues the same single sequential read; it does not re-read.
+			//
+			// The drain must succeed before anything is published. If it fails, the rules are
+			// complete and stay live, but the byte stream cannot be named, so no derived artifact
+			// may be published for it.
+			if _, drainErr := io.Copy(identity, setFile); drainErr != nil {
+				s.logger.Debug(E.Cause(drainErr, "read the remainder of rule-set ", path,
+					" for its derived identity"))
+				derived = nil
+			} else if !identity.matches(firstDigest, firstSize) {
+				// The parser consumed different bytes from the ones the first pass hashed: an
+				// in-place edit landed inside the window. The conversion belongs to the parsed bytes.
+				// No second lookup here: srs.Read has already done the parse a lookup would have
+				// saved, so the retry would be pure cost. Publishing under the first-pass identity
+				// is impossible because `derived` is replaced by the measured identity.
+				derived = localDerivedSource(s.tag, path, derivedFormatName(s.fileFormat), identity.digest(), identity.size)
+			}
 		}
 	default:
 		return E.New("unknown rule-set format: ", s.fileFormat)
 	}
 	return s.reloadParsedRuleSet(derived, ruleSet)
+}
+
+// reloadFromDerived tries one derived identity and reports whether it served the load. A verified
+// artifact this build still cannot turn into rules is only a miss: the source remains authoritative,
+// and the caller continues on the parse path with its descriptor still at offset 0.
+func (s *LocalRuleSet) reloadFromDerived(source *derivedSource) bool {
+	mapped, hit := s.derivedCache.open(source)
+	if !hit {
+		return false
+	}
+	if err := s.reloadMappedRuleSet(mapped); err != nil {
+		s.logger.Debug(E.Cause(err, "derived rule-set is unusable, re-parsing the source"))
+		return false
+	}
+	return true
 }
 
 // reloadMappedRuleSet publishes a rule-set whose matchers are backed by a persisted mapping. The

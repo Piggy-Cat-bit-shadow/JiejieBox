@@ -24,12 +24,18 @@ package rule
 // tag nor the mtime nor a node count. The identity of a *conversion* is the tuple recorded in the
 // artifact manifest:
 //
-//   - exact source digest (sha256 of the source bytes) and size  -> source-sha256/source-size
+//   - exact source digest (sha256 of the bytes actually parsed) and size -> source-sha256/source-size
 //   - declared source format                                   -> source-format
 //   - source rule-set version (the SRS version byte)           -> source-version
+//   - the identity-generation rule (see derivedIdentityGeneration) -> identity-generation
 //   - SRSM layout generation                                   -> manifest schema + file header
 //   - layout/ABI fingerprint of the compiling build            -> manifest compiler + file header
 //   - platform ABI                                             -> manifest ABI/Platform (store-enforced)
+//
+// The digest names the bytes that were handed to the parser, never an earlier pass over a file
+// descriptor that an in-place edit can change between the two reads. `identity-generation` makes
+// that rule verifiable at hit time: an artifact written before the rule existed does not carry the
+// line and is therefore never served, whatever its source-sha256 says.
 //
 // A load is a hit only when the newest compatible version's source dependencies match exactly. The
 // layout generation and fingerprint are ALSO embedded in the SRSM header, so a file written by a
@@ -54,6 +60,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -77,6 +84,15 @@ const (
 	// derivedSchemaPrefix names the derived relationship, distinguishable from the source artifacts
 	// the remote path publishes under "rule-set/<format>".
 	derivedSchemaPrefix = "rule-set-derived/srsm/"
+	// derivedIdentityGeneration names the generation of the rule "a derived artifact's identity is
+	// computed from the bytes that were actually parsed". It is recorded in every manifest as an
+	// extra dependency and REQUIRED, verbatim, by derivedManifestMatches. That requirement is the
+	// migration: an artifact written before the rule existed has no identity-generation line, so it
+	// can never be served even when its source-sha256 happens to match. The store replaces the
+	// manifest when identical artifact bytes are republished with a different provenance, so an
+	// unchanged source is not stuck forever behind the old account. Bump the value only if the
+	// identity rule itself changes meaning again.
+	derivedIdentityGeneration = 2
 )
 
 // derivedSource is the exact identity of the bytes a derived artifact belongs to.
@@ -166,6 +182,11 @@ func derivedFormatName(format string) string {
 // hashOpenFile hashes the whole file and rewinds it for the parser. It is one sequential read of
 // the source, which the cold path already had to read; it is skipped entirely on platforms where
 // the derived path is not active.
+//
+// The digest it returns is the FIRST-PASS identity: it answers "which artifact may already describe
+// this file", so the warm path can stop here. It is NOT the publish identity. A file can be edited
+// in place between this pass and the parse read, so the bytes the parser actually receives are
+// measured again by derivedIdentity and that second measurement is what a manifest may name.
 func hashOpenFile(file *os.File) (digest string, size int64, err error) {
 	hasher := sha256.New()
 	written, err := io.Copy(hasher, file)
@@ -178,6 +199,41 @@ func hashOpenFile(file *os.File) (digest string, size int64, err error) {
 	return hex.EncodeToString(hasher.Sum(nil)), written, nil
 }
 
+// derivedIdentity accumulates the sha256 and the byte count of the source bytes that are actually
+// handed to the parser. It is written through io.TeeReader, so the measurement is a by-product of
+// the parse read rather than an extra pass over the file: the cold path still performs exactly one
+// hashing pass (for the cache lookup) plus one parse read (which now also yields the identity).
+//
+// The JSON path tees io.ReadAll and hashes exactly the bytes passed to the decoder. The binary path
+// tees the reader handed to srs.Read and then drains the rest of the descriptor into the same
+// accumulator, so the identity covers the complete byte stream from offset 0: the zlib stream the
+// parser interprets plus any trailing bytes it deliberately does not.
+type derivedIdentity struct {
+	hasher hash.Hash
+	size   int64
+}
+
+func newDerivedIdentity() *derivedIdentity {
+	return &derivedIdentity{hasher: sha256.New()}
+}
+
+func (i *derivedIdentity) Write(bytes []byte) (int, error) {
+	written, err := i.hasher.Write(bytes)
+	i.size += int64(written)
+	return written, err
+}
+
+func (i *derivedIdentity) digest() string {
+	return hex.EncodeToString(i.hasher.Sum(nil))
+}
+
+// matches reports whether the measured bytes are the ones the first pass hashed. When they are
+// not, an in-place edit landed inside the hashing/parsing window and the first-pass identity must
+// not be used for anything that names the parsed bytes.
+func (i *derivedIdentity) matches(digest string, size int64) bool {
+	return i.size == size && i.digest() == digest
+}
+
 // derivedManifest builds the manifest of one conversion. Schema and Compiler carry the layout
 // generation/fingerprint so a person (and Collect's compatibility check) can tell what wrote it;
 // the hit test itself uses the source dependency lines and the file header.
@@ -186,6 +242,7 @@ func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVers
 		derivedSchemaPrefix+strconv.Itoa(srs.MmapFormatVersion),
 		"srsm/"+srs.MmapFingerprint()+"/sing-box/"+C.Version,
 		"source-format/"+source.format,
+		"identity-generation="+strconv.Itoa(derivedIdentityGeneration),
 		"source-sha256="+source.digest,
 		"source-size="+strconv.FormatInt(source.size, 10),
 		"source-format="+source.format,
@@ -197,9 +254,13 @@ func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVers
 }
 
 // derivedManifestMatches tests the exact source identity. Only lines that pin BYTES are accepted:
-// a tag or a creation time must never make a stale conversion look current.
+// a tag or a creation time must never make a stale conversion look current. The identity-generation
+// line is required, so an artifact written before the "identity is the parsed bytes" rule existed is
+// a miss no matter what its source-sha256 says - refusing that hit is the only way to stop serving
+// a conversion whose provenance was measured on a different snapshot.
 func derivedManifestMatches(manifest artifact.Manifest, source *derivedSource) bool {
 	wanted := []string{
+		"identity-generation=" + strconv.Itoa(derivedIdentityGeneration),
 		"source-sha256=" + source.digest,
 		"source-size=" + strconv.FormatInt(source.size, 10),
 		"source-format=" + source.format,
