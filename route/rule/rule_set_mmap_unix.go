@@ -4,7 +4,6 @@ package rule
 
 import (
 	"context"
-	"io"
 	"os"
 
 	"github.com/sagernet/sing-box/common/srs"
@@ -19,25 +18,26 @@ import (
 //
 // It is the first half of the iOS temp-mmap path, split out so a caller can ALSO publish the exact
 // bytes as a derived artifact before mapping them - one write of the SRSM bytes serves both.
-func writeRuleSetMmapFile(ctx context.Context, logger logger.Logger, tag string, ruleSet option.PlainRuleSetCompat) (*os.File, bool) {
+func writeRuleSetMmapFile(ctx context.Context, logger logger.Logger, tag string, ruleSet option.PlainRuleSetCompat) (*os.File, string, int64, bool) {
 	file, err := filemanager.CreateTemp(ctx, "rule-set-*.mmap")
 	if err != nil {
 		logger.Warn(E.Cause(err, "create rule-set mmap file ", tag))
-		return nil, false
+		return nil, "", 0, false
 	}
 	if err = srs.WriteMmap(file, ruleSet); err != nil {
 		_ = file.Close()
 		_ = filemanager.Remove(ctx, file.Name())
 		logger.Warn(E.Cause(err, "mmap rule-set ", tag))
-		return nil, false
+		return nil, "", 0, false
 	}
-	if _, err = file.Seek(0, io.SeekStart); err != nil {
+	digest, size, err := hashOpenFile(file)
+	if err != nil {
 		_ = file.Close()
 		_ = filemanager.Remove(ctx, file.Name())
-		logger.Warn(E.Cause(err, "mmap rule-set ", tag))
-		return nil, false
+		logger.Warn(E.Cause(err, "hash rule-set mmap file ", tag))
+		return nil, "", 0, false
 	}
-	return file, true
+	return file, digest, size, true
 }
 
 // mapRuleSetMmapFile maps the transient file and returns the fallback on any failure, so the caller

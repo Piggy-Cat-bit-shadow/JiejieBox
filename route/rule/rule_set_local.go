@@ -293,12 +293,12 @@ func (s *LocalRuleSet) reloadMappedRuleSet(mapped option.PlainRuleSetCompat) err
 func (s *LocalRuleSet) reloadParsedRuleSet(derived *derivedSource, ruleSet option.PlainRuleSetCompat) error {
 	mapped := ruleSet
 	if s.derivedCache != nil {
-		file, ok := writeRuleSetMmapFile(s.ctx, s.logger, s.tag, ruleSet)
+		file, srsmDigest, srsmSize, ok := writeRuleSetMmapFile(s.ctx, s.logger, s.tag, ruleSet)
 		if ok {
 			defer file.Close()
 			// Publish before mapping: the store streams the very bytes the mapping will use, so a
 			// cold load writes the conversion twice (temp + store copy) instead of three times.
-			s.derivedCache.publish(derived, ruleSet.Version, file)
+			s.derivedCache.publish(derived, ruleSet.Version, srsmDigest, srsmSize, file)
 			mapped = mapRuleSetMmapFile(s.logger, s.tag, file, ruleSet)
 		}
 	} else {

@@ -22,7 +22,7 @@ var mmapRuleSetPlatform = true
 
 // mmapRuleSet converts a heap rule-set into the transient mmap form this platform serves.
 func mmapRuleSet(ctx context.Context, logger logger.Logger, tag string, ruleSet option.PlainRuleSetCompat) option.PlainRuleSetCompat {
-	file, ok := writeRuleSetMmapFile(ctx, logger, tag, ruleSet)
+	file, _, _, ok := writeRuleSetMmapFile(ctx, logger, tag, ruleSet)
 	if !ok {
 		return ruleSet
 	}

@@ -748,6 +748,15 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 		if s.cacheFile != nil {
 			saveSub := s.cacheFile.LoadSubscription(s.Tag())
 			if saveSub != nil {
+				if len(saveSub.URLHash) > 0 && !bytes.Equal(saveSub.URLHash, s.urlHash[:]) {
+					// The conditional request belongs to a different URL than the cached record.
+					// Accepting the 304 would rewrite the record with this URL's identity while its
+					// content is the old URL's document. Forget the tag so the next update downloads.
+					s.infoMu.Lock()
+					s.lastEtag = ""
+					s.infoMu.Unlock()
+					return report, E.New("provider cache belongs to another URL; refetching")
+				}
 				hasCacheRecord = true
 				if s.path == "" && hasInfo {
 					index := bytes.IndexByte(saveSub.Content, '\n')

@@ -261,7 +261,7 @@ func (i *derivedIdentity) matches(digest string, size int64) bool {
 //
 // `created` is the publication stamp the caller wants (see nextPublicationTime); zero lets the
 // artifact store stamp it with the wall clock.
-func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVersion uint8, created int64) artifact.Manifest {
+func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVersion uint8, srsmDigest string, srsmSize int64, created int64) artifact.Manifest {
 	manifest := artifact.NewManifest(
 		derivedSchemaPrefix+strconv.Itoa(srs.MmapFormatVersion),
 		"srsm/"+srs.MmapFingerprint()+"/sing-box/"+C.Version,
@@ -278,6 +278,11 @@ func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVers
 	// The derived cache's stamp is a logical clock (see nextPublicationTime): it must replace an
 	// older stamp for the same bytes, or a version that has to outrank a future-dated account would
 	// keep its old position and the cache could never warm.
+	// The artifact store refuses to publish bytes that do not match a non-empty digest. Recording
+	// the SRSM digest here makes a rewrite between the mapping and the commit a publish failure,
+	// instead of publishing B's bytes under A's source identity.
+	manifest.Digest = srsmDigest
+	manifest.Size = srsmSize
 	manifest.Published = true
 	if created != 0 {
 		manifest.Created = created
@@ -481,7 +486,7 @@ func (c *derivedRuleSetCache) discardUnusableGeneration(key string, id string) {
 // avoids serialising the conversion a second time. The extra sequential read+write of the derived
 // bytes is the cold-path cost of the cache and is measured in the report. A failure here costs the
 // caller nothing but a log line.
-func (c *derivedRuleSetCache) publish(source *derivedSource, ruleSetVersion uint8, file *os.File) {
+func (c *derivedRuleSetCache) publish(source *derivedSource, ruleSetVersion uint8, srsmDigest string, srsmSize int64, file *os.File) {
 	if c == nil || source == nil || file == nil {
 		return
 	}
@@ -493,7 +498,7 @@ func (c *derivedRuleSetCache) publish(source *derivedSource, ruleSetVersion uint
 	// The stamp is a logical clock, not wall time: see nextPublicationTime. It must be taken before
 	// the commit, and it is the only ordering input the store uses for this key.
 	created := c.nextPublicationTime(source.key)
-	version, err := c.store.Commit(source.key, c.derivedManifest(source, ruleSetVersion, created), file)
+	version, err := c.store.Commit(source.key, c.derivedManifest(source, ruleSetVersion, srsmDigest, srsmSize, created), file)
 	if err != nil {
 		derivedCacheCounters.failures.Add(1)
 		c.logger.Debug(E.Cause(err, "store derived rule-set"))

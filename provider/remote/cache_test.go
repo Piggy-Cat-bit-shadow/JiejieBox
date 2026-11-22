@@ -217,3 +217,30 @@ func TestProviderRemoteNotModifiedWithoutRecordRefreshesPath(t *testing.T) {
 	require.NotEqual(t, original, string(after), "without a record the path mtime must still be refreshed")
 	require.Contains(t, string(after), `"outbounds"`)
 }
+
+// TestProviderRemoteNotModifiedRejectsAStaleURLCacheRecord: a cachefile record belongs to the
+// provider's previous URL. Accepting the 304 would relabel the old document as the new URL and
+// keep serving it; the fetch must clear the conditional tag and let the next update download.
+func TestProviderRemoteNotModifiedRejectsAStaleURLCacheRecord(t *testing.T) {
+	t.Parallel()
+	path := t.TempDir() + "/provider.json"
+	original := `{"outbounds": [{"type": "test", "tag": "old"}]}`
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Etag", `"v1"`)
+		writer.WriteHeader(http.StatusNotModified)
+	}))
+	t.Cleanup(server.Close)
+	provider, _ := newRemoteHarness(t, server.URL)
+	provider.httpClient = server.Client()
+	provider.path = path
+	cache := &staticSubscriptionCache{sub: &adapter.SavedBinary{URLHash: []byte("another-url")}}
+	provider.cacheFile = cache
+	err := provider.fetch(context.Background(), true)
+	require.Error(t, err)
+	after, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, original, string(after))
+	require.Empty(t, provider.lastEtag, "the stale conditional tag must be forgotten")
+	require.Zero(t, cache.saves)
+}

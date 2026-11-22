@@ -60,7 +60,7 @@ func TestRemoteDerivedC07LateDiscardKeepsTheRepairedConversion(t *testing.T) {
 
 	// Repair the same physical version while the loader still holds the stale snapshot.
 	corrected, err := store.Commit(identity.key,
-		cache.derivedManifest(identity, C.RuleSetVersionCurrent, 0), bytes.NewReader(compiled))
+		cache.derivedManifest(identity, C.RuleSetVersionCurrent, "", 0, 0), bytes.NewReader(compiled))
 	require.NoError(t, err)
 	require.Equal(t, stale.Path(), corrected.Path(), "the repair is one physical version")
 	corrected.Release()

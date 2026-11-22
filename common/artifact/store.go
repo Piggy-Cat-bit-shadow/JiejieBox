@@ -555,6 +555,15 @@ func compatible(manifest Manifest) bool {
 func (s *Store) publishVersion(tempDir string, versionDir string, manifest Manifest) (Manifest, error) {
 	s.lease.access.Lock()
 	defer s.lease.access.Unlock()
+	// Stage verified the bytes it wrote, but another writer can land between that check and this
+	// rename. Verify once more at the last point that can still refuse to name bytes by a digest
+	// they no longer have. An empty digest is the legacy Commit path, whose caller supplied bytes
+	// directly; keep its previous behaviour.
+	if manifest.Digest != "" {
+		if err := verifyArtifact(tempDir, manifest); err != nil {
+			return Manifest{}, E.Cause(err, "verify staged artifact")
+		}
+	}
 	if _, err := os.Stat(versionDir); err == nil {
 		// The identical artifact is already published: the temp copy is redundant, and the
 		// existing version is the one this commit leases. The returned manifest is the one now on

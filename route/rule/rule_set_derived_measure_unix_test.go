@@ -302,7 +302,7 @@ func loadCurrentRuleSet(ctx context.Context, path string, format string) ([]adap
 	default:
 		return nil, fmt.Errorf("unknown format %q", format)
 	}
-	if file, ok := writeRuleSetMmapFile(ctx, logger.NOP(), "measure", ruleSet); ok {
+	if file, _, _, ok := writeRuleSetMmapFile(ctx, logger.NOP(), "measure", ruleSet); ok {
 		defer file.Close()
 		ruleSet = mapRuleSetMmapFile(logger.NOP(), "measure", file, ruleSet)
 	}

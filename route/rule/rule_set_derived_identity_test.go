@@ -102,7 +102,7 @@ func requireEveryDerivedManifestNames(t *testing.T, base string, key string, dig
 // identity-generation line, published earlier than anything this test loads.
 func oldStyleDerivedManifest(t *testing.T, cache *derivedRuleSetCache, source *derivedSource, ruleSetVersion uint8) artifact.Manifest {
 	t.Helper()
-	manifest := cache.derivedManifest(source, ruleSetVersion, 0)
+	manifest := cache.derivedManifest(source, ruleSetVersion, "", 0, 0)
 	dependencies := make([]string, 0, len(manifest.Dependencies))
 	for _, dependency := range manifest.Dependencies {
 		if strings.HasPrefix(dependency, "identity-generation=") {
@@ -583,7 +583,7 @@ func TestDerivedRuleSetStaleDiscardDecisionKeepsTheCorrectedVersion(t *testing.T
 	stale.Release()
 
 	// A concurrent load publishes the corrected account for the SAME bytes; only the manifest changes.
-	corrected, err := store.Commit(identity.key, cache.derivedManifest(identity, C.RuleSetVersionCurrent, 0), bytes.NewReader(compiled))
+	corrected, err := store.Commit(identity.key, cache.derivedManifest(identity, C.RuleSetVersionCurrent, "", 0, 0), bytes.NewReader(compiled))
 	require.NoError(t, err)
 	corrected.Release()
 	require.Equal(t, stale.Path(), corrected.Path(), "the correction is one physical version")
@@ -620,7 +620,7 @@ func TestDerivedRuleSetOtherSourceFutureVersionStillWarms(t *testing.T) {
 	identityB := localDerivedSource("future-other", path, C.RuleSetFormatSource, digestB, sizeB)
 	compiledB := encodeDerivedMmapRuleSet(t, parseDerivedJSONSource(t, sourceB))
 	stale, err := store.Commit(identityB.key,
-		cache.derivedManifest(identityB, C.RuleSetVersionCurrent, time.Now().Add(time.Hour).UnixNano()),
+		cache.derivedManifest(identityB, C.RuleSetVersionCurrent, "", 0, time.Now().Add(time.Hour).UnixNano()),
 		bytes.NewReader(compiledB))
 	require.NoError(t, err)
 	stale.Release()
@@ -713,7 +713,7 @@ func TestDerivedRuleSetRepublishedStampOutranks(t *testing.T) {
 	future := time.Now().Add(time.Hour).UnixNano()
 	publishAt := func(identity *derivedSource, content []byte, created int64) {
 		version, commitErr := store.Commit(identity.key,
-			cache.derivedManifest(identity, C.RuleSetVersionCurrent, created), bytes.NewReader(content))
+			cache.derivedManifest(identity, C.RuleSetVersionCurrent, "", 0, created), bytes.NewReader(content))
 		require.NoError(t, commitErr)
 		version.Release()
 	}
@@ -726,7 +726,8 @@ func TestDerivedRuleSetRepublishedStampOutranks(t *testing.T) {
 	require.NoError(t, err)
 	_, err = file.Write(compiledA)
 	require.NoError(t, err)
-	cache.publish(identityA, C.RuleSetVersionCurrent, file)
+	compiledDigest, compiledSize := derivedContentDigest(compiledA)
+	cache.publish(identityA, C.RuleSetVersionCurrent, compiledDigest, compiledSize, file)
 	_ = file.Close()
 
 	loaded, err := store.Load(identityA.key)

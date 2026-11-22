@@ -651,7 +651,7 @@ func (s *RemoteRuleSet) buildRules(ruleSet option.PlainRuleSetCompat) ([]adapter
 // original helper, so the cache can only add work it can afford, never fail a load.
 func (s *RemoteRuleSet) buildRulesFor(ruleSet option.PlainRuleSetCompat, derived *derivedSource) ([]adapter.HeadlessRule, adapter.RuleSetMetadata, error) {
 	if s.derivedCache != nil && derived != nil {
-		file, ok := writeRuleSetMmapFile(s.ctx, s.logger, s.tag, ruleSet)
+		file, srsmDigest, srsmSize, ok := writeRuleSetMmapFile(s.ctx, s.logger, s.tag, ruleSet)
 		if ok {
 			defer file.Close()
 			remoteDerivedCounters.srsmWrites.Add(1)
@@ -661,7 +661,7 @@ func (s *RemoteRuleSet) buildRulesFor(ruleSet option.PlainRuleSetCompat, derived
 				// context-independent, but a document this Box rejects should not become a cached
 				// success for a Box that would reject it for the same reason; a compatible Box can
 				// still rebuild it from the source.
-				s.derivedCache.publish(derived, ruleSet.Version, file)
+				s.derivedCache.publish(derived, ruleSet.Version, srsmDigest, srsmSize, file)
 			}
 			return rules, metadata, buildErr
 		}
