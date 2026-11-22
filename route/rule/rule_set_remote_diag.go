@@ -46,6 +46,11 @@ func resetRemoteDerivedDiagnostics() {
 // Points: "derived-hit", "derived-miss", "before-source-publish", "before-commit".
 var remoteDerivedTestHook func(point string)
 
+// remoteStagedTestHook, when non-nil, receives the path of the just-staged source file before it is
+// parsed or published, so a test can rewrite it inside the verify/parse/publish window. Production is
+// nil; the loader re-hashes the bytes it uses, so a rewrite is detected rather than trusted.
+var remoteStagedTestHook func(path string)
+
 func remoteDerivedTestPoint(point string) {
 	if remoteDerivedTestHook != nil {
 		remoteDerivedTestHook(point)

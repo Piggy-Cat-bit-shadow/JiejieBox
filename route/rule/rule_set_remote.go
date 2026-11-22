@@ -655,8 +655,15 @@ func (s *RemoteRuleSet) buildRulesFor(ruleSet option.PlainRuleSetCompat, derived
 		if ok {
 			defer file.Close()
 			remoteDerivedCounters.srsmWrites.Add(1)
-			s.derivedCache.publish(derived, ruleSet.Version, file)
-			return s.buildRulesFrom(mapRuleSetMmapFile(s.logger, s.tag, file, ruleSet))
+			rules, metadata, buildErr := s.buildRulesFrom(mapRuleSetMmapFile(s.logger, s.tag, file, ruleSet))
+			if buildErr == nil {
+				// Publish only after THIS Box accepted the build. The conversion itself is
+				// context-independent, but a document this Box rejects should not become a cached
+				// success for a Box that would reject it for the same reason; a compatible Box can
+				// still rebuild it from the source.
+				s.derivedCache.publish(derived, ruleSet.Version, file)
+			}
+			return rules, metadata, buildErr
 		}
 	}
 	return s.buildRules(ruleSet)
@@ -926,9 +933,19 @@ var maxRemoteRuleSetSize int64 = 64 << 20
 func (s *RemoteRuleSet) publishStaged(staged *artifact.StagedVersion, generation uint64) error {
 	stagedManifest := staged.Manifest()
 	derived := s.remoteDerivedIdentity(stagedManifest.Digest, stagedManifest.Size)
+	if remoteStagedTestHook != nil {
+		remoteStagedTestHook(staged.Path())
+	}
 	if mapped, hit := s.openDerivedRuleSet(derived); hit {
 		rules, metadata, buildErr := s.buildRulesFrom(mapped)
 		if buildErr == nil {
+			// The conversion is of the bytes Stage hashed; the source artifact published below must
+			// still be exactly those bytes, or a later restart would load a different document under
+			// the digest this generation recorded.
+			if !s.stagedMatches(staged, stagedManifest) {
+				staged.Discard()
+				return E.New("staged rule-set ", stagedManifest.Digest, " changed before it was published")
+			}
 			remoteDerivedTestPoint("before-source-publish")
 			version, publishErr := staged.Publish()
 			if publishErr != nil {
@@ -954,18 +971,32 @@ func (s *RemoteRuleSet) publishStaged(staged *artifact.StagedVersion, generation
 			staged.Discard()
 			return openErr
 		}
+		// Hash the exact bytes the parser consumes (plus the tail drain), so a rewrite of the staged
+		// file between Stage and parse cannot become the source of a conversion published under the
+		// staged digest.
+		hasher := sha256.New()
+		counted := &countingReader{reader: io.TeeReader(file, hasher)}
 		remoteDerivedCounters.sourceDecodes.Add(1)
-		ruleSet, err = srs.Read(file, false)
+		ruleSet, err = srs.Read(counted, false)
 		if err == nil {
 			// The parser stops at the end of the zlib stream; drain the rest so a body shorter
 			// than its HTTP framing still fails, exactly as the read-all path did.
-			_, err = io.Copy(io.Discard, file)
+			_, err = io.Copy(io.Discard, counted)
 		}
 		_ = file.Close()
+		if err == nil && (counted.count != stagedManifest.Size || hex.EncodeToString(hasher.Sum(nil)) != stagedManifest.Digest) {
+			staged.Discard()
+			return E.New("staged rule-set ", stagedManifest.Digest, " changed before it was parsed")
+		}
 	} else {
 		var content []byte
 		content, err = os.ReadFile(staged.Path())
 		if err == nil {
+			contentSum := sha256.Sum256(content)
+			if int64(len(content)) != stagedManifest.Size || hex.EncodeToString(contentSum[:]) != stagedManifest.Digest {
+				staged.Discard()
+				return E.New("staged rule-set ", stagedManifest.Digest, " changed before it was parsed")
+			}
 			ruleSet, err = s.decodeRuleSet(content)
 		}
 	}
@@ -977,6 +1008,11 @@ func (s *RemoteRuleSet) publishStaged(staged *artifact.StagedVersion, generation
 	if err != nil {
 		staged.Discard()
 		return err
+	}
+	// The build may take a while; re-check the bytes that are about to become this generation.
+	if !s.stagedMatches(staged, stagedManifest) {
+		staged.Discard()
+		return E.New("staged rule-set ", stagedManifest.Digest, " changed before it was published")
 	}
 	remoteDerivedTestPoint("before-source-publish")
 	version, err := staged.Publish()
@@ -990,6 +1026,35 @@ func (s *RemoteRuleSet) publishStaged(staged *artifact.StagedVersion, generation
 	}
 	s.collectArtifacts()
 	return nil
+}
+
+// stagedMatches reports whether the staged file still holds exactly the bytes Stage hashed. The
+// source artifact is the authority a restart reloads, so it cannot be published when a concurrent
+// writer changed the temp file after staging.
+func (s *RemoteRuleSet) stagedMatches(staged *artifact.StagedVersion, manifest artifact.Manifest) bool {
+	file, err := os.Open(staged.Path())
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	hasher := sha256.New()
+	written, err := io.Copy(hasher, file)
+	if err != nil || written != manifest.Size {
+		return false
+	}
+	return hex.EncodeToString(hasher.Sum(nil)) == manifest.Digest
+}
+
+// countingReader counts the bytes a parser consumed through it.
+type countingReader struct {
+	reader io.Reader
+	count  int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	read, err := r.reader.Read(p)
+	r.count += int64(read)
+	return read, err
 }
 
 // collectArtifacts removes older unleased versions, keeping the live version's lease and the

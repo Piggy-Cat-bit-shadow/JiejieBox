@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
 	"testing"
 
@@ -162,4 +163,61 @@ func TestRemoteDerivedHTTP200ReusesTheSameContent(t *testing.T) {
 	require.EqualValues(t, 2, misses)
 	require.EqualValues(t, 2, decodes)
 	require.EqualValues(t, 2, writes)
+}
+
+// TestRemoteDerivedE09StagedRewriteWindow is the HTTP 200 half of E09: the body Stage verified is
+// rewritten before the loader parses (miss) or publishes (hit) it. Neither B's rules nor B's bytes may
+// be published under A's digest, and the live A generation must keep serving.
+func TestRemoteDerivedE09StagedRewriteWindow(t *testing.T) {
+	enableDerivedRuleSetPlatform(t)
+	ctx, base := derivedTestContext(t)
+	payloadA := writeRuleSetPayload(t, "10.0.0.0/8")
+	payloadB := writeRuleSetPayload(t, "192.168.0.0/16")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write(payloadA)
+	}))
+	t.Cleanup(server.Close)
+
+	ruleSet := newStoredRemoteRuleSet(t, ctx, server.URL, "remote-e09-staged")
+	ruleSet.httpClient = server.Client()
+	require.NoError(t, ruleSet.fetch(ctx, true))
+	require.True(t, remoteRuleSetMatches(t, ruleSet, "10.1.2.3"))
+	require.Equal(t, ruleSetDigest(payloadA), ruleSet.artifactLease.ID())
+
+	// MISS arm: no conversion exists, so the staged bytes would be parsed and converted directly.
+	remoteDerivedTestRemoveDerivedVersions(t, base)
+	var rewrites atomic.Int32
+	remoteStagedTestHook = func(path string) {
+		if rewrites.Add(1) == 1 {
+			require.NoError(t, os.WriteFile(path, payloadB, 0o600))
+		}
+	}
+	t.Cleanup(func() { remoteStagedTestHook = nil })
+	resetRemoteDerivedDiagnostics()
+	require.Error(t, ruleSet.fetch(ctx, true), "a staged rewrite must fail, not publish B under A")
+	require.True(t, remoteRuleSetMatches(t, ruleSet, "10.1.2.3"), "the live A generation keeps serving")
+	require.False(t, remoteRuleSetMatches(t, ruleSet, "192.168.1.1"))
+	require.Equal(t, ruleSetDigest(payloadA), ruleSet.artifactLease.ID())
+	hits, misses, decodes, writes, _ := remoteDerivedDiagnostics()
+	require.EqualValues(t, 1, misses)
+	require.EqualValues(t, 1, decodes, "the parsed bytes are counted before the mismatch is refused")
+	require.Zero(t, writes, "nothing may be converted or published from rewritten bytes")
+	require.Zero(t, hits)
+	require.Empty(t, remoteDerivedTestStoreDerivedVersions(t, base), "no conversion may be published")
+	require.Len(t, remoteDerivedTestStoreSourceVersions(t, base), 1, "no source version may be added")
+
+	// The same fetch without the rewrite succeeds and publishes the conversion of A.
+	remoteStagedTestHook = nil
+	require.NoError(t, ruleSet.fetch(ctx, true))
+	require.True(t, remoteRuleSetMatches(t, ruleSet, "10.1.2.3"))
+
+	// HIT arm: the conversion exists, so the loader would only publish the source artifact; a rewrite
+	// must still be caught before that publication.
+	remoteStagedTestHook = func(path string) {
+		require.NoError(t, os.WriteFile(path, payloadB, 0o600))
+	}
+	require.Error(t, ruleSet.fetch(ctx, true), "a staged rewrite must fail on the hit path too")
+	require.True(t, remoteRuleSetMatches(t, ruleSet, "10.1.2.3"))
+	require.Equal(t, ruleSetDigest(payloadA), ruleSet.artifactLease.ID())
+	require.Len(t, remoteDerivedTestStoreSourceVersions(t, base), 1, "the rewritten bytes must not be published")
 }
