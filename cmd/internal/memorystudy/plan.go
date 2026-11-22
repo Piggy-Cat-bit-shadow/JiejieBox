@@ -49,6 +49,10 @@ type runFlags struct {
 	// ledger against the budget derived from it.
 	referenceManifest string
 	selfCheck         bool
+	// sourceSHA is the caller's explicit assertion of the revision under test. It is only needed
+	// where neither git nor the binary's VCS stamp can be read, and it is recorded as an assertion
+	// rather than as a measured value.
+	sourceSHA string
 	// provided records which flags the caller actually set. "runs=1" and "runs was left at its
 	// default" are different statements when a ledger read back from disk has three repetitions.
 	provided map[string]bool

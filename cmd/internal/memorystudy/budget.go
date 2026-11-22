@@ -1008,10 +1008,13 @@ func printGateReport(writer io.Writer, report gateReport, budget budgetFile) {
 		report.Passed, report.Failed, report.Skipped, report.RecordCount, report.BudgetPath,
 		budget.Baseline.SourceSHA)
 	if verification := report.Verification; verification != nil {
-		fmt.Fprintf(writer, "identity: candidate %s, checkout %s, baseline %s, reference %s%s\n",
-			shortOrNone(verification.CandidateSHA), shortOrNone(verification.CheckoutSHA),
-			shortOrNone(verification.BaselineSHA), referenceDescription(verification),
-			describeSelfCheck(verification.SelfCheck))
+		fmt.Fprintf(writer, "identity: candidate %s (detected_by=%s, dirty=%t), checkout %s (%s, dirty=%s), "+
+			"baseline %s (dirty=%t), reference %s%s\n",
+			shortOrNone(verification.CandidateSHA), verification.CandidateDetectedBy,
+			verification.CandidateDirty, shortOrNone(verification.CheckoutSHA),
+			verification.CheckoutSource, describeBool(verification.CheckoutDirty),
+			shortOrNone(verification.BaselineSHA), verification.BaselineDirty,
+			referenceDescription(verification), describeSelfCheck(verification.SelfCheck))
 		if verification.LegacyBudget {
 			fmt.Fprintf(writer, "note: this budget is the legacy schema/1 contract: its rules name no "+
 				"activity history and it carries no provenance, so it cannot certify a candidate\n")
@@ -1061,6 +1064,18 @@ func shortOrNone(sha string) string {
 		return "(none)"
 	}
 	return shortSHA(sha)
+}
+
+// describeBool renders an optional flag: "unknown" is a different answer from "false", and the
+// identity report must not let one look like the other.
+func describeBool(value *bool) string {
+	if value == nil {
+		return "unknown"
+	}
+	if *value {
+		return "true"
+	}
+	return "false"
 }
 
 func referenceDescription(verification *gateVerification) string {

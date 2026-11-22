@@ -55,6 +55,7 @@ func run(args []string, stdout io.Writer) error {
 	command.StringVar(&flags.from, "from", "", "read an existing merged JSONL instead of running anything (with -write-budget, or with -gate to judge that ledger)")
 	command.StringVar(&flags.referenceManifest, "reference-manifest", "", "with -write-budget -from: the archived reference manifest that makes the ledger a reference (without it the budget is provenance=derived and cannot gate)")
 	command.BoolVar(&flags.selfCheck, "self-check", false, "with -gate: allow the budget to be the reference ledger's own budget (verifies the reference against itself)")
+	command.StringVar(&flags.sourceSHA, "source-sha", "", "with -gate: the revision this run certifies, for a tree where neither git nor the binary's VCS stamp can be read; it must equal the ledger's (and the checkout's, when observable)")
 	command.BoolVar(&flags.wide, "wide", false, "add the 1000- and 10000-node scale cases to the gate matrix")
 
 	command.IntVar(&flags.gomaxprocs, "gomaxprocs", 0, "start every child with GOMAXPROCS=n in its environment (0 leaves it alone)")
@@ -408,7 +409,7 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	verification, err := verifyGateInputs(budget, summary, flags.selfCheck)
+	verification, err := verifyGateInputs(budget, summary, flags.selfCheck, flags.sourceSHA)
 	if err != nil {
 		// The refusal is the verdict, so it is written down as one: an exit code alone leaves the
 		// reviewer with no record of which identity check refused and why.

@@ -347,7 +347,11 @@ func syntheticRecord(spec runSpec, stage string, status string, values map[strin
 		"traffic_bytes": json.Number(fmt.Sprintf("%d", spec.TrafficBytes)),
 	}
 	record["identity"] = map[string]any{
-		"source": map[string]any{"sha": testLedgerSHA, "dirty": false},
+		"source": map[string]any{
+			"sha": testLedgerSHA, "dirty": false,
+			"detected_by": "git-working-tree", "git_sha": testLedgerSHA, "git_dirty": false,
+			"build_sha": testLedgerSHA, "build_dirty": false,
+		},
 		"build": map[string]any{
 			"go_version": "go1.27.4", "goos": "windows", "goarch": "amd64",
 			"tags": []any{"with_purego"},

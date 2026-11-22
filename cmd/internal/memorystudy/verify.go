@@ -30,11 +30,22 @@ import (
 
 // ledgerSummary is what one ledger says about the world it was measured in. Everything here is read
 // back from the JSONL, not from the process that is checking it.
+//
+// The source block is carried in FULL, not just the revision: a ledger that claims its revision came
+// from the git working tree has to have matching git_sha/git_dirty fields, and a ledger that claims
+// the build stamp has to be checkable against this binary's own stamp. Without those fields the
+// claim "measured at X" is a self-declaration, and a self-declaration is what a washout needs.
 type ledgerSummary struct {
 	Runs           []string          `json:"runs"`
 	SHA            string            `json:"source_sha"`
 	BuildSHA       string            `json:"build_sha"`
 	Dirty          bool              `json:"source_dirty"`
+	DetectedBy     string            `json:"detected_by"`
+	GitSHA         string            `json:"git_sha,omitempty"`
+	GitDirty       *bool             `json:"git_dirty,omitempty"`
+	BuildDirty     *bool             `json:"build_dirty,omitempty"`
+	DirtyPaths     []string          `json:"dirty_paths,omitempty"`
+	DeclaredOrigin string            `json:"declared_origin,omitempty"`
 	GoVersion      string            `json:"go_version"`
 	GOOS           string            `json:"goos"`
 	GOARCH         string            `json:"goarch"`
@@ -102,19 +113,35 @@ func summariseLedger(records []recordMap) (ledgerSummary, error) {
 	}
 	perRunDigest := make(map[string]string)
 	perRunSpec := make(map[string]string)
+	var dirtyPaths []string
 	for _, record := range records {
 		if record.recordKind() != recordStage && record.recordKind() != recordChildResult {
 			continue
 		}
 		note("source.sha", stringAt(record, "identity.source.sha"))
 		note("source.build_sha", stringAt(record, "identity.source.build_sha"))
+		note("source.detected_by", stringAt(record, "identity.source.detected_by"))
+		note("source.git_sha", stringAt(record, "identity.source.git_sha"))
+		note("source.declared_origin", stringAt(record, "identity.source.declared_origin"))
 		note("build.go_version", stringAt(record, "identity.build.go_version"))
 		note("build.goos", stringAt(record, "identity.build.goos"))
 		note("build.goarch", stringAt(record, "identity.build.goarch"))
 		note("fixture.version", stringAt(record, "identity.fixture.version"))
 		note("build.tags", strings.Join(stringListAt(record, "identity.build.tags"), ","))
-		if dirty, present := boolAt(record, "identity.source.dirty"); present && dirty {
-			summary.Dirty = true
+		// Dirty is noted as a VALUE, not OR'd: a ledger whose first half says clean and whose second
+		// half says dirty is two measurements under one name, and picking either answer would hide
+		// that.
+		if dirty, present := boolAt(record, "identity.source.dirty"); present {
+			note("source.dirty", fmt.Sprint(dirty))
+		}
+		if dirty, present := boolAt(record, "identity.source.git_dirty"); present {
+			note("source.git_dirty", fmt.Sprint(dirty))
+		}
+		if dirty, present := boolAt(record, "identity.source.build_dirty"); present {
+			note("source.build_dirty", fmt.Sprint(dirty))
+		}
+		if len(dirtyPaths) == 0 {
+			dirtyPaths = stringListAt(record, "identity.source.dirty_paths")
 		}
 		id := record.runID()
 		if id == "" {
@@ -149,6 +176,21 @@ func summariseLedger(records []recordMap) (ledgerSummary, error) {
 	}
 	summary.SHA = first("source.sha")
 	summary.BuildSHA = first("source.build_sha")
+	summary.DetectedBy = first("source.detected_by")
+	summary.GitSHA = first("source.git_sha")
+	summary.DeclaredOrigin = first("source.declared_origin")
+	if raw := first("source.dirty"); raw != "" {
+		summary.Dirty = raw == "true"
+	}
+	if raw := first("source.git_dirty"); raw != "" {
+		value := raw == "true"
+		summary.GitDirty = &value
+	}
+	if raw := first("source.build_dirty"); raw != "" {
+		value := raw == "true"
+		summary.BuildDirty = &value
+	}
+	summary.DirtyPaths = dirtyPaths
 	summary.GoVersion = first("build.go_version")
 	summary.GOOS = first("build.goos")
 	summary.GOARCH = first("build.goarch")
@@ -209,29 +251,181 @@ func sameStrings(left, right []string) bool {
 	return true
 }
 
+// The sources a ledger's revision may come from. "declared" is the escape hatch for a tree that is
+// not a checkout at all (an archive); it can never be verified, so it needs the caller to assert the
+// revision explicitly.
+const (
+	detectedByGit       = "git-working-tree"
+	detectedByBuildInfo = "buildinfo"
+	detectedByDeclared  = "declared"
+	liveOriginGit       = "git-working-tree"
+	liveOriginBuildInfo = "buildinfo"
+	liveOriginNone      = "none"
+)
+
+// liveIdentity is what THIS process can observe about the checkout it runs in, as opposed to what a
+// ledger claims. The two are cross-checked field by field; neither side is trusted on its own.
+//
+// # Why the ledger alone is not enough
+//
+// Every source field in the ledger is written by the measured process. A ledger that says
+// dirty=false on a dirty tree - one character changed - satisfied the first version of this check,
+// which only compared the revision, and the gate then certified uncommitted code as the commit. The
+// live `git status --porcelain` and the binary's own build stamp are the only values the gate can
+// obtain without asking the evidence to describe itself.
+type liveIdentity struct {
+	SHA        string
+	Origin     string // liveOriginGit | liveOriginBuildInfo | liveOriginNone
+	Dirty      *bool
+	DirtyPaths []string
+	BuildSHA   string
+	BuildDirty *bool
+	BuildInfo  bool
+}
+
+// probeLiveIdentity reads the live sources: the git checkout first, the binary's VCS stamp second.
+func probeLiveIdentity() liveIdentity {
+	live := liveIdentity{Origin: liveOriginNone}
+	build := captureBuildIdentity()
+	live.BuildSHA = build.Settings["vcs.revision"]
+	if modified, present := build.Settings["vcs.modified"]; present {
+		dirty := modified == "true"
+		live.BuildDirty = &dirty
+	}
+	live.BuildInfo = live.BuildSHA != ""
+	if sha, _, dirty, paths, ok := gitProbe(); ok && sha != "" {
+		live.SHA = sha
+		live.Origin = liveOriginGit
+		live.Dirty = dirty
+		live.DirtyPaths = paths
+		return live
+	}
+	if live.BuildInfo {
+		live.SHA = live.BuildSHA
+		live.Origin = liveOriginBuildInfo
+		live.Dirty = live.BuildDirty
+	}
+	return live
+}
+
 // requireCandidateIdentity checks the candidate ledger against the checkout it must describe.
 //
 // The rule is "the candidate names this checkout", not "the candidate names the baseline": a change
 // under test has a new SHA by definition, and requiring the two to match would make the gate fail
 // for every normal commit.
-func requireCandidateIdentity(summary ledgerSummary, headSHA string, headKnown bool) error {
+//
+// It checks three layers, because each one alone was a demonstrated false pass:
+//  1. the ledger's own source block must be internally consistent and name a source this tool can
+//     verify (`detected_by`); a ledger that does not say how it knows its revision is refused, and an
+//     unknown source is refused rather than trusted;
+//  2. the ledger's revision and dirty flag must equal what the LIVE checkout says;
+//  3. when neither git nor the build stamp is available, the caller must assert the revision with
+//     -source-sha, and the assertion is recorded as an assertion, not as a measurement.
+func requireCandidateIdentity(summary ledgerSummary, live liveIdentity, explicitSourceSHA string) error {
 	if summary.SHA == "" {
 		return fmt.Errorf("the candidate ledger carries no source revision: a ledger without an " +
 			"identity cannot be certified")
 	}
-	if !headKnown || headSHA == "" {
-		return fmt.Errorf("cannot determine this checkout's HEAD revision (git is unavailable): the "+
-			"candidate ledger claims %s and there is nothing to check that claim against; run the "+
-			"gate from a checkout, or declare the revision with MEMORYSTUDY_SOURCE_SHA and compare "+
-			"explicitly", summary.SHA)
+	if live.BuildInfo && live.BuildSHA != "" && summary.BuildSHA != "" && !strings.EqualFold(summary.BuildSHA, live.BuildSHA) {
+		// The binary in this tree was built from a different revision than the one the ledger
+		// recorded: the ledger is not this binary's evidence.
+		return fmt.Errorf("the ledger's binary was stamped at %s but this binary was built from %s; "+
+			"the evidence and the checker are different builds", summary.BuildSHA, live.BuildSHA)
 	}
-	if !strings.EqualFold(summary.SHA, headSHA) {
-		return fmt.Errorf("the candidate ledger was measured at %s but this checkout is %s; a gate "+
-			"must judge the commit under test, not a different tree", summary.SHA, headSHA)
+	// 1. The claimed source of the revision must be one this tool can check.
+	switch summary.DetectedBy {
+	case detectedByGit:
+		if !strings.EqualFold(summary.GitSHA, summary.SHA) {
+			return fmt.Errorf("the ledger says its revision came from the git working tree, but its "+
+				"git_sha (%q) disagrees with source.sha (%q); the source block is incoherent",
+				summary.GitSHA, summary.SHA)
+		}
+		if summary.GitDirty == nil {
+			return fmt.Errorf("the ledger says its revision came from the git working tree but records " +
+				"no git_dirty flag; the working-tree state cannot be checked")
+		}
+		if *summary.GitDirty != summary.Dirty {
+			return fmt.Errorf("the ledger's git_dirty=%t disagrees with its source.dirty=%t",
+				*summary.GitDirty, summary.Dirty)
+		}
+	case detectedByBuildInfo:
+		if !strings.EqualFold(summary.BuildSHA, summary.SHA) {
+			return fmt.Errorf("the ledger says its revision came from the build stamp, but its "+
+				"build_sha (%q) disagrees with source.sha (%q)", summary.BuildSHA, summary.SHA)
+		}
+		if !live.BuildInfo {
+			return fmt.Errorf("the ledger says its revision came from the build stamp " +
+				"(detected_by=buildinfo), but this binary carries no VCS information (buildvcs was not " +
+				"stamped), so that claim cannot be checked; rebuild with buildvcs, or re-measure in a " +
+				"checkout")
+		}
+		if !strings.EqualFold(live.BuildSHA, summary.SHA) {
+			return fmt.Errorf("the ledger's build stamp says %s but this binary's says %s",
+				summary.SHA, live.BuildSHA)
+		}
+		if live.BuildDirty != nil && summary.BuildDirty != nil && *live.BuildDirty != *summary.BuildDirty {
+			return fmt.Errorf("the ledger's build_dirty=%t disagrees with this binary's %t",
+				*summary.BuildDirty, *live.BuildDirty)
+		}
+	case detectedByDeclared:
+		if explicitSourceSHA == "" {
+			return fmt.Errorf("the ledger's revision was DECLARED, not measured (%s); pass "+
+				"-source-sha with the revision this run is supposed to certify", summary.DeclaredOrigin)
+		}
+	case "":
+		return fmt.Errorf("the candidate ledger does not say how its source revision was determined " +
+			"(detected_by is empty); an unattributed revision cannot be verified")
+	default:
+		return fmt.Errorf("the candidate ledger names %q as the source of its revision; this tool "+
+			"only accepts %q, %q or %q", summary.DetectedBy, detectedByGit, detectedByBuildInfo,
+			detectedByDeclared)
 	}
-	if summary.BuildSHA != "" && !strings.EqualFold(summary.BuildSHA, headSHA) {
+
+	// 2. The live checkout is authoritative when it is observable.
+	if live.SHA == "" {
+		if explicitSourceSHA == "" {
+			return fmt.Errorf("cannot determine this checkout's revision (git is unavailable and the "+
+				"binary carries no VCS stamp), and the candidate ledger claims %s; there is nothing to "+
+				"check that claim against. Run the gate from a checkout or pass -source-sha %s "+
+				"explicitly", summary.SHA, summary.SHA)
+		}
+		if !strings.EqualFold(explicitSourceSHA, summary.SHA) {
+			return fmt.Errorf("-source-sha says %s but the candidate ledger was measured at %s",
+				explicitSourceSHA, summary.SHA)
+		}
+	} else {
+		if !strings.EqualFold(summary.SHA, live.SHA) {
+			return fmt.Errorf("the candidate ledger was measured at %s but this checkout is %s "+
+				"(read from %s); a gate must judge the commit under test, not a different tree",
+				summary.SHA, live.SHA, live.Origin)
+		}
+		if explicitSourceSHA != "" && !strings.EqualFold(explicitSourceSHA, live.SHA) {
+			return fmt.Errorf("-source-sha says %s but this checkout is %s; the assertion contradicts "+
+				"the live source", explicitSourceSHA, live.SHA)
+		}
+	}
+
+	// 3. The dirty flag is part of the identity: uncommitted code is not the commit.
+	if live.Dirty != nil {
+		if summary.Dirty != *live.Dirty {
+			return fmt.Errorf("the candidate ledger says the working tree was dirty=%t, but this "+
+				"checkout is dirty=%t (%d changed path(s)); the ledger does not describe this tree, so "+
+				"its numbers cannot be attributed to %s", summary.Dirty, *live.Dirty,
+				len(live.DirtyPaths), live.SHA)
+		}
+		if !*live.Dirty && len(summary.DirtyPaths) > 0 {
+			return fmt.Errorf("the candidate ledger claims a clean tree but lists %d changed path(s); "+
+				"the source block is incoherent", len(summary.DirtyPaths))
+		}
+	} else if explicitSourceSHA == "" {
+		return fmt.Errorf("the working tree's state is not observable here (no git and no VCS stamp "+
+			"with a modified flag), so the candidate's dirty=%t claim cannot be checked; pass "+
+			"-source-sha to assert the revision explicitly", summary.Dirty)
+	}
+
+	if summary.BuildSHA != "" && live.SHA != "" && !strings.EqualFold(summary.BuildSHA, live.SHA) {
 		return fmt.Errorf("the measured binary was built from %s, not from this checkout's %s; "+
-			"rebuild the study binary in this tree before gating", summary.BuildSHA, headSHA)
+			"rebuild the study binary in this tree before gating", summary.BuildSHA, live.SHA)
 	}
 	return nil
 }
@@ -309,6 +503,8 @@ func requireBudgetComparable(budget budgetFile, summary ledgerSummary) (warnings
 		}
 	}
 	if summary.Dirty {
+		// Reported here so the value is visible even on a run that fails a later check; the
+		// authoritative comparison against the live tree is in requireCandidateIdentity.
 		warnings = append(warnings, "the candidate working tree is dirty: the ledger describes "+
 			"uncommitted code, so its SHA is the commit it was based on, not the code that ran")
 	}
@@ -385,8 +581,17 @@ func sameStringSet(left, right []string) bool {
 // report on purpose: "the gate passed" without the identities it compared is not reproducible.
 type gateVerification struct {
 	CandidateSHA        string   `json:"candidate_sha"`
+	CandidateDetectedBy string   `json:"candidate_detected_by"`
+	CandidateDirty      bool     `json:"candidate_dirty"`
+	CandidateDirtyPaths int      `json:"candidate_dirty_paths"`
 	CheckoutSHA         string   `json:"checkout_sha"`
+	CheckoutSource      string   `json:"checkout_source"`
+	CheckoutDirty       *bool    `json:"checkout_dirty,omitempty"`
+	CheckoutDirtyPaths  int      `json:"checkout_dirty_paths"`
+	IdentityVerified    bool     `json:"identity_verified"`
+	SourceSHAExplicit   string   `json:"source_sha_explicit,omitempty"`
 	BaselineSHA         string   `json:"baseline_sha"`
+	BaselineDirty       bool     `json:"baseline_dirty"`
 	BaselineIsCandidate bool     `json:"baseline_is_candidate"`
 	SelfCheck           bool     `json:"self_check"`
 	ReferenceKind       string   `json:"reference_kind,omitempty"`
@@ -405,32 +610,46 @@ type gateVerification struct {
 // The checks are ordered so that the message names the MOST fundamental problem first: a ledger
 // that is not this checkout cannot be compared to anything, and a budget that is not a reference
 // cannot certify anything.
-func verifyGateInputs(budget budgetFile, summary ledgerSummary, selfCheck bool) (gateVerification, error) {
-	headSHA, _, _, _, headKnown := gitProbe()
-	return verifyGateInputsAgainst(budget, summary, selfCheck, headSHA, headKnown)
+func verifyGateInputs(budget budgetFile, summary ledgerSummary, selfCheck bool, explicitSourceSHA string) (gateVerification, error) {
+	return verifyGateInputsAgainst(budget, summary, selfCheck, probeLiveIdentity(), explicitSourceSHA)
 }
 
-// verifyGateInputsAgainst is verifyGateInputs with the checkout revision passed in, so a test can
-// exercise the comparison without depending on the working tree it happens to run in.
-func verifyGateInputsAgainst(budget budgetFile, summary ledgerSummary, selfCheck bool, headSHA string, headKnown bool) (gateVerification, error) {
+// verifyGateInputsAgainst is verifyGateInputs with the live sources passed in, so a test can exercise
+// every comparison without depending on the working tree it happens to run in.
+func verifyGateInputsAgainst(budget budgetFile, summary ledgerSummary, selfCheck bool, live liveIdentity, explicitSourceSHA string) (gateVerification, error) {
 	verification := gateVerification{
-		CandidateSHA:   summary.SHA,
-		CheckoutSHA:    headSHA,
-		BaselineSHA:    budget.Baseline.SourceSHA,
-		SelfCheck:      selfCheck,
-		FixtureVersion: summary.FixtureVersion,
-		GoVersion:      summary.GoVersion,
-		GOOS:           summary.GOOS,
-		GOARCH:         summary.GOARCH,
-		Tags:           summary.Tags,
-		LegacyBudget:   budget.legacy,
+		CandidateSHA:        summary.SHA,
+		CandidateDetectedBy: summary.DetectedBy,
+		CandidateDirty:      summary.Dirty,
+		CandidateDirtyPaths: len(summary.DirtyPaths),
+		CheckoutSHA:         live.SHA,
+		CheckoutSource:      live.Origin,
+		CheckoutDirty:       live.Dirty,
+		CheckoutDirtyPaths:  len(live.DirtyPaths),
+		IdentityVerified:    live.SHA != "" && strings.EqualFold(live.SHA, summary.SHA),
+		SourceSHAExplicit:   explicitSourceSHA,
+		BaselineSHA:         budget.Baseline.SourceSHA,
+		BaselineDirty:       budget.Baseline.SourceDirty,
+		SelfCheck:           selfCheck,
+		FixtureVersion:      summary.FixtureVersion,
+		GoVersion:           summary.GoVersion,
+		GOOS:                summary.GOOS,
+		GOARCH:              summary.GOARCH,
+		Tags:                summary.Tags,
+		LegacyBudget:        budget.legacy,
 	}
 	if budget.Provenance != nil {
 		verification.ReferenceKind = budget.Provenance.Kind
 		verification.ReferenceLedger = budget.Provenance.LedgerSHA256
 	}
-	if err := requireCandidateIdentity(summary, headSHA, headKnown); err != nil {
+	if err := requireCandidateIdentity(summary, live, explicitSourceSHA); err != nil {
 		return verification, err
+	}
+	if budget.Baseline.SourceDirty {
+		verification.Warnings = append(verification.Warnings,
+			fmt.Sprintf("the reference budget was captured on a DIRTY tree (source_dirty=true, "+
+				"revision %s): its thresholds describe uncommitted code, not that commit",
+				shortOrNone(budget.Baseline.SourceSHA)))
 	}
 	if budget.Baseline.SourceSHA != "" && strings.EqualFold(budget.Baseline.SourceSHA, summary.SHA) {
 		verification.BaselineIsCandidate = true

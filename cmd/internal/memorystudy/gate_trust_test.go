@@ -166,31 +166,156 @@ func TestPerDenominatorMustBePositive(t *testing.T) {
 	}
 }
 
+// cleanTree is the live identity of a clean checkout at sha. It is a parameter of the identity
+// checks rather than something the test probes, so every case below is independent of the tree the
+// test happens to run in.
+func cleanTree(sha string) liveIdentity {
+	clean := false
+	return liveIdentity{
+		SHA: sha, Origin: liveOriginGit, Dirty: &clean, DirtyPaths: nil,
+		BuildSHA: sha, BuildDirty: &clean, BuildInfo: true,
+	}
+}
+
+// cleanLedger is a ledger that says it was measured on a clean checkout at sha, through git.
+func cleanLedger(sha string) ledgerSummary {
+	clean := false
+	return ledgerSummary{
+		SHA: sha, DetectedBy: detectedByGit, GitSHA: sha, GitDirty: &clean,
+		BuildSHA: sha, BuildDirty: &clean, Dirty: false,
+	}
+}
+
 // TestCandidateIdentityMustBeTheCheckout is the third residual.
 //
 // The candidate ledger must describe THIS checkout (on CI, the commit under test). The baseline's
 // revision is a different matter and is tested separately: it is a fixed reference and is expected
 // to be older.
+//
+// Every case below is a false pass that the first version of this check allowed: it compared the
+// revision only, so a ledger could claim a clean tree (dirty=false) on a dirty checkout, claim
+// detected_by=buildinfo with no build stamp to check it against, or name an unknown source.
 func TestCandidateIdentityMustBeTheCheckout(t *testing.T) {
 	head := strings.Repeat("c", 40)
 	other := strings.Repeat("d", 40)
+	dirty := true
 	for _, testCase := range []struct {
-		name    string
-		summary ledgerSummary
-		head    string
-		known   bool
-		wantOK  bool
-		reason  string
+		name     string
+		summary  ledgerSummary
+		live     liveIdentity
+		explicit string
+		wantOK   bool
+		reason   string
 	}{
-		{"candidate is the checkout", ledgerSummary{SHA: head}, head, true, true, ""},
-		{"candidate is another tree", ledgerSummary{SHA: other}, head, true, false, "was measured at"},
-		{"binary was built elsewhere", ledgerSummary{SHA: head, BuildSHA: other}, head, true, false, "was built from"},
-		{"candidate has no revision", ledgerSummary{}, head, true, false, "no source revision"},
-		{"checkout is unknown", ledgerSummary{SHA: head}, "", false, false, "cannot determine"},
+		{"candidate is the checkout", cleanLedger(head), cleanTree(head), "", true, ""},
+		{"candidate is another tree", func() ledgerSummary {
+			// The binary is this checkout's; only the revision the ledger claims is different.
+			summary := cleanLedger(other)
+			summary.BuildSHA = head
+			return summary
+		}(), cleanTree(head), "", false, "this checkout is"},
+		{"binary stamped elsewhere", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.BuildSHA = other
+			return summary
+		}(), cleanTree(head), "", false, "different builds"},
+		{"binary was built elsewhere", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.BuildSHA = other
+			return summary
+		}(), cleanTree(head), "", false, "built from"},
+		{"candidate has no revision", ledgerSummary{}, cleanTree(head), "", false, "no source revision"},
+
+		// The live sources were unreadable and the caller asserted the revision: that is allowed,
+		// and recorded as an assertion.
+		{"no live source, assertion agrees", cleanLedger(head), liveIdentity{Origin: liveOriginNone}, head, true, ""},
+		{"no live source, assertion differs", cleanLedger(head), liveIdentity{Origin: liveOriginNone}, other, false, "-source-sha says"},
+		{"no live source, no assertion", cleanLedger(head), liveIdentity{Origin: liveOriginNone}, "", false, "cannot determine"},
+		{"assertion contradicts live", cleanLedger(head), cleanTree(head), other, false, "contradicts"},
+
+		// P1-1 negative 1: the ledger's dirty claim is checked against the live tree, not believed.
+		{"ledger says clean, tree is dirty", cleanLedger(head), func() liveIdentity {
+			live := cleanTree(head)
+			live.Dirty = &dirty
+			live.DirtyPaths = []string{"cmd/internal/memorystudy/verify.go"}
+			return live
+		}(), "", false, "dirty=false"},
+		{"ledger says dirty, tree is clean", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.Dirty = true
+			summary.GitDirty = &dirty
+			return summary
+		}(), cleanTree(head), "", false, "dirty=true"},
+		{"clean claim lists dirty paths", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.DirtyPaths = []string{"some/file.go"}
+			return summary
+		}(), cleanTree(head), "", false, "lists"},
+
+		// P1-1 negative 2: the claimed source of the revision must be checkable.
+		{"buildinfo claim without a build stamp", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.DetectedBy = detectedByBuildInfo
+			return summary
+		}(), func() liveIdentity {
+			live := cleanTree(head)
+			live.BuildInfo = false
+			live.BuildSHA = ""
+			live.BuildDirty = nil
+			return live
+		}(), "", false, "cannot be checked"},
+		{"unknown detected_by", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.DetectedBy = "somebody-told-me"
+			return summary
+		}(), cleanTree(head), "", false, "only accepts"},
+		{"no detected_by", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.DetectedBy = ""
+			return summary
+		}(), cleanTree(head), "", false, "does not say how"},
+		{"declared without an assertion", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.DetectedBy = detectedByDeclared
+			summary.DeclaredOrigin = "git archive of the reference"
+			summary.GitSHA = ""
+			summary.GitDirty = nil
+			return summary
+		}(), cleanTree(head), "", false, "DECLARED"},
+		{"declared with an assertion", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.DetectedBy = detectedByDeclared
+			summary.DeclaredOrigin = "git archive of the reference"
+			summary.GitSHA = ""
+			summary.GitDirty = nil
+			return summary
+		}(), cleanTree(head), head, true, ""},
+
+		// The source block is checked for internal coherence, so a single edited field is visible.
+		{"git_sha disagrees with sha", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.GitSHA = other
+			return summary
+		}(), cleanTree(head), "", false, "incoherent"},
+		{"git_dirty disagrees with dirty", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.GitDirty = &dirty
+			return summary
+		}(), cleanTree(head), "", false, "disagrees with its source.dirty"},
+		{"git_dirty missing", func() ledgerSummary {
+			summary := cleanLedger(head)
+			summary.GitDirty = nil
+			return summary
+		}(), cleanTree(head), "", false, "records no git_dirty"},
+		{"dirty state unknown and unasserted", cleanLedger(head), func() liveIdentity {
+			live := cleanTree(head)
+			live.Dirty = nil
+			return live
+		}(), "", false, "not observable"},
 	} {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
-			err := requireCandidateIdentity(testCase.summary, testCase.head, testCase.known)
+			err := requireCandidateIdentity(testCase.summary, testCase.live, testCase.explicit)
 			if testCase.wantOK {
 				if err != nil {
 					t.Fatalf("a matching candidate was refused: %v", err)
@@ -222,12 +347,14 @@ func TestToolchainTagFixtureAndPlatformMismatchesAreRefused(t *testing.T) {
 	}
 	provenance := &budgetProvenance{Kind: provenanceReference, LedgerSHA256: strings.Repeat("e", 64)}
 	manifest := budgetFile{SchemaVersion: budgetSchemaVersion, Baseline: baseline, Provenance: provenance}
-	summary := ledgerSummary{
-		SHA: head, GoVersion: "go1.27.4", GOOS: "windows", GOARCH: "amd64",
-		Tags: []string{"with_quic", "with_purego"}, FixtureVersion: fixtureVersion,
-		Runs: []string{"candidate-run"},
-	}
-	if _, err := verifyGateInputsAgainst(manifest, summary, false, head, true); err != nil {
+	summary := cleanLedger(head)
+	summary.GoVersion = "go1.27.4"
+	summary.GOOS = "windows"
+	summary.GOARCH = "amd64"
+	summary.Tags = []string{"with_quic", "with_purego"}
+	summary.FixtureVersion = fixtureVersion
+	summary.Runs = []string{"candidate-run"}
+	if _, err := verifyGateInputsAgainst(manifest, summary, false, cleanTree(head), ""); err != nil {
 		t.Fatalf("a compatible budget was refused: %v", err)
 	}
 
@@ -235,7 +362,7 @@ func TestToolchainTagFixtureAndPlatformMismatchesAreRefused(t *testing.T) {
 	// case and must not be an error; the warning list says why when they are equal.
 	equal := manifest
 	equal.Baseline.SourceSHA = head
-	verification, err := verifyGateInputsAgainst(equal, summary, false, head, true)
+	verification, err := verifyGateInputsAgainst(equal, summary, false, cleanTree(head), "")
 	if err != nil {
 		t.Fatalf("a budget captured at the candidate's revision was refused outright: %v", err)
 	}
@@ -275,7 +402,7 @@ func TestToolchainTagFixtureAndPlatformMismatchesAreRefused(t *testing.T) {
 			brokenBudget.Provenance = &provenanceCopy
 			brokenBudget.Provenance.FixtureDigests = nil
 			testCase.mutate(&brokenBudget, &brokenSummary)
-			_, err := verifyGateInputsAgainst(brokenBudget, brokenSummary, false, head, true)
+			_, err := verifyGateInputsAgainst(brokenBudget, brokenSummary, false, cleanTree(head), "")
 			if err == nil {
 				t.Fatalf("a %s mismatch was compared instead of refused", testCase.name)
 			}
@@ -296,10 +423,13 @@ func TestToolchainTagFixtureAndPlatformMismatchesAreRefused(t *testing.T) {
 func TestBudgetDerivedFromTheCandidateCannotCertifyIt(t *testing.T) {
 	head := strings.Repeat("c", 40)
 	runs := []string{"run-1", "run-2"}
-	summary := ledgerSummary{
-		SHA: head, GoVersion: "go1.27.4", GOOS: "windows", GOARCH: "amd64",
-		Tags: []string{"with_purego"}, FixtureVersion: fixtureVersion, Runs: runs,
-	}
+	summary := cleanLedger(head)
+	summary.GoVersion = "go1.27.4"
+	summary.GOOS = "windows"
+	summary.GOARCH = "amd64"
+	summary.Tags = []string{"with_purego"}
+	summary.FixtureVersion = fixtureVersion
+	summary.Runs = runs
 	baseline := budgetBaseline{
 		SourceSHA: head, GOOS: "windows", GOARCH: "amd64", GoVersion: "go1.27.4",
 		Tags: []string{"with_purego"}, FixtureVersion: fixtureVersion, Runs: runs,
@@ -308,12 +438,12 @@ func TestBudgetDerivedFromTheCandidateCannotCertifyIt(t *testing.T) {
 		Baseline:   baseline,
 		Provenance: &budgetProvenance{Kind: provenanceDerived, LedgerSHA256: strings.Repeat("f", 64)},
 	}
-	if _, err := verifyGateInputsAgainst(derived, summary, false, head, true); err == nil {
+	if _, err := verifyGateInputsAgainst(derived, summary, false, cleanTree(head), ""); err == nil {
 		t.Fatal("a budget derived from a ledger (provenance=derived) certified a candidate")
 	} else if !strings.Contains(err.Error(), "derived") {
 		t.Fatalf("the refusal does not explain that the budget is derived: %v", err)
 	}
-	if _, err := verifyGateInputsAgainst(derived, summary, true, head, true); err == nil {
+	if _, err := verifyGateInputsAgainst(derived, summary, true, cleanTree(head), ""); err == nil {
 		t.Fatal("-self-check let a derived budget through; it exists for the reference ledger only")
 	}
 
@@ -323,13 +453,13 @@ func TestBudgetDerivedFromTheCandidateCannotCertifyIt(t *testing.T) {
 		Baseline:   baseline,
 		Provenance: &budgetProvenance{Kind: provenanceReference, LedgerSHA256: strings.Repeat("f", 64)},
 	}
-	if _, err := verifyGateInputsAgainst(circular, summary, false, head, true); err == nil {
+	if _, err := verifyGateInputsAgainst(circular, summary, false, cleanTree(head), ""); err == nil {
 		t.Fatal("a reference budget derived from the candidate's own ledger certified it")
 	} else if !strings.Contains(err.Error(), "circular") {
 		t.Fatalf("the refusal does not explain the circularity: %v", err)
 	}
 	// The self-check is the explicit way to verify the archived reference against its own budget.
-	if _, err := verifyGateInputsAgainst(circular, summary, true, head, true); err != nil {
+	if _, err := verifyGateInputsAgainst(circular, summary, true, cleanTree(head), ""); err != nil {
 		t.Fatalf("the explicit self-check of the reference ledger was refused: %v", err)
 	}
 
@@ -339,7 +469,7 @@ func TestBudgetDerivedFromTheCandidateCannotCertifyIt(t *testing.T) {
 		Provenance: &budgetProvenance{Kind: provenanceReference, LedgerSHA256: strings.Repeat("a", 64)},
 	}
 	genuine.Baseline.Runs = []string{"older-1", "older-2"}
-	if _, err := verifyGateInputsAgainst(genuine, summary, false, head, true); err != nil {
+	if _, err := verifyGateInputsAgainst(genuine, summary, false, cleanTree(head), ""); err != nil {
 		t.Fatalf("a reference budget from a different session was refused: %v", err)
 	}
 }
@@ -457,6 +587,39 @@ func TestWriteBudgetWithoutAManifestMintsOnlyADerivedBudget(t *testing.T) {
 	}
 	if _, err = readManifest(path); err == nil {
 		t.Fatal("a manifest that declares kind=derived was accepted as a reference")
+	}
+}
+
+// TestSummariseLedgerReadsTheSourceBlock is the reader half of the identity check.
+//
+// The gate decides on what the JSONL says, so the source block has to survive the decode: the
+// revision, the dirty flag, HOW the revision was determined, and the working-tree evidence. A field
+// that the writer emits and the reader drops is a check that silently cannot run.
+func TestSummariseLedgerReadsTheSourceBlock(t *testing.T) {
+	summary, err := summariseLedger(syntheticGateLedger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.SHA != testLedgerSHA {
+		t.Fatalf("source sha = %q", summary.SHA)
+	}
+	if summary.DetectedBy != detectedByGit {
+		t.Fatalf("detected_by = %q, want %q", summary.DetectedBy, detectedByGit)
+	}
+	if summary.GitSHA != testLedgerSHA {
+		t.Fatalf("git_sha = %q", summary.GitSHA)
+	}
+	if summary.GitDirty == nil || *summary.GitDirty {
+		t.Fatalf("git_dirty = %v, want a recorded false", summary.GitDirty)
+	}
+	if summary.Dirty {
+		t.Fatal("a clean ledger was summarised as dirty")
+	}
+	if len(summary.DirtyPaths) != 0 {
+		t.Fatalf("a clean ledger carries changed paths: %v", summary.DirtyPaths)
+	}
+	if summary.BuildSHA != testLedgerSHA {
+		t.Fatalf("build_sha = %q", summary.BuildSHA)
 	}
 }
 
