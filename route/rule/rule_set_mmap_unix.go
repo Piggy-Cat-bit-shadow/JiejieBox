@@ -4,6 +4,7 @@ package rule
 
 import (
 	"context"
+	"io"
 	"os"
 
 	"github.com/sagernet/sing-box/common/srs"
@@ -28,6 +29,12 @@ func writeRuleSetMmapFile(ctx context.Context, logger logger.Logger, tag string,
 		_ = file.Close()
 		_ = filemanager.Remove(ctx, file.Name())
 		logger.Warn(E.Cause(err, "mmap rule-set ", tag))
+		return nil, "", 0, false
+	}
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
+		_ = filemanager.Remove(ctx, file.Name())
+		logger.Warn(E.Cause(err, "rewind rule-set mmap file ", tag))
 		return nil, "", 0, false
 	}
 	digest, size, err := hashOpenFile(file)
