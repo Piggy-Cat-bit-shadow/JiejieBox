@@ -44,6 +44,7 @@ import (
 	protocolgroup "github.com/sagernet/sing-box/protocol/group"
 	protocolhttp "github.com/sagernet/sing-box/protocol/http"
 	protocolsocks "github.com/sagernet/sing-box/protocol/socks"
+	protocoltrojan "github.com/sagernet/sing-box/protocol/trojan"
 	providerlocal "github.com/sagernet/sing-box/provider/local"
 	providerremote "github.com/sagernet/sing-box/provider/remote"
 	"github.com/sagernet/sing/common/json/badoption"
@@ -123,6 +124,8 @@ func crossSystemContext(t *testing.T, directory string, recorder *crossSystemRec
 	protocoldirect.RegisterOutbound(outboundRegistry)
 	protocolblock.RegisterOutbound(outboundRegistry)
 	protocolsocks.RegisterOutbound(outboundRegistry)
+	protocolhttp.RegisterOutbound(outboundRegistry)
+	protocoltrojan.RegisterOutbound(outboundRegistry)
 	protocolgroup.RegisterSelector(outboundRegistry)
 	protocolgroup.RegisterURLTest(outboundRegistry)
 	if recorder != nil {

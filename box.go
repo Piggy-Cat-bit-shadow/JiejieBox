@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/adapter/outbound/catalog"
 	boxProvider "github.com/sagernet/sing-box/adapter/provider"
 	boxService "github.com/sagernet/sing-box/adapter/service"
 	"github.com/sagernet/sing-box/common/certificate"
@@ -121,6 +122,9 @@ type Box struct {
 	endpoint            *endpoint.Manager
 	inbound             *inbound.Manager
 	outbound            *outbound.Manager
+	// catalogStore is this Box's shared rebuild-record space. The outbound manager's deferred
+	// constructor reads it; the Box owns its lifetime.
+	catalogStore        *catalog.Store
 	provider            *boxProvider.Manager
 	service             *boxService.Manager
 	certificateProvider *boxCertificate.Manager
@@ -549,13 +553,14 @@ func New(options Options) (*Box, error) {
 	endpointManager := endpoint.NewManager(endpointRegistry)
 	inboundManager := inbound.NewManager(inboundRegistry, endpointManager)
 	outboundManager := outbound.NewManager(outboundRegistry, endpointManager, routeOptions.Final)
+	catalogStore := catalog.NewStore()
 	// The reachable-leaf dry run reports non-fatal capability findings as warnings, and a warning
 	// must go through the normal log interface so the configured level applies to it.
 	outboundManager.SetLogger(logFactory.NewLogger("outbound/manager"))
 	// The deferred-construction seam for the node kinds that can honour it, with the manager's own
 	// bounded reclaim policy. Installed before any provider exists, because a provider builds its
 	// outbounds through this manager. See box_deferred.go for why it is on rather than switched.
-	withDeferredOutbounds(outboundManager)
+	withDeferredOutbounds(outboundManager, catalogStore)
 	// The reachable-leaf dry run needs three facts the outbound objects cannot report themselves:
 	// which tags DECLARED destination_dns_ownership, how a domain resolver is derived for one of
 	// them, and whether the network layer configures a resolver that applies when an outbound
@@ -1074,6 +1079,7 @@ func New(options Options) (*Box, error) {
 		endpoint:            endpointManager,
 		inbound:             inboundManager,
 		outbound:            outboundManager,
+		catalogStore:        catalogStore,
 		provider:            providerManager,
 		dnsTransport:        dnsTransportManager,
 		service:             serviceManager,
@@ -1405,6 +1411,12 @@ func (s *Box) close() error {
 	// ordering the old hand-written close list was trying to express.
 	scopeStarted := time.Now()
 	closeErr := s.scope.Close()
+	// Descriptors were closed by the scope drain; a record whose last reference is gone is
+	// unlinked now. Closing after the drain (not before) keeps a late build readable during the
+	// close window, as the store contract requires.
+	if s.catalogStore != nil {
+		s.catalogStore.Close()
+	}
 	// One debug line per close, with the phase that was slow. The scope drain's own worst stage is
 	// named by the bounded watchdog inside it when it wedges; when it merely takes a while, its
 	// slow-cleanup lines carry the detail.
