@@ -24,6 +24,25 @@
 // next to each record is only a fast reject and is always confirmed by a byte comparison, so a
 // collision can never make two different configurations share a record.
 //
+// Two narrower rules keep the domain exact where Go's own comparison is not a deep walk:
+//
+//   - A NaN is equal to nothing, including itself, and a NaN in either component makes the whole
+//     complex value unequal to everything. Non-finite floats therefore use their own kind marker and
+//     an explicit flag byte instead of the finite float data space, and a NaN's unique counter lives
+//     inside that dedicated space. A finite float can never reproduce a non-finite record from the
+//     counter's bits.
+//   - The type key of a channel includes its direction, because `chan int`, `<-chan int` and
+//     `chan<- int` are different Go types and DeepEqual is false between nil values of different
+//     directions. Two non-nil channels of the same type still never compare equal: a record outlives
+//     the channel it came from, so identity cannot be proven (the safe direction is a rebuild).
+//
+// # Why the budget is charged, not measured
+//
+// One cumulative budget bounds the whole encoding. Every byte is charged before it is copied into any
+// buffer, and a map's key/value sorting scratch shares that same budget, so individually-in-budget
+// pieces cannot assemble into an over-budget record. Measuring the finished buffer instead would run
+// after the allocation the limit exists to prevent.
+//
 // # Why not re-marshal JSON
 //
 // JSON is not the identity of an options value. It drops `nil` versus empty distinctions, it
@@ -54,10 +73,13 @@ const (
 	// maxDepth bounds recursion. The option tree is shallow; a value deeper than this is treated as
 	// unsupported (the provider rebuilds the node, which is the safe direction).
 	maxDepth = 512
-	// maxRecordBytes bounds one record. Real nodes are kilobytes; the cap only exists so a hostile
-	// or corrupt document cannot make change detection allocate without bound. A value above the
-	// cap is not an error the provider surfaces at start: it becomes an Opaque record, which can
-	// never compare equal, so the node is rebuilt on every refresh but still works.
+	// maxRecordBytes bounds one record: the output length and the peak of the encoding. Every write
+	// is charged against one cumulative budget before the bytes are copied (scratch included), so no
+	// intermediate buffer and no assembled record can pass the cap. Real nodes are kilobytes; the cap
+	// only exists so a hostile or corrupt document cannot make change detection allocate without
+	// bound. A value above the cap is not an error the provider surfaces at start: it becomes an
+	// Opaque record, which can never compare equal, so the node is rebuilt on every refresh but still
+	// works.
 	maxRecordBytes = 16 << 20
 )
 
@@ -91,15 +113,15 @@ func Encode(value any) (payload Payload, err error) {
 			err = fmt.Errorf("%w: encoder panic: %v", ErrUnsupported, recovered)
 		}
 	}()
-	encoder := encoder{visiting: make(map[visit]bool)}
-	encoder.buf = append(encoder.buf, formatVersion)
-	// The root type is written once. Every nested type is implied by the root type and the
-	// interface values the encoding meets, so repeating a type key per struct would only inflate
-	// the record.
-	encoder.buf = appendString(encoder.buf, typeKey(reflect.TypeOf(value)))
-	encoder.value(reflect.ValueOf(value), 0)
+	encoder := newEncoder()
+	encoder.encodeRoot(value)
 	if encoder.err != nil {
 		return Payload{}, encoder.err
+	}
+	// The per-write budget already guarantees this; the check is a cheap second line of defence
+	// against an accounting mistake in a future write path.
+	if encoder.spent > maxRecordBytes || len(encoder.buf) > maxRecordBytes {
+		return Payload{}, fmt.Errorf("%w: record exceeds %d bytes", ErrUnsupported, maxRecordBytes)
 	}
 	payload = Payload{Bytes: encoder.buf}
 	payload.Hash = Hash(payload.Bytes)
@@ -167,7 +189,22 @@ type visit struct {
 type encoder struct {
 	buf      []byte
 	err      error
+	limit    int
+	spent    int
 	visiting map[visit]bool
+}
+
+func newEncoder() *encoder {
+	return &encoder{limit: maxRecordBytes, visiting: make(map[visit]bool)}
+}
+
+// encodeRoot writes the version, the root type key and the value. The root type is written once.
+// Every nested type is implied by the root type and the interface values the encoding meets, so
+// repeating a type key per struct would only inflate the record.
+func (e *encoder) encodeRoot(value any) {
+	e.writeByte(formatVersion)
+	e.writeLengthPrefixed(typeKey(reflect.TypeOf(value)))
+	e.value(reflect.ValueOf(value), 0)
 }
 
 func (e *encoder) fail(err error) {
@@ -176,105 +213,178 @@ func (e *encoder) fail(err error) {
 	}
 }
 
+// reserve charges n bytes against the record budget. It is called before every allocation and copy,
+// so the budget bounds the peak of the encoding rather than only the finished length: a write that
+// would push the record past the limit fails before its bytes are materialised.
+func (e *encoder) reserve(n int) bool {
+	if e.err != nil {
+		return false
+	}
+	if n < 0 || n > e.limit-e.spent {
+		e.fail(fmt.Errorf("%w: record exceeds %d bytes", ErrUnsupported, e.limit))
+		return false
+	}
+	e.spent += n
+	return true
+}
+
+// grow makes room for n more bytes without letting a buffer's capacity pass the record limit, so a
+// large write cannot allocate far beyond the budget it was charged for.
+func (e *encoder) grow(n int) {
+	need := len(e.buf) + n
+	if cap(e.buf) >= need {
+		return
+	}
+	newCapacity := cap(e.buf) * 2
+	if newCapacity < need {
+		newCapacity = need
+	}
+	if newCapacity > e.limit {
+		newCapacity = need
+	}
+	grown := make([]byte, len(e.buf), newCapacity)
+	copy(grown, e.buf)
+	e.buf = grown
+}
+
+func (e *encoder) writeByte(value byte) {
+	if !e.reserve(1) {
+		return
+	}
+	e.grow(1)
+	e.buf = append(e.buf, value)
+}
+
+// writeBytes copies value into the current buffer. It is for data that has not been charged yet.
+func (e *encoder) writeBytes(value []byte) {
+	if !e.reserve(len(value)) {
+		return
+	}
+	e.grow(len(value))
+	e.buf = append(e.buf, value...)
+}
+
+func (e *encoder) writeZeros(count int) {
+	if !e.reserve(count) {
+		return
+	}
+	e.grow(count)
+	e.buf = append(e.buf, make([]byte, count)...)
+}
+
+func (e *encoder) writeUvarint(value uint64) {
+	var scratch [binary.MaxVarintLen64]byte
+	e.writeBytes(scratch[:binary.PutUvarint(scratch[:], value)])
+}
+
+func (e *encoder) writeVarint(value int64) {
+	var scratch [binary.MaxVarintLen64]byte
+	e.writeBytes(scratch[:binary.PutVarint(scratch[:], value)])
+}
+
+func (e *encoder) writeUint64(value uint64) {
+	var scratch [8]byte
+	binary.LittleEndian.PutUint64(scratch[:], value)
+	e.writeBytes(scratch[:])
+}
+
+func (e *encoder) writeString(value string) {
+	if !e.reserve(len(value)) {
+		return
+	}
+	e.grow(len(value))
+	e.buf = append(e.buf, value...)
+}
+
+// writeLengthPrefixed writes a uvarint byte length followed by the string's bytes.
+func (e *encoder) writeLengthPrefixed(value string) {
+	e.writeUvarint(uint64(len(value)))
+	e.writeString(value)
+}
+
+// writeCharged appends bytes that were already charged by the scratch buffer that produced them.
+// The transfer is deliberately not charged again: every byte is charged exactly once, so `spent`
+// equals the finished record length, and a map's key/value scratch shares the one record budget
+// instead of passing a local check each and then assembling into an over-budget record.
+func (e *encoder) writeCharged(value []byte) {
+	if e.err != nil {
+		return
+	}
+	e.grow(len(value))
+	e.buf = append(e.buf, value...)
+}
+
 func (e *encoder) value(v reflect.Value, depth int) {
 	if e.err != nil {
 		return
 	}
 	if !v.IsValid() {
-		e.buf = append(e.buf, kindInvalid)
+		e.writeByte(kindInvalid)
 		return
 	}
 	if depth > maxDepth {
 		e.fail(fmt.Errorf("%w: nesting deeper than %d", ErrUnsupported, maxDepth))
 		return
 	}
-	if len(e.buf) > maxRecordBytes {
-		e.fail(fmt.Errorf("%w: record exceeds %d bytes", ErrUnsupported, maxRecordBytes))
-		return
-	}
 	switch v.Kind() {
 	case reflect.Bool:
-		e.buf = append(e.buf, kindBool)
+		e.writeByte(kindBool)
 		if v.Bool() {
-			e.buf = append(e.buf, 1)
+			e.writeByte(1)
 		} else {
-			e.buf = append(e.buf, 0)
+			e.writeByte(0)
 		}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		// `reflect.DeepEqual` compares integers by value. The width only matters for the value it
 		// can hold, so one zig-zag encoding covers every width.
-		e.buf = append(e.buf, kindInt)
-		e.buf = binary.AppendVarint(e.buf, v.Int())
+		e.writeByte(kindInt)
+		e.writeVarint(v.Int())
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		e.buf = append(e.buf, kindUint)
-		e.buf = binary.AppendUvarint(e.buf, v.Uint())
+		e.writeByte(kindUint)
+		e.writeUvarint(v.Uint())
 	case reflect.Float32, reflect.Float64:
-		// `==` on floats says -0 == +0 and NaN != NaN. The encoding must agree: normalise -0, and
-		// give every NaN its own token so it can never compare equal to anything, itself included.
-		e.buf = append(e.buf, kindFloat)
-		value := v.Float()
-		if math.IsNaN(value) {
-			e.buf = binary.LittleEndian.AppendUint64(e.buf, nextUniqueToken())
-			return
-		}
-		if value == 0 {
-			value = 0
-		}
-		e.buf = binary.LittleEndian.AppendUint64(e.buf, math.Float64bits(value))
+		e.floatValue(v.Float())
 	case reflect.Complex64, reflect.Complex128:
-		e.buf = append(e.buf, kindComplex)
+		// `==` on a complex value compares both components as floats, so each component goes through
+		// the same float space - including the non-finite space for a NaN or infinity component.
+		e.writeByte(kindComplex)
 		value := v.Complex()
-		realPart, imagPart := real(value), imag(value)
-		if math.IsNaN(realPart) || math.IsNaN(imagPart) {
-			e.buf = binary.LittleEndian.AppendUint64(e.buf, nextUniqueToken())
-			return
-		}
-		if realPart == 0 {
-			realPart = 0
-		}
-		if imagPart == 0 {
-			imagPart = 0
-		}
-		e.buf = binary.LittleEndian.AppendUint64(e.buf, math.Float64bits(realPart))
-		e.buf = binary.LittleEndian.AppendUint64(e.buf, math.Float64bits(imagPart))
+		e.floatValue(real(value))
+		e.floatValue(imag(value))
 	case reflect.String:
 		encodedString := v.String()
-		if len(encodedString) > maxRecordBytes-len(e.buf) {
-			e.fail(fmt.Errorf("%w: record exceeds %d bytes", ErrUnsupported, maxRecordBytes))
-			return
-		}
-		e.buf = append(e.buf, kindString)
-		e.buf = binary.AppendUvarint(e.buf, uint64(len(encodedString)))
-		e.buf = append(e.buf, encodedString...)
+		e.writeByte(kindString)
+		e.writeUvarint(uint64(len(encodedString)))
+		e.writeString(encodedString)
 	case reflect.Pointer:
 		if v.IsNil() {
-			e.buf = append(e.buf, kindNilPointer)
+			e.writeByte(kindNilPointer)
 			return
 		}
 		if e.enter(v, depth) {
 			return
 		}
-		e.buf = append(e.buf, kindPointer)
+		e.writeByte(kindPointer)
 		e.value(v.Elem(), depth+1)
 		e.leave(v)
 	case reflect.Interface:
 		if v.IsNil() {
-			e.buf = append(e.buf, kindNilInterface)
+			e.writeByte(kindNilInterface)
 			return
 		}
-		e.buf = append(e.buf, kindInterface)
-		e.buf = appendString(e.buf, typeKey(v.Elem().Type()))
+		e.writeByte(kindInterface)
+		e.writeLengthPrefixed(typeKey(v.Elem().Type()))
 		e.value(v.Elem(), depth+1)
 	case reflect.Struct:
 		e.structValue(v, depth)
 	case reflect.Slice:
 		if v.IsNil() {
-			e.buf = append(e.buf, kindNilSlice)
+			e.writeByte(kindNilSlice)
 			return
 		}
 		// An empty non-nil slice is a different value from a nil slice under DeepEqual, so the nil
 		// case above and this branch must never collapse into each other.
-		if v.Len() > maxRecordBytes {
+		if v.Len() > e.limit {
 			// Every element occupies at least one marker byte, except zero-sized elements, which
 			// would otherwise let a huge length spin the walker without growing the record.
 			e.fail(fmt.Errorf("%w: slice length %d exceeds the record budget", ErrUnsupported, v.Len()))
@@ -283,8 +393,8 @@ func (e *encoder) value(v reflect.Value, depth int) {
 		if v.Len() > 0 && e.enter(v, depth) {
 			return
 		}
-		e.buf = append(e.buf, kindSlice)
-		e.buf = binary.AppendUvarint(e.buf, uint64(v.Len()))
+		e.writeByte(kindSlice)
+		e.writeUvarint(uint64(v.Len()))
 		for i := 0; i < v.Len(); i++ {
 			e.value(v.Index(i), depth+1)
 		}
@@ -292,16 +402,16 @@ func (e *encoder) value(v reflect.Value, depth int) {
 			e.leave(v)
 		}
 	case reflect.Array:
-		e.buf = append(e.buf, kindArray)
+		e.writeByte(kindArray)
 		for i := 0; i < v.Len(); i++ {
 			e.value(v.Index(i), depth+1)
 		}
 	case reflect.Map:
 		if v.IsNil() {
-			e.buf = append(e.buf, kindNilMap)
+			e.writeByte(kindNilMap)
 			return
 		}
-		if v.Len() > maxRecordBytes {
+		if v.Len() > e.limit {
 			e.fail(fmt.Errorf("%w: map length %d exceeds the record budget", ErrUnsupported, v.Len()))
 			return
 		}
@@ -314,32 +424,64 @@ func (e *encoder) value(v reflect.Value, depth int) {
 		// `reflect.DeepEqual` says func values are only equal when both are nil. A non-nil func is
 		// therefore never equal to anything, including itself.
 		if v.IsNil() {
-			e.buf = append(e.buf, kindNilFunc)
+			e.writeByte(kindNilFunc)
 		} else {
-			e.buf = append(e.buf, kindFunc)
-			e.buf = binary.LittleEndian.AppendUint64(e.buf, nextUniqueToken())
+			e.writeByte(kindFunc)
+			e.writeUint64(nextUniqueToken())
 		}
 	case reflect.Chan:
 		// DeepEqual compares channels with ==, but a stored record outlives the channel it came
 		// from, so an address could be reused after GC and produce a false "equal". Unique tokens
-		// make such a value always rebuild instead - conservative, never stale.
-		e.buf = append(e.buf, kindUnique)
+		// make such a value always rebuild instead - conservative, never stale. The channel's type
+		// (including direction) is part of the enclosing type key.
+		e.writeByte(kindUnique)
 		if v.IsNil() {
-			e.buf = append(e.buf, 0)
+			e.writeByte(0)
 		} else {
-			e.buf = append(e.buf, 1)
-			e.buf = binary.LittleEndian.AppendUint64(e.buf, nextUniqueToken())
+			e.writeByte(1)
+			e.writeUint64(nextUniqueToken())
 		}
 	case reflect.UnsafePointer:
-		e.buf = append(e.buf, kindUnique)
+		e.writeByte(kindUnique)
 		if v.IsNil() {
-			e.buf = append(e.buf, 0)
+			e.writeByte(0)
 		} else {
-			e.buf = append(e.buf, 1)
-			e.buf = binary.LittleEndian.AppendUint64(e.buf, nextUniqueToken())
+			e.writeByte(1)
+			e.writeUint64(nextUniqueToken())
 		}
 	default:
 		e.fail(fmt.Errorf("%w: kind %s", ErrUnsupported, v.Kind()))
+	}
+}
+
+// floatValue encodes one float component. A finite value keeps the compact `kindFloat` + IEEE bit
+// pattern form; the two infinities and NaN move to the dedicated non-finite kind.
+//
+// The separation is the fix for the review's F3 counterexample: the old encoding wrote a NaN's
+// unique counter into the same eight bytes a finite float's bit pattern occupies, so a finite float
+// whose bits equalled the counter produced a byte-identical record. A NaN now carries its counter
+// inside `kindNonFiniteFloat`, a space no finite value ever writes.
+func (e *encoder) floatValue(value float64) {
+	switch {
+	case math.IsNaN(value):
+		// `==` says NaN is equal to nothing, including itself, so every NaN record is unique.
+		e.writeByte(kindNonFiniteFloat)
+		e.writeByte(nonFiniteNaN)
+		e.writeUint64(nextUniqueToken())
+	case math.IsInf(value, 1):
+		// `==` says +Inf equals +Inf and nothing else, so the flag alone is the identity.
+		e.writeByte(kindNonFiniteFloat)
+		e.writeByte(nonFinitePositiveInfinity)
+	case math.IsInf(value, -1):
+		e.writeByte(kindNonFiniteFloat)
+		e.writeByte(nonFiniteNegativeInfinity)
+	default:
+		// `==` on floats says -0 == +0, so both zeros must encode to the same bytes.
+		if value == 0 {
+			value = 0
+		}
+		e.writeByte(kindFloat)
+		e.writeUint64(math.Float64bits(value))
 	}
 }
 
@@ -353,11 +495,14 @@ func (e *encoder) value(v reflect.Value, depth int) {
 // all of them are zero for any one node.
 func (e *encoder) structValue(v reflect.Value, depth int) {
 	fieldCount := v.NumField()
-	e.buf = append(e.buf, kindStruct)
-	e.buf = binary.AppendUvarint(e.buf, uint64(fieldCount))
-	bitmapStart := len(e.buf)
+	e.writeByte(kindStruct)
+	e.writeUvarint(uint64(fieldCount))
 	bitmapLength := (fieldCount + 7) / 8
-	e.buf = append(e.buf, make([]byte, bitmapLength)...)
+	bitmapStart := len(e.buf)
+	e.writeZeros(bitmapLength)
+	if e.err != nil {
+		return
+	}
 	for i := 0; i < fieldCount; i++ {
 		field := v.Field(i)
 		// Field(i) is readable for unexported fields for every operation used here (IsZero and the
@@ -367,12 +512,17 @@ func (e *encoder) structValue(v reflect.Value, depth int) {
 		}
 		e.buf[bitmapStart+i/8] |= 1 << (i % 8)
 		e.value(field, depth+1)
+		if e.err != nil {
+			return
+		}
 	}
 }
 
 // mapValue encodes map entries sorted by canonical key bytes, because map iteration order is
 // random while DeepEqual's answer is not. Entries are encoded into scratch buffers so they can be
-// sorted before being appended.
+// sorted before being appended; the scratch bytes are charged against the same record budget as
+// every other byte, so the assembled record cannot outgrow the limit even when each entry fits on
+// its own.
 //
 // # Why map keys are restricted
 //
@@ -409,16 +559,21 @@ func (e *encoder) mapValue(v reflect.Value, depth int) {
 	sort.Slice(entries, func(i, j int) bool {
 		return string(entries[i].key) < string(entries[j].key)
 	})
-	e.buf = append(e.buf, kindMap)
-	e.buf = binary.AppendUvarint(e.buf, uint64(len(entries)))
+	e.writeByte(kindMap)
+	e.writeUvarint(uint64(len(entries)))
 	for _, item := range entries {
-		e.buf = binary.AppendUvarint(e.buf, uint64(len(item.key)))
-		e.buf = append(e.buf, item.key...)
-		e.buf = append(e.buf, item.value...)
+		e.writeUvarint(uint64(len(item.key)))
+		e.writeCharged(item.key)
+		e.writeCharged(item.value)
+		if e.err != nil {
+			return
+		}
 	}
 }
 
-// scratch encodes v into a fresh buffer, sharing the cycle-detection state with the main encoder.
+// scratch encodes v into a fresh buffer, sharing the cycle-detection state and the cumulative record
+// budget with the main encoder. The budget is deliberately not swapped: bytes a scratch writes are
+// charged as they are produced, which is what makes map keys and values share one limit.
 func (e *encoder) scratch(v reflect.Value, depth int) []byte {
 	saved := e.buf
 	e.buf = nil
@@ -445,11 +600,6 @@ func (e *encoder) enter(v reflect.Value, depth int) bool {
 
 func (e *encoder) leave(v reflect.Value) {
 	delete(e.visiting, visit{typ: v.Type(), ptr: v.Pointer()})
-}
-
-func appendString(buf []byte, value string) []byte {
-	buf = binary.AppendUvarint(buf, uint64(len(value)))
-	return append(buf, value...)
 }
 
 var uniqueToken atomic.Uint64
@@ -481,6 +631,18 @@ const (
 	kindNilFunc
 	kindFunc
 	kindUnique
+	// kindNonFiniteFloat marks a NaN or an infinity. It is its own kind so a non-finite value can
+	// never share the byte space of a finite float's IEEE bit pattern; the next byte is the
+	// non-finite flag below, and a NaN adds one unique counter inside this dedicated space.
+	kindNonFiniteFloat
+)
+
+// Non-finite float flags, written immediately after kindNonFiniteFloat. NaN is the zero flag because
+// it is the only non-finite value that needs the extra unique counter.
+const (
+	nonFiniteNaN byte = iota
+	nonFinitePositiveInfinity
+	nonFiniteNegativeInfinity
 )
 
 // canonicalMapKeyType reports whether Go `==` on this key type is injective on the canonical
@@ -520,6 +682,10 @@ func canonicalMapKeyType(t reflect.Type) bool {
 // embeddedness are DIFFERENT types (DeepEqual on interfaces holding them is false, and they are not
 // interchangeable map keys). Every part is length-prefixed so a field name, tag or nested type key
 // cannot splice into another type's key.
+//
+// A channel's direction is part of its type identity: `chan int`, `<-chan int` and `chan<- int` are
+// three different types, so nil values of different directions are not deeply equal. Leaving the
+// direction out (the review's F3 counterexample) made them share a record.
 func typeKey(t reflect.Type) string {
 	if t == nil {
 		return ""
@@ -537,7 +703,14 @@ func typeKey(t reflect.Type) string {
 	case reflect.Map:
 		return "map[" + typeKey(t.Key()) + "]" + typeKey(t.Elem())
 	case reflect.Chan:
-		return "chan " + typeKey(t.Elem())
+		switch t.ChanDir() {
+		case reflect.RecvDir:
+			return "<-chan " + typeKey(t.Elem())
+		case reflect.SendDir:
+			return "chan<- " + typeKey(t.Elem())
+		default:
+			return "chan " + typeKey(t.Elem())
+		}
 	case reflect.Struct:
 		var builder strings.Builder
 		builder.WriteString("struct{")
