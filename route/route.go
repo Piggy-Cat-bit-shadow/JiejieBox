@@ -1642,13 +1642,29 @@ func (r *Router) actionSniff(
 		if len(streamSniffers) == 0 {
 			streamSniffers = sniff.DefaultStreamSniffers
 		}
-		sniffBuffer := buf.NewPacket()
-		err := sniff.PeekStream(
+		// A small starting buffer that grows on demand, instead of buf.NewPacket() up front.
+		//
+		// The old line allocated the whole packet buffer before the first byte could arrive, so a flow
+		// that never sent one - a server-first peer, a slow client, a stalled handshake - held
+		// buf.UDPBufferSize (16 KiB desktop, 8 KiB with_low_memory) for the whole sniff and released it
+		// unused. The CEILING is unchanged: PeekStreamGrow grows only up to buf.UDPBufferSize, so a
+		// payload that fills it ends the sniff with the same io.ErrShortBuffer/aggregate path as before,
+		// and every byte read is still handed to the connection in order.
+		//
+		// The returned buffer may be a different object, because sing's Buffer is fixed-capacity and a
+		// growth replaces it (common/sniff/stream_buffer.go). It is therefore reassigned here: hanging
+		// on to the argument would hand the connection the small array and drop the bytes read after the
+		// growth. Ownership is otherwise unchanged - on success, failure or a read error the same single
+		// buffer is either handed off below or released when empty.
+		sniffBuffer := sniff.NewStreamSniffBuffer()
+		var err error
+		sniffBuffer, err = sniff.PeekStreamGrow(
 			ctx,
 			metadata,
 			inputConn,
 			inputBuffers,
 			sniffBuffer,
+			buf.UDPBufferSize,
 			action.Timeout,
 			streamSniffers...,
 		)

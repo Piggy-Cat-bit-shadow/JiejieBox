@@ -122,13 +122,42 @@ func (r *payloadReader) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
+// PeekStream sniffs the newest bytes of a stream into buffer and returns the sniffers' verdict.
+//
+// It is the fixed-ceiling form: the capacity of buffer is the sniff's byte ceiling, exactly as it
+// has always been, and a payload that fills it ends the peek. Use PeekStreamGrow when the buffer
+// starts smaller than the ceiling and may grow on demand.
 func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.Conn, buffers []*buf.Buffer, buffer *buf.Buffer, timeout time.Duration, sniffers ...StreamSniffer) error {
+	_, err := peekStream(ctx, metadata, conn, buffers, buffer, 0, timeout, sniffers...)
+	return err
+}
+
+// PeekStreamGrow is PeekStream with an on-demand-growing buffer, and it returns the OWNER.
+//
+// buffer is the initial (small) buffer. growLimit is the ceiling: growth stops there, and a payload
+// that fills the ceiling ends the peek exactly as the fixed form always did (io.ErrShortBuffer from
+// the next read, the last round's aggregate returned, the bytes already read handed over). A
+// growLimit that is not above buffer's capacity disables growth and makes this identical to
+// PeekStream.
+//
+// The returned *buf.Buffer may be a DIFFERENT object from the one passed in, because sing's Buffer
+// is fixed-capacity and a growth replaces it (see stream_buffer.go). The caller therefore owns what
+// this returns, not what it passed: route/route.go hands the returned buffer to the connection, and
+// using the argument instead would drop every byte read after a growth. The returned buffer is never
+// nil when buffer is not nil, and it always holds the complete, in-order payload that was read -
+// whether the sniff succeeded, found nothing, ran out of data or the read failed.
+func PeekStreamGrow(ctx context.Context, metadata *adapter.InboundContext, conn net.Conn, buffers []*buf.Buffer, buffer *buf.Buffer, growLimit int, timeout time.Duration, sniffers ...StreamSniffer) (*buf.Buffer, error) {
+	return peekStream(ctx, metadata, conn, buffers, buffer, growLimit, timeout, sniffers...)
+}
+
+func peekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.Conn, buffers []*buf.Buffer, buffer *buf.Buffer, growLimit int, timeout time.Duration, sniffers ...StreamSniffer) (*buf.Buffer, error) {
 	if timeout == 0 {
 		timeout = C.ReadPayloadTimeout
 	}
 	deadline := time.Now().Add(timeout)
 	// The cached buffers cannot change during this call, so their payload is captured once. The
-	// newest buffer is re-read after every ReadOnceFrom because reading is what fills it.
+	// newest buffer is re-read after every ReadOnceFrom because reading is what fills it - and,
+	// when it grows, because a growth moves the payload to a different array.
 	segments := make([][]byte, 0, len(buffers)+1)
 	for _, cachedBuffer := range buffers {
 		segments = append(segments, cachedBuffer.Bytes())
@@ -143,9 +172,20 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 	roundErrors := make([]error, 0, len(sniffers))
 	var sniffError error
 	for i := 0; ; i++ {
+		// Grow BEFORE the read, never by truncating to make room.
+		//
+		// Reaching the top of this loop means the previous round ended with at least one sniffer
+		// asking for more bytes - that is the loop's only "continue" condition - so a full buffer
+		// here is a flow whose sniff is still undecided and needs more room. The old code ended the
+		// sniff in exactly this state (the next ReadOnceFrom reports io.ErrShortBuffer); growing
+		// first is what turns the INITIAL size into a hint instead of a ceiling. At growLimit the
+		// condition is false and that old ending happens unchanged.
+		if growLimit > buffer.Cap() && buffer.IsFull() {
+			buffer = growStreamBuffer(buffer, growLimit)
+		}
 		err := conn.SetReadDeadline(deadline)
 		if err != nil {
-			return E.Cause(err, "set read deadline")
+			return buffer, E.Cause(err, "set read deadline")
 		}
 		_, err = buffer.ReadOnceFrom(conn)
 		_ = conn.SetReadDeadline(time.Time{})
@@ -157,7 +197,7 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 				sniffError = E.Errors(roundErrors...)
 				break
 			}
-			return E.Cause(err, "read payload")
+			return buffer, E.Cause(err, "read payload")
 		}
 		segments[newestSegment] = buffer.Bytes()
 		roundErrors = roundErrors[:0]
@@ -186,7 +226,7 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 			payload.Reset(segments)
 			err = sniffer(ctx, metadata, &payload)
 			if err == nil {
-				return nil
+				return buffer, nil
 			}
 			roundErrors = append(roundErrors, err)
 			if errors.Is(err, ErrNeedMoreData) {
@@ -198,7 +238,7 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 			break
 		}
 	}
-	return sniffError
+	return buffer, sniffError
 }
 
 func PeekPacket(ctx context.Context, metadata *adapter.InboundContext, packet []byte, sniffers ...PacketSniffer) error {
