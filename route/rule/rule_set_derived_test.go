@@ -439,7 +439,7 @@ func TestDerivedRuleSetOldLayoutFallsBack(t *testing.T) {
 	require.NoError(t, err)
 	newest.Release()
 	binary.NativeEndian.PutUint32(encoded[4:8], 1) // a layout generation this build does not read
-	manifest := ruleSet.derivedCache.derivedManifest(source, C.RuleSetVersionCurrent)
+	manifest := ruleSet.derivedCache.derivedManifest(source, C.RuleSetVersionCurrent, 0)
 	manifest.Created = time.Now().UnixNano()
 	patched, err := ruleSet.derivedCache.store.Commit(key, manifest, bytes.NewReader(encoded))
 	require.NoError(t, err)

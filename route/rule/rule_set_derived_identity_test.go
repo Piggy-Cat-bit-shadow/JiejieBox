@@ -102,7 +102,7 @@ func requireEveryDerivedManifestNames(t *testing.T, base string, key string, dig
 // identity-generation line, published earlier than anything this test loads.
 func oldStyleDerivedManifest(t *testing.T, cache *derivedRuleSetCache, source *derivedSource, ruleSetVersion uint8) artifact.Manifest {
 	t.Helper()
-	manifest := cache.derivedManifest(source, ruleSetVersion)
+	manifest := cache.derivedManifest(source, ruleSetVersion, 0)
 	dependencies := make([]string, 0, len(manifest.Dependencies))
 	for _, dependency := range manifest.Dependencies {
 		if strings.HasPrefix(dependency, "identity-generation=") {
@@ -583,7 +583,7 @@ func TestDerivedRuleSetStaleDiscardDecisionKeepsTheCorrectedVersion(t *testing.T
 	stale.Release()
 
 	// A concurrent load publishes the corrected account for the SAME bytes; only the manifest changes.
-	corrected, err := store.Commit(identity.key, cache.derivedManifest(identity, C.RuleSetVersionCurrent), bytes.NewReader(compiled))
+	corrected, err := store.Commit(identity.key, cache.derivedManifest(identity, C.RuleSetVersionCurrent, 0), bytes.NewReader(compiled))
 	require.NoError(t, err)
 	corrected.Release()
 	require.Equal(t, stale.Path(), corrected.Path(), "the correction is one physical version")
@@ -596,6 +596,52 @@ func TestDerivedRuleSetStaleDiscardDecisionKeepsTheCorrectedVersion(t *testing.T
 	require.NoError(t, err)
 	require.Contains(t, loaded.Manifest().Dependencies, "identity-generation="+strconv.Itoa(derivedIdentityGeneration))
 	loaded.Release()
+}
+
+// TestDerivedRuleSetOtherSourceFutureVersionStillWarms covers the residual the independent review
+// named: a version of ANOTHER source whose stamp is ahead of this host's clock (a backward clock
+// correction, or a machine whose clock was wrong when it wrote the conversion) stays the store's
+// "newest" by Created. Refusing it is not enough - the corrected conversion published by this load
+// would be collected as the non-newest version and the cache would never warm. The publication
+// stamp is a logical clock, so the fresh conversion outranks what is on disk and the next load hits.
+func TestDerivedRuleSetOtherSourceFutureVersionStillWarms(t *testing.T) {
+	enableDerivedRuleSetPlatform(t)
+	resetDerivedCacheDiagnostics()
+	ctx, base := derivedTestContext(t)
+	path := filepath.Join(t.TempDir(), "future-other.json")
+	sourceA := derivedJSONDomainSource("warm-a.example")
+	sourceB := derivedJSONDomainSource("warm-b.example")
+	require.NoError(t, os.WriteFile(path, sourceA, 0o600))
+
+	store, err := artifact.Open(filepath.Join(base, derivedStoreDirectory))
+	require.NoError(t, err)
+	cache := &derivedRuleSetCache{ctx: ctx, store: store, logger: logger.NOP()}
+	digestB, sizeB := derivedContentDigest(sourceB)
+	identityB := localDerivedSource("future-other", path, C.RuleSetFormatSource, digestB, sizeB)
+	compiledB := encodeDerivedMmapRuleSet(t, parseDerivedJSONSource(t, sourceB))
+	stale, err := store.Commit(identityB.key,
+		cache.derivedManifest(identityB, C.RuleSetVersionCurrent, time.Now().Add(time.Hour).UnixNano()),
+		bytes.NewReader(compiledB))
+	require.NoError(t, err)
+	stale.Release()
+
+	ruleSet := newDerivedRuleSet(t, ctx, "future-other", path, C.RuleSetFormatSource)
+	requireDomainMatch(t, ruleSet, "warm-a.example", true)
+	requireDomainMatch(t, ruleSet, "warm-b.example", false)
+
+	// The conversion published by the load above must outrank the future stamp; otherwise Collect
+	// deletes it as the non-newest version and this reload re-parses (hits stays 0 forever).
+	require.NoError(t, ruleSet.reloadFile(path))
+	requireDomainMatch(t, ruleSet, "warm-a.example", true)
+	requireDomainMatch(t, ruleSet, "warm-b.example", false)
+	hits, _, publishes, failures := derivedCacheDiagnostics()
+	require.EqualValues(t, 1, hits,
+		"the derived cache must warm even when another source's version is future-dated")
+	require.EqualValues(t, 1, publishes)
+	require.Zero(t, failures)
+	require.Len(t, derivedVersions(t, base, identityB.key), 1)
+	digestA, sizeA := derivedContentDigest(sourceA)
+	requireEveryDerivedManifestNames(t, base, identityB.key, digestA, sizeA)
 }
 
 // TestDerivedRuleSetFutureLegacyManifestStillMigrates covers the clock-skew boundary the other

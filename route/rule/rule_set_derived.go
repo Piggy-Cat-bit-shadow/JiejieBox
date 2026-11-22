@@ -62,10 +62,12 @@ import (
 	"encoding/hex"
 	"hash"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/common/artifact"
 	"github.com/sagernet/sing-box/common/srs"
@@ -237,8 +239,11 @@ func (i *derivedIdentity) matches(digest string, size int64) bool {
 // derivedManifest builds the manifest of one conversion. Schema and Compiler carry the layout
 // generation/fingerprint so a person (and Collect's compatibility check) can tell what wrote it;
 // the hit test itself uses the source dependency lines and the file header.
-func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVersion uint8) artifact.Manifest {
-	return artifact.NewManifest(
+//
+// `created` is the publication stamp the caller wants (see nextPublicationTime); zero lets the
+// artifact store stamp it with the wall clock.
+func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVersion uint8, created int64) artifact.Manifest {
+	manifest := artifact.NewManifest(
 		derivedSchemaPrefix+strconv.Itoa(srs.MmapFormatVersion),
 		"srsm/"+srs.MmapFingerprint()+"/sing-box/"+C.Version,
 		"source-format/"+source.format,
@@ -251,6 +256,38 @@ func (c *derivedRuleSetCache) derivedManifest(source *derivedSource, ruleSetVers
 		"cache-key="+source.key,
 		"tag="+source.tag,
 	)
+	if created != 0 {
+		manifest.Created = created
+	}
+	return manifest
+}
+
+// nextPublicationTime returns the stamp the next conversion of key must carry.
+//
+// The artifact store ranks versions by Created and keeps only the newest one, so a conversion that
+// is published at wall-clock time is not necessarily the newest: after a backward clock correction
+// (NTP, a device whose clock was wrong) every new stamp is smaller than an existing one, and a stale
+// version written while the clock was ahead can stay "newest" forever. Either way the fresh
+// conversion would be collected as the non-newest version on the next pass, so the cache would stay
+// cold and every load would re-parse.
+//
+// For the derived cache the stamp is therefore a LOGICAL clock, not a claim about when the
+// conversion happened: wall time, bumped one tick past the newest stamp already on disk when wall
+// time cannot exceed it. The artifacts themselves are unchanged and the identity (source digest)
+// still decides whether a version may be served; only the order in which a key's versions are
+// ranked is made monotonic. The remote rule-set path keeps its own meaning of Created (the time the
+// refresh STARTED), which is why this lives here and not in the store's ranking.
+func (c *derivedRuleSetCache) nextPublicationTime(key string) int64 {
+	now := time.Now().UnixNano()
+	newest := c.store.NewestCreated(key)
+	if newest < now {
+		return now
+	}
+	if newest == math.MaxInt64 {
+		// Only reachable through a hand-written manifest; keep the store's order usable.
+		return now
+	}
+	return newest + 1
 }
 
 // derivedIdentityCurrent reports whether a manifest was written under the identity rule this build
@@ -427,7 +464,10 @@ func (c *derivedRuleSetCache) publish(source *derivedSource, ruleSetVersion uint
 		c.logger.Debug(E.Cause(err, "rewind derived rule-set"))
 		return
 	}
-	version, err := c.store.Commit(source.key, c.derivedManifest(source, ruleSetVersion), file)
+	// The stamp is a logical clock, not wall time: see nextPublicationTime. It must be taken before
+	// the commit, and it is the only ordering input the store uses for this key.
+	created := c.nextPublicationTime(source.key)
+	version, err := c.store.Commit(source.key, c.derivedManifest(source, ruleSetVersion, created), file)
 	if err != nil {
 		derivedCacheCounters.failures.Add(1)
 		c.logger.Debug(E.Cause(err, "store derived rule-set"))
