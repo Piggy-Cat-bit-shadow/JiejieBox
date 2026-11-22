@@ -189,3 +189,59 @@ func TestCommittingTheSameBytesIsOneVersion(t *testing.T) {
 	defer second.Release()
 	require.Equal(t, first.Path(), second.Path(), "identical bytes collapse to one version, not a pile of copies")
 }
+
+// TestRepublishingIdenticalBytesReplacesTheProvenance is the migration contract: the version name
+// is a property of the BYTES, so a corrected account of those bytes (a new cache identity
+// generation, another source that compiles to the same layout) must be able to replace the stale
+// account instead of being shadowed by it forever.
+func TestRepublishingIdenticalBytesReplacesTheProvenance(t *testing.T) {
+	store, err := Open(t.TempDir())
+	require.NoError(t, err)
+
+	stale := manifestFor(0, "")
+	stale.Dependencies = []string{"source-sha256=old", "source-size=4"}
+	first, err := store.Commit("derived", stale, bytes.NewReader([]byte("same")))
+	require.NoError(t, err)
+	firstPath := first.Path()
+	first.Release()
+
+	corrected := manifestFor(0, "")
+	corrected.Dependencies = []string{"source-sha256=new", "source-size=4", "identity-generation=2"}
+	second, err := store.Commit("derived", corrected, bytes.NewReader([]byte("same")))
+	require.NoError(t, err)
+	second.Release()
+	require.Equal(t, firstPath, second.Path(), "identical bytes stay one version")
+
+	loaded, err := store.Load("derived")
+	require.NoError(t, err)
+	defer loaded.Release()
+	require.Equal(t, corrected.Dependencies, loaded.Manifest().Dependencies,
+		"the latest account of the same bytes must be the one a reader sees")
+	require.FileExists(t, loaded.Path(), "replacing the manifest must not touch the artifact bytes")
+}
+
+// TestRepublishingTheSameProvenanceKeepsThePublicationTime makes the replacement conditional: an
+// unchanged account must not rewrite the manifest, so the version keeps the timestamp that ranks it
+// against other versions.
+func TestRepublishingTheSameProvenanceKeepsThePublicationTime(t *testing.T) {
+	store, err := Open(t.TempDir())
+	require.NoError(t, err)
+
+	manifest := manifestFor(0, "")
+	manifest.Dependencies = []string{"source-sha256=same"}
+	first, err := store.Commit("derived", manifest, bytes.NewReader([]byte("same")))
+	require.NoError(t, err)
+	created := first.Manifest().Created
+	first.Release()
+
+	time.Sleep(time.Millisecond)
+	second, err := store.Commit("derived", manifest, bytes.NewReader([]byte("same")))
+	require.NoError(t, err)
+	defer second.Release()
+	require.Equal(t, created, second.Manifest().Created,
+		"an identical account is not a new publication")
+	loaded, err := store.Load("derived")
+	require.NoError(t, err)
+	defer loaded.Release()
+	require.Equal(t, created, loaded.Manifest().Created)
+}

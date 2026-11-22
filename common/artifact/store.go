@@ -501,21 +501,100 @@ func compatible(manifest Manifest) bool {
 // The rename and the lease are one step because the commit returns a handle to the caller: a
 // collector that listed the key directory between the rename and the lease would see a new,
 // unleased version and remove it, and Commit would return a version that no longer exists.
-func (s *Store) publishVersion(tempDir string, versionDir string) error {
+//
+// A version is named by its bytes, and its manifest is the producer's account of WHAT those bytes
+// are. When the identical bytes are published again under a different manifest, the bytes stay one
+// version and the manifest is replaced: a producer that can prove a new provenance for the same
+// bytes (another source identity that compiles to the same layout, a new cache identity
+// generation, a corrected policy) must not be permanently unable to load them because an older
+// account of the same bytes is still on disk. Keeping the first manifest made a stale account win
+// forever, which is exactly how a corrected cache generation would have been shadowed by the
+// generation it replaced.
+func (s *Store) publishVersion(tempDir string, versionDir string, manifest Manifest) (Manifest, error) {
 	s.lease.access.Lock()
 	defer s.lease.access.Unlock()
 	if _, err := os.Stat(versionDir); err == nil {
 		// The identical artifact is already published: the temp copy is redundant, and the
-		// existing version is the one this commit leases.
+		// existing version is the one this commit leases. The returned manifest is the one now on
+		// disk, which is the commit's own unless an identical account was already there.
+		if err := replaceManifest(versionDir, manifest); err != nil {
+			return Manifest{}, err
+		}
+		effective, err := readManifest(versionDir)
+		if err != nil {
+			return Manifest{}, err
+		}
 		if err := os.RemoveAll(tempDir); err != nil {
-			return err
+			return Manifest{}, err
 		}
 		s.lease.counts[versionDir]++
-		return nil
+		return effective, nil
 	}
 	if err := os.Rename(tempDir, versionDir); err != nil {
-		return E.Cause(err, "publish artifact version")
+		return Manifest{}, E.Cause(err, "publish artifact version")
 	}
 	s.lease.counts[versionDir]++
+	return manifest, nil
+}
+
+// replaceManifest rewrites a version's manifest in place, atomically and only when the provenance
+// actually changed.
+//
+// The artifact bytes are untouched, so every reader that already verified them stays valid; a
+// reader either sees the old manifest or the new one, and both describe the same bytes. Created is
+// a publication timestamp rather than provenance, so republishing the same account of the same
+// bytes does not rewrite the file on every load.
+func replaceManifest(dir string, manifest Manifest) error {
+	existing, existingErr := readManifest(dir)
+	if existingErr == nil && sameProvenance(existing, manifest) {
+		return nil
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return E.Cause(err, "encode artifact manifest")
+	}
+	temporary, err := os.CreateTemp(dir, ".tmp-manifest-")
+	if err != nil {
+		return E.Cause(err, "stage artifact manifest")
+	}
+	temporaryName := temporary.Name()
+	// CreateTemp uses 0600; the manifest it replaces was written 0644, and it is metadata that a
+	// diagnostics tool may read. A crash between here and the rename leaves one small file that no
+	// reader consults (Load lists directories, readManifest reads manifest.json).
+	_ = temporary.Chmod(0o644)
+	if _, err = temporary.Write(encoded); err != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryName)
+		return E.Cause(err, "write artifact manifest")
+	}
+	if err = temporary.Close(); err != nil {
+		_ = os.Remove(temporaryName)
+		return E.Cause(err, "close artifact manifest")
+	}
+	if err = os.Rename(temporaryName, filepath.Join(dir, manifestName)); err != nil {
+		_ = os.Remove(temporaryName)
+		return E.Cause(err, "replace artifact manifest")
+	}
 	return nil
+}
+
+// sameProvenance compares two manifests as accounts of the same bytes: everything except the
+// publication timestamp must agree.
+func sameProvenance(left Manifest, right Manifest) bool {
+	if left.Schema != right.Schema ||
+		left.Compiler != right.Compiler ||
+		left.Policy != right.Policy ||
+		left.ABI != right.ABI ||
+		left.Platform != right.Platform ||
+		left.Size != right.Size ||
+		left.Digest != right.Digest ||
+		len(left.Dependencies) != len(right.Dependencies) {
+		return false
+	}
+	for index := range left.Dependencies {
+		if left.Dependencies[index] != right.Dependencies[index] {
+			return false
+		}
+	}
+	return true
 }

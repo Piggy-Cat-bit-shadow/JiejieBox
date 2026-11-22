@@ -129,10 +129,12 @@ func (st *StagedVersion) Publish() (*Version, error) {
 		return nil, E.New("artifact: staged version already finished")
 	}
 	store := st.store
-	if err := store.publishVersion(st.tempDir, st.versionDir); err != nil {
+	effective, err := store.publishVersion(st.tempDir, st.versionDir, st.manifest)
+	if err != nil {
 		st.Discard()
 		return nil, err
 	}
+	st.manifest = effective
 	st.closed = true
 	store.lease.access.Lock()
 	delete(store.lease.writing, st.tempDir)
