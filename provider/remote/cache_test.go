@@ -148,3 +148,47 @@ func TestProviderRemoteKeepsEtagWhenTheCacheWriteFails(t *testing.T) {
 	require.NoError(t, provider.fetch(context.Background(), false))
 	require.Equal(t, 0, int(conditionalRequests.Load()), "a retry must download the body, not revalidate")
 }
+
+type staticSubscriptionCache struct {
+	adapter.CacheFile
+	sub   *adapter.SavedBinary
+	saves int
+}
+
+func (c *staticSubscriptionCache) LoadSubscription(string) *adapter.SavedBinary { return c.sub }
+
+func (c *staticSubscriptionCache) SaveSubscription(string, *adapter.SavedBinary) error {
+	c.saves++
+	return nil
+}
+
+// TestProviderRemoteNotModifiedWithCacheFileDoesNotRewritePath: with a cachefile record the
+// timestamp and content already exist, so a 304 must not re-encode/replace the path cache just to
+// refresh mtime. The cachefile save still runs.
+func TestProviderRemoteNotModifiedWithCacheFileDoesNotRewritePath(t *testing.T) {
+	t.Parallel()
+	path := t.TempDir() + "/provider.json"
+	original := `{"outbounds": [{"type": "test", "tag": "a"}]}`
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Etag", `"v1"`)
+		writer.WriteHeader(http.StatusNotModified)
+	}))
+	t.Cleanup(server.Close)
+	provider, _ := newRemoteHarness(t, server.URL)
+	provider.httpClient = server.Client()
+	provider.path = path
+	cache := &staticSubscriptionCache{sub: &adapter.SavedBinary{URLHash: provider.urlHash[:]}}
+	provider.cacheFile = cache
+	require.NoError(t, provider.fetch(context.Background(), true))
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, original, string(after), "a 304 with a cachefile record must not rewrite the path cache")
+	require.Equal(t, 1, cache.saves)
+}
+
+func TestSaveCacheFileRejectsAnEmptyDocument(t *testing.T) {
+	provider := &ProviderRemote{ctx: context.Background(), path: t.TempDir() + "/provider.json"}
+	require.Error(t, provider.saveCacheFile(false, adapter.SubscriptionInfo{}, nil))
+	require.NoFileExists(t, provider.path)
+}

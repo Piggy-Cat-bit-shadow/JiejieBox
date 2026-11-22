@@ -759,14 +759,18 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 				}
 			}
 		}
-		if s.path != "" && s.lastOutOpts != nil {
-			// Rewriting the path cache refreshes its mtime, which a start without a cachefile record
-			// uses as LastUpdated. It is only safe when this provider actually has a document: a
-			// spurious 304 before any content was loaded would otherwise replace a valid cache file
-			// with `{"outbounds":null}`.
-			content, _ := json.Marshal(option.Options{
-				Outbounds: s.lastOutOpts,
-			})
+		// Rewriting the path cache refreshes its mtime, which a start WITHOUT a cachefile record
+		// uses as LastUpdated. With a cachefile record the timestamp and the content already exist,
+		// so a 304 must not re-encode and rewrite the whole document just to refresh mtime.
+		// It is only safe to rewrite when this provider actually has a document: a spurious 304
+		// before any content was loaded would otherwise replace a valid cache file with
+		// `{"outbounds":null}`.
+		if s.path != "" && s.lastOutOpts != nil && s.cacheFile == nil {
+			content, encodeErr := s.cacheDocumentBytes()
+			if encodeErr != nil {
+				report.AncillaryError = s.redact(encodeErr.Error())
+				return report, E.Cause(encodeErr, "encode outbound provider cache file")
+			}
 			if err := s.saveCacheFile(hasInfo, info, content); err != nil {
 				report.AncillaryError = s.redact(err.Error())
 				return report, E.Cause(err, "save outbound provider cache file")
@@ -831,9 +835,12 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 	// used for the path cache / cacheFile below, so a fetch no longer encodes the document twice.
 	var documentContent []byte
 	if s.artifactStore != nil || s.path != "" || s.cacheFile != nil {
-		if encoded, encodeErr := s.cacheDocumentBytes(); encodeErr == nil {
-			documentContent = encoded
+		encoded, encodeErr := s.cacheDocumentBytes()
+		if encodeErr != nil {
+			report.AncillaryError = s.redact(encodeErr.Error())
+			return report, E.Cause(encodeErr, "encode outbound provider cache document")
 		}
+		documentContent = encoded
 	}
 	s.snapshotPublishedNodesContent(documentContent)
 	// The ETag is evidence that the SERVER's document is in the cache. Advancing it before the
@@ -845,7 +852,12 @@ func (s *ProviderRemote) fetchReport(ctx context.Context, isStart bool) (*ApplyR
 	if s.path != "" || s.cacheFile != nil {
 		content := documentContent
 		if content == nil {
-			content, _ = s.cacheDocumentBytes()
+			var encodeErr error
+			content, encodeErr = s.cacheDocumentBytes()
+			if encodeErr != nil {
+				report.AncillaryError = s.redact(encodeErr.Error())
+				return report, E.Cause(encodeErr, "encode outbound provider cache file")
+			}
 		}
 		if s.path != "" {
 			if err = s.saveCacheFile(hasInfo, info, content); err != nil {
@@ -1015,6 +1027,9 @@ func (s *ProviderRemote) loopUpdate() {
 }
 
 func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionInfo, contentRaw []byte) error {
+	if len(contentRaw) == 0 {
+		return E.New("outbound provider cache document is empty")
+	}
 	content := contentRaw
 	if hasInfo {
 		infoStr := fmt.Sprint(
@@ -1140,12 +1155,14 @@ func getFirstLine(content string) (string, string) {
 	return first, rest
 }
 
+var subscriptionInfoRegex = regexp.MustCompile(`(upload|download|total|expire)[\s\t]*=[\s\t]*(-?\d*);?`)
+
 func parseInfo(infoStr string) (adapter.SubscriptionInfo, bool) {
 	info := adapter.SubscriptionInfo{}
 	if infoStr == "" {
 		return info, false
 	}
-	reg := regexp.MustCompile(`(upload|download|total|expire)[\s\t]*=[\s\t]*(-?\d*);?`)
+	reg := subscriptionInfoRegex
 	matches := reg.FindAllStringSubmatch(infoStr, 4)
 	if len(matches) == 0 {
 		return info, false

@@ -25,6 +25,11 @@ func (c *http2ClientConn) isClosed() bool {
 	return c.State().Closed
 }
 
+func (c *http2ClientConn) idle() bool {
+	state := c.State()
+	return state.StreamsActive == 0 && state.StreamsReserved == 0 && state.StreamsPending == 0
+}
+
 func (c *http2ClientConn) reserveNewRequest() bool {
 	return c.ReserveNewRequest()
 }

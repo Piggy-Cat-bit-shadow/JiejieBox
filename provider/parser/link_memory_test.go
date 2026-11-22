@@ -37,6 +37,9 @@ func linkMemoryDocument(nodes int, padding int) string {
 // parser drops its own input reference.
 func TestParseRawSubscriptionReleasesDocumentPadding(t *testing.T) {
 	const padding = 4 << 20
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
 	document := linkMemoryDocument(100, padding)
 	require.Greater(t, len(document), padding)
 
@@ -52,7 +55,7 @@ func TestParseRawSubscriptionReleasesDocumentPadding(t *testing.T) {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	runtime.KeepAlive(outbounds)
-	if stats.HeapAlloc > 3<<20 {
-		t.Fatalf("parsed link list retained the document: heap=%d with %d bytes of padding, want < 3 MiB", stats.HeapAlloc, padding)
+	if stats.HeapAlloc > before.HeapAlloc+2<<20 {
+		t.Fatalf("parsed link list retained the document: heap=%d baseline=%d padding=%d, want < baseline+2 MiB", stats.HeapAlloc, before.HeapAlloc, padding)
 	}
 }

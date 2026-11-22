@@ -19,8 +19,14 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
+var (
+	linkSchemeRegex  = regexp.MustCompile(`^(.*?)(://)(.*?)([@?#].*)?$`)
+	linkHeaderRegex  = regexp.MustCompile(`^[ \t]*?(\S+?):[ \t]*?(\S+?)[ \t]*?$`)
+	vmessNumberRegex = regexp.MustCompile(`("[^:,]+?"[ \t]*:[ \t]*)(\d+|true|false)`)
+)
+
 func ParseSubscriptionLink(link string) (option.Outbound, error) {
-	reg := regexp.MustCompile(`^(.*?)(://)(.*?)([@?#].*)?$`)
+	reg := linkSchemeRegex
 	result := reg.FindStringSubmatch(link)
 	if result == nil {
 		return option.Outbound{}, E.New("invalid link")
@@ -67,7 +73,7 @@ func StringToType[T any](str string) T {
 		return value
 	case badoption.HTTPHeader:
 		headers := badoption.HTTPHeader{}
-		reg := regexp.MustCompile(`^[ \t]*?(\S+?):[ \t]*?(\S+?)[ \t]*?$`)
+		reg := linkHeaderRegex
 		for header := range strings.SplitSeq(str, "\n") {
 			result := reg.FindStringSubmatch(header)
 			if result != nil {
@@ -281,7 +287,7 @@ func parseTuicLink(link string) (option.Outbound, error) {
 
 func parseVMessLink(link string) (option.Outbound, error) {
 	var proxy map[string]string
-	reg := regexp.MustCompile(`(\"[^:,]+?\"[ \t]*:[ \t]*)(\d+|true|false)`)
+	reg := vmessNumberRegex
 	s := reg.ReplaceAllString(link, `$1"$2"`)
 	err := json.Unmarshal([]byte(s[8:]), &proxy)
 	if err != nil {

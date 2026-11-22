@@ -26,6 +26,13 @@ func (c *http2ClientConn) isClosed() bool {
 	return c.Err() != nil
 }
 
+// idle reports that the connection carries no stream. It is the only safe condition for the
+// ordinary HTTP/2 pool trim: this pool has no session provenance, so active work must never be
+// disturbed.
+func (c *http2ClientConn) idle() bool {
+	return c.InFlight() == 0
+}
+
 func (c *http2ClientConn) reserveNewRequest() bool {
 	return c.Reserve() == nil
 }

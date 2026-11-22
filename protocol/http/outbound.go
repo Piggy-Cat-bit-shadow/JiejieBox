@@ -27,6 +27,8 @@ func RegisterOutbound(registry *outbound.Registry) {
 
 var _ adapter.OutboundWithMultiplex = (*Outbound)(nil)
 
+var _ adapter.IdleConnectionKeeper = (*Outbound)(nil)
+
 type Outbound struct {
 	outbound.Adapter
 	logger logger.ContextLogger
@@ -247,4 +249,20 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return h.client.ListenPacket(ownedDestinationContext(ctx, destination, downstreamAddresses), ownedDestination)
 	}
 	return h.client.ListenPacket(ctx, destination)
+}
+
+// CloseIdleConnections participates in the reference manager's trim walk. The HTTP transport owns a
+// pooled HTTP/2 client whose connections were previously invisible to every walk; the transport
+// closes only connections with no in-flight stream. HTTP/3 has no idle-only API, so it is not
+// touched here.
+func (h *Outbound) CloseIdleConnections() {
+	h.client.CloseIdleConnections()
+}
+
+// SetKeepIdleConnections is the bundled interface's policy half. false means trim now; true only
+// records that the owner is referenced, which the transport does not need to act on.
+func (h *Outbound) SetKeepIdleConnections(keep bool) {
+	if !keep {
+		h.CloseIdleConnections()
+	}
 }

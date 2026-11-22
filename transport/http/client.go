@@ -745,6 +745,23 @@ func (c *Client) dialContext(ctx context.Context, network string, destination M.
 	return c.connectAndClose(ctx, conn, destination)
 }
 
+// CloseIdleConnections drops the idle HTTP/2 connections. It is the trim action the reference
+// walk calls on an unreferenced outbound: it never dials and never closes a connection carrying a
+// stream. HTTP/3 has no idle-only API and is deliberately untouched.
+func (c *Client) CloseIdleConnections() {
+	c.http2Access.Lock()
+	defer c.http2Access.Unlock()
+	kept := c.http2Conns[:0]
+	for _, clientConn := range c.http2Conns {
+		if clientConn.idle() {
+			clientConn.Close()
+			continue
+		}
+		kept = append(kept, clientConn)
+	}
+	c.http2Conns = kept
+}
+
 func (c *Client) closeHTTP2Locked() {
 	for _, clientConn := range c.http2Conns {
 		clientConn.Close()
