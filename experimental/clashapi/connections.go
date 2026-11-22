@@ -29,6 +29,73 @@ func connectionRouter(ctx context.Context, network adapter.NetworkManager, traff
 	return r
 }
 
+// WebSocket snapshot frame buffer retention policy.
+//
+// A connections stream encodes one JSON document per tick into a bytes.Buffer. bytes.Buffer.Reset
+// only sets the length to zero: the backing array keeps the capacity of the largest frame the
+// stream has ever produced. A dashboard opened while ten thousand connections were alive therefore
+// keeps a multi-megabyte array resident for as long as the tab is open, even after the list shrinks
+// to a handful of entries.
+//
+// The policy releases the array only when releasing it is both worthwhile and stable:
+//
+//   - wsFrameBufferFloor: buffers at or below this size are never released. Below it the array is
+//     small enough that reallocating it is not worth the churn, and the common small-panel stream
+//     would otherwise allocate a fresh buffer on every tick after a transient spike.
+//   - wsFrameBufferShrinkFactor: the current frame must be less than a quarter of the retained
+//     capacity. A stream that keeps producing large frames keeps its buffer; only a stream whose
+//     frames have shrunk relative to the high-water mark releases it.
+//   - wsFrameBufferShrinkTicks: the small-frame condition must hold for two consecutive ticks. A
+//     single dip (one momentarily quiet second on a busy node) does not throw the buffer away and
+//     force a full reallocation on the next tick.
+//
+// A released buffer is replaced with a fresh zero-capacity bytes.Buffer, so the next frame grows to
+// exactly what that frame needs. The replacement happens after WriteServerText has returned, in the
+// goroutine that owns the stream and is the only writer of the buffer, so it can never be swapped
+// while a concurrent write is using it.
+const (
+	wsFrameBufferFloor        = 64 << 10
+	wsFrameBufferShrinkFactor = 4
+	wsFrameBufferShrinkTicks  = 2
+)
+
+// wsFrameBuffer owns the reusable encoding buffer of ONE connections WebSocket stream.
+type wsFrameBuffer struct {
+	buffer      bytes.Buffer
+	smallFrames int
+	releases    int
+}
+
+func (b *wsFrameBuffer) encode(value any) error {
+	b.buffer.Reset()
+	return json.NewEncoder(&b.buffer).Encode(value)
+}
+
+func (b *wsFrameBuffer) bytes() []byte {
+	return b.buffer.Bytes()
+}
+
+func (b *wsFrameBuffer) capacity() int {
+	return b.buffer.Cap()
+}
+
+// releaseHighWater drops the backing array when this frame shows that the stream no longer needs the
+// capacity it once did. frameSize is the size of the frame that was just sent.
+func (b *wsFrameBuffer) releaseHighWater(frameSize int) bool {
+	if b.buffer.Cap() <= wsFrameBufferFloor || frameSize*wsFrameBufferShrinkFactor >= b.buffer.Cap() {
+		b.smallFrames = 0
+		return false
+	}
+	b.smallFrames++
+	if b.smallFrames < wsFrameBufferShrinkTicks {
+		return false
+	}
+	b.buffer = bytes.Buffer{}
+	b.smallFrames = 0
+	b.releases++
+	return true
+}
+
 func connectionsSnapshot(trafficManager *trafficcontrol.Manager) render.M {
 	uplinkTotal, downlinkTotal := trafficManager.Total()
 	connections := common.Filter(trafficManager.Connections(), func(metadata *trafficcontrol.TrackerMetadata) bool {
@@ -130,14 +197,20 @@ func getConnections(ctx context.Context, trafficManager *trafficcontrol.Manager)
 			interval = t
 		}
 
-		buf := &bytes.Buffer{}
+		frameBuffer := &wsFrameBuffer{}
 		sendSnapshot := func() error {
-			buf.Reset()
-			encodeErr := json.NewEncoder(buf).Encode(connectionsSnapshot(trafficManager))
+			encodeErr := frameBuffer.encode(connectionsSnapshot(trafficManager))
 			if encodeErr != nil {
 				return encodeErr
 			}
-			return wsutil.WriteServerText(conn, buf.Bytes())
+			frame := frameBuffer.bytes()
+			frameSize := len(frame)
+			writeErr := wsutil.WriteServerText(conn, frame)
+			if writeErr != nil {
+				return writeErr
+			}
+			frameBuffer.releaseHighWater(frameSize)
+			return nil
 		}
 
 		if err = sendSnapshot(); err != nil {

@@ -2,6 +2,7 @@ package clashapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -75,25 +76,38 @@ func findProxyByName(server *Server) func(next http.Handler) http.Handler {
 	}
 }
 
-func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
-	var info badjson.JSONObject
-	var clashType string
+// proxyView is the scalar state of one node as the list endpoint reports it.
+//
+// It exists so that building the response and writing it are separate phases: every value is read
+// from the live manager/group while the snapshot is built, and the (possibly slow) network write
+// afterwards touches only these fields. It is deliberately made of strings, a bool, one history
+// pointer and the group's member tags - no outbound reference, no JSON object graph. Holding an
+// outbound here would keep a node (and whatever it owns) alive for as long as a slow client reads,
+// and the provider contract only allows Tag/Type/Network to be read from a replaced object.
+type proxyView struct {
+	clashType string
+	history   *adapter.URLTestHistory
+	all       []string
+	now       string
+	udp       bool
+	isGroup   bool
+	hasNow    bool
+}
+
+// newProxyView performs exactly the reads the old proxyInfo did, in the same order, and returns them
+// as plain values.
+func newProxyView(server *Server, detour adapter.Outbound) proxyView {
+	var view proxyView
 	switch detour.Type() {
 	case C.TypeBlock:
-		clashType = "Reject"
+		view.clashType = "Reject"
 	default:
-		clashType = C.ProxyDisplayName(detour.Type())
+		view.clashType = C.ProxyDisplayName(detour.Type())
 	}
-	info.Put("type", clashType)
-	info.Put("name", detour.Tag())
-	info.Put("udp", common.Contains(detour.Network(), N.NetworkUDP))
-	delayHistory := server.urlTestHistory.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP))
-	if delayHistory != nil {
-		info.Put("history", []*adapter.URLTestHistory{delayHistory})
-	} else {
-		info.Put("history", []*adapter.URLTestHistory{})
-	}
-	if group, isGroup := detour.(adapter.OutboundGroup); isGroup {
+	view.udp = common.Contains(detour.Network(), N.NetworkUDP)
+	view.history = server.urlTestHistory.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP))
+	if detourGroup, isGroup := detour.(adapter.OutboundGroup); isGroup {
+		view.isGroup = true
 		// A flow-aware group has no current member to report.
 		//
 		// Its member is a property of the flow, so Selected() answers "which member would
@@ -102,75 +116,240 @@ func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
 		// the user every flow goes there, which is the opposite of what the group does. The
 		// field is omitted, as the reference implementation omits it for the same reason,
 		// while `all` and `type` still describe the group so a dashboard can list it.
-		if _, isFlowAware := group.(adapter.FlowAwareOutboundGroup); !isFlowAware {
-			var now string
-			if selected := group.Selected(N.NetworkTCP); selected != nil {
-				now = selected.Tag()
+		if _, isFlowAware := detourGroup.(adapter.FlowAwareOutboundGroup); !isFlowAware {
+			view.hasNow = true
+			if selected := detourGroup.Selected(N.NetworkTCP); selected != nil {
+				view.now = selected.Tag()
 			}
-			info.Put("now", now)
 		}
-		info.Put("all", group.All())
+		view.all = detourGroup.All()
+	}
+	return view
+}
+
+func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
+	view := newProxyView(server, detour)
+	var info badjson.JSONObject
+	info.Put("type", view.clashType)
+	info.Put("name", detour.Tag())
+	info.Put("udp", view.udp)
+	if view.history != nil {
+		info.Put("history", []*adapter.URLTestHistory{view.history})
+	} else {
+		info.Put("history", []*adapter.URLTestHistory{})
+	}
+	if view.isGroup {
+		if view.hasNow {
+			info.Put("now", view.now)
+		}
+		info.Put("all", view.all)
 	}
 	return &info
 }
 
+// proxyEntry is one key/value pair of the `proxies` object, in output order.
+type proxyEntry struct {
+	key       string
+	clashType string
+	history   *adapter.URLTestHistory
+	all       []string
+	now       string
+	global    bool
+	isGroup   bool
+	hasNow    bool
+	udp       bool
+}
+
+// snapshotProxyEntries builds the ordered entry list once, before any byte is written.
+//
+// The ordering and duplicate-key semantics are the ones badjson.JSONObject.Put provided: the first
+// occurrence of a key fixes its position, a later occurrence REPLACES the value in place. That is
+// observable - when an outbound and an endpoint share a tag, the endpoint's card is reported but at
+// the outbound's position - so it is reproduced rather than "cleaned up".
+//
+// The duplicate index is dropped when no duplicate occurred (the normal case) so a slow client does
+// not pin a map it will never consult again.
+func snapshotProxyEntries(server *Server) ([]proxyEntry, error) {
+	outbounds := common.Filter(server.outbound.Outbounds(), func(detour adapter.Outbound) bool {
+		return detour.Tag() != ""
+	})
+	outbounds = append(outbounds, common.Map(common.Filter(server.endpoint.Endpoints(), func(detour adapter.Endpoint) bool {
+		return detour.Tag() != ""
+	}), func(it adapter.Endpoint) adapter.Outbound {
+		return it
+	})...)
+
+	allProxies := make([]string, 0, len(outbounds))
+
+	for _, detour := range outbounds {
+		switch detour.Type() {
+		case C.TypeDirect, C.TypeBlock, C.TypeDNS:
+			continue
+		}
+		allProxies = append(allProxies, detour.Tag())
+	}
+
+	defaultTag := server.outbound.Default().Tag()
+
+	// Exactly the old stable sort: every entry equal to the default tag is moved to the front,
+	// keeping the relative order of everything else.
+	sort.SliceStable(allProxies, func(i, j int) bool {
+		return allProxies[i] == defaultTag
+	})
+
+	entries := make([]proxyEntry, 0, len(outbounds)+1)
+	positions := make(map[string]int, len(outbounds)+1)
+	// fix clash dashboard
+	entries = append(entries, proxyEntry{
+		key:    "GLOBAL",
+		global: true,
+		all:    allProxies,
+		now:    defaultTag,
+	})
+	positions["GLOBAL"] = 0
+	duplicate := false
+	put := func(entry proxyEntry) {
+		if index, loaded := positions[entry.key]; loaded {
+			// Put replaced the value in place, so a node tagged GLOBAL takes the pseudo entry's
+			// position but not its Fallback card.
+			entry.global = false
+			entries[index] = entry
+			duplicate = true
+			return
+		}
+		positions[entry.key] = len(entries)
+		entries = append(entries, entry)
+	}
+
+	for i, detour := range outbounds {
+		var tag string
+		if detour.Tag() == "" {
+			tag = F.ToString(i)
+		} else {
+			tag = detour.Tag()
+		}
+		view := newProxyView(server, detour)
+		put(proxyEntry{
+			key:       tag,
+			clashType: view.clashType,
+			history:   view.history,
+			all:       view.all,
+			now:       view.now,
+			isGroup:   view.isGroup,
+			hasNow:    view.hasNow,
+			udp:       view.udp,
+		})
+	}
+	if !duplicate {
+		// The index is only needed to reproduce "replace in place" duplicate handling. Dropping
+		// it here makes the map unreachable before the response is written, so a slow client does
+		// not pin it.
+		positions = nil
+	}
+
+	// MarshalJSON of the old object graph could fail in exactly one place: a history entry whose
+	// time is outside the RFC 3339 range encodable by time.Time.MarshalJSON. Everything else in the
+	// document is a string, a bool or a []string. The condition is checked here, before the response
+	// head and before the first byte, so the endpoint keeps the old 500-instead-of-body behaviour
+	// instead of emitting a truncated document.
+	if invalid := invalidProxyHistory(entries); invalid != nil {
+		if _, err := json.Marshal(invalid); err != nil {
+			return nil, err
+		}
+		// Unreachable: the year range above is the only failure mode of time.Time.MarshalJSON.
+	}
+	return entries, nil
+}
+
+// invalidProxyHistory returns the first history entry that encoding/json cannot encode.
+func invalidProxyHistory(entries []proxyEntry) *adapter.URLTestHistory {
+	for index := range entries {
+		history := entries[index].history
+		if history == nil {
+			continue
+		}
+		// time.Time.MarshalJSON fails when the year is outside [0, 9999].
+		if year := history.Time.Year(); year < 0 || year > 9999 {
+			return history
+		}
+	}
+	return nil
+}
+
 func getProxies(server *Server) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var proxyMap badjson.JSONObject
-		outbounds := common.Filter(server.outbound.Outbounds(), func(detour adapter.Outbound) bool {
-			return detour.Tag() != ""
-		})
-		outbounds = append(outbounds, common.Map(common.Filter(server.endpoint.Endpoints(), func(detour adapter.Endpoint) bool {
-			return detour.Tag() != ""
-		}), func(it adapter.Endpoint) adapter.Outbound {
-			return it
-		})...)
-
-		allProxies := make([]string, 0, len(outbounds))
-
-		for _, detour := range outbounds {
-			switch detour.Type() {
-			case C.TypeDirect, C.TypeBlock, C.TypeDNS:
-				continue
-			}
-			allProxies = append(allProxies, detour.Tag())
-		}
-
-		defaultTag := server.outbound.Default().Tag()
-
-		sort.SliceStable(allProxies, func(i, j int) bool {
-			return allProxies[i] == defaultTag
-		})
-
-		// fix clash dashboard
-		proxyMap.Put("GLOBAL", map[string]any{
-			"type":    "Fallback",
-			"name":    "GLOBAL",
-			"udp":     true,
-			"history": []*adapter.URLTestHistory{},
-			"all":     allProxies,
-			"now":     defaultTag,
-		})
-
-		for i, detour := range outbounds {
-			var tag string
-			if detour.Tag() == "" {
-				tag = F.ToString(i)
-			} else {
-				tag = detour.Tag()
-			}
-			proxyMap.Put(tag, proxyInfo(server, detour))
-		}
-		var responseMap badjson.JSONObject
-		responseMap.Put("proxies", &proxyMap)
-		response, err := responseMap.MarshalJSON()
+		entries, err := snapshotProxyEntries(server)
 		if err != nil {
 			render.Status(r, http.StatusInternalServerError)
 			render.JSON(w, r, newError(err.Error()))
 			return
 		}
-		w.Write(response)
+		// No Content-Type is set on purpose: the old handler wrote the marshalled bytes without
+		// one, so net/http sniffed the body (text/plain; charset=utf-8). Keeping the first chunk
+		// text makes the sniffed type identical.
+		stream := newJSONStream(w)
+		stream.raw(`{"proxies": {`)
+		for index := range entries {
+			if stream.err != nil || r.Context().Err() != nil {
+				// The client is gone or the write failed. Stop: a truncated document is not
+				// reported as success because the connection is already unusable, and no error
+				// JSON is appended to a body that has already started.
+				return
+			}
+			if index > 0 {
+				stream.raw(",")
+			}
+			writeProxyEntry(stream, &entries[index])
+		}
+		stream.raw("}}")
 	}
+}
+
+// writeProxyEntry writes one node card in the exact byte layout the old object graph produced.
+//
+// The layout is compact (`{"type":"Direct",...}`) because encoding/json compacts the output of
+// every MarshalJSON implementation it calls, and the nested badjson objects were all produced
+// through such calls. Only the outermost `{"proxies": ` separator kept a space: it was written by
+// the top-level badjson object, whose bytes were passed to w.Write without a further compaction.
+// That single space is reproduced here and nowhere else.
+func writeProxyEntry(stream *jsonStream, entry *proxyEntry) {
+	stream.value(entry.key)
+	if entry.global {
+		// encoding/json sorts map keys, so the pseudo GLOBAL card is always in this order.
+		stream.raw(`:{"all":`)
+		stream.stringArray(entry.all)
+		stream.raw(`,"history":[],"name":"GLOBAL","now":`)
+		stream.value(entry.now)
+		stream.raw(`,"type":"Fallback","udp":true}`)
+		return
+	}
+	stream.raw(`:{"type":`)
+	stream.value(entry.clashType)
+	stream.raw(`,"name":`)
+	stream.value(entry.key)
+	stream.raw(`,"udp":`)
+	if entry.udp {
+		stream.raw("true")
+	} else {
+		stream.raw("false")
+	}
+	stream.raw(`,"history":`)
+	if entry.history == nil {
+		stream.raw("[]")
+	} else {
+		stream.raw("[")
+		stream.value(entry.history)
+		stream.raw("]")
+	}
+	if entry.isGroup {
+		if entry.hasNow {
+			stream.raw(`,"now":`)
+			stream.value(entry.now)
+		}
+		stream.raw(`,"all":`)
+		stream.stringArray(entry.all)
+	}
+	stream.raw("}")
 }
 
 func getProxy(server *Server) func(w http.ResponseWriter, r *http.Request) {
