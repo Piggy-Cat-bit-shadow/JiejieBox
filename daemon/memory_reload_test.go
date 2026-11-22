@@ -1,9 +1,9 @@
 package daemon
 
-// G08 host harness: whole-Box reload peak. It is opt-in and one process per sample. The service is
-// started with N static SOCKS nodes, then StartOrReloadService replaces the whole configuration K
-// times with one node changed. A sampler records HeapAlloc during each reload so the transient
-// old+new overlap is visible, not only the settled heap.
+// G08 host harness: whole-Box SEQUENTIAL rebuild peak. It is opt-in and one process per sample.
+// StartOrReloadService closes the old instance and calls FreeOSMemory BEFORE building the new Box,
+// so this samples the rebuild workspace, not old+new coexistence. A sampler records HeapAlloc
+// during each reload so the transient rebuild is visible, not only the settled heap.
 
 import (
 	"context"
