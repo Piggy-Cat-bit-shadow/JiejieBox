@@ -228,13 +228,15 @@ func (s *Store) Stats() Stats {
 
 // Retain adds one reference; the caller must Release it.
 func (r Ref) Retain() Ref {
-	if r.rec == nil {
+	if r.rec == nil || r.store == nil {
 		return Ref{}
 	}
-	if r.rec.refs.Add(1) <= 1 {
-		r.rec.refs.Add(-1)
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	if r.rec.refs.Load() <= 0 || r.rec.payload == nil {
 		return Ref{}
 	}
+	r.rec.refs.Add(1)
 	return Ref{store: r.store, rec: r.rec, generation: r.rec.generation}
 }
 
@@ -244,15 +246,19 @@ func (r Ref) Release() {
 	if r.rec == nil || r.store == nil {
 		return
 	}
+	store := r.store
+	store.mu.Lock()
+	defer store.mu.Unlock()
 	if r.rec.refs.Add(-1) != 0 {
 		return
 	}
-	store := r.store
-	store.mu.Lock()
-	delete(store.records, r.rec.key)
-	store.released.Add(1)
+	// The decrement and the unlink are one critical section with Put's dedupe Add, so Put can
+	// never observe refs>0 on a record that Release has just unlinked and cleared.
+	if current, found := store.records[r.rec.key]; found && current == r.rec {
+		delete(store.records, r.rec.key)
+		store.released.Add(1)
+	}
 	r.rec.payload = nil
-	store.mu.Unlock()
 }
 
 // Valid reports whether the reference still names a live record of the generation it was made for.

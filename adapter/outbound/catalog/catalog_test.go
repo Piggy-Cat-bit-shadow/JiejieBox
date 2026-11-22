@@ -519,3 +519,28 @@ func TestOwnerAndProtocolReadsDoNotRaceWithIntern(t *testing.T) {
 	group.Wait()
 	ref.Release()
 }
+
+// TestPutReleaseStressNeverReturnsDeadReference targets L-CAT-03: Put's dedupe and the last
+// Release used to update the refcount under different critical sections. A Put could then return a
+// record that Release had already unlinked and cleared. The stress is small because the fix is the
+// ordering, not probability; -race also checks the name/payload accesses.
+func TestPutReleaseStressNeverReturnsDeadReference(t *testing.T) {
+	store := catalog.NewStore()
+	payload := []byte("same-record")
+	for round := 0; round < 5000; round++ {
+		ref, err := store.Put("owner", C.TypeSOCKS, payload)
+		require.NoError(t, err)
+		released := make(chan struct{})
+		go func() {
+			ref.Release()
+			close(released)
+		}()
+		other, otherErr := store.Put("owner", C.TypeSOCKS, payload)
+		if otherErr == nil {
+			require.NotEmpty(t, other.Payload(), "Put returned a record already cleared by Release")
+			other.Release()
+		}
+		<-released
+	}
+	require.Equal(t, 0, store.Stats().Records)
+}
