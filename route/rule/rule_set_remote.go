@@ -318,6 +318,14 @@ func (s *RemoteRuleSet) publishStoredVersion(version *artifact.Version) error {
 	if err != nil {
 		return E.Cause(err, "read stored rule-set")
 	}
+	// The store verified this version's digest when it was loaded. Reading the file again gives a
+	// second chance for the name to have changed (an in-place write, a sync tool, a concurrent
+	// repair); parsing whatever is there now would attribute another document's rules to the
+	// verified digest. Re-check the bytes we actually hold before they become the live generation.
+	contentSum := sha256.Sum256(content)
+	if int64(len(content)) != storedManifest.Size || hex.EncodeToString(contentSum[:]) != storedManifest.Digest {
+		return E.New("stored rule-set ", storedManifest.Digest, " changed on disk after it was verified")
+	}
 	ruleSet, err := s.decodeRuleSet(content)
 	if err != nil {
 		return err
