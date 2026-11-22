@@ -1,5 +1,3 @@
-//go:build !race
-
 package catalog_test
 
 // Measurement harness for the A/B/C arms. It is opt-in (CATALOG_MEASURE_ROOT) and one process per

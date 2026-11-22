@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing/common/json/badoption"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json/badoption"
 	N "github.com/sagernet/sing/common/network"
 )
 
@@ -66,18 +66,18 @@ func (l StringList) Value() badoption.Listable[string] {
 // Dialer is the subset of option.DialerOptions an admitted shape may carry. It is shared so Trojan,
 // SOCKS and HTTP records cannot drift on how an accepted dialer field is represented.
 type Dialer struct {
-	ConnectTimeout             badoption.Duration   `json:"connect_timeout,omitempty"`
-	TCPFastOpen                bool                 `json:"tcp_fast_open,omitempty"`
-	TCPMultiPath               bool                 `json:"tcp_multipath,omitempty"`
-	DisableTCPKeepAlive        bool                 `json:"disable_tcp_keep_alive,omitempty"`
-	TCPKeepAlive               badoption.Duration   `json:"tcp_keep_alive,omitempty"`
-	TCPKeepAliveInterval       badoption.Duration   `json:"tcp_keep_alive_interval,omitempty"`
-	TCPKeepAliveSystemDefaults bool                 `json:"tcp_keep_alive_system_defaults,omitempty"`
-	ReuseAddr                  bool                 `json:"reuse_addr,omitempty"`
-	ProtectPath                string               `json:"protect_path,omitempty"`
-	UDPBindPort                uint16               `json:"udp_bind_port,omitempty"`
-	UDPFragment                *bool                `json:"udp_fragment,omitempty"`
-	UDPFragmentDefault         bool                 `json:"udp_fragment_default,omitempty"`
+	ConnectTimeout             badoption.Duration    `json:"connect_timeout,omitempty"`
+	TCPFastOpen                bool                  `json:"tcp_fast_open,omitempty"`
+	TCPMultiPath               bool                  `json:"tcp_multipath,omitempty"`
+	DisableTCPKeepAlive        bool                  `json:"disable_tcp_keep_alive,omitempty"`
+	TCPKeepAlive               badoption.Duration    `json:"tcp_keep_alive,omitempty"`
+	TCPKeepAliveInterval       badoption.Duration    `json:"tcp_keep_alive_interval,omitempty"`
+	TCPKeepAliveSystemDefaults bool                  `json:"tcp_keep_alive_system_defaults,omitempty"`
+	ReuseAddr                  bool                  `json:"reuse_addr,omitempty"`
+	ProtectPath                string                `json:"protect_path,omitempty"`
+	UDPBindPort                uint16                `json:"udp_bind_port,omitempty"`
+	UDPFragment                *bool                 `json:"udp_fragment,omitempty"`
+	UDPFragmentDefault         bool                  `json:"udp_fragment_default,omitempty"`
 	DomainStrategy             option.DomainStrategy `json:"domain_strategy,omitempty"`
 }
 
