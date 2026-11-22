@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -353,7 +354,7 @@ func syntheticRecord(spec runSpec, stage string, status string, values map[strin
 			"build_sha": testLedgerSHA, "build_dirty": false,
 		},
 		"build": map[string]any{
-			"go_version": "go1.27.4", "goos": "windows", "goarch": "amd64",
+			"go_version": "go1.27.4", "goos": runtime.GOOS, "goarch": runtime.GOARCH,
 			"tags": []any{"with_purego"},
 		},
 		"fixture": map[string]any{"version": fixtureVersion, "document_sha256": testFixtureDigest(spec)},

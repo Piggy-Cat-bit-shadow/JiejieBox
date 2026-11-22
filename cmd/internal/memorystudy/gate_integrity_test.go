@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -262,7 +263,7 @@ func TestBudgetStructureIsRefusedWhenItCannotFail(t *testing.T) {
 	// is marked legacy, and the gate refuses it as a certification reference.
 	legacyBody, err := json.Marshal(map[string]any{
 		"schema_version": legacyBudgetSchemaVersion,
-		"baseline":       map[string]any{"goos": "windows", "goarch": "amd64"},
+		"baseline":       map[string]any{"goos": runtime.GOOS, "goarch": runtime.GOARCH},
 		"rules": []map[string]any{{
 			"id": "canary-impossible", "case": "empty", "nodes": 0, "groups": 0,
 			"node_proto": "direct", "gc_mode": "forced", "stage": "close",
