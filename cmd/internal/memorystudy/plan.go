@@ -41,6 +41,13 @@ type runFlags struct {
 	writeBudget string
 	from        string
 	wide        bool
+	// referenceManifest archives a reference capture; selfCheck lets -gate verify the reference
+	// ledger against the budget derived from it.
+	referenceManifest string
+	selfCheck         bool
+	// provided records which flags the caller actually set. "runs=1" and "runs was left at its
+	// default" are different statements when a ledger read back from disk has three repetitions.
+	provided map[string]bool
 
 	gomaxprocs int
 	godebug    string

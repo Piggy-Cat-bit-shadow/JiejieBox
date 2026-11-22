@@ -23,8 +23,16 @@ import (
 // is written by deriveBudget from observed runs, and the observed values are kept in the file next
 // to the threshold so the derivation can be audited without re-running anything.
 const (
-	budgetSchemaVersion = "memorystudy-budget/1"
-	gateSchemaVersion   = "memorystudy-gate/1"
+	budgetSchemaVersion = "memorystudy-budget/2"
+	// legacyBudgetSchemaVersion is the previous contract, still readable so that a hand-written or
+	// pre-existing budget is EVALUATED (and can fail) instead of being replaced by a decode error.
+	// A legacy budget cannot certify a candidate through the reference path: it carries no
+	// provenance, so the gate reports it as unprovenanced and evaluates it under the legacy rules
+	// (a rule that names no activity matches any activity). New budgets are always written as /2.
+	legacyBudgetSchemaVersion = "memorystudy-budget/1"
+	gateSchemaVersion         = "memorystudy-gate/1"
+	// referenceSchemaVersion names the archived reference manifest.
+	referenceSchemaVersion = "memorystudy-reference/1"
 	// budgetFactor is the multiplicative headroom over the worst observed baseline. A regression
 	// gate needs room for run-to-run noise; it must not have so much room that the regressions it
 	// exists to catch fit inside it.
@@ -38,10 +46,44 @@ const (
 )
 
 type budgetFile struct {
-	SchemaVersion string         `json:"schema_version"`
-	Baseline      budgetBaseline `json:"baseline"`
-	Rules         []budgetRule   `json:"rules"`
+	SchemaVersion string            `json:"schema_version"`
+	Baseline      budgetBaseline    `json:"baseline"`
+	Provenance    *budgetProvenance `json:"provenance,omitempty"`
+	Rules         []budgetRule      `json:"rules"`
+	// legacy is set by the reader for a schema/1 file. It is not part of the JSON: it says "this
+	// budget predates the activity selector and the reference provenance", which the gate reports
+	// instead of silently treating the file as current.
+	legacy bool
 }
+
+// budgetProvenance is where the thresholds came from, in a form the gate can check.
+//
+// # Why the ledger's hash and run ids are here
+//
+// The failure this closes: run the gate matrix once, feed that ledger to -write-budget, and then
+// evaluate the SAME ledger against the budget derived from it. Every rule then passes by
+// construction, so the gate reports success without testing anything. A budget therefore records
+// (a) whether it came from a reference capture at all, (b) the SHA-256 of the ledger it was derived
+// from and (c) that ledger's run ids, and the gate refuses a candidate whose evidence is that very
+// ledger unless it was explicitly asked to self-check the reference.
+type budgetProvenance struct {
+	Kind         string `json:"kind"`
+	LedgerPath   string `json:"ledger_path,omitempty"`
+	LedgerSHA256 string `json:"ledger_sha256"`
+	ManifestPath string `json:"manifest_path,omitempty"`
+	ManifestSHA  string `json:"manifest_sha256,omitempty"`
+	Repetitions  int    `json:"repetitions"`
+	Specs        int    `json:"specs"`
+	// FixtureDigests binds each spec to the configuration document it measured. A budget whose
+	// document differs from the candidate's is not a threshold for the candidate.
+	FixtureDigests map[string]string `json:"fixture_digests,omitempty"`
+}
+
+// Provenance kinds. Only a reference budget may certify a candidate.
+const (
+	provenanceReference = "reference"
+	provenanceDerived   = "derived"
+)
 
 type budgetBaseline struct {
 	CapturedAt  string   `json:"captured_at"`
@@ -51,8 +93,10 @@ type budgetBaseline struct {
 	GOARCH      string   `json:"goarch"`
 	GoVersion   string   `json:"go_version"`
 	Tags        []string `json:"tags"`
-	Runs        []string `json:"runs"`
-	Notes       []string `json:"notes,omitempty"`
+	// FixtureVersion is the generated-document contract the thresholds were derived against.
+	FixtureVersion string   `json:"fixture_version"`
+	Runs           []string `json:"runs"`
+	Notes          []string `json:"notes,omitempty"`
 }
 
 type budgetRule struct {
@@ -62,6 +106,7 @@ type budgetRule struct {
 	Nodes           int       `json:"nodes"`
 	Groups          int       `json:"groups"`
 	NodeProto       string    `json:"node_proto"`
+	Activity        []string  `json:"activity"`
 	GCMode          string    `json:"gc_mode"`
 	Stage           string    `json:"stage"`
 	Metric          string    `json:"metric"`
@@ -149,13 +194,23 @@ func gateSpecs(wide bool) []runSpec {
 	return specs
 }
 
-// ruleSelector names the case a rule applies to. It is the same five fields the ledger echoes on
-// every line, so a rule can be checked against a saved JSONL without re-running anything.
+// ruleSelector names the case a rule applies to. It is the same fields the ledger echoes on every
+// line, so a rule can be checked against a saved JSONL without re-running anything.
+//
+// # Why Activity is part of the selector
+//
+// The gate matrix contains two empty/direct/forced cases that differ only in their activity history:
+// the plain one and the traffic one. Without an activity term a base rule selected BOTH, so its
+// observed population was six runs instead of three, and deleting the plain case's runs entirely
+// still left the rule green on the traffic runs - a case that disappeared was silently covered by a
+// different case. The gate's own contract is "a rule names exactly the population it was derived
+// from"; activity is part of that population.
 type ruleSelector struct {
 	caseName  string
 	nodes     int
 	groups    int
 	nodeProto string
+	activity  []string
 	gcMode    string
 }
 
@@ -183,6 +238,7 @@ func gateRuleTemplates() []budgetRule {
 			Nodes:       selector.nodes,
 			Groups:      selector.groups,
 			NodeProto:   selector.nodeProto,
+			Activity:    append([]string(nil), selector.activity...),
 			GCMode:      selector.gcMode,
 			Stage:       stage,
 			Metric:      metric,
@@ -193,11 +249,15 @@ func gateRuleTemplates() []budgetRule {
 			Required: true,
 		}
 	}
-	emptyForced := ruleSelector{"empty", 0, 0, "direct", "forced"}
-	emptyNatural := ruleSelector{"empty", 0, 0, "direct", "natural"}
-	ordinaryZero := ruleSelector{"ordinary", 0, 0, "trojan", "forced"}
-	ordinaryHundred := ruleSelector{"ordinary", 100, 2, "trojan", "forced"}
-	probeCase := ruleSelector{"ordinary", 8, 2, "direct", "forced"}
+	none := []string{"none"}
+	emptyForced := ruleSelector{"empty", 0, 0, "direct", none, "forced"}
+	emptyNatural := ruleSelector{"empty", 0, 0, "direct", none, "natural"}
+	ordinaryZero := ruleSelector{"ordinary", 0, 0, "trojan", none, "forced"}
+	ordinaryHundred := ruleSelector{"ordinary", 100, 2, "trojan", none, "forced"}
+	probeCase := ruleSelector{"ordinary", 8, 2, "direct", []string{"probe"}, "forced"}
+	// The traffic case is the same empty/direct/forced configuration as emptyForced; only its
+	// activity history differs, which is exactly why the selector has to say so.
+	trafficCase := ruleSelector{"empty", 0, 0, "direct", []string{"traffic"}, "forced"}
 
 	return []budgetRule{
 		rule("base-entry-live-heap",
@@ -250,19 +310,19 @@ func gateRuleTemplates() []budgetRule {
 		withPer(
 			rule("traffic-per-flow-live-heap",
 				"live heap per held flow: one buffer plus bookkeeping, not two buffers",
-				emptyForced, "deltas.from_previous.live_heap_bytes", stageTrafficHeld, noisePerFlowFloor),
+				trafficCase, "deltas.from_previous.live_heap_bytes", stageTrafficHeld, noisePerFlowFloor),
 			"spec.held_flows"),
 		// The two business checks are not budgets: they are the definition of a working relay, so
 		// their threshold is the value itself and there is nothing to derive.
 		withMin(
 			rule("traffic-verified",
 				"the traffic fixture must verify both directions",
-				emptyForced, "traffic.verified", stageTrafficVerified, 0),
+				trafficCase, "traffic.verified", stageTrafficVerified, 0),
 			1),
 		withMin(
 			rule("traffic-half-close",
 				"the client's half-close must be propagated: the destination only answers after EOF",
-				emptyForced, "traffic.half_close_propagated", stageTrafficVerified, 0),
+				trafficCase, "traffic.half_close_propagated", stageTrafficVerified, 0),
 			1),
 	}
 }
@@ -305,6 +365,13 @@ type gateReport struct {
 	Results        []ruleResult   `json:"results"`
 	Runs           []string       `json:"runs"`
 	RecordCount    int            `json:"record_count"`
+	// Verification is the identity comparison the verdict stands on: which checkout was measured,
+	// which revision the budget describes, and whether the budget is a reference rather than a
+	// re-derivation of this very ledger.
+	Verification *gateVerification `json:"verification,omitempty"`
+	// Error is set when the gate REFUSED to compare. The report is written in that case too, so a
+	// refusal is an artefact a reviewer can read rather than an exit code.
+	Error string `json:"error,omitempty"`
 }
 
 func (r *gateReport) summarise() {
@@ -403,6 +470,9 @@ func evaluateBudget(budget budgetFile, records []recordMap) []ruleResult {
 
 // observedValues resolves one rule against the ledger.
 func observedValues(rule budgetRule, records []recordMap) (values []float64, matched int, missing int) {
+	// A legacy (schema/1) rule has no activity term and keeps matching any activity. That is the
+	// old behaviour preserved for old files only; every rule this tool writes names its activity.
+	wantActivity := activityKey(rule.Activity)
 	for _, record := range records {
 		if record.recordKind() != recordStage {
 			continue
@@ -418,6 +488,9 @@ func observedValues(rule budgetRule, records []recordMap) (values []float64, mat
 			record.specField("groups") != fmt.Sprint(rule.Groups) ||
 			record.specField("node_proto") != rule.NodeProto ||
 			record.specField("gc_mode") != rule.GCMode {
+			continue
+		}
+		if wantActivity != "" && record.specActivity() != wantActivity {
 			continue
 		}
 		matched++
@@ -438,7 +511,11 @@ func observedValues(rule budgetRule, records []recordMap) (values []float64, mat
 				continue
 			}
 			divisor, perOK := numeric(perRaw)
-			if !perOK || divisor == 0 {
+			// A denominator has to be POSITIVE. Zero was always rejected; a negative one was
+			// accepted until this check existed, and dividing by it flipped the sign of the
+			// observation: a "cost per flow" rule then compared a negative number against a
+			// positive ceiling, which can never fail, so the rule was green for any measurement.
+			if !perOK || divisor <= 0 {
 				missing++
 				continue
 			}
@@ -468,11 +545,18 @@ func (r budgetRule) BudgetText() string {
 // Every rule must have at least one observation. A rule with no observation is not given a generous
 // default: it fails the derivation, because a threshold invented for a metric that was never
 // measured is a gate that cannot detect anything.
-func deriveBudget(records []recordMap, previousPath string) (budgetFile, error) {
+func deriveBudget(records []recordMap, provenance budgetProvenance) (budgetFile, error) {
 	templates := gateRuleTemplates()
+	summarised, err := summariseLedger(records)
+	if err != nil {
+		return budgetFile{}, err
+	}
+	provenance.FixtureDigests = summarised.FixtureDigests
+	provenance.Repetitions, provenance.Specs = repetitionsAndSpecs(records)
 	budget := budgetFile{
 		SchemaVersion: budgetSchemaVersion,
 		Baseline:      baselineFrom(records),
+		Provenance:    &provenance,
 	}
 	for _, rule := range templates {
 		values, matched, missing := observedValues(rule, records)
@@ -492,9 +576,9 @@ func deriveBudget(records []recordMap, previousPath string) (budgetFile, error) 
 		}
 		if len(values) == 0 {
 			return budgetFile{}, fmt.Errorf(
-				"rule %s: no numeric observation in %d matching record(s) of stage %s; a threshold "+
-					"cannot be derived from a metric this platform does not produce",
-				rule.ID, matched, rule.Stage)
+				"rule %s: no numeric observation in %d matching record(s) of stage %s (activity %q); a "+
+					"threshold cannot be derived from a metric this platform does not produce",
+				rule.ID, matched, rule.Stage, activityKey(rule.Activity))
 		}
 		worst := values[0]
 		best := values[0]
@@ -520,8 +604,10 @@ func deriveBudget(records []recordMap, previousPath string) (budgetFile, error) 
 	budget.Baseline.Notes = append(budget.Baseline.Notes,
 		"thresholds are derived from the runs listed in baseline.runs; they are not copied from "+
 			"another project and they are not a device footprint",
-		"re-derive with: memorystudy -write-budget <path> -from <baseline.jsonl>")
-	_ = previousPath
+		"re-derive with: memorystudy -write-budget <path> -from <baseline.jsonl> -runs <n> "+
+			"(a reference budget additionally needs -reference-manifest)",
+		fmt.Sprintf("provenance: kind=%s, ledger_sha256=%s, %d repetitions x %d specs",
+			provenance.Kind, provenance.LedgerSHA256, provenance.Repetitions, provenance.Specs))
 	return budget, nil
 }
 
@@ -536,27 +622,45 @@ func baselineFrom(records []recordMap) budgetBaseline {
 		text, _ := value.(string)
 		return text
 	}
+	// Every stage line carries the identity, but the FIRST one (earliest_observable) predates the
+	// fixture: it can only say what the process was, not which document it went on to measure. The
+	// scan therefore takes the first non-empty value of each field across the ledger instead of
+	// reading one line and inheriting its blanks.
 	for _, record := range records {
 		if record.recordKind() != recordStage {
 			continue
 		}
-		baseline.SourceSHA = stringAt(record, "identity.source.sha")
-		if value, ok := record.resolve("identity.source.dirty"); ok {
-			baseline.SourceDirty, _ = value.(bool)
+		if baseline.SourceSHA == "" {
+			baseline.SourceSHA = stringAt(record, "identity.source.sha")
 		}
-		baseline.GOOS = stringAt(record, "identity.build.goos")
-		baseline.GOARCH = stringAt(record, "identity.build.goarch")
-		baseline.GoVersion = stringAt(record, "identity.build.go_version")
-		if tags, ok := record.resolve("identity.build.tags"); ok {
-			if list, isList := tags.([]any); isList {
-				for _, entry := range list {
-					if text, isText := entry.(string); isText {
-						baseline.Tags = append(baseline.Tags, text)
+		if value, ok := record.resolve("identity.source.dirty"); ok {
+			if dirty, isBool := value.(bool); isBool {
+				baseline.SourceDirty = dirty
+			}
+		}
+		if baseline.GOOS == "" {
+			baseline.GOOS = stringAt(record, "identity.build.goos")
+		}
+		if baseline.GOARCH == "" {
+			baseline.GOARCH = stringAt(record, "identity.build.goarch")
+		}
+		if baseline.GoVersion == "" {
+			baseline.GoVersion = stringAt(record, "identity.build.go_version")
+		}
+		if baseline.FixtureVersion == "" {
+			baseline.FixtureVersion = stringAt(record, "identity.fixture.version")
+		}
+		if len(baseline.Tags) == 0 {
+			if tags, ok := record.resolve("identity.build.tags"); ok {
+				if list, isList := tags.([]any); isList {
+					for _, entry := range list {
+						if text, isText := entry.(string); isText {
+							baseline.Tags = append(baseline.Tags, text)
+						}
 					}
 				}
 			}
 		}
-		break
 	}
 	return baseline
 }
@@ -573,8 +677,17 @@ func readBudgetFile(path string) (budgetFile, error) {
 	if err = json.Unmarshal(content, &budget); err != nil {
 		return budget, fmt.Errorf("decode %s: %w", path, err)
 	}
-	if budget.SchemaVersion != budgetSchemaVersion {
-		return budget, fmt.Errorf("%s is %q, this binary writes %q", path, budget.SchemaVersion, budgetSchemaVersion)
+	switch budget.SchemaVersion {
+	case budgetSchemaVersion:
+	case legacyBudgetSchemaVersion:
+		// Readable on purpose: a hand-written budget (the CI canary is one) must still be
+		// EVALUATED and be able to fail, not merely rejected as a version mismatch. The gate
+		// reports it as unprovenanced and applies the legacy selector, and it can never pass
+		// through the reference path.
+		budget.legacy = true
+	default:
+		return budget, fmt.Errorf("%s is %q, this binary writes %q (and still reads the legacy %q)",
+			path, budget.SchemaVersion, budgetSchemaVersion, legacyBudgetSchemaVersion)
 	}
 	if err = validateBudgetStructure(budget, path); err != nil {
 		return budget, err
@@ -589,6 +702,12 @@ func readBudgetFile(path string) (budgetFile, error) {
 // demonstrated: deleting 16 of 17 rules, and nulling one rule's threshold, both left the gate at
 // exit 0. The file is a baseline, so an empty or duplicated rule set is not a smaller check - it is
 // a different one.
+//
+// A schema/2 budget additionally has to say WHICH POPULATION each rule measures (case, nodes,
+// groups, proto, activity, gc) and where its thresholds came from. A missing activity is refused
+// rather than treated as "any activity": that default is exactly the hole the activity term exists
+// to close, and a budget that lost the field would otherwise silently go back to matching a
+// different case's runs.
 func validateBudgetStructure(budget budgetFile, path string) error {
 	if len(budget.Rules) == 0 {
 		return fmt.Errorf("%s has no rules: a gate with an empty rule set verifies nothing and must not pass", path)
@@ -605,6 +724,38 @@ func validateBudgetStructure(budget budgetFile, path string) error {
 		if rule.Min == nil && rule.Max == nil {
 			return fmt.Errorf("%s rule %q has no threshold: it would pass unconditionally", path, rule.ID)
 		}
+		if !budget.legacy {
+			switch {
+			case rule.Case == "":
+				return fmt.Errorf("%s rule %q does not name a case; a rule that selects everything measures nothing", path, rule.ID)
+			case rule.NodeProto == "":
+				return fmt.Errorf("%s rule %q does not name a node protocol", path, rule.ID)
+			case rule.GCMode == "":
+				return fmt.Errorf("%s rule %q does not name a gc discipline", path, rule.ID)
+			case len(rule.Activity) == 0:
+				return fmt.Errorf("%s rule %q does not name an activity history; without it the rule "+
+					"matches every activity of its case, so one case's disappearance can be covered "+
+					"by another's runs", path, rule.ID)
+			case rule.Stage == "":
+				return fmt.Errorf("%s rule %q does not name a stage", path, rule.ID)
+			case rule.Metric == "":
+				return fmt.Errorf("%s rule %q does not name a metric", path, rule.ID)
+			}
+		}
+	}
+	if !budget.legacy {
+		if budget.Provenance == nil {
+			return fmt.Errorf("%s carries no provenance: a schema/2 budget must record the ledger "+
+				"hash and the reference kind it was derived from, so the gate can refuse a budget "+
+				"derived from the very ledger it is asked to certify", path)
+		}
+		if budget.Provenance.Kind != provenanceReference && budget.Provenance.Kind != provenanceDerived {
+			return fmt.Errorf("%s declares provenance kind %q (want %q or %q)",
+				path, budget.Provenance.Kind, provenanceReference, provenanceDerived)
+		}
+		if budget.Provenance.LedgerSHA256 == "" {
+			return fmt.Errorf("%s does not record the SHA-256 of the ledger its thresholds came from", path)
+		}
 	}
 	return nil
 }
@@ -617,14 +768,71 @@ func validateBudgetStructure(budget budgetFile, path string) error {
 // is answered against the wrong population. Each of these was a demonstrated false pass before this
 // check existed: 5 of 6 run_end records removed, the base case deleted entirely, and 1 of 3
 // repetitions kept all reached "17 pass" with exit 0.
+//
+// It is also the check -write-budget uses, so the artefact the thresholds are derived from cannot be
+// weaker than the artefact the gate accepts.
 func requireCompleteEvidence(current *session, flags *runFlags) error {
-	specs := gateSpecs(flags.wide)
-	expectedRuns := flags.runs * len(specs)
-	seen := runIDs(current.records)
+	return requireCompleteLedger(current.records, flags.runs, gateSpecs(flags.wide))
+}
+
+// requireCompleteLedger is the completeness check over a ledger, whether it was just measured or
+// read back from a file. `planned` is the exact case list the ledger must contain.
+func requireCompleteLedger(records []recordMap, repetitions int, planned []runSpec) error {
+	if repetitions < 1 {
+		return fmt.Errorf("incomplete evidence: %d repetition(s) planned; a session that ran nothing "+
+			"cannot be completed", repetitions)
+	}
+	if len(planned) == 0 {
+		return fmt.Errorf("incomplete evidence: no planned case, so there is nothing to compare")
+	}
+	expectedRuns := repetitions * len(planned)
+	seen := runIDs(records)
 	if len(seen) != expectedRuns {
 		return fmt.Errorf("incomplete evidence: %d repetition(s) x %d spec(s) = %d run(s) planned, "+
 			"the ledger names %d; a gate cannot be compared against a 3-run baseline with fewer runs",
-			flags.runs, len(specs), expectedRuns, len(seen))
+			repetitions, len(planned), expectedRuns, len(seen))
+	}
+	// Which case each run measured is part of the population, not decoration: 18 runs that are
+	// each a repetition of one spec satisfy "one run_end per run" and still answer every rule from
+	// the wrong case. The multiset comparison is what makes "specs x runs" mean it.
+	wanted := make(map[string]int, len(planned))
+	for _, spec := range planned {
+		wanted[specSignature(spec)]++
+	}
+	perRun := make(map[string][]string, len(seen))
+	for _, record := range records {
+		id := record.runID()
+		if id == "" {
+			continue
+		}
+		perRun[id] = append(perRun[id], recordSpecSignature(record))
+	}
+	got := make(map[string]int, expectedRuns)
+	for _, id := range seen {
+		signatures := perRun[id]
+		if len(signatures) == 0 {
+			return fmt.Errorf("incomplete evidence: run %s has no records", id)
+		}
+		signature := signatures[0]
+		for _, other := range signatures[1:] {
+			if other != signature {
+				return fmt.Errorf("incomplete evidence: run %s mixes two specs (%q and %q); one run id "+
+					"is one measurement", id, signature, other)
+			}
+		}
+		if wanted[signature] == 0 {
+			return fmt.Errorf("incomplete evidence: run %s measured the case %q, which is not in the "+
+				"planned matrix", id, signature)
+		}
+		got[signature]++
+	}
+	for signature, count := range wanted {
+		expected := count * repetitions
+		if got[signature] != expected {
+			return fmt.Errorf("incomplete evidence: case %q appears in %d run(s), want %d "+
+				"(%d repetition(s) x %d spec(s) with that signature)", signature, got[signature], expected,
+				repetitions, count)
+		}
 	}
 	core := []string{
 		stageSetup, stageConfigParse, stageConfigBuild, stageConstruct, stageFixtureServers,
@@ -635,7 +843,7 @@ func requireCompleteEvidence(current *session, flags *runFlags) error {
 	stagePID := make(map[string]map[int]bool, len(seen))
 	stageName := make(map[string]map[string]bool, len(seen))
 	childOK := make(map[string]bool, len(seen))
-	for _, record := range current.records {
+	for _, record := range records {
 		id := record.runID()
 		if id == "" {
 			continue
@@ -703,6 +911,69 @@ func requireCompleteEvidence(current *session, flags *runFlags) error {
 	return nil
 }
 
+// specSignature is the identity of one planned case, in the fields a ledger echoes. Two runs with
+// different signatures are different measurements and cannot stand in for each other.
+func specSignature(spec runSpec) string {
+	return strings.Join([]string{
+		spec.Case,
+		fmt.Sprint(spec.Nodes),
+		fmt.Sprint(spec.Groups),
+		spec.NodeProto,
+		spec.ConfigSource,
+		activityKey(spec.Activity),
+		spec.GCMode,
+		fmt.Sprint(spec.HeldFlows),
+		fmt.Sprint(spec.TrafficBytes),
+	}, "|")
+}
+
+// recordSpecSignature is specSignature read back from a ledger line.
+func recordSpecSignature(record recordMap) string {
+	return strings.Join([]string{
+		record.specField("case"),
+		record.specField("nodes"),
+		record.specField("groups"),
+		record.specField("node_proto"),
+		record.specField("config_source"),
+		record.specActivity(),
+		record.specField("gc_mode"),
+		record.specField("held_flows"),
+		record.specField("traffic_bytes"),
+	}, "|")
+}
+
+// repetitionsAndSpecs reports how many repetitions of how many distinct cases a ledger contains.
+func repetitionsAndSpecs(records []recordMap) (repetitions int, specs int) {
+	perRun := make(map[string]string)
+	for _, record := range records {
+		id := record.runID()
+		if id == "" || record.recordKind() != recordStage {
+			continue
+		}
+		if _, exists := perRun[id]; !exists {
+			perRun[id] = recordSpecSignature(record)
+		}
+	}
+	if len(perRun) == 0 {
+		return 0, 0
+	}
+	counts := make(map[string]int)
+	for _, signature := range perRun {
+		counts[signature]++
+	}
+	specs = len(counts)
+	repetitions = -1
+	for _, count := range counts {
+		if repetitions < 0 || count < repetitions {
+			repetitions = count
+		}
+	}
+	if specs == 0 {
+		return 0, 0
+	}
+	return repetitions, specs
+}
+
 func writeBudgetFile(path string, budget budgetFile) error {
 	content, err := json.MarshalIndent(budget, "", "  ")
 	if err != nil {
@@ -724,6 +995,22 @@ func printGateReport(writer io.Writer, report gateReport, budget budgetFile) {
 	fmt.Fprintf(writer, "memorystudy gate: %d pass, %d fail, %d skip (%d records, budget %s, baseline %s)\n",
 		report.Passed, report.Failed, report.Skipped, report.RecordCount, report.BudgetPath,
 		budget.Baseline.SourceSHA)
+	if verification := report.Verification; verification != nil {
+		fmt.Fprintf(writer, "identity: candidate %s, checkout %s, baseline %s, reference %s%s\n",
+			shortOrNone(verification.CandidateSHA), shortOrNone(verification.CheckoutSHA),
+			shortOrNone(verification.BaselineSHA), referenceDescription(verification),
+			describeSelfCheck(verification.SelfCheck))
+		if verification.LegacyBudget {
+			fmt.Fprintf(writer, "note: this budget is the legacy schema/1 contract: its rules name no "+
+				"activity history and it carries no provenance, so it cannot certify a candidate\n")
+		}
+		for _, warning := range verification.Warnings {
+			fmt.Fprintf(writer, "warning: %s\n", warning)
+		}
+	}
+	if report.Error != "" {
+		fmt.Fprintf(writer, "refused: %s\n", report.Error)
+	}
 	if budget.Baseline.SourceSHA != "" && report.Source.SHA != "" && budget.Baseline.SourceSHA != report.Source.SHA {
 		fmt.Fprintf(writer, "note: the budget was derived at %s and this run is %s; the thresholds still apply, the comparison of the two is not a regression\n",
 			budget.Baseline.SourceSHA, report.Source.SHA)
@@ -755,4 +1042,28 @@ func printGateReport(writer io.Writer, report gateReport, budget budgetFile) {
 		}
 		fmt.Fprintln(writer, line)
 	}
+}
+
+func shortOrNone(sha string) string {
+	if sha == "" {
+		return "(none)"
+	}
+	return shortSHA(sha)
+}
+
+func referenceDescription(verification *gateVerification) string {
+	if verification.ReferenceKind == "" {
+		return "(none)"
+	}
+	if verification.ReferenceLedger == "" {
+		return verification.ReferenceKind
+	}
+	return verification.ReferenceKind + " ledger " + shortSHA(verification.ReferenceLedger)
+}
+
+func describeSelfCheck(selfCheck bool) string {
+	if !selfCheck {
+		return ""
+	}
+	return ", self-check (the reference ledger is being verified against its own budget)"
 }

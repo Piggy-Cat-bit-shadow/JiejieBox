@@ -152,7 +152,25 @@ type identity struct {
 	Policy      policyIdentity    `json:"policy"`
 	Overlay     overlayIdentity   `json:"overlay"`
 	Device      deviceIdentity    `json:"device"`
+	Fixture     fixtureIdentity   `json:"fixture"`
 	Unsupported map[string]string `json:"unsupported,omitempty"`
+}
+
+// fixtureIdentity says WHICH configuration document was measured.
+//
+// # Why a version and a digest rather than "the fixture is in the source"
+//
+// The budget's thresholds are a function of the document: node count, group count, the enclosing
+// inbounds and the probe URL all change the heap a case costs. Two runs are only comparable if they
+// measured the same document, and "we did not change fixtures.go" is a claim, not a measurement. The
+// version is the reviewed, human-facing contract; the digest is the machine check that catches an
+// edit that forgot to bump it. Both travel in the ledger, so a comparison against a saved baseline
+// can refuse an incompatible fixture instead of silently attributing its bytes to the product.
+type fixtureIdentity struct {
+	Version string `json:"version"`
+	// Digest is the SHA-256 of the generated document. It is empty on the records taken before the
+	// document exists (earliest observable, setup, fixture servers) and present from config_build on.
+	Digest string `json:"document_sha256,omitempty"`
 }
 
 type sourceIdentity struct {

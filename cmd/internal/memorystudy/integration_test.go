@@ -402,7 +402,7 @@ func TestGateMatrixDerivesAndPassesItsOwnBudget(t *testing.T) {
 			t.Fatalf("%s produced no ledger\n%s", specTag(spec), stderr)
 		}
 	}
-	budget, err := deriveBudget(ledger, "")
+	budget, err := deriveBudget(ledger, budgetProvenance{Kind: provenanceDerived})
 	if err != nil {
 		t.Fatalf("the gate matrix could not be turned into a budget: %v", err)
 	}
@@ -446,9 +446,43 @@ func TestBudgetFileRoundTrip(t *testing.T) {
 		if rule.Max != nil && rule.Min == nil && len(rule.Observed) == 0 {
 			t.Fatalf("rule %s has a derived threshold but no observed baselines", rule.ID)
 		}
+		// The checked-in artefact must be the current contract, not a legacy file that the gate
+		// would refuse as a certification reference.
+		if len(rule.Activity) == 0 {
+			t.Fatalf("rule %s names no activity history; it could be answered by another case's run", rule.ID)
+		}
+	}
+	if budget.legacy {
+		t.Fatal("the checked-in budget is the legacy schema/1 contract; re-capture the reference")
+	}
+	if budget.Provenance == nil || budget.Provenance.Kind != provenanceReference {
+		t.Fatalf("the checked-in budget is not a reference capture: %+v", budget.Provenance)
+	}
+	if budget.Provenance.LedgerSHA256 == "" || len(budget.Provenance.FixtureDigests) == 0 {
+		t.Fatalf("the checked-in budget does not bind its ledger and fixture: %+v", budget.Provenance)
+	}
+	if budget.Provenance.Repetitions != 3 {
+		t.Fatalf("the checked-in budget was derived from %d repetition(s); the gate runs three",
+			budget.Provenance.Repetitions)
+	}
+	if budget.Baseline.FixtureVersion != fixtureVersion {
+		t.Fatalf("the checked-in budget describes fixture %q, this binary generates %q",
+			budget.Baseline.FixtureVersion, fixtureVersion)
 	}
 	if len(budget.Baseline.Runs) == 0 || budget.Baseline.GOOS == "" {
 		t.Fatal("the budget does not name the runs and platform it was derived from")
+	}
+	// One observation per baseline run, not per matching record from another activity: the base
+	// rules used to carry six values because the traffic run answered them too.
+	for _, rule := range budget.Rules {
+		if rule.Min != nil {
+			continue
+		}
+		if len(rule.Observed) != budget.Provenance.Repetitions {
+			t.Fatalf("rule %s carries %d observation(s), want one per repetition (%d): the selector "+
+				"is matching more or fewer records than its own case", rule.ID, len(rule.Observed),
+				budget.Provenance.Repetitions)
+		}
 	}
 	encoded, err := os.ReadFile(path)
 	if err != nil {

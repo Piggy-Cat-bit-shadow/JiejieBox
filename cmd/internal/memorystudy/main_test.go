@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -319,20 +321,38 @@ func setPath(target map[string]any, path string, value any) {
 
 // syntheticRecord builds one ledger line with the given metric values.
 func syntheticRecord(spec runSpec, stage string, status string, values map[string]any) recordMap {
+	activity := make([]any, 0, len(spec.Activity))
+	for _, entry := range spec.Activity {
+		activity = append(activity, entry)
+	}
 	record := recordMap{
 		"schema_version": schemaVersion,
 		"record":         recordStage,
 		"status":         status,
-		"run_id":         "synthetic-" + spec.Case,
-		"stage":          stage,
+		// One run id per SPEC, not per case: the summariser is allowed to refuse a run that carries
+		// two different fixture digests, and a synthetic ledger that reused one id for three specs
+		// would be exactly that.
+		"run_id": "synthetic-" + specTag(spec),
+		"stage":  stage,
 	}
 	record["spec"] = map[string]any{
-		"case":       spec.Case,
-		"nodes":      json.Number(fmt.Sprintf("%d", spec.Nodes)),
-		"groups":     json.Number(fmt.Sprintf("%d", spec.Groups)),
-		"node_proto": spec.NodeProto,
-		"gc_mode":    spec.GCMode,
-		"held_flows": json.Number(fmt.Sprintf("%d", spec.HeldFlows)),
+		"case":          spec.Case,
+		"nodes":         json.Number(fmt.Sprintf("%d", spec.Nodes)),
+		"groups":        json.Number(fmt.Sprintf("%d", spec.Groups)),
+		"node_proto":    spec.NodeProto,
+		"config_source": "static",
+		"activity":      activity,
+		"gc_mode":       spec.GCMode,
+		"held_flows":    json.Number(fmt.Sprintf("%d", spec.HeldFlows)),
+		"traffic_bytes": json.Number(fmt.Sprintf("%d", spec.TrafficBytes)),
+	}
+	record["identity"] = map[string]any{
+		"source": map[string]any{"sha": testLedgerSHA, "dirty": false},
+		"build": map[string]any{
+			"go_version": "go1.27.4", "goos": "windows", "goarch": "amd64",
+			"tags": []any{"with_purego"},
+		},
+		"fixture": map[string]any{"version": fixtureVersion, "document_sha256": testFixtureDigest(spec)},
 	}
 	record["traffic"] = map[string]any{
 		"verified":              true,
@@ -343,6 +363,17 @@ func syntheticRecord(spec runSpec, stage string, status string, values map[strin
 		setPath(record, path, value)
 	}
 	return record
+}
+
+// testLedgerSHA is the revision the synthetic ledgers claim. It is a fixed string because the unit
+// tests are about the SELECTOR and the EVALUATOR, not about the checkout; the identity tests below
+// pass their own HEAD explicitly.
+const testLedgerSHA = "1111111111111111111111111111111111111111"
+
+// testFixtureDigest is a stable per-spec document digest for synthetic ledgers.
+func testFixtureDigest(spec runSpec) string {
+	sum := sha256.Sum256([]byte(specSignature(spec)))
+	return hex.EncodeToString(sum[:])
 }
 
 // syntheticGateLedger produces one record for every rule in the gate matrix, with a value slightly
@@ -426,7 +457,7 @@ func syntheticGateLedger() []recordMap {
 // the baseline, fail one that regresses, and SKIP - never pass - what it cannot see.
 func TestBudgetDerivationAndEvaluation(t *testing.T) {
 	ledger := syntheticGateLedger()
-	budget, err := deriveBudget(ledger, "")
+	budget, err := deriveBudget(ledger, budgetProvenance{Kind: provenanceDerived})
 	if err != nil {
 		t.Fatalf("the baseline could not be turned into a budget: %v", err)
 	}
@@ -544,7 +575,7 @@ func TestDeriveBudgetRefusesAnUnmeasuredRule(t *testing.T) {
 		}
 		truncated = append(truncated, record)
 	}
-	if _, err := deriveBudget(truncated, ""); err == nil {
+	if _, err := deriveBudget(truncated, budgetProvenance{Kind: provenanceDerived}); err == nil {
 		t.Fatal("a budget was derived without any held-flow observation")
 	}
 }

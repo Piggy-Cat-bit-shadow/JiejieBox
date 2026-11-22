@@ -160,6 +160,16 @@ func runChild(spec runSpec, runID string, output io.Writer) (returnErr error) {
 	}
 	instance.fixture = generateFixtureWithProvider(spec, instance.inboundPort, probeURL, instance.providerPath)
 	instance.configBytes = instance.fixture.Document
+	// The document's own identity is recorded with the run, before the first reading that charges
+	// it. The digest is what turns "the fixture did not change" into something the gate can check:
+	// two ledgers with different documents are not two measurements of the same thing, whatever
+	// the version string says. The reserved inbound port, the fixture server's port and the
+	// provider's temporary directory are ephemeral, so they are redacted from the hash.
+	instance.identity.Fixture = fixtureIdentity{
+		Version: fixtureVersion,
+		Digest: fixtureFingerprint(instance.fixture.Document, probeURL, instance.providerPath,
+			strconv.Itoa(int(instance.inboundPort))),
+	}
 	instance.note(fmt.Sprintf("fixture document: %d bytes, %d nodes, %d groups, node_proto=%s, config_source=%s",
 		len(instance.fixture.Document), instance.fixture.Nodes, instance.fixture.Groups, spec.NodeProto,
 		spec.ConfigSource))

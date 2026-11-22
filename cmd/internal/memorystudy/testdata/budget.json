@@ -1,8 +1,8 @@
 {
-  "schema_version": "memorystudy-budget/1",
+  "schema_version": "memorystudy-budget/2",
   "baseline": {
-    "captured_at": "2026-11-21T14:49:23Z",
-    "source_sha": "00aac2129d889ca1461d44e44ccdb542976b8126",
+    "captured_at": "2026-11-22T05:07:01Z",
+    "source_sha": "4eb12dde45914aee30da75148494b3ab9ef10316",
     "source_dirty": true,
     "goos": "windows",
     "goarch": "amd64",
@@ -10,30 +10,49 @@
     "tags": [
       "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,with_xhttp,with_trusttunnel,with_awg,badlinkname,http2legacy,with_purego"
     ],
+    "fixture_version": "memorystudy-fixture/1",
     "runs": [
-      "20261121T144904Z-3ff47a-00-empty-n0-g0-direct-none-forced-b579",
-      "20261121T144904Z-3ff47a-00-empty-n0-g0-direct-none-natural-8a08",
-      "20261121T144904Z-3ff47a-00-ordinary-n0-g0-trojan-none-forced-c695",
-      "20261121T144904Z-3ff47a-00-ordinary-n100-g2-trojan-none-forced-7554",
-      "20261121T144904Z-3ff47a-00-empty-n0-g0-direct-traffic-forced-a4f2",
-      "20261121T144904Z-3ff47a-00-ordinary-n8-g2-direct-probe-forced-f1a6",
-      "20261121T144904Z-3ff47a-01-empty-n0-g0-direct-none-forced-6774",
-      "20261121T144904Z-3ff47a-01-empty-n0-g0-direct-none-natural-54d3",
-      "20261121T144904Z-3ff47a-01-ordinary-n0-g0-trojan-none-forced-d30c",
-      "20261121T144904Z-3ff47a-01-ordinary-n100-g2-trojan-none-forced-a8cb",
-      "20261121T144904Z-3ff47a-01-empty-n0-g0-direct-traffic-forced-e4c9",
-      "20261121T144904Z-3ff47a-01-ordinary-n8-g2-direct-probe-forced-5d72",
-      "20261121T144904Z-3ff47a-02-empty-n0-g0-direct-none-forced-5faf",
-      "20261121T144904Z-3ff47a-02-empty-n0-g0-direct-none-natural-e951",
-      "20261121T144904Z-3ff47a-02-ordinary-n0-g0-trojan-none-forced-95ef",
-      "20261121T144904Z-3ff47a-02-ordinary-n100-g2-trojan-none-forced-81a6",
-      "20261121T144904Z-3ff47a-02-empty-n0-g0-direct-traffic-forced-d09d",
-      "20261121T144904Z-3ff47a-02-ordinary-n8-g2-direct-probe-forced-50fd"
+      "20261122T050638Z-4ca58e-00-empty-n0-g0-direct-static-none-forced-6f3b",
+      "20261122T050638Z-4ca58e-00-empty-n0-g0-direct-static-none-natural-5f11",
+      "20261122T050638Z-4ca58e-00-ordinary-n0-g0-trojan-static-none-forced-6607",
+      "20261122T050638Z-4ca58e-00-ordinary-n100-g2-trojan-static-none-forced-deaa",
+      "20261122T050638Z-4ca58e-00-empty-n0-g0-direct-static-traffic-forced-d7a8",
+      "20261122T050638Z-4ca58e-00-ordinary-n8-g2-direct-static-probe-forced-b669",
+      "20261122T050638Z-4ca58e-01-empty-n0-g0-direct-static-none-forced-cab3",
+      "20261122T050638Z-4ca58e-01-empty-n0-g0-direct-static-none-natural-cdbf",
+      "20261122T050638Z-4ca58e-01-ordinary-n0-g0-trojan-static-none-forced-1d09",
+      "20261122T050638Z-4ca58e-01-ordinary-n100-g2-trojan-static-none-forced-b76c",
+      "20261122T050638Z-4ca58e-01-empty-n0-g0-direct-static-traffic-forced-5f2e",
+      "20261122T050638Z-4ca58e-01-ordinary-n8-g2-direct-static-probe-forced-5df5",
+      "20261122T050638Z-4ca58e-02-empty-n0-g0-direct-static-none-forced-e7c2",
+      "20261122T050638Z-4ca58e-02-empty-n0-g0-direct-static-none-natural-7a13",
+      "20261122T050638Z-4ca58e-02-ordinary-n0-g0-trojan-static-none-forced-8de5",
+      "20261122T050638Z-4ca58e-02-ordinary-n100-g2-trojan-static-none-forced-dd49",
+      "20261122T050638Z-4ca58e-02-empty-n0-g0-direct-static-traffic-forced-8ed8",
+      "20261122T050638Z-4ca58e-02-ordinary-n8-g2-direct-static-probe-forced-1d86"
     ],
     "notes": [
       "thresholds are derived from the runs listed in baseline.runs; they are not copied from another project and they are not a device footprint",
-      "re-derive with: memorystudy -write-budget \u003cpath\u003e -from \u003cbaseline.jsonl\u003e"
+      "re-derive with: memorystudy -write-budget \u003cpath\u003e -from \u003cbaseline.jsonl\u003e -runs \u003cn\u003e (a reference budget additionally needs -reference-manifest)",
+      "provenance: kind=reference, ledger_sha256=733f7e58637b2cceee1747233fef2ecf33a30140aa876ed7be0c5c5ce8989974, 3 repetitions x 6 specs"
     ]
+  },
+  "provenance": {
+    "kind": "reference",
+    "ledger_path": "C:\\Deepseek\\JiejieBox-closeout-2026-11-22\\samples\\gate-reference-3runs.jsonl",
+    "ledger_sha256": "733f7e58637b2cceee1747233fef2ecf33a30140aa876ed7be0c5c5ce8989974",
+    "manifest_path": "C:\\Deepseek\\JiejieBox-closeout-2026-11-22\\samples\\gate-reference-3runs.jsonl.manifest.json",
+    "manifest_sha256": "66b94d5931dd904fd3f11ce86bcca6926a586cf9e2970b405a49961dfb8bbe03",
+    "repetitions": 3,
+    "specs": 6,
+    "fixture_digests": {
+      "empty|0|0|direct|static|none|forced|4|65536": "16384270afc0318336f20acb62a6a28c358ab6f1f9ab342b5efb174ebc461707",
+      "empty|0|0|direct|static|none|natural|4|65536": "16384270afc0318336f20acb62a6a28c358ab6f1f9ab342b5efb174ebc461707",
+      "empty|0|0|direct|static|traffic|forced|4|65536": "16384270afc0318336f20acb62a6a28c358ab6f1f9ab342b5efb174ebc461707",
+      "ordinary|0|0|trojan|static|none|forced|4|65536": "16384270afc0318336f20acb62a6a28c358ab6f1f9ab342b5efb174ebc461707",
+      "ordinary|100|2|trojan|static|none|forced|4|65536": "70f62eadf46670a79abc16eb1ce7bb504af9df12411c0f961c23e3fdf126f029",
+      "ordinary|8|2|direct|static|probe|forced|4|65536": "3ac1f5c891eb553cdd9693e56e54d2e9f25edb6fd32f4d1f5c4641e23fb3ca9e"
+    }
   },
   "rules": [
     {
@@ -43,18 +62,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "earliest_observable",
       "metric": "readings.go.live_heap_bytes",
-      "max": 2664250,
-      "basis": "derived from 6 baseline run(s) of THIS tree: observed 2104384..2131400; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 2679640,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2122872..2143712; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        2128624,
-        2104384,
-        2131400,
-        2119304,
-        2106048,
-        2111176
+        2124056,
+        2122872,
+        2143712
       ],
       "required": true
     },
@@ -65,18 +84,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.go.live_heap_bytes",
-      "max": 3065160,
-      "basis": "derived from 6 baseline run(s) of THIS tree: observed 2425048..2452128; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 3068240,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2453216..2454592; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        2448248,
-        2425048,
-        2449440,
-        2446904,
-        2427712,
-        2452128
+        2453216,
+        2453568,
+        2454592
       ],
       "required": true
     },
@@ -87,18 +106,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.go.total_bytes",
-      "max": 25029430,
-      "basis": "derived from 6 baseline run(s) of THIS tree: observed 15558904..20023544; threshold = ceil(max(observed)*1.25, observed+65536) with 65536 of noise allowance",
+      "max": 24998710,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 15296760..19998968; threshold = ceil(max(observed)*1.25, observed+65536) with 65536 of noise allowance",
       "observed": [
-        20023544,
-        19548408,
-        16140536,
-        20015352,
-        15812856,
-        15558904
+        19998968,
+        19761400,
+        15296760
       ],
       "required": true
     },
@@ -109,18 +128,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.goroutines.current",
-      "max": 35,
-      "basis": "derived from 6 baseline run(s) of THIS tree: observed 27..28; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "max": 34,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 27..27; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
         27,
-        28,
         27,
-        28,
-        27,
-        28
+        27
       ],
       "required": true
     },
@@ -131,18 +150,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "construct",
       "metric": "deltas.from_previous.live_heap_bytes",
-      "max": 32336,
-      "basis": "derived from 6 baseline run(s) of THIS tree: observed 17256..24144; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
+      "max": 30688,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 17512..22496; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
       "observed": [
-        17272,
-        17304,
-        17272,
-        24144,
-        17256,
-        22464
+        17512,
+        17512,
+        22496
       ],
       "required": true
     },
@@ -153,15 +172,15 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "run_end",
       "metric": "readings.goroutines.current",
       "max": 30,
-      "basis": "derived from 6 baseline run(s) of THIS tree: observed 24..24; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 24..24; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
-        24,
-        24,
-        24,
         24,
         24,
         24
@@ -175,18 +194,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "run_end",
       "metric": "deltas.from_entry.live_heap_bytes",
-      "max": 315160,
-      "basis": "derived from 6 baseline run(s) of THIS tree: observed 215496..252128; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 287080,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 209784..229664; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        217048,
-        237448,
-        215496,
-        238424,
-        219200,
-        252128
+        228112,
+        229664,
+        209784
       ],
       "required": true
     },
@@ -197,15 +216,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "trojan",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.go.live_heap_bytes",
-      "max": 3061840,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2442520..2449472; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
+      "max": 3067540,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 2452784..2454032; threshold = ceil(max(observed)*1.25, observed+16384) with 16384 of noise allowance",
       "observed": [
-        2442520,
-        2448128,
-        2449472
+        2452784,
+        2454032,
+        2453504
       ],
       "required": true
     },
@@ -216,15 +238,18 @@
       "nodes": 100,
       "groups": 2,
       "node_proto": "trojan",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "construct",
       "metric": "deltas.from_entry.live_heap_per_node_bytes",
-      "max": 9598,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 7561..7678; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
+      "max": 7210,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 5755..5768; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
       "observed": [
-        7678,
-        7561,
-        7622
+        5755,
+        5768,
+        5757
       ],
       "required": true
     },
@@ -235,15 +260,18 @@
       "nodes": 100,
       "groups": 2,
       "node_proto": "trojan",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "deltas.from_entry.live_heap_per_node_bytes",
-      "max": 12445,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 9936..9956; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
+      "max": 8845,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 7019..7076; threshold = ceil(max(observed)*1.25, observed+128) with 128 of noise allowance",
       "observed": [
-        9956,
-        9936,
-        9955
+        7037,
+        7019,
+        7076
       ],
       "required": true
     },
@@ -254,6 +282,9 @@
       "nodes": 100,
       "groups": 2,
       "node_proto": "trojan",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.goroutines.current",
@@ -273,15 +304,18 @@
       "nodes": 100,
       "groups": 2,
       "node_proto": "trojan",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "forced",
       "stage": "idle_0s",
       "metric": "readings.process.threads",
       "max": 27,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 20..21; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 19..21; threshold = ceil(max(observed)*1.25, observed+1) with 1 of noise allowance",
       "observed": [
-        20,
         21,
-        21
+        19,
+        20
       ],
       "required": true
     },
@@ -292,6 +326,9 @@
       "nodes": 8,
       "groups": 2,
       "node_proto": "direct",
+      "activity": [
+        "probe"
+      ],
       "gc_mode": "forced",
       "stage": "probe",
       "metric": "probe.succeeded",
@@ -311,15 +348,18 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "none"
+      ],
       "gc_mode": "natural",
       "stage": "idle_1s",
       "metric": "deltas.from_previous.heap_objects_bytes",
-      "max": 24128,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 0..15936; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
+      "max": 8192,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 0..0; threshold = ceil(max(observed)*1.25, observed+8192) with 8192 of noise allowance",
       "observed": [
         0,
-        15936,
-        8192
+        0,
+        0
       ],
       "required": true
     },
@@ -330,16 +370,19 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "traffic"
+      ],
       "gc_mode": "forced",
       "stage": "traffic_held",
       "metric": "deltas.from_previous.live_heap_bytes",
       "per": "spec.held_flows",
-      "max": 57938,
-      "basis": "derived from 3 baseline run(s) of THIS tree: observed 44942..46350; threshold = ceil(max(observed)*1.25, observed+2048) with 2048 of noise allowance",
+      "max": 56320,
+      "basis": "derived from 3 baseline run(s) of THIS tree: observed 43896..45056; threshold = ceil(max(observed)*1.25, observed+2048) with 2048 of noise allowance",
       "observed": [
-        46350,
-        44942,
-        45066
+        45056,
+        43912,
+        43896
       ],
       "required": true
     },
@@ -350,6 +393,9 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "traffic"
+      ],
       "gc_mode": "forced",
       "stage": "traffic_verified",
       "metric": "traffic.verified",
@@ -369,6 +415,9 @@
       "nodes": 0,
       "groups": 0,
       "node_proto": "direct",
+      "activity": [
+        "traffic"
+      ],
       "gc_mode": "forced",
       "stage": "traffic_verified",
       "metric": "traffic.half_close_propagated",

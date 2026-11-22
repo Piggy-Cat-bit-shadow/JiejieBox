@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -97,6 +98,56 @@ func (m recordMap) specField(key string) string {
 	default:
 		return fmt.Sprint(typed)
 	}
+}
+
+// specActivity reads the activity history the run measured, in the canonical form the budget's
+// selector compares against.
+//
+// The spec echoes the list as the caller gave it ("probe,traffic"), while a budget rule names a set
+// ("traffic,probe"). A comparison on the raw string would make the same measurement match or not
+// depending on the order the command line happened to use, so both sides go through activityKey.
+func (m recordMap) specActivity() string {
+	spec, ok := m["spec"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	switch typed := spec["activity"].(type) {
+	case []any:
+		list := make([]string, 0, len(typed))
+		for _, entry := range typed {
+			if text, isText := entry.(string); isText {
+				list = append(list, text)
+			}
+		}
+		return activityKey(list)
+	case []string:
+		return activityKey(typed)
+	case string:
+		return activityKey(strings.Split(typed, ","))
+	default:
+		return ""
+	}
+}
+
+// activityKey is the canonical form of an activity list: sorted, de-duplicated, comma-joined. The
+// list is a SET of activities, not a sequence, and two runs that performed the same activities are
+// the same population whatever order they were requested in.
+func activityKey(list []string) string {
+	if len(list) == 0 {
+		return ""
+	}
+	seen := make(map[string]bool, len(list))
+	unique := make([]string, 0, len(list))
+	for _, entry := range list {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		unique = append(unique, entry)
+	}
+	sort.Strings(unique)
+	return strings.Join(unique, ",")
 }
 
 func (m recordMap) stage() string {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,7 +51,9 @@ func run(args []string, stdout io.Writer) error {
 	command.BoolVar(&flags.gate, "gate", false, "run the fast budget matrix and evaluate it against -budget")
 	command.StringVar(&flags.budgetPath, "budget", "", "budget JSON for -gate (default testdata/budget.json next to the source)")
 	command.StringVar(&flags.writeBudget, "write-budget", "", "derive a budget JSON from a baseline and write it here")
-	command.StringVar(&flags.from, "from", "", "read an existing merged JSONL instead of running anything (with -write-budget)")
+	command.StringVar(&flags.from, "from", "", "read an existing merged JSONL instead of running anything (with -write-budget, or with -gate to judge that ledger)")
+	command.StringVar(&flags.referenceManifest, "reference-manifest", "", "with -write-budget -from: the archived reference manifest that makes the ledger a reference (without it the budget is provenance=derived and cannot gate)")
+	command.BoolVar(&flags.selfCheck, "self-check", false, "with -gate: allow the budget to be the reference ledger's own budget (verifies the reference against itself)")
 	command.BoolVar(&flags.wide, "wide", false, "add the 1000- and 10000-node scale cases to the gate matrix")
 
 	command.IntVar(&flags.gomaxprocs, "gomaxprocs", 0, "start every child with GOMAXPROCS=n in its environment (0 leaves it alone)")
@@ -69,6 +72,7 @@ func run(args []string, stdout io.Writer) error {
 	}
 	provided := make(map[string]bool)
 	command.Visit(func(visited *flag.Flag) { provided[visited.Name] = true })
+	flags.provided = provided
 	applyCaseDefaults(flags, provided)
 
 	if flags.child {
@@ -188,35 +192,146 @@ func sessionIdentity() identity {
 	return cachedSessionIdentity
 }
 
+// runWriteBudget derives a budget from a reference ledger (or by capturing one now).
+//
+// # The completeness check is the gate's check
+//
+// -write-budget used to accept any JSONL: a ledger that lost 5 of 6 run_end records, or half its
+// repetitions, still produced thresholds. That made the budget the weak link the gate explicitly
+// refuses at evaluation time: the gate read a file derived from evidence it would never have
+// accepted. Both entry points now run the same requireCompleteLedger, so what the thresholds are
+// derived from is by construction as complete as what the gate will certify.
+//
+// # derived vs reference
+//
+// Capturing a matrix in this invocation, or deriving from a ledger with an archived manifest, mints
+// a REFERENCE budget. Deriving from a bare ledger mints a DERIVED budget, which -gate refuses: a
+// budget derived from the candidate passes every rule by construction, so it is not a gate.
 func runWriteBudget(flags *runFlags) error {
+	planned := gateSpecs(flags.wide)
+	kind := provenanceReference
+	provenance := budgetProvenance{Kind: kind}
 	var records []recordMap
+	var err error
+
 	if flags.from != "" {
-		lines, err := readLines(flags.from)
-		if err != nil {
-			return err
+		lines, readErr := readLines(flags.from)
+		if readErr != nil {
+			return readErr
 		}
 		records, err = decodeLines(lines)
 		if err != nil {
 			return err
 		}
+		ledgerSHA, hashErr := sha256File(flags.from)
+		if hashErr != nil {
+			return hashErr
+		}
+		provenance.LedgerPath = flags.from
+		provenance.LedgerSHA256 = ledgerSHA
+		repetitions, repetitionErr := repetitionsFor(flags, planned, records)
+		if repetitionErr != nil {
+			return repetitionErr
+		}
+		if flags.referenceManifest != "" {
+			manifest, manifestErr := readManifest(flags.referenceManifest)
+			if manifestErr != nil {
+				return manifestErr
+			}
+			if !strings.EqualFold(manifest.LedgerSHA256, ledgerSHA) {
+				return fmt.Errorf("the reference manifest %s records ledger %s but %s hashes to %s; "+
+					"the manifest describes different evidence", flags.referenceManifest,
+					manifest.LedgerSHA256, flags.from, ledgerSHA)
+			}
+			manifestSHA, manifestHashErr := sha256File(flags.referenceManifest)
+			if manifestHashErr != nil {
+				return manifestHashErr
+			}
+			provenance.ManifestPath = flags.referenceManifest
+			provenance.ManifestSHA = manifestSHA
+			if manifest.Repetitions > 0 {
+				// The archived capture is authoritative: it was the contract the reference ledger
+				// was measured under, and a caller who forgets -runs 3 must not silently weaken the
+				// completeness check to one repetition.
+				repetitions = manifest.Repetitions
+			}
+			provenance.Kind = provenanceReference
+		} else {
+			provenance.Kind = provenanceDerived
+		}
+		if err = requireCompleteLedger(records, repetitions, planned); err != nil {
+			return err
+		}
 	} else {
 		flags.output = budgetRunOutput(flags)
-		current, err := runSpecs(flags, gateSpecs(flags.wide))
-		if err != nil {
+		current, runErr := runSpecs(flags, planned)
+		if runErr != nil {
+			return runErr
+		}
+		if current.failures > 0 {
+			return fmt.Errorf("%d of %d child run(s) failed; a session with a failed child cannot be "+
+				"the reference the thresholds are derived from", current.failures, current.planned)
+		}
+		if err = requireCompleteLedger(current.records, flags.runs, planned); err != nil {
 			return err
 		}
 		records = current.records
+		ledgerSHA, hashErr := sha256File(flags.output)
+		if hashErr != nil {
+			return hashErr
+		}
+		provenance.LedgerPath = flags.output
+		provenance.LedgerSHA256 = ledgerSHA
+		summary, summaryErr := summariseLedger(records)
+		if summaryErr != nil {
+			return summaryErr
+		}
+		provenance.ManifestPath = flags.output + ".manifest.json"
+		if err = writeManifest(provenance.ManifestPath,
+			manifestFromLedger(summary, len(records), flags.output, ledgerSHA, flags.runs, planned)); err != nil {
+			return err
+		}
+		manifestSHA, hashErr := sha256File(provenance.ManifestPath)
+		if hashErr != nil {
+			return hashErr
+		}
+		provenance.ManifestSHA = manifestSHA
 	}
-	budget, err := deriveBudget(records, flags.budgetPath)
+	budget, err := deriveBudget(records, provenance)
 	if err != nil {
 		return err
 	}
 	if err = writeBudgetFile(flags.writeBudget, budget); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "memorystudy: wrote %d budget rules to %s from %d records\n",
-		len(budget.Rules), flags.writeBudget, len(records))
+	fmt.Fprintf(os.Stderr, "memorystudy: wrote %d budget rules to %s from %d records "+
+		"(provenance=%s, ledger_sha256=%s, %d repetition(s) x %d spec(s))\n",
+		len(budget.Rules), flags.writeBudget, len(records), budget.Provenance.Kind,
+		budget.Provenance.LedgerSHA256, budget.Provenance.Repetitions, budget.Provenance.Specs)
+	if budget.Provenance.Kind != provenanceReference {
+		fmt.Fprintf(os.Stderr, "memorystudy: this budget is provenance=%s: -gate will refuse it. "+
+			"To mint a reference, capture the matrix in this invocation (omit -from) or pass the "+
+			"archived -reference-manifest.\n", budget.Provenance.Kind)
+	}
 	return nil
+}
+
+// repetitionsFor resolves how many repetitions a ledger read from disk must contain.
+//
+// An explicit -runs is a claim the ledger has to satisfy. Without one, the count is inferred from
+// the ledger itself and then checked for uniformity by requireCompleteLedger: inferring is a
+// convenience, not a relaxation, because a ledger with 7 runs of one spec and 6 of another still
+// fails.
+func repetitionsFor(flags *runFlags, planned []runSpec, records []recordMap) (int, error) {
+	if flags.provided["runs"] {
+		return flags.runs, nil
+	}
+	repetitions, specs := repetitionsAndSpecs(records)
+	if repetitions < 1 || specs != len(planned) {
+		return 0, fmt.Errorf("the ledger contains %d repetition(s) of %d distinct spec(s), the gate "+
+			"matrix has %d; pass -runs explicitly if this is intended", repetitions, specs, len(planned))
+	}
+	return repetitions, nil
 }
 
 func budgetRunOutput(flags *runFlags) string {
@@ -226,23 +341,50 @@ func budgetRunOutput(flags *runFlags) string {
 	return "memorystudy-baseline-" + newSessionStamp() + ".jsonl"
 }
 
+// runGate evaluates a ledger against a reference budget.
+//
+// `-from <ledger>` judges an existing merged JSONL (the archived reference, or a ledger somebody
+// else produced) instead of running the matrix again. It goes through every check the measured path
+// goes through - completeness, identity, compatibility, non-circularity - so reading a ledger back
+// is not a way around them.
 func runGate(flags *runFlags, stdout io.Writer) error {
 	if flags.output == "" || flags.output == "-" {
 		return fmt.Errorf("-gate needs -output: a gate that does not keep its raw ledger cannot be " +
 			"re-examined when it fails")
 	}
-	current, err := runSpecs(flags, gateSpecs(flags.wide))
-	if err != nil {
-		return err
+	planned := gateSpecs(flags.wide)
+	var records []recordMap
+	var repetitions int
+	if flags.from != "" {
+		lines, err := readLines(flags.from)
+		if err != nil {
+			return err
+		}
+		records, err = decodeLines(lines)
+		if err != nil {
+			return err
+		}
+		repetitions, err = repetitionsFor(flags, planned, records)
+		if err != nil {
+			return err
+		}
+	} else {
+		current, err := runSpecs(flags, planned)
+		if err != nil {
+			return err
+		}
+		// A failed child does not stop the session (the other cases are still worth measuring), so
+		// the failure has to stop the GATE. Without this the gate certified a session in which every
+		// child had failed: runSpecs only counted the failures, and nothing read the count.
+		if current.failures > 0 {
+			return fmt.Errorf("%d of %d child run(s) failed; a session with a failed child is not "+
+				"evidence for a gate (the child_result records name the run and the cause)",
+				current.failures, current.planned)
+		}
+		records = current.records
+		repetitions = flags.runs
 	}
-	// A failed child does not stop the session (the other cases are still worth measuring), so the
-	// failure has to stop the GATE. Without this the gate certified a session in which every child
-	// had failed: runSpecs only counted the failures, and nothing read the count.
-	if current.failures > 0 {
-		return fmt.Errorf("%d of %d child run(s) failed; a session with a failed child is not evidence "+
-			"for a gate (the child_result records name the run and the cause)", current.failures, current.planned)
-	}
-	if err = requireCompleteEvidence(current, flags); err != nil {
+	if err := requireCompleteLedger(records, repetitions, planned); err != nil {
 		return err
 	}
 	budgetPath := flags.budgetPath
@@ -253,7 +395,36 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	results := evaluateBudget(budget, current.records)
+	summary, err := summariseLedger(records)
+	if err != nil {
+		return err
+	}
+	verification, err := verifyGateInputs(budget, summary, flags.selfCheck)
+	if err != nil {
+		// The refusal is the verdict, so it is written down as one: an exit code alone leaves the
+		// reviewer with no record of which identity check refused and why.
+		refusal := gateReport{
+			SchemaVersion:  gateSchemaVersion,
+			GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+			BudgetPath:     budgetPath,
+			BudgetBaseline: budget.Baseline,
+			Output:         flags.output,
+			Source:         captureSourceIdentity(captureBuildIdentity()),
+			GoVersion:      summary.GoVersion,
+			GOOS:           summary.GOOS,
+			GOARCH:         summary.GOARCH,
+			Tags:           summary.Tags,
+			Runs:           runIDs(records),
+			RecordCount:    len(records),
+			Verification:   &verification,
+			Error:          err.Error(),
+		}
+		if writeErr := writeGateReport(flags.output+".gate.json", refusal); writeErr != nil {
+			return writeErr
+		}
+		return fmt.Errorf("the gate refused to compare: %w", err)
+	}
+	results := evaluateBudget(budget, records)
 	build := captureBuildIdentity()
 	report := gateReport{
 		SchemaVersion:  gateSchemaVersion,
@@ -266,9 +437,10 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 		GOOS:           build.GOOS,
 		GOARCH:         build.GOARCH,
 		Tags:           build.Tags,
-		Runs:           runIDs(current.records),
+		Runs:           runIDs(records),
 		Results:        results,
-		RecordCount:    len(current.records),
+		RecordCount:    len(records),
+		Verification:   &verification,
 	}
 	report.summarise()
 	if err = writeGateReport(flags.output+".gate.json", report); err != nil {
@@ -311,9 +483,23 @@ Fast budget gate, evaluated against a baseline-derived budget:
 
   memorystudy -gate -runs 3 -output gate.jsonl -budget testdata/budget.json
 
-Derive that budget from a saved baseline:
+Judge a ledger that already exists (the archived reference, or somebody else's):
 
-  memorystudy -write-budget testdata/budget.json -from baseline-3runs.jsonl
+  memorystudy -gate -from reference-3runs.jsonl -output gate.jsonl -budget testdata/budget.json
+  memorystudy -gate -from reference-3runs.jsonl -output self.jsonl \
+              -budget testdata/budget.json -self-check
 
-Exit status is non-zero when a child fails or a budget rule fails. A skipped rule is not a pass.
+Capture a reference (writes the budget, the raw ledger and its manifest):
+
+  memorystudy -write-budget analysis/budget-reference.json -runs 3 \
+              -output samples/gate-reference-3runs.jsonl
+
+Re-derive that budget from the archived ledger (needs the manifest, or it is only "derived"):
+
+  memorystudy -write-budget budget.json -from samples/gate-reference-3runs.jsonl \
+              -reference-manifest samples/gate-reference-3runs.jsonl.manifest.json
+
+Exit status is non-zero when a child fails, a budget rule fails, or the gate refuses to compare
+(a candidate that is not this checkout, a toolchain/tag/fixture mismatch, or a budget derived from
+the ledger it is asked to certify). A skipped rule is not a pass.
 `

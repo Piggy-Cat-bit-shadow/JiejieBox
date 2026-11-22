@@ -10,8 +10,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,11 +23,23 @@ const (
 )
 
 // completeRun builds one run's records in the shape a real ledger has: a parent-written
-// child_result, then the child's stages with contiguous indexes and one PID.
-func completeRun(id string) []recordMap {
+// child_result, then the child's stages with contiguous indexes and one PID. The spec is on every
+// line because completeness now includes "which case did this run measure".
+func completeRun(id string, spec runSpec) []recordMap {
 	stages := []string{
 		stageSetup, stageConfigParse, stageConfigBuild, stageConstruct, stageFixtureServers,
 		stageServiceStart, stageReady, stageClose, stageRunEnd,
+	}
+	encodedSpec := map[string]any{
+		"case":          spec.Case,
+		"nodes":         json.Number(fmt.Sprintf("%d", spec.Nodes)),
+		"groups":        json.Number(fmt.Sprintf("%d", spec.Groups)),
+		"node_proto":    spec.NodeProto,
+		"config_source": spec.ConfigSource,
+		"activity":      activityList(spec.Activity),
+		"gc_mode":       spec.GCMode,
+		"held_flows":    json.Number(fmt.Sprintf("%d", spec.HeldFlows)),
+		"traffic_bytes": json.Number(fmt.Sprintf("%d", spec.TrafficBytes)),
 	}
 	records := []recordMap{{
 		"record":       recordChildResult,
@@ -35,6 +49,7 @@ func completeRun(id string) []recordMap {
 		"stage":        recordChildResult,
 		"stage_index":  0,
 		"run_end_seen": true,
+		"spec":         encodedSpec,
 	}}
 	for index, stage := range stages {
 		records = append(records, recordMap{
@@ -44,9 +59,18 @@ func completeRun(id string) []recordMap {
 			"pid":         gateTestChildPID,
 			"stage":       stage,
 			"stage_index": index,
+			"spec":        encodedSpec,
 		})
 	}
 	return records
+}
+
+func activityList(list []string) []any {
+	encoded := make([]any, 0, len(list))
+	for _, entry := range list {
+		encoded = append(encoded, entry)
+	}
+	return encoded
 }
 
 // completeSession is a ledger with every planned run present: the POSITIVE control for the checker.
@@ -55,8 +79,8 @@ func completeSession(t *testing.T, repetitions int) (*session, *runFlags) {
 	flags := &runFlags{runs: repetitions}
 	var records []recordMap
 	for repetition := 0; repetition < repetitions; repetition++ {
-		for specIndex := range gateSpecs(false) {
-			records = append(records, completeRun(runTestID(repetition, specIndex))...)
+		for specIndex, spec := range gateSpecs(false) {
+			records = append(records, completeRun(runTestID(repetition, specIndex), spec)...)
 		}
 	}
 	return &session{records: records, planned: len(gateSpecs(false)) * repetitions, flags: flags}, flags
@@ -178,23 +202,36 @@ func writeTestBudget(t *testing.T, body string) string {
 }
 
 // A budget whose rules cannot fail is not a budget. Empty rules, a duplicated id and a rule with no
-// threshold all reached exit 0 before this validation existed.
+// threshold all reached exit 0 before this validation existed. The schema/2 checks add two more ways
+// a budget can silently stop measuring: a rule that lost its activity selector (which would go back
+// to matching another case's runs) and a file that lost its provenance (which is what lets the gate
+// refuse a budget re-derived from the candidate).
 func TestBudgetStructureIsRefusedWhenItCannotFail(t *testing.T) {
 	minimum := 1.0
-	valid := budgetRule{ID: "ok-rule", Case: "empty", NodeProto: "direct", GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes", Min: &minimum}
+	valid := budgetRule{ID: "ok-rule", Case: "empty", NodeProto: "direct", Activity: []string{"none"},
+		GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes", Min: &minimum}
+	reference := &budgetProvenance{Kind: provenanceReference, LedgerSHA256: strings.Repeat("a", 64)}
 	for _, testCase := range []struct {
-		name  string
-		rules any
+		name       string
+		rules      any
+		provenance *budgetProvenance
 	}{
-		{"no rules", []budgetRule{}},
-		{"duplicate id", []budgetRule{valid, valid}},
-		{"no threshold", []budgetRule{{ID: "no-threshold", Case: "empty", NodeProto: "direct", GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes"}}},
-		{"no id", []budgetRule{{Case: "empty", NodeProto: "direct", GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes", Min: &minimum}}},
+		{"no rules", []budgetRule{}, reference},
+		{"duplicate id", []budgetRule{valid, valid}, reference},
+		{"no threshold", []budgetRule{{ID: "no-threshold", Case: "empty", NodeProto: "direct", Activity: []string{"none"}, GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes"}}, reference},
+		{"no id", []budgetRule{{Case: "empty", NodeProto: "direct", Activity: []string{"none"}, GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes", Min: &minimum}}, reference},
+		{"no activity", []budgetRule{{ID: "no-activity", Case: "empty", NodeProto: "direct", GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes", Min: &minimum}}, reference},
+		{"no case", []budgetRule{{ID: "no-case", NodeProto: "direct", Activity: []string{"none"}, GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes", Min: &minimum}}, reference},
+		{"empty activity list", []budgetRule{{ID: "empty-activity", Case: "empty", NodeProto: "direct", Activity: []string{}, GCMode: "forced", Stage: stageClose, Metric: "readings.live_heap_bytes", Min: &minimum}}, reference},
+		{"no provenance", []budgetRule{valid}, nil},
+		{"unknown provenance kind", []budgetRule{valid}, &budgetProvenance{Kind: "somebody-told-me", LedgerSHA256: strings.Repeat("a", 64)}},
+		{"no ledger hash", []budgetRule{valid}, &budgetProvenance{Kind: provenanceReference}},
 	} {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			body, err := json.Marshal(map[string]any{
 				"schema_version": budgetSchemaVersion,
+				"provenance":     testCase.provenance,
 				"rules":          testCase.rules,
 			})
 			if err != nil {
@@ -207,12 +244,44 @@ func TestBudgetStructureIsRefusedWhenItCannotFail(t *testing.T) {
 		})
 	}
 
-	// The positive control: one rule with a threshold is a budget.
-	body, err := json.Marshal(map[string]any{"schema_version": budgetSchemaVersion, "rules": []budgetRule{valid}})
+	// The positive control: one rule with a threshold and a reference provenance is a budget.
+	body, err := json.Marshal(map[string]any{
+		"schema_version": budgetSchemaVersion,
+		"provenance":     reference,
+		"rules":          []budgetRule{valid},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = readBudgetFile(writeTestBudget(t, string(body))); err != nil {
-		t.Fatalf("a well-formed one-rule budget must be accepted: %v", err)
+		t.Fatalf("a well-formed one-rule reference budget must be accepted: %v", err)
+	}
+
+	// A legacy schema/1 budget is still READ and EVALUATED, because a hand-written budget (the CI
+	// canary is one) has to be able to fail rather than merely be rejected by a version check. It
+	// is marked legacy, and the gate refuses it as a certification reference.
+	legacyBody, err := json.Marshal(map[string]any{
+		"schema_version": legacyBudgetSchemaVersion,
+		"baseline":       map[string]any{"goos": "windows", "goarch": "amd64"},
+		"rules": []map[string]any{{
+			"id": "canary-impossible", "case": "empty", "nodes": 0, "groups": 0,
+			"node_proto": "direct", "gc_mode": "forced", "stage": "close",
+			"metric": "readings.this_metric_does_not_exist", "max": 1, "required": true,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := writeTestBudget(t, string(legacyBody))
+	legacyBudget, err := readBudgetFile(legacyPath)
+	if err != nil {
+		t.Fatalf("the legacy budget must stay readable so its rules can fail: %v", err)
+	}
+	if !legacyBudget.legacy {
+		t.Fatal("a schema/1 budget was not marked legacy")
+	}
+	summary := ledgerSummary{SHA: strings.Repeat("b", 40), Runs: []string{"run-a"}}
+	if err = requireReferenceProvenance(legacyBudget, summary, false); err == nil {
+		t.Fatal("a legacy budget must be refused as a certification reference")
 	}
 }

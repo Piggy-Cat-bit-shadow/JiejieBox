@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,6 +20,17 @@ import (
 // pipeline than the one the product runs on every launch. Generating the bytes also makes the
 // document-size term visible: a 10 000-node subscription is a megabyte of JSON before it is anything
 // else.
+
+// fixtureVersion names the generated-document contract.
+//
+// # Bump this when the generated document changes
+//
+// A budget's thresholds are only comparable across runs of the SAME document shape. The version is
+// recorded in the ledger, in the reference manifest and in the budget, and the gate refuses a
+// comparison across versions. The per-run document digest next to it is what catches an edit that
+// changed the document without bumping this string; a version bump alone would be a promise, and the
+// gate is not allowed to take promises.
+const fixtureVersion = "memorystudy-fixture/1"
 
 // Fixture identities that the measurement stages address by name.
 const (
@@ -51,6 +64,28 @@ type fixtureConfig struct {
 	// DocumentBytes and ProviderBytes are the exact sizes of the two documents; the node term is a
 	// function of both when the nodes live in a provider file.
 	ProviderBytes int
+}
+
+// fixtureFingerprint hashes the document's SHAPE.
+//
+// # Why the raw bytes are not the identity
+//
+// Each child reserves a free local port for its inbound and, for the probe case, starts its fixture
+// server on another one. Both appear in the generated document, so two runs of the SAME spec produce
+// different bytes by construction - measured: the first version of this digest refused its own
+// repeated runs as "the fixture is not deterministic". The ephemeral values are redacted to a single
+// token and everything the spec controls (node count, groups, protocols, addresses, provider edges)
+// stays in the hash, which is what "the same document" has to mean across sessions.
+func fixtureFingerprint(document []byte, ephemeral ...string) string {
+	normalized := string(document)
+	for _, token := range ephemeral {
+		if token == "" {
+			continue
+		}
+		normalized = strings.ReplaceAll(normalized, token, "{{ephemeral}}")
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
 }
 
 // nodeServer is TEST-NET-2 (RFC 5737). A never-dialled node must not reach a real peer, and a test
