@@ -356,7 +356,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // ConnectionReceiveWindow keep their "one value for both" meaning and still win when set; 6c2f947
 // adds the real-loopback matrix that proves 1/10/40 streams still deliver byte-exact payloads under
 // the lowered grant with immediate, throttled and paused readers.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261121123015-6c2f94740819
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261122231816-a1125fe50482
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
