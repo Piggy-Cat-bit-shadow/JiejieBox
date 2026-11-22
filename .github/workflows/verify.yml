@@ -806,7 +806,12 @@ jobs:
         run: |
           set -euo pipefail
           tags="$(cat release/DEFAULT_BUILD_TAGS)"
-          go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./transport/v2rayxhttp/... ./route/... ./adapter/...
+          # transport/device and protocol/masque join the set: the 2026-11-22 audit named them as the
+          # packages whose race coverage was missing while being called "waiting for a device". They
+          # are pure Go, pull no cronet native archive under this tag profile (checked with
+          # `go list -deps -tags "$(cat release/DEFAULT_BUILD_TAGS)"`), and protocol/masque runs a real
+          # local HTTP/3 CONNECT-IP dataplane test, so a race here is a fork-local defect.
+          go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./transport/v2rayxhttp/... ./route/... ./adapter/... ./transport/device/... ./protocol/masque/...
 
       - name: race on the control channel
         # The control channel's decision logic is concurrent by construction - a connection generation
