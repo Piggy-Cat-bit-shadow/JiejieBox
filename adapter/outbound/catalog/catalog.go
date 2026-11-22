@@ -100,6 +100,10 @@ type Store struct {
 	created   atomic.Uint64
 	released  atomic.Uint64
 	closed    bool
+	// testDedupeBarrier, when set, runs under Store.mu between the dedupe refcount check and
+	// Add(1). It lets a test deterministically place the last Release in that window; production
+	// leaves it nil.
+	testDedupeBarrier func()
 }
 
 var storeSequence atomic.Uint64
@@ -170,6 +174,9 @@ func (s *Store) Put(owner string, protocol string, payload []byte) (Ref, error) 
 	}
 	key := recordKey{hash: hash, owner: ownerID, protocol: protocolID}
 	if existing, found := s.records[key]; found && existing.refs.Load() > 0 {
+		if s.testDedupeBarrier != nil {
+			s.testDedupeBarrier()
+		}
 		existing.refs.Add(1)
 		return Ref{store: s, rec: existing, generation: existing.generation}, nil
 	}
