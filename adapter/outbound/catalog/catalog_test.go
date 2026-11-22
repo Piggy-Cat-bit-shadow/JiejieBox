@@ -527,7 +527,7 @@ func TestOwnerAndProtocolReadsDoNotRaceWithIntern(t *testing.T) {
 func TestPutReleaseStressNeverReturnsDeadReference(t *testing.T) {
 	store := catalog.NewStore()
 	payload := []byte("same-record")
-	for round := 0; round < 5000; round++ {
+	for round := 0; round < 20000; round++ {
 		ref, err := store.Put("owner", C.TypeSOCKS, payload)
 		require.NoError(t, err)
 		released := make(chan struct{})
