@@ -152,8 +152,8 @@ func TestBothCopyDirectionsHandTheirSeamsToTheCopy(t *testing.T) {
 	require.NoError(t, err)
 	source := string(content)
 
-	require.Contains(t, source, "uploadIncreaseBufferAfter, uploadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)")
-	require.Contains(t, source, "downloadIncreaseBufferAfter, downloadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)")
+	require.Contains(t, source, "uploadIncreaseBufferAfter, uploadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)")
+	require.Contains(t, source, "downloadIncreaseBufferAfter, downloadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)")
 	require.Contains(t, source, "teardown, uploadGrowthBoundary)")
 	require.Contains(t, source, "teardown, downloadGrowthBoundary)")
 	require.NotContains(t, source, "defer uploadGrowthBoundary")

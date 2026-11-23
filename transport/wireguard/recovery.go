@@ -433,12 +433,17 @@ func (e *Endpoint) RebindStale(ctx context.Context, reason adapter.RebindReason)
 	if e.suspended.Load() {
 		return errRebindNotPossible
 	}
-	e.stateAccess.Lock()
-	closing := e.closing
-	wgDevice := e.device.Load()
-	e.stateAccess.Unlock()
-	if closing {
+	// Hold a use lease for the rebind itself. A rebind reopens the bind's socket through the Device,
+	// so it is a reader of the same object a suspend wants to close: with the lease held, a suspend
+	// that lands mid-rebind sees activeUses > 0 and keeps the previous Down-only behaviour for that
+	// boundary instead of closing the Device underneath the socket operation. The lease is released
+	// when this method returns, and Close is still allowed to win over a rebind (it is terminal).
+	wgDevice, release, acquireErr := e.acquireDevice()
+	if acquireErr != nil {
 		return errRebindNotPossible
+	}
+	if wgDevice != nil {
+		defer release()
 	}
 
 	// Test seam. It runs the decision path without a live device, which is what makes the recovery

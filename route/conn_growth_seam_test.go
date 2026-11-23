@@ -489,10 +489,9 @@ func TestGrowthPermitIsReturnedOnHalfCloseAndReset(t *testing.T) {
 // transfer even while the ordinary policy has no capacity at all, and it takes no
 // ordinary permit.
 //
-// The end marked below is the one the existing route wiring consults for that direction
-// (growthThreshold receives the inbound conn for the upload call and the outbound conn
-// for the download call; that argument order is pre-existing and is not changed by this
-// work). The assertion is the exemption itself, on both directions of a connection.
+// The tuned end is the DESTINATION writer of the copy (growthThreshold resolves the
+// writer the copy feeds): the outbound end for the upload copy, the inbound end for the
+// download copy. The assertion is the exemption itself, on both directions.
 func TestGeometryRequiredDirectionGrowsWithoutAHeldPermit(t *testing.T) {
 	payload := bytes.Repeat([]byte{0x77}, 256<<10)
 
@@ -501,7 +500,7 @@ func TestGeometryRequiredDirectionGrowsWithoutAHeldPermit(t *testing.T) {
 		budget := resourceguard.NewGrowthBudget(resourceguard.GrowthConfig{Flows: 0}, nil)
 		fixture := newQuietRelayFixture(t, budget, 0, false)
 		conn := newRelayProbePair(t, false)
-		conn.inbound.early = true // the end the upload call inspects
+		conn.outbound.early = true // the upload copy writes to the outbound end
 		fixture.start(t, conn, "geometry-upload.example")
 
 		written := make(chan struct{})
@@ -536,7 +535,7 @@ func TestGeometryRequiredDirectionGrowsWithoutAHeldPermit(t *testing.T) {
 		budget := resourceguard.NewGrowthBudget(resourceguard.GrowthConfig{Flows: 0}, nil)
 		fixture := newQuietRelayFixture(t, budget, 0, false)
 		conn := newRelayProbePair(t, false)
-		conn.outbound.early = true // the end the download call inspects
+		conn.inbound.early = true // the download copy writes to the inbound end
 		fixture.start(t, conn, "geometry-download.example")
 
 		written := make(chan struct{})
