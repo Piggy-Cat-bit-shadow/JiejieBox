@@ -331,4 +331,4 @@ replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wire
 
 replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261120123305-b74ada19da50
 
-replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261122050203-0f0e75089c3b
+replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261123042716-2c89d083c5ca
