@@ -260,3 +260,30 @@ func TestAFailedProbeReachesTheGroupSubscriptionStream(t *testing.T) {
 		}
 	}
 }
+
+// TestAProbeThatGetsTheWrongAnswerIsStillATimeout pins the classification decision at the display
+// layer: a probe that RAN and did not complete as configured (here the target answers 500 where 204
+// was required) is a failed probe for the user, even though it must not be health evidence about the
+// node's proxy path. The two questions have different answers, which is why the layers are separate.
+func TestAProbeThatGetsTheWrongAnswerIsStillATimeout(t *testing.T) {
+	wrongAnswer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(wrongAnswer.Close)
+
+	profile := fmt.Sprintf(`{
+  "log": {"level": "error"},
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "urltest", "tag": "group", "outbounds": ["direct"],
+     "url": "%s", "expected_status": "204", "interval": "1h", "idle_timeout": "2h"}
+  ]
+}`, wrongAnswer.URL)
+	started := newHiddenGroupService(t, profile)
+
+	require.Eventually(t, func() bool {
+		delay, at, found := groupItemResult(t, started, "group", "direct")
+		return found && delay == 0 && at > 0
+	}, 20*time.Second, 25*time.Millisecond,
+		"a probe that could not validate the target's answer is a failed probe for display purposes")
+}
