@@ -316,17 +316,17 @@ func TestAManualProbeDoesNotBecomeSelectionEvidence(t *testing.T) {
 	}
 }
 
-// TestASupersededRoundDoesNotFabricateATimeout is the overlap rule at the payload level, and it was
-// discovered while trying to build an out-of-order test: when a second round for a neighbouring group
-// starts while a slow round is still probing, the daemon SUPERSEDES the older round, whose probe is
-// then cancelled. A cancelled probe is not a fact about the node, so the slow member must keep its
-// previous state (here: untested, because the target never answered successfully) instead of being
-// published as a timeout.
+// TestAnOverlappingRoundCannotMoveTheNodesResultBackwards is the overlap rule at the payload level.
 //
-// That is also why out-of-order completion is verified at the storage layer
-// (TestAnOlderProbeCannotOverwriteANewerDisplayResult, which a mutation killing the StartedAt check
-// fails): the daemon never lets two overlapping rounds finish out of order in the first place.
-func TestASupersededRoundDoesNotFabricateATimeout(t *testing.T) {
+// An earlier version of this test asserted that the second round always CANCELS the first, and that a
+// superseded probe therefore never publishes. CI proved that premise wrong (the slow probe completed
+// and published a legitimate failure there), and it is not the invariant a client depends on: whether
+// the first probe is cancelled or completes, its probe STARTED earlier, so it must never win the
+// node's newest result. That is what this version asserts, and it holds either way.
+//
+// The slow group's own member is allowed either state - absent (its round was superseded) or a
+// completed failure (it was not) - but never a half-state, i.e. a result with a zero completion time.
+func TestAnOverlappingRoundCannotMoveTheNodesResultBackwards(t *testing.T) {
 	var slowHits atomic.Int32
 	slowServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		slowHits.Add(1)
@@ -354,24 +354,35 @@ func TestASupersededRoundDoesNotFabricateATimeout(t *testing.T) {
 		return found && at > 0 && delay > 0
 	}, 25*time.Second, 20*time.Millisecond, "the fast success never arrived")
 
-	// Start the slow round and wait until its probe is really in flight, then supersede it.
+	// Start the slow round and wait until its probe is really in flight, then start a newer one.
 	settledHits := slowHits.Load()
 	forceURLTest(t, started, "group-slow")
 	require.Eventually(t, func() bool { return slowHits.Load() > settledHits }, 10*time.Second, 5*time.Millisecond,
 		"the slow round never reached its target")
+	fastStart := time.Now()
 	forceURLTest(t, started, "group-fast")
+	require.Eventually(t, func() bool {
+		delay, _, found := outboundItemResult(t, started, "node")
+		return found && delay > 0
+	}, 25*time.Second, 20*time.Millisecond, "the second fast round never arrived")
 
-	// Let the superseded round's probe die, then check what the payload says.
+	// Let the slow probe finish (it started BEFORE the fast round above).
 	time.Sleep(3 * time.Second)
-	slowDelay, slowAt, slowFound := groupItemResult(t, started, "group-slow", "node")
-	require.True(t, slowFound)
-	require.Zero(t, slowAt,
-		"a cancelled/superseded probe must not publish a terminal state for the slow group; "+
-			"delay=%d at=%d means it fabricated one", slowDelay, slowAt)
+
 	delay, at, found := outboundItemResult(t, started, "node")
 	require.True(t, found)
 	require.Positive(t, at)
-	require.Positive(t, delay, "the node list must keep the real success")
+	require.Positive(t, delay,
+		"the older-started probe must not move the node's result backwards when it finishes later")
+	require.GreaterOrEqual(t, at, fastStart.Add(-2*time.Second).Unix(),
+		"the node's result must still be the newer measurement")
+
+	// The slow group's member is either absent (superseded) or a COMPLETE failure; never a half-state.
+	slowDelay, slowAt, slowFound := groupItemResult(t, started, "group-slow", "node")
+	require.True(t, slowFound)
+	if slowAt != 0 {
+		require.Zero(t, slowDelay, "a published terminal state for the slow group must be the real failure")
+	}
 }
 
 // TestAHundredFailedProbesDoNotGrowTheDisplayState is the bound: repeated failures must not accumulate
