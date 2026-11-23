@@ -121,6 +121,11 @@ func (st *StagedVersion) Manifest() Manifest {
 }
 
 // Publish renames the staged directory into its version name and takes the commit's lease.
+//
+// The name it lands under is not always the canonical one: when that name is already occupied by a
+// version this commit may not replace (a damaged version a reader still holds, or a complete
+// artifact of another identity), the verified copy is published beside it and the returned version
+// names the directory it actually lives in.
 func (st *StagedVersion) Publish() (*Version, error) {
 	if st == nil || st.store == nil {
 		return nil, E.New("artifact: nil staged version")
@@ -129,12 +134,13 @@ func (st *StagedVersion) Publish() (*Version, error) {
 		return nil, E.New("artifact: staged version already finished")
 	}
 	store := st.store
-	effective, err := store.publishVersion(st.tempDir, st.versionDir, st.manifest)
+	effective, publishedDir, err := store.publishVersion(st.tempDir, st.versionDir, st.manifest)
 	if err != nil {
 		st.Discard()
 		return nil, err
 	}
 	st.manifest = effective
+	st.versionDir = publishedDir
 	st.closed = true
 	store.lease.access.Lock()
 	delete(store.lease.writing, st.tempDir)

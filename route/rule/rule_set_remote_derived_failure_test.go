@@ -251,8 +251,11 @@ func TestRemoteDerivedE04CorruptConversionFallsBackAndRepairs(t *testing.T) {
 
 	// patched cases commit a version whose manifest matches its damaged bytes, so only the SRSM
 	// reader can reject it. repairLoads is how many fallback loads it takes before the next start
-	// can hit: a version that was published under the same name (an in-place corruption) has to be
-	// collected once before a correct publication can take its place.
+	// can hit. An in-place corruption of the published bytes needs exactly ONE fallback load: the
+	// fallback republishes the conversion, and the store verifies the version directory it is about
+	// to reuse and replaces it when its bytes are not the ones the manifest names (F-CODEX-01). It
+	// used to take two, because the republish was written into the damaged directory and only a
+	// later Collect could clear the way - that wasted round was the defect, not a requirement.
 	cases := []struct {
 		name        string
 		repairLoads int
@@ -260,7 +263,7 @@ func TestRemoteDerivedE04CorruptConversionFallsBackAndRepairs(t *testing.T) {
 	}{
 		{
 			name:        "corrupt-bytes",
-			repairLoads: 2,
+			repairLoads: 1,
 			prepare: func(t *testing.T, _ string, version remoteDerivedTestStoreVersion) {
 				content := version.ArtifactBytes(t)
 				for index := 0; index < len(content); index += 7 {
@@ -271,7 +274,7 @@ func TestRemoteDerivedE04CorruptConversionFallsBackAndRepairs(t *testing.T) {
 		},
 		{
 			name:        "truncated-bytes",
-			repairLoads: 2,
+			repairLoads: 1,
 			prepare: func(t *testing.T, _ string, version remoteDerivedTestStoreVersion) {
 				require.NoError(t, os.Truncate(version.ArtifactPath(), int64(len(version.ArtifactBytes(t))/2)))
 			},

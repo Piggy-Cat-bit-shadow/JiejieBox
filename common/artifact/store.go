@@ -20,6 +20,14 @@ package artifact
 //     version, so an mmap or a streaming reader that is still using the old artifact cannot
 //     be pulled out from under it. The newest valid version is kept even when unleased, so a
 //     crash recovery always has something to load.
+//   - REUSE OF AN EXISTING VERSION NAME is verified, not assumed. A name is derived from the
+//     digest of the bytes, so a directory that exists is not evidence that it still HOLDS those
+//     bytes: a half-written file, a bad manifest, a missing file or a rewrite by another tool can
+//     leave a name that describes one artifact around another. Committing the verified bytes again
+//     therefore re-checks the directory it is about to reuse, and repairs it when it is not the
+//     artifact its name claims. A damaged version that a reader still holds is never removed or
+//     rewritten underneath that reader; the verified bytes are published beside it instead, and the
+//     damaged one is collected when its lease drops.
 //   - The lease is taken BEFORE Load reads the manifest and verifies the bytes, and Collect
 //     checks and removes under the same lock. That closes the window in which a collector had
 //     already decided to remove a version a Load was about to return. A live temp directory is
@@ -38,6 +46,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,6 +68,17 @@ var ErrDigestMismatch = E.New("artifact: digest mismatch")
 
 // ErrIncompatible is returned when the manifest was produced for another ABI or platform.
 var ErrIncompatible = E.New("artifact: manifest is not compatible with this build")
+
+// ErrVersionBusy is returned when a version directory holds bytes that are not the artifact its
+// manifest names, and the directory cannot be replaced without disturbing whatever still has it
+// open. The commit is refused instead of silently reusing the damaged version; nothing is
+// rewritten underneath a reader that a lease does not cover.
+var ErrVersionBusy = E.New("artifact: damaged version is still in use")
+
+// repairSequence names the quarantine directories and repaired siblings of one process. It is not
+// a version name and never becomes loadable; a unique suffix only keeps two repairs of one name
+// from colliding.
+var repairSequence atomic.Uint64
 
 // Manifest says what produced an artifact and what it is safe to load into.
 type Manifest struct {
@@ -350,7 +370,7 @@ func (s *Store) loadOnce(key string) (version *Version, vanished bool, err error
 		return nil, vanished, os.ErrNotExist
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].manifest.Created > candidates[j].manifest.Created
+		return newerView(candidates[i].manifest.Created, candidates[i].dir, candidates[j].manifest.Created, candidates[j].dir)
 	})
 	chosen := candidates[0]
 	// The rejected candidates were leased only for the duration of their check.
@@ -437,7 +457,12 @@ func (s *Store) Collect(key string, retained ...string) error {
 		// versions, not of who happens to be reading them. It is only protected from removal.
 		valid = append(valid, candidate{dir: full, created: manifest.Created, digest: manifest.Digest})
 	}
-	sort.Slice(valid, func(i, j int) bool { return valid[i].created > valid[j].created })
+	// The ranking must be the SAME one Load uses, or a collector can remove the version a load
+	// would have chosen. Two versions published in the same clock tick are ordered by directory
+	// name instead of by the sort's arbitrary tie-break.
+	sort.Slice(valid, func(i, j int) bool {
+		return newerView(valid[i].created, valid[i].dir, valid[j].created, valid[j].dir)
+	})
 	for index, entry := range valid {
 		if index == 0 || retainedIDs[entry.digest] {
 			continue
@@ -526,6 +551,20 @@ func verifyArtifact(dir string, manifest Manifest) error {
 	return nil
 }
 
+// newerView reports whether the left version outranks the right one.
+//
+// Created is the ordering value (a publication or logical stamp), and Load and Collect must rank
+// with the SAME rule: a collector whose ranking differed could remove the version a load would have
+// chosen. Two versions can be published inside one clock tick, so the tie is broken by directory
+// name - arbitrary as a statement about time, but identical in both passes, which is what has to
+// hold.
+func newerView(leftCreated int64, leftDir string, rightCreated int64, rightDir string) bool {
+	if leftCreated != rightCreated {
+		return leftCreated > rightCreated
+	}
+	return leftDir < rightDir
+}
+
 // compatible reports whether the manifest can be loaded by this build.
 func compatible(manifest Manifest) bool {
 	if manifest.Platform != "" && manifest.Platform != currentPlatform() {
@@ -537,8 +576,58 @@ func compatible(manifest Manifest) bool {
 	return true
 }
 
+// versionSlot is what a version name already holds.
+//
+// The three answers that matter are deliberately separate: a name can be EMPTY, it can hold exactly
+// the artifact this commit verified, or it can hold something else. The last case is not one thing
+// either - it can be bytes no build can load (a crash, a truncated download, a rewrite by a sync
+// tool), or a complete artifact of another identity that happens to be under this name - and the
+// repair differs. "The directory exists" is never treated as any of these.
+type versionSlot struct {
+	// exists reports that something is at the path.
+	exists bool
+	// manifest is the account found there, when it could be read.
+	manifest Manifest
+	// valid reports that the directory holds a complete artifact whose bytes match its own
+	// manifest, which is what Load would call loadable.
+	valid bool
+	// reusable reports that those bytes ARE this commit's bytes: the directory can be reused as
+	// this version without touching the artifact file.
+	reusable bool
+}
+
+// inspectVersionSlot verifies what is published under a version name against the bytes this commit
+// has just staged and hashed.
+//
+// The verification is the same one Load performs - read the manifest, hash the artifact, compare
+// size and digest - because a commit that reuses a directory is making exactly Load's claim about
+// it. A name is a weak statement (a prefix of a digest); the bytes are the strong one.
+func inspectVersionSlot(dir string, want Manifest) versionSlot {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return versionSlot{}
+	}
+	slot := versionSlot{exists: true}
+	if !info.IsDir() {
+		return slot
+	}
+	manifest, readErr := readManifest(dir)
+	if readErr != nil {
+		return slot
+	}
+	slot.manifest = manifest
+	if verifyErr := verifyArtifact(dir, manifest); verifyErr != nil {
+		return slot
+	}
+	slot.valid = true
+	slot.reusable = manifest.Digest == want.Digest && manifest.Size == want.Size
+	return slot
+}
+
 // publishVersion renames a complete temp directory into its version name and takes the commit's
-// own lease on it, under the lease lock.
+// own lease on it, under the lease lock. It returns the manifest that is now on disk and the
+// directory the caller's lease is actually on - the two differ when the canonical name was occupied
+// and the verified bytes had to be published beside it.
 //
 // The rename and the lease are one step because the commit returns a handle to the caller: a
 // collector that listed the key directory between the rename and the lease would see a new,
@@ -552,41 +641,146 @@ func compatible(manifest Manifest) bool {
 // account of the same bytes is still on disk. Keeping the first manifest made a stale account win
 // forever, which is exactly how a corrected cache generation would have been shadowed by the
 // generation it replaced.
-func (s *Store) publishVersion(tempDir string, versionDir string, manifest Manifest) (Manifest, error) {
+//
+// The reuse is conditional on the directory STILL holding those bytes. A name that exists but whose
+// bytes, size or manifest no longer describe the artifact this commit verified is a damaged version,
+// and returning it leased would report a successful commit of bytes the caller never gets. That used
+// to be the failure: one corrupted artifact.bin survived every re-download, so the live rules were
+// correct while the next offline restore was not. Repair rules, in order:
+//
+//	reusable                 reuse it; replace the manifest only when the account changed.
+//	damaged, no lease        quarantine the directory aside, publish the verified copy under its name.
+//	damaged, leased          publish the verified copy beside it; the reader keeps its own backing.
+//	valid, other identity    publish beside it; a complete artifact of another digest is not this
+//	                         build's to delete, and the name is not evidence enough to overwrite it.
+//
+// In no case is a directory removed or rewritten while this process holds a lease on it, and in no
+// case is a verified temp copy thrown away in favour of unverified bytes.
+func (s *Store) publishVersion(tempDir string, versionDir string, manifest Manifest) (Manifest, string, error) {
 	s.lease.access.Lock()
 	defer s.lease.access.Unlock()
 	// Stage verified the bytes it wrote, but another writer can land between that check and this
 	// rename. Verify once more at the last point that can still refuse to name bytes by a digest
-	// they no longer have. An empty digest is the legacy Commit path, whose caller supplied bytes
-	// directly; keep its previous behaviour.
+	// they no longer have.
 	if manifest.Digest != "" {
 		if err := verifyArtifact(tempDir, manifest); err != nil {
-			return Manifest{}, E.Cause(err, "verify staged artifact")
+			return Manifest{}, "", E.Cause(err, "verify staged artifact")
 		}
 	}
-	if _, err := os.Stat(versionDir); err == nil {
+	slot := inspectVersionSlot(versionDir, manifest)
+	if slot.reusable {
 		// The identical artifact is already published: the temp copy is redundant, and the
 		// existing version is the one this commit leases. The returned manifest is the one now on
 		// disk, which is the commit's own unless an identical account was already there.
 		if err := replaceManifest(versionDir, manifest); err != nil {
-			return Manifest{}, err
+			return Manifest{}, "", err
 		}
 		effective, err := readManifest(versionDir)
 		if err != nil {
-			return Manifest{}, err
+			return Manifest{}, "", err
 		}
 		if err := os.RemoveAll(tempDir); err != nil {
-			return Manifest{}, err
+			return Manifest{}, "", err
 		}
 		s.lease.counts[versionDir]++
-		return effective, nil
+		return effective, versionDir, nil
+	}
+	if slot.exists {
+		if slot.valid || s.lease.counts[versionDir] > 0 {
+			return s.publishBesideLocked(tempDir, versionDir, manifest)
+		}
+		if err := s.replaceDamagedLocked(tempDir, versionDir); err != nil {
+			return Manifest{}, "", err
+		}
+		s.lease.counts[versionDir]++
+		return manifest, versionDir, nil
 	}
 	if err := os.Rename(tempDir, versionDir); err != nil {
-		return Manifest{}, E.Cause(err, "publish artifact version")
+		return Manifest{}, "", E.Cause(err, "publish artifact version")
 	}
 	s.lease.counts[versionDir]++
-	return manifest, nil
+	return manifest, versionDir, nil
 }
+
+// replaceDamagedLocked publishes a verified temp directory under a version name that currently
+// holds bytes nothing can load. The caller holds the lease lock and has established that no lease
+// in this process covers the directory.
+//
+// The damaged directory is moved aside first and removed only after the verified copy is in place.
+// Removing it first would leave a crash window in which the name is empty and the only copy of the
+// bytes is a `.tmp` entry; renaming it first also leaves a reader that opened the file without a
+// lease holding a functioning handle, which is why the failure of that rename is reported as
+// ErrVersionBusy instead of being forced through.
+func (s *Store) replaceDamagedLocked(tempDir string, versionDir string) error {
+	quarantine := s.repairPathLocked(versionDir, true)
+	if err := os.Rename(versionDir, quarantine); err != nil {
+		return E.Cause(ErrVersionBusy, "quarantine damaged artifact version ", filepath.Base(versionDir), ": ", err)
+	}
+	if err := os.Rename(tempDir, versionDir); err != nil {
+		// Put the damaged directory back: the name is at least occupied by something a repair can
+		// find again, and a concurrent Load is not left with an empty listing.
+		_ = os.Rename(quarantine, versionDir)
+		return E.Cause(err, "publish repaired artifact version")
+	}
+	// Best effort: anything left behind starts with the temp prefix and is removed by the next
+	// Collect, which is the same rule crash leftovers follow.
+	_ = os.RemoveAll(quarantine)
+	return nil
+}
+
+// publishBesideLocked publishes a verified temp directory under a fresh name next to a version name
+// this commit may not replace. The caller holds the lease lock.
+//
+// The occupied name is not touched: it can be a live reader's backing (a reader that loaded the
+// version before its bytes were damaged is exactly the mmap case the lease contract protects) or a
+// complete artifact of another identity. The commit still succeeds - it is the artifact its caller
+// verified - and Load ranks versions by their manifests, so the repaired copy is found without
+// depending on the directory name. The damaged directory is left for Collect, which removes it once
+// no lease covers it.
+func (s *Store) publishBesideLocked(tempDir string, versionDir string, manifest Manifest) (Manifest, string, error) {
+	beside := s.repairPathLocked(versionDir, false)
+	if err := os.Rename(tempDir, beside); err != nil {
+		return Manifest{}, "", E.Cause(err, "publish repaired artifact beside ", filepath.Base(versionDir))
+	}
+	s.lease.counts[beside]++
+	return manifest, beside, nil
+}
+
+// repairPathLocked returns a path next to versionDir that no directory occupies, for a quarantine
+// (kind is a temp-prefixed name, so Collect removes it like any crash leftover) or for a repaired
+// version published beside an occupied name.
+//
+// It must be called under the lease lock, which is what makes check-then-rename one step: every
+// publisher in this process is serialized by that lock, and the store's contract is one writer per
+// directory. Repairs are rare, so a process-wide sequence that only has to skip names already on
+// disk is enough.
+func (s *Store) repairPathLocked(versionDir string, temporary bool) string {
+	directory := filepath.Dir(versionDir)
+	base := filepath.Base(versionDir)
+	var candidate string
+	for attempt := 0; attempt < 64; attempt++ {
+		sequence := strconv.FormatUint(repairSequence.Add(1), 36)
+		if temporary {
+			candidate = filepath.Join(directory, tempPrefix+"replaced-"+sequence+"-"+base)
+		} else {
+			// A repaired copy is a REAL version: it must be listable and loadable, so it cannot
+			// carry the temp prefix Collect deletes.
+			candidate = filepath.Join(directory, base+"-repair-"+sequence)
+		}
+		if !pathExists(candidate) {
+			return candidate
+		}
+	}
+	return candidate
+}
+
+// pathExists reports whether anything (a directory, a file, a link) is at path.
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+
 
 // replaceManifest rewrites a version's manifest in place, atomically and only when the provenance
 // actually changed.

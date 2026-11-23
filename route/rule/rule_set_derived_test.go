@@ -405,16 +405,25 @@ func TestDerivedRuleSetCorruptArtifactFallsBackAndRepairs(t *testing.T) {
 
 	require.NoError(t, ruleSet.reloadFile(path), "a corrupt cache must fall back to the source")
 	requireDomainMatch(t, ruleSet, censusDomainAt(999, 0), true)
-	require.Empty(t, derivedVersions(t, base, key),
-		"the corrupt version must be removed by Collect, not kept as the newest")
+	// The corrupt bytes are gone: the fallback republished the conversion, and the store verified the
+	// version directory it was about to reuse and replaced it because its bytes were not the ones the
+	// manifest names (F-CODEX-01). It used to write into the damaged directory, so the version had to
+	// be collected once before a correct publication could take its place - that wasted round is the
+	// defect, so the repair is asserted directly: one version, and it loads.
+	require.Len(t, derivedVersions(t, base, key), 1,
+		"the damaged conversion is replaced under its own name, not accumulated")
+	repaired, err := ruleSet.derivedCache.store.Load(key)
+	require.NoError(t, err, "the repaired conversion must be loadable, not left corrupt")
+	repaired.Release()
 
-	// The artifact was removed, so the repair publishes it again; only the load after that hits.
+	// The repaired conversion is served on the next load.
 	require.NoError(t, ruleSet.reloadFile(path))
 	requireDomainMatch(t, ruleSet, censusDomainAt(999, 0), true)
 	require.NoError(t, ruleSet.reloadFile(path))
 	requireDomainMatch(t, ruleSet, censusDomainAt(999, 0), true)
 	hits, _, _, failures := derivedCacheDiagnostics()
-	require.EqualValues(t, 1, hits, "the repaired conversion must be served on the next load")
+	require.EqualValues(t, 2, hits,
+		"the repaired conversion is served by every load after the repair (the two reloads above)")
 	require.Zero(t, failures)
 	require.Len(t, derivedVersions(t, base, key), 1)
 }
