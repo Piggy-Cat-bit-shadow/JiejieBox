@@ -20,6 +20,7 @@ import (
 
 	"github.com/sagernet/sing-box/common/urltest"
 
+	protocolgroup "github.com/sagernet/sing-box/protocol/group"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -286,4 +287,13 @@ func TestAProbeThatGetsTheWrongAnswerIsStillATimeout(t *testing.T) {
 		return found && delay == 0 && at > 0
 	}, 20*time.Second, 25*time.Millisecond,
 		"a probe that could not validate the target's answer is a failed probe for display purposes")
+
+	// ...but it must NOT become health evidence: a target that answers 500 says nothing about the
+	// node's proxy path, and the health layer is what selection reads.
+	groupOutbound, loaded := started.Instance().outboundManager.Outbound("group")
+	require.True(t, loaded)
+	urlTestGroup, isURLTest := groupOutbound.(*protocolgroup.URLTest)
+	require.True(t, isURLTest)
+	require.Nil(t, started.Instance().urlTestHistoryStorage.LoadURLTestHistoryFor("direct", urlTestGroup.MeasurementScope()),
+		"a target-side failure must not enter the health layer")
 }
