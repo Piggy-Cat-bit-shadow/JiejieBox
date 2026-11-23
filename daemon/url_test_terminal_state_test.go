@@ -21,6 +21,7 @@ import (
 	"github.com/sagernet/sing-box/common/urltest"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // freePort reserves and immediately releases a loopback port, so a test can start a listener on it
@@ -199,4 +200,63 @@ func TestAMixedGroupGivesEveryMeasuredMemberATerminalState(t *testing.T) {
 	scope := started.Instance().outboundManager
 	require.NotNil(t, scope)
 	_ = urltest.DefaultURLTestURL
+}
+
+// TestAFailedProbeReachesTheGroupSubscriptionStream is the delivery half: the clients build their
+// group screen from SubscribeGroups, so a terminal failure that only exists in storage would never
+// reach a UI. The stream must carry delay 0 WITH a completion time, and a freshly read snapshot must
+// still report it (that is what a re-subscribe does).
+func TestAFailedProbeReachesTheGroupSubscriptionStream(t *testing.T) {
+	probeServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(probeServer.Close)
+	deadPort := freePort(t)
+
+	profile := fmt.Sprintf(`{
+  "log": {"level": "error"},
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "probe-member", "tag": "dead", "destination": "127.0.0.1:%d"},
+    {"type": "urltest", "tag": "group", "outbounds": ["direct", "dead"],
+     "url": "%s", "expected_status": "204", "interval": "1h", "idle_timeout": "2h"}
+  ]
+}`, deadPort, probeServer.URL)
+	started := newHiddenGroupService(t, profile)
+
+	streamContext, cancelStream := context.WithCancel(context.Background())
+	stream := &groupSubscriptionStream{ctx: streamContext, sent: make(chan *Groups, 8)}
+	finished := make(chan error, 1)
+	go func() { finished <- started.SubscribeGroups(&emptypb.Empty{}, stream) }()
+
+	deadline := time.After(20 * time.Second)
+	for {
+		select {
+		case groups := <-stream.sent:
+			for _, entry := range groups.Group {
+				if entry.Tag != "group" {
+					continue
+				}
+				for _, item := range entry.Items {
+					if item.Tag == "dead" && item.UrlTestDelay == 0 && item.UrlTestTime > 0 {
+						cancelStream()
+						select {
+						case <-finished:
+						case <-time.After(10 * time.Second):
+							t.Fatal("the group stream did not return after its context was cancelled")
+						}
+						// A re-subscribe is a full snapshot from storage: it must still say timeout.
+						delay, at, found := groupItemResult(t, started, "group", "dead")
+						require.True(t, found)
+						require.EqualValues(t, 0, delay)
+						require.Positive(t, at)
+						return
+					}
+				}
+			}
+		case <-deadline:
+			cancelStream()
+			t.Fatal("no streamed group payload carried the failed member's terminal state")
+		}
+	}
 }
