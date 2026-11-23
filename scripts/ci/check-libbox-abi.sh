@@ -374,7 +374,19 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 #   {"scanned": 742, "violations": [], "interface_methods": 3, "error": ""}
 # The compile half is the Apple client run dispatched for this candidate; its run id is recorded in
 # release/pin-runs.json with the rest of this round's evidence. It is not a device or TestFlight result.
-VERIFIED_APPLE_SHA="5998e5e8362d888c1ffe20ea0dee89041f066472"
+#
+# Moved from 5998e5e to 79d09f67eecc for the node-timeout round. The range is ONE UI/formatting
+# change (a URLTestResult derivation plus the group views, the Hako views, the tools picker and both
+# macOS status-bar menu paths; localization for "Timeout"), and it touches no Go surface in
+# experimental/libbox and no Libbox call site. Layer 4 was RUN against the checkout this gitlink
+# names (no submodules), not inherited:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root C:\Deepseek\sing-box-for-apple
+#   {"scanned": 487, "violations": [], "interface_methods": 3, "error": ""}
+# The compile half is the Apple client workflow, which builds the source the client branch resolves
+# to; a run at this client revision is recorded in release/pin-runs.json with the rest of this
+# round's evidence. It is not a device or TestFlight result.
+VERIFIED_APPLE_SHA="79d09f67eecc3533af100b18ff770ef8ba5fb9b1"
 
 client_root=""
 skip_client=0
