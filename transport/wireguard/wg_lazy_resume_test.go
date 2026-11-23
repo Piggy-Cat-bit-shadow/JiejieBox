@@ -24,45 +24,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// awgObfuscationProfile is a full AWG profile: AWG shares this endpoint's device lifecycle, so the
-// release/rebuild contract has to be proved on the obfuscated path too, not only on plain WG.
-func awgObfuscationProfile() option.AmneziaWGOptions {
-	return option.AmneziaWGOptions{
-		Jc:                     4,
-		Jmin:                   40,
-		Jmax:                   70,
-		S1:                     55,
-		S2:                     42,
-		S3:                     40,
-		S4:                     12,
-		H1:                     "1",
-		H2:                     "2",
-		H3:                     "3",
-		H4:                     "4",
-		HeaderProtectionKey:    testPrivateKey,
-		ContentPaddingAddition: "10-100",
-		RandomTrailers:         true,
-		DisableCookies:         true,
-	}
-}
-
-// lazyResumeCases is the pair of transports this contract is proved on.
-func lazyResumeCases() []struct {
+// resumeCase is one transport this contract is proved on.
+type resumeCase struct {
 	name string
 	awg  option.AmneziaWGOptions
-} {
-	return []struct {
-		name string
-		awg  option.AmneziaWGOptions
-	}{
-		{name: "wireguard"},
-		{name: "amneziawg", awg: awgObfuscationProfile()},
-	}
+}
+
+// resumeCases is plain WireGuard plus whatever the AWG build contributes.
+//
+// The AWG half lives in a `with_awg`-tagged file on purpose: this repository also builds and tests
+// the UNTAGGED stub path (linux-kernel-verify.yml runs `go test ./transport/wireguard/` with no
+// tags), where AWG options are refused at construction. Keeping the case list build-tagged is what
+// lets one contract be proved on both transports without breaking the stub build - the first version
+// of this test asked for AWG unconditionally and failed exactly there.
+func resumeCases() []resumeCase {
+	return append([]resumeCase{{name: "wireguard"}}, awgResumeCases()...)
 }
 
 // TestARetainedFlowRebuildsAReleasedChainWithoutANewDial is the regression the review reproduced.
 func TestARetainedFlowRebuildsAReleasedChainWithoutANewDial(t *testing.T) {
-	for _, testCase := range lazyResumeCases() {
+	for _, testCase := range resumeCases() {
 		t.Run(testCase.name, func(t *testing.T) {
 			testRetainedFlowRebuildsChain(t, testCase.awg)
 		})
@@ -98,7 +79,7 @@ func testRetainedFlowRebuildsChain(t *testing.T, awg option.AmneziaWGOptions) {
 // TestAWakeWithoutTrafficDoesNotRebuildTheChain is the saving half, stated as its own test so a fix
 // for the case above cannot pass by rebuilding eagerly on every wake.
 func TestAWakeWithoutTrafficDoesNotRebuildTheChain(t *testing.T) {
-	for _, testCase := range lazyResumeCases() {
+	for _, testCase := range resumeCases() {
 		t.Run(testCase.name, func(t *testing.T) {
 			testWakeWithoutTrafficKeepsTheChainReleased(t, testCase.awg)
 		})
@@ -125,7 +106,7 @@ func testWakeWithoutTrafficKeepsTheChainReleased(t *testing.T, awg option.Amnezi
 // TestAReleasedChainSurvivesRepeatedSuspendResume keeps the retained flow usable across several
 // pause/wake cycles, so the rebuild is not a one-shot recovery.
 func TestAReleasedChainSurvivesRepeatedSuspendResume(t *testing.T) {
-	for _, testCase := range lazyResumeCases() {
+	for _, testCase := range resumeCases() {
 		t.Run(testCase.name, func(t *testing.T) {
 			testRepeatedSuspendResume(t, testCase.awg)
 		})
