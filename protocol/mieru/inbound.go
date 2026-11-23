@@ -20,6 +20,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 
 	mierucommon "github.com/enfein/mieru/v3/apis/common"
 	mieruconstant "github.com/enfein/mieru/v3/apis/constant"
@@ -356,6 +357,28 @@ func (c *trackedConn) Close() error {
 func (c *trackedConn) Upstream() any {
 	return c.Conn
 }
+
+// WriterReplaceable completes what Upstream already promised: the copy layer
+// unwraps a writer only when the wrapper says its writer may be replaced, so
+// without this method N.UnwrapWriter stopped at trackedConn, the TCP relay saw
+// "not a WriteCloser", and a destination that finished writing first tore the
+// whole Mieru session down instead of ending only the write direction.
+//
+// It is true because this wrapper adds nothing to writes: it only removes
+// itself from the registry when the connection is CLOSED. Unwrapping therefore
+// cannot skip any behaviour, while the session's own CloseWrite (a Mieru
+// write-direction end, negotiated with the peer) becomes reachable. Close still
+// goes through this wrapper, so the registry stays exact. The read side is
+// deliberately not declared replaceable: nothing needs it today, and changing
+// read unwrapping has wider effects (sniffing, splice eligibility) than this
+// work order covers.
+func (c *trackedConn) WriterReplaceable() bool {
+	return true
+}
+
+// The relay's unwrap path requires exactly this pair; a broken one would be
+// silently inert, which is how the missing half went unnoticed.
+var _ N.WriterWithUpstream = (*trackedConn)(nil)
 
 // UserName preserves the SDK's authenticated-user capability across the
 // registry wrapper. A downstream tracker that type-asserts UserContext on the
