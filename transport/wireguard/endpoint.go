@@ -242,6 +242,12 @@ func (e *Endpoint) Initialize(memoryPressure func() tun.MemoryPressure) error {
 		return E.Cause(err, "create WireGuard device")
 	}
 	e.tunDevice = tunDevice
+	if stack, isStack := tunDevice.(*stackDevice); isStack {
+		// The demand half of the release protocol: a retained flow's packet is what asks for the
+		// rebuild, because only a new Dial used to be able to. A system stack keeps its own Device
+		// lifecycle and never takes the release path, so it is not wired.
+		stack.setWake(e.rebuildOnTrafficDemand)
+	}
 	return nil
 }
 
@@ -1012,12 +1018,75 @@ func (e *Endpoint) resume() {
 	wgDevice := e.device.Load()
 	if wgDevice == nil {
 		// A released chain: rebuilt on demand, not here. Waking it eagerly would spend the Device's
-		// 8.4 MB for a network event that may carry no traffic.
+		// 8.4 MB for a network event that may carry no traffic. The demand that DOES justify the
+		// rebuild is a packet from a flow that stayed in the stack; see rebuildOnTrafficDemand.
 		return
 	}
 	if !e.networkPaused {
 		wgDevice.Up()
 	}
+}
+
+// rebuildOnTrafficDemand restores a released heavy chain because a flow that survived the release
+// produced traffic again.
+//
+// # Why this is not beginUse
+//
+// beginUse answers a NEW flow, so it increments activeUses and refuses a background probe. This path
+// answers a flow that already exists: there is no new dial to account for and no probe context to
+// consult - a background probe cannot reach it, because a probe opens its own flow and goes through
+// beginUse. What it shares with beginUse is the protocol: buildAccess for the whole rebuild (so a
+// concurrent suspend cannot release a chain that is being rebuilt), stateAccess only for the checks
+// and the publish, and the same closing re-check before anything is published.
+//
+// # What it deliberately does not do
+//
+// It does not run while the endpoint is still suspended. A packet can only appear here after the
+// caller resumed the endpoint (that is what cleared the suspension), and rebuilding during a real
+// suspend - a paused network, an app that keeps retransmitting - would spend the Device on traffic
+// that cannot leave the machine anyway. It also does not hold the packet that triggered it: the
+// packet is dropped by the caller and the flow's retransmission is the one that arrives.
+func (e *Endpoint) rebuildOnTrafficDemand() {
+	e.buildAccess.Lock()
+	defer e.buildAccess.Unlock()
+
+	e.stateAccess.Lock()
+	if e.closing || e.device.Load() != nil || !e.deferred || e.suspended.Load() {
+		e.stateAccess.Unlock()
+		return
+	}
+	hook := e.buildDeviceHook
+	e.stateAccess.Unlock()
+
+	if hook != nil {
+		if hookErr := hook(); hookErr != nil {
+			e.options.Logger.Debug("wireguard[", e.options.Tag, "] rebuild on traffic failed: ", hookErr)
+			return
+		}
+	}
+	bind, err := e.newBind()
+	if err != nil {
+		e.options.Logger.Debug("wireguard[", e.options.Tag, "] rebuild on traffic failed: ", err)
+		return
+	}
+	wgDevice, wgPeers, err := e.buildDevice(bind)
+	if err != nil {
+		e.options.Logger.Debug("wireguard[", e.options.Tag, "] rebuild on traffic failed: ", err)
+		return
+	}
+	e.stateAccess.Lock()
+	if e.closing {
+		e.stateAccess.Unlock()
+		wgDevice.Close()
+		return
+	}
+	e.publishLocked(wgDevice, wgPeers)
+	if e.networkPaused {
+		wgDevice.Down()
+	}
+	e.stateAccess.Unlock()
+	wgDevice.SetSessionStateFunc(e.sessionStateChanged)
+	e.options.Logger.Debug("wireguard[", e.options.Tag, "] rebuilt the release wireguard-go device for a retained flow")
 }
 
 func (e *Endpoint) Close() error {

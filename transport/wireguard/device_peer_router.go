@@ -21,6 +21,16 @@ type peerRouter struct {
 	// than answer ICMP: a suspension is a reversible pause, and injecting "no route" into a live
 	// flow would turn it into an error instead of a stall the reconnect can recover from.
 	detached atomic.Bool
+	// wake is the demand signal for a released chain. A retained flow that writes while detached is
+	// producing REAL traffic - it is not a background probe, which would have to open a new flow and
+	// therefore pass through the endpoint's own gate - so the first such packet asks the endpoint to
+	// rebuild the chain. Without this, only a NEW dial could ever rebuild it, and a flow that was
+	// already open stalled forever: the release kept the stack and its flows but left them no path
+	// back.
+	wake atomic.Pointer[func()]
+	// wakePending makes the demand single-flight: a burst of packets from several retained flows
+	// must produce one rebuild attempt, not one per packet.
+	wakePending atomic.Bool
 }
 
 type peerRoutes struct {
@@ -60,6 +70,7 @@ func (r *peerRouter) setPeers(allowedIPs *device.AllowedIPs, peers []*device.Pee
 	// the drop check and then finds no route.
 	previous := r.routes.Swap(routes)
 	r.detached.Store(false)
+	r.wakePending.Store(false)
 	if previous != nil {
 		previous.close()
 	}
@@ -76,10 +87,38 @@ func (r *peerRouter) setPeers(allowedIPs *device.AllowedIPs, peers []*device.Pee
 // Close returns there is no live reader or writer of that Device at all.
 func (r *peerRouter) clearPeers() {
 	r.detached.Store(true)
+	r.wakePending.Store(false)
 	previous := r.routes.Swap(nil)
 	if previous != nil {
 		previous.close()
 	}
+}
+
+// setWake installs the demand callback. It is called once, while the endpoint is being built, before
+// any flow can exist.
+func (r *peerRouter) setWake(wake func()) {
+	r.wake.Store(&wake)
+}
+
+// requestWake asks for a rebuild of the released chain, once per release cycle.
+//
+// The callback runs on its own goroutine on purpose: this is the stack's packet-writing path, and a
+// rebuild waits on buildAccess (which a concurrent suspend holds while it detaches the routes). Doing
+// that work here would put a device build - or a deadlock behind suspend's own callback - inside the
+// path that must stay responsive, so the packet is dropped (the flow retries) and the rebuild happens
+// beside it.
+func (r *peerRouter) requestWake() {
+	wake := r.wake.Load()
+	if wake == nil {
+		return
+	}
+	if !r.wakePending.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer r.wakePending.Store(false)
+		(*wake)()
+	}()
 }
 
 func (r *peerRouter) route(packet []byte) *tun.OutboundQueue {
@@ -108,7 +147,11 @@ func (r *peerRouter) route(packet []byte) *tun.OutboundQueue {
 func (r *peerRouter) writeUnrouted(packetBuffers []*buf.Buffer) {
 	defer buf.ReleaseMulti(packetBuffers)
 	if r.detached.Load() {
-		// Suspended: no Device is published, so the write is a stall, not a routing error.
+		// No Device is published, so the write is a stall, not a routing error. But a stall from a
+		// flow that was already open means that flow has demand again - the case the release used to
+		// lose, because only a new Dial could rebuild the chain. Ask for the rebuild and drop this
+		// batch; the flow's own retransmission is what arrives once the chain is live.
+		r.requestWake()
 		return
 	}
 	replies := make([][]byte, 0, len(packetBuffers))

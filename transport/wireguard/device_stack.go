@@ -100,6 +100,12 @@ func (w *stackDevice) clearDevice() {
 	w.router.clearPeers()
 }
 
+// setWake installs the endpoint's demand callback for a released chain: a packet written by a flow
+// that stayed in the stack is real traffic and must be able to bring the heavy chain back.
+func (w *stackDevice) setWake(wake func()) {
+	w.router.setWake(wake)
+}
+
 func (w *stackDevice) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	bind, err := w.bindAddress(destination)
 	if err != nil {
