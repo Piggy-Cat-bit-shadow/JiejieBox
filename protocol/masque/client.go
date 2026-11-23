@@ -112,6 +112,10 @@ type ClientEndpoint struct {
 	// manager advanced the epoch but before the listener restarted the session restarts it here
 	// first, so the demand cannot ride a tunnel built for the previous network.
 	generation *runtimecoord.GenerationGate
+	// sessionLifecycle is the retire-then-release state machine for the userspace stack this
+	// endpoint owns. See session_release.go: Release has exactly one product caller, the
+	// retirement transition, and it is the reason a session ending frees the stack.
+	sessionLifecycle sessionLifecycle
 }
 
 type clientState struct {
@@ -592,8 +596,23 @@ func (c *ClientEndpoint) h3ConnectionState() (string, bool) {
 //
 // The server does not resend DNS_ASSIGN when the tunnel changes, and it should not have to:
 // the assignment did not change, our ability to use it did.
+//
+// # Why this is also the session-lifetime hook
+//
+// transport/masque calls this once when a session is published (with the transport it was established
+// over) and once when that session's run() has returned (with TunnelTransportUnknown). Those are
+// exactly the begin and the end of one session, delivered on the session-loop goroutine in that
+// order, so this method is the only place in the product that can say "a session ended and no newer
+// one has begun". The retirement half therefore releases the userspace stack - the flows it carried
+// have no carrier left - while the begin half only records the epoch. See session_release.go for the
+// ownership proof and for why "no local dial" is not a release condition.
 func (c *ClientEndpoint) UpdateTunnelTransport(ctx context.Context, tunnelTransport transportHTTP.TunnelTransport) {
 	c.sessionTransport.Store(uint32(tunnelTransport))
+	if tunnelTransport == transportHTTP.TunnelTransportUnknown {
+		c.retireSession()
+	} else {
+		c.sessionLifecycle.begin()
+	}
 	c.recompileAssignedDNS()
 }
 

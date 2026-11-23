@@ -87,6 +87,15 @@ func startConnectIPServer(t *testing.T, prefix netip.Prefix) (*ServerEndpoint, u
 // session is configured.
 func startConnectIPClient(t *testing.T, port uint16) *ClientEndpoint {
 	t.Helper()
+	return startConnectIPClientWithRouter(t, port, nil)
+}
+
+// startConnectIPClientWithRouter is the same client with a router for server-initiated flows: a
+// CONNECT-IP tunnel may carry a flow the PEER opens to our assigned address, and that flow reaches
+// this endpoint as an inbound connection through the endpointBase router. nil is the ordinary
+// outbound-only fixture.
+func startConnectIPClientWithRouter(t *testing.T, port uint16, router adapter.Router) *ClientEndpoint {
+	t.Helper()
 	logger := log.NewNOPFactory().Logger()
 	clientOptions := option.MASQUEClientEndpointOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: port},
@@ -103,7 +112,7 @@ func startConnectIPClient(t *testing.T, port uint16) *ClientEndpoint {
 	}
 	clientContext := service.ContextWithDefaultRegistry(context.Background())
 	clientContext = service.ContextWith[adapter.NetworkManager](clientContext, &stubNetworkManager{})
-	created, err := NewClientEndpoint(clientContext, nil, logger, "connect-ip-client", clientOptions)
+	created, err := NewClientEndpoint(clientContext, router, logger, "connect-ip-client", clientOptions)
 	require.NoError(t, err)
 	clientEndpoint, isClient := created.(*ClientEndpoint)
 	require.True(t, isClient)

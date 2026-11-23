@@ -27,8 +27,15 @@ import (
 // 43.6 KB at first configuration (reports/R-heavy.md, 5 samples). That is the ENTIRE prize for
 // deferral, which is why this type does NOT invent a second lifecycle policy, a timer, or a
 // background releaser. It builds on the first demand, keeps ONE generation at a time, and offers an
-// explicit Release for a caller that has already proved it holds no flows. Nothing in the product
-// path calls Release today.
+// explicit Release for a caller that has already proved it holds no flows.
+//
+// # The one product caller of Release
+//
+// protocol/masque calls Release at a tunnel session's retirement transition, and only there: the
+// session that could carry the stack's flows has ended, no newer session has begun, and the
+// endpoint's epoch state machine (§ session_release.go there) has established that ordering. A
+// caller must not treat "nothing dialled recently" as permission - a CONNECT-IP tunnel may carry
+// remote-initiated flows that produce no local dial at all.
 //
 // # What stays stable
 //
@@ -66,10 +73,12 @@ type Deferred interface {
 	InFlight() int
 	// Release closes the inner device and returns to the unbuilt state.
 	//
-	// It refuses while an operation is inside the stack OR while a build is still running, and says
-	// so through the returned error; a caller that wants to wait can retry. It does not stop a
-	// session, cancel a dial or close a return path: proving those are gone is the caller's job,
-	// because only the caller knows about the tunnel session that carries the flows.
+	// It refuses while an operation is inside the stack, while a build is still running, and for
+	// good once an outbound queue has been handed to a caller (that queue's lifetime is not
+	// observable here); it says so through the returned error and a caller that wants to wait can
+	// retry. It does not stop a session, cancel a dial or close a return path: proving those are gone
+	// is the caller's job, because only the caller knows about the tunnel session that carries the
+	// flows. The return path, MTU, addresses and packet writer are facade state and survive.
 	Release() error
 	// Diagnostics reports the facade's own counters. It exists so a caller can tell "never built"
 	// from "a release keeps being refused" without adding logging to the hot path.
@@ -119,6 +128,12 @@ type deferredDevice struct {
 	buildCount    int
 	releaseNum    int
 	queueFailures int
+	// queueHandouts counts the outbound queues this facade handed to callers. A *tun.OutboundQueue
+	// is owned by whoever asked for it: the device cannot observe its Close, and MemoryTun.Close
+	// deliberately does NOT close caller-owned queues ("Caller-owned queues are closed by their
+	// owners" in the pinned sing-tun). So a handed-out queue cannot be proven gone, and Release
+	// refuses from the first handout on - see the Release doc.
+	queueHandouts int
 	lastError     error
 	closeOnce     sync.Once
 	closeErr      error
@@ -133,6 +148,9 @@ type DeferredDiagnostics struct {
 	Builds        int
 	Releases      int
 	QueueFailures int
+	// QueueHandouts is how many caller-owned outbound queues this facade has returned. A non-zero
+	// value is the permanent reason Release refuses: their lifetime is not observable from here.
+	QueueHandouts int
 	LastError     error
 }
 
@@ -187,6 +205,7 @@ func (d *deferredDevice) Diagnostics() DeferredDiagnostics {
 		Builds:        d.buildCount,
 		Releases:      d.releaseNum,
 		QueueFailures: d.queueFailures,
+		QueueHandouts: d.queueHandouts,
 		LastError:     d.lastError,
 	}
 }
@@ -517,21 +536,48 @@ func (d *deferredDevice) NewOutboundQueue(handler func(packetBuffers []*buf.Buff
 		d.access.Lock()
 		d.queueFailures++
 		d.access.Unlock()
+		return nil
 	}
+	// The queue's lifetime belongs to the caller from this line on: releasing the generation would
+	// leave a live queue whose drain goroutine reads a closed memory TUN, and nothing here can see
+	// that caller's Close. Recorded so Release can refuse rather than produce that state.
+	d.access.Lock()
+	d.queueHandouts++
+	d.access.Unlock()
 	return queue
 }
 
 // Release closes the current generation and returns the facade to its unbuilt state.
 //
-// The preconditions are the caller's to prove; the only ones this type can check for itself are that
-// no operation is still inside the stack and that no build is still running. Everything else - a live
-// tunnel session, a pending dial, an attached return path, a queue registration - belongs to the
-// caller.
+// The preconditions are the caller's to prove; the only ones this type can check for itself are:
+//
+//   - no operation is still inside the stack (a dial, an inbound write, a queue creation);
+//   - no build is still running;
+//   - no outbound queue has ever been handed to a caller.
+//
+// Everything else - a live tunnel session, a returned connection, an attached return path - belongs
+// to the caller. The return path, the MTU, the addresses and the packet writer are FACADE state and
+// survive a release, so a caller that attached them does not lose them.
+//
+// # Why a queue handout is a permanent refusal
+//
+// A *tun.OutboundQueue is owned by the caller. The pinned sing-tun states it explicitly: MemoryTun's
+// Close "does not close caller-owned queues; they are closed by their owners", and the queue's drain
+// goroutine lives until that owner closes it. This type cannot observe that Close, so it cannot prove
+// the queue is gone - and releasing would leave a live reader on a closed memory TUN. Keeping the
+// generation built is the safe answer, so this is a refusal, not a retry: the shape falls back to
+// the original "defer construction only" behaviour, stated rather than silently half-released.
 func (d *deferredDevice) Release() error {
 	d.access.Lock()
 	if d.closed {
 		d.access.Unlock()
 		return errDeviceClosed
+	}
+	if d.queueHandouts > 0 {
+		handouts := d.queueHandouts
+		d.access.Unlock()
+		return E.New("cannot release the inner device: ", handouts,
+			" caller-owned outbound queue(s) were handed out and their lifetime is not observable here")
 	}
 	if d.inner == nil {
 		// A build may still be running even though nothing is published; there is then nothing to
