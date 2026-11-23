@@ -1331,15 +1331,24 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 			// the probe may not wake it, this process is closing, the caller went away - are NOT
 			// facts about the node and are not recorded.
 			probeStart := time.Now()
+			scope := urltest.MeasurementScope{}
+			// The evidence stamp is captured BEFORE the probe, and the writes below are authorised by
+			// it. Without that, a probe that was already running when the node's evidence was dropped
+			// (a removal, a reload, a re-admission under the same tag) would create a display record
+			// AFTERWARDS: an entry for a node whose evidence is gone, which no later code cleans up and
+			// which a reused tag would then show as a real measurement. The group paths have always
+			// passed ownership here; this path was the one that did not, and a stalled probe released
+			// after a DeleteURLTestHistory reproduced it.
+			tagEpoch, scopeEpoch := historyStorage.EvidenceStamp(outboundTag, scope)
+			ownership := urltest.EvidenceOwnership{TagEpoch: tagEpoch, ScopeEpoch: scopeEpoch}
 			measurement, err := urltest.Measure(boxService.ctx, urltest.MeasureOptions{}, outbound)
 			completedAt := time.Now()
-			scope := urltest.MeasurementScope{}
 			if err == nil {
-				historyStorage.StoreDisplayHistory(outboundTag, measurement.Scope, &adapter.URLTestHistory{
+				historyStorage.StoreDisplayHistoryOwned(outboundTag, scope, &adapter.URLTestHistory{
 					Time:  completedAt,
 					Delay: measurement.Delay,
-				})
-				historyStorage.StoreDisplayResult(outboundTag, scope, measurement.Delay, probeStart, completedAt, nil)
+				}, ownership)
+				historyStorage.StoreDisplayResult(outboundTag, scope, measurement.Delay, probeStart, completedAt, &ownership)
 				return
 			}
 			if !isGenuineProbeFailure(err) {
@@ -1347,7 +1356,7 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 				return
 			}
 			boxService.logFactory.Logger().Debug("urltest: node ", outboundTag, " failed: ", err)
-			historyStorage.StoreDisplayResult(outboundTag, scope, 0, probeStart, completedAt, nil)
+			historyStorage.StoreDisplayResult(outboundTag, scope, 0, probeStart, completedAt, &ownership)
 		}()
 	}
 	return &emptypb.Empty{}, nil
