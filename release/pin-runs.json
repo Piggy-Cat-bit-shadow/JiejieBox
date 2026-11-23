@@ -40,6 +40,24 @@
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Apple client",
+      "run_id": 45133371980,
+      "head_sha": "54250132cf393cca115e712b4842bffdfb983d6b",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/45133371980"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 45133316056,
+      "head_sha": "54250132cf393cca115e712b4842bffdfb983d6b",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/45133316056"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Android Core ARM64",
       "run_id": 45127066004,
       "head_sha": "7fc52af00e17277e0989111cfed0cb5a35fcaef0",
