@@ -98,6 +98,19 @@ runs:
           exit 1
         fi
 
+    - name: assert the reviewed startup policy reached the artifact
+      # R-F1: the startup default is a link-time input. The build used to record it in
+      # libbox.provenance but no gate read it, so "off/off in the shipping Apple build" rested on
+      # the host composer and unit tests. Pin the provenance keys here, before the framework is
+      # packed, and fail the build if the recorded policy is not the reviewed one.
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -f libbox.provenance
+        grep -Fxq 'runtime.startup=memprofilerate=0,adaptivestackstart=0' libbox.provenance
+        grep -Eq '^runtime\.godebugDefault=.*,memprofilerate=0,adaptivestackstart=0$' libbox.provenance
+        echo "PASS: the Apple artifact records memprofilerate=0,adaptivestackstart=0"
+
     - name: prove the iOS runtime overlay reached the framework
       # The builder verifies the framework it just produced, and that check cannot survive the
       # artifact leaving that process. This re-runs the SAME verification on the INSTALLED
