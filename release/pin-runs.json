@@ -700,8 +700,8 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
-      "tip": "5998e5e8362d888c1ffe20ea0dee89041f066472",
-      "pin": "5998e5e8362d",
+      "tip": "79d09f67eecc3533af100b18ff770ef8ba5fb9b1",
+      "pin": "79d09f67eecc",
       "relation": "identical",
       "policy": "update",
       "observed_at": "2026-11-20",
@@ -720,8 +720,8 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
       "branch": "main",
-      "tip": "1a1c98e590db6ae2b38bd60f492db93ca395b30f",
-      "pin": "1a1c98e590db",
+      "tip": "f910128277dd21ac82979f8df6bee709e66eb838",
+      "pin": "f910128277dd",
       "relation": "identical",
       "policy": "report",
       "observed_at": "2026-11-20",
@@ -730,8 +730,8 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
       "branch": "main",
-      "tip": "b6e3193abbedc4c8b84c0c79a60f995d08bc95ec",
-      "pin": "b6e3193abbed",
+      "tip": "85eee94d5cf5db91df401391eda5161a41c78ffc",
+      "pin": "85eee94d5cf5",
       "relation": "identical",
       "policy": "report",
       "observed_at": "2026-11-15",
