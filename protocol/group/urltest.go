@@ -2392,6 +2392,27 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 						b.logger.Debug("outbound ", tag, " not measured: ", testErr)
 						return nil, nil
 					}
+					// A GENUINE probe failure is a display terminal state. A client has to be able to
+					// show "timeout" after a manual test exactly as after an automatic one; until
+					// this existed, a failure was recorded only as the ABSENCE of a success, which no
+					// client can distinguish from "never tested".
+					//
+					// It goes to the display-result layer, never to the health layer: healthHistory
+					// presence means "this node answered", and several policies test it for presence
+					// alone. The health rules below are unchanged.
+					//
+					// Declared HERE, after the cancellation/suspension filters, so every branch below
+					// that represents "the probe ran and failed" can record it, including the
+					// target/local branch that deliberately leaves health alone.
+					displayScope := urltest.MeasurementScope{}
+					if b.mode == TestHistoryHealth {
+						// Only a CONFIGURED target is recorded per target. A manual diagnostic may
+						// test an arbitrary URL, and storing one entry per typed URL would grow the
+						// map without bound - the same reason healthHistory is only written here.
+						displayScope = b.scope
+					}
+					displayOwnership := b.evidenceOwnership(measurement)
+					displayStarted := evidenceTime(attemptStart, measurement.ProbeStarted)
 					if facts, hasFacts := adapter.FailureFactsOf(testErr); hasFacts {
 						switch facts.Origin {
 						case adapter.FailureOriginTarget, adapter.FailureOriginLocal:
@@ -2399,25 +2420,46 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 							// policy/configuration failure, is not evidence that this member's
 							// proxy path is down. Remove nothing: the next probe or the next
 							// real demand can still use the last valid measurement.
+							//
+							// The probe DID run and DID fail, though, so the DISPLAY terminal state
+							// says so - a user who pressed "test" and got no answer should see a
+							// timeout rather than a number from an older measurement. The two
+							// questions ("is this node healthy" and "did my test succeed") have
+							// different answers here, which is why the layers are separate.
+							b.history.StoreDisplayResult(tag, displayScope, 0,
+								displayStarted, time.Now(), &displayOwnership)
 							b.logger.Debug("outbound ", tag, " measurement target/local failure, health left alone: ", testErr)
 							return nil, nil
 						}
 					}
 					b.logger.Debug("outbound ", tag, " unavailable: ", testErr)
+					// The display terminal state is recorded by the branches below, using the
+					// scope/ownership/start identity declared above.
 					if b.mode == TestHistoryHealth && b.history != nil {
-						// Only this target's health result is removed. The display entry is left
-						// alone: a failed check against this group's target does not invalidate a
-						// previous success against another one.
-						//
-						// The removal is scoped to THIS attempt: if a result that started after it
-						// is already stored, that result is newer evidence and survives. It is also
-						// scoped to the attempt's OWNERSHIP: a failure measured on the previous
-						// network, or before an evidence drop, has no right to remove the current
-						// state's evidence.
 						if b.history.DeleteHealthHistoryOlderThanOwned(tag, b.scope,
-							evidenceTime(attemptStart, measurement.ProbeStarted), b.evidenceOwnership(measurement)) {
+							displayStarted, displayOwnership) {
+							// Only this target's health result is removed. The display success
+							// entry is left alone: a failed check against this group's target does
+							// not invalidate a previous success against another one.
+							//
+							// The removal is scoped to THIS attempt: if a result that started after
+							// it is already stored, that result is newer evidence and survives. It is
+							// also scoped to the attempt's OWNERSHIP: a failure measured on the
+							// previous network, or before an evidence drop, has no right to remove
+							// the current state's evidence.
 							b.publish(tag, roundPublishedFailure, 0)
+							b.history.StoreDisplayResult(tag, displayScope, 0,
+								displayStarted, time.Now(), &displayOwnership)
 						}
+					} else if b.history != nil {
+						// DISPLAY-ONLY round (a manual test of a generic group or of one node).
+						//
+						// The terminal state is recorded so the node list and the group the user is
+						// looking at can show a timeout, but the round's verdict map is deliberately
+						// NOT touched: that map is what the failover policy reads, and a manual
+						// diagnostic must not move selection.
+						b.history.StoreDisplayResult(tag, displayScope, 0,
+							displayStarted, time.Now(), &displayOwnership)
 					}
 				} else {
 					b.logger.Debug("outbound ", tag, " available: ", measurement.Delay, "ms")
@@ -2451,6 +2493,19 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 						// The provenance travels with the result: convergence re-checks it, and the
 						// selection commit requires it, because a drop can land after this write.
 						b.recordEvidence(tag, roundEvidence{ownership: ownership, nodeIdentity: nodeIdentity(detour)})
+						// The same completed outcome is recorded as DISPLAY TERMINAL state, so the
+						// client always has a (delay, completion time) pair from this one result.
+						// Reading the delay from one layer and the time from another is exactly how
+						// a fresh failure used to be paired with an old success's timestamp.
+						//
+						// Scope: a configured target only. A manual diagnostic's URL must not grow
+						// the per-target map (see display_result.go).
+						displayScope := urltest.MeasurementScope{}
+						if b.mode == TestHistoryHealth {
+							displayScope = measurement.Scope
+						}
+						b.history.StoreDisplayResult(tag, displayScope, measurement.Delay,
+							evidenceTime(attemptStart, measurement.ProbeStarted), time.Now(), &ownership)
 						b.logger.Debug("outbound ", tag, " result published: ", measurement.Delay, "ms")
 					} else {
 						// Not a failure: the probe succeeded, but the state it measured is not the

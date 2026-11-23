@@ -87,6 +87,17 @@ type HistoryStorage struct {
 	// without bound.
 	healthHistory map[scopedHistoryKey]adapter.URLTestHistory
 
+	// displayResults is the newest COMPLETED probe outcome per tag, success or genuine failure, and
+	// scopedDisplayResults is the same for a configured target. They are the display TERMINAL state:
+	// delay 0 with a valid completion time means "the last probe failed".
+	//
+	// They are separate from both layers above on purpose. displayHistory never records a failure
+	// (failing one URL does not disprove a success against another), and healthHistory's presence is
+	// selection evidence, so a delay-0 record there would read as health. See display_result.go for
+	// the full contract, the ordering rule and the bounds.
+	displayResults       map[string]DisplayResult
+	scopedDisplayResults map[scopedHistoryKey]DisplayResult
+
 	// sharedScopes makes the IMMUTABLE target identity of a stored key one string pair, shared by
 	// every entry that names the same target, instead of one copy per entry.
 	//
@@ -243,10 +254,12 @@ func (s *HistoryStorage) CommitAgainstEvidence(tag string, scope MeasurementScop
 
 func NewHistoryStorage() *HistoryStorage {
 	return &HistoryStorage{
-		displayHistory: make(map[string]adapter.URLTestHistory),
-		healthHistory:  make(map[scopedHistoryKey]adapter.URLTestHistory),
-		tagCounts:      make(map[string]uint32),
-		scopeCounts:    make(map[scopedHistoryKey]uint32),
+		displayHistory:       make(map[string]adapter.URLTestHistory),
+		healthHistory:        make(map[scopedHistoryKey]adapter.URLTestHistory),
+		displayResults:       make(map[string]DisplayResult),
+		scopedDisplayResults: make(map[scopedHistoryKey]DisplayResult),
+		tagCounts:            make(map[string]uint32),
+		scopeCounts:          make(map[scopedHistoryKey]uint32),
 	}
 }
 
@@ -567,6 +580,9 @@ func (s *HistoryStorage) DeleteHealthHistory(tag string, scope MeasurementScope)
 		return
 	}
 	delete(s.healthHistory, scopedHistoryKey{Tag: tag, Scope: scope})
+	// The terminal display result for this target goes with it: retiring a target must not leave a
+	// failure (or a delay) on screen that describes a measurement the configuration no longer makes.
+	delete(s.scopedDisplayResults, scopedHistoryKey{Tag: tag, Scope: scope})
 	// This is an evidence DROP for THIS node and target, not the failure path of one attempt: an
 	// in-flight probe for them that started before it must not store its result afterwards. Other
 	// targets of the same node are untouched on purpose.
@@ -638,6 +654,12 @@ func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
 		return
 	}
 	delete(s.displayHistory, tag)
+	delete(s.displayResults, tag)
+	for key := range s.scopedDisplayResults {
+		if key.Tag == tag {
+			delete(s.scopedDisplayResults, key)
+		}
+	}
 	for key := range s.healthHistory {
 		if key.Tag == tag {
 			delete(s.healthHistory, key)
@@ -756,6 +778,8 @@ func (s *HistoryStorage) Close() error {
 	// maps would let a late writer - or a reader that raced Close - still observe live state.
 	clear(s.displayHistory)
 	clear(s.healthHistory)
+	clear(s.displayResults)
+	clear(s.scopedDisplayResults)
 	// The epoch book goes too. It carries no measurement, but a closed storage must not keep a
 	// growing record of drops either, and a late writer is already refused by s.closed before any
 	// stamp is compared.

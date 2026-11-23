@@ -142,20 +142,20 @@ type StartedService struct {
 	// instanceID identifies the running instance for the connection-event stream. It is written
 	// under serviceAccess together with instance, and a stream captures it at subscribe time so a
 	// batch produced by a replaced instance can be told apart from the current one.
-	instanceID             string
-	startedAt              time.Time
+	instanceID string
+	startedAt  time.Time
 	// beforeInstanceStart is a test seam for the interruption window: the instance is published
 	// and the service is STARTING, but Start has not returned yet. Nil in production.
 	beforeInstanceStart func()
 	// beforeSelectionInstanceCheck is a test seam for the reload-during-selection window. Nil in
 	// production.
 	beforeSelectionInstanceCheck func()
-	urlTestSubscriber      *observable.Subscriber[struct{}]
-	urlTestObserver        *observable.Observer[struct{}]
-	clashModeSubscriber    *observable.Subscriber[struct{}]
-	clashModeObserver      *observable.Observer[struct{}]
-	notificationSubscriber *observable.Subscriber[*NotificationEvent]
-	notificationObserver   *observable.Observer[*NotificationEvent]
+	urlTestSubscriber            *observable.Subscriber[struct{}]
+	urlTestObserver              *observable.Observer[struct{}]
+	clashModeSubscriber          *observable.Subscriber[struct{}]
+	clashModeObserver            *observable.Observer[struct{}]
+	notificationSubscriber       *observable.Subscriber[*NotificationEvent]
+	notificationObserver         *observable.Observer[*NotificationEvent]
 }
 
 // setInstanceLocked records the running instance and the identity a connection-event stream
@@ -311,8 +311,8 @@ func NewStartedService(options ServiceOptions) *StartedService {
 	// and to every later Box.
 	pause.WithDefaultManager(startedCtx)
 	s := &StartedService{
-		ctx:                      startedCtx,
-		fakeIPIssuanceLedger:     fakeIPIssuanceLedger,
+		ctx:                  startedCtx,
+		fakeIPIssuanceLedger: fakeIPIssuanceLedger,
 		// platform:                options.Platform,
 		handler:           options.Handler,
 		debug:             options.Debug,
@@ -1154,6 +1154,23 @@ func (s *StartedService) readGroups() *Groups {
 			} else {
 				history = historyStorage.LoadURLTestHistory(realTag)
 			}
+			// The DISPLAY TERMINAL result wins over the last-success history: it carries the outcome
+			// of the most recent probe, including a failure (delay 0 with a completion time), which
+			// the success-only history cannot express. Without this, a failed test left the client
+			// showing the previous success - the "timeout" it was told to display never arrived.
+			if groupScope != nil {
+				if result, loaded := historyStorage.LoadDisplayResultFor(realTag, *groupScope); loaded {
+					item.UrlTestTime = result.CompletedAt.Unix()
+					item.UrlTestDelay = int32(result.Delay)
+					g.Items = append(g.Items, &item)
+					continue
+				}
+			} else if result, loaded := historyStorage.LoadDisplayResult(realTag); loaded {
+				item.UrlTestTime = result.CompletedAt.Unix()
+				item.UrlTestDelay = int32(result.Delay)
+				g.Items = append(g.Items, &item)
+				continue
+			}
 			if history != nil {
 				item.UrlTestTime = history.Time.Unix()
 				item.UrlTestDelay = int32(history.Delay)
@@ -1308,15 +1325,29 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 			// it into the health map would also let a user grow that map without bound by testing
 			// arbitrary URLs.
 			//
-			// A failure records nothing: it does not disprove an earlier success against another
-			// URL, and the caller already receives the error.
+			// The completed OUTCOME is recorded either way: a success with its delay, a genuine
+			// probe failure with delay 0 and a completion time. That pair is what lets the client
+			// show "timeout" instead of an older success. Management outcomes - the node is idle and
+			// the probe may not wake it, this process is closing, the caller went away - are NOT
+			// facts about the node and are not recorded.
+			probeStart := time.Now()
 			measurement, err := urltest.Measure(boxService.ctx, urltest.MeasureOptions{}, outbound)
+			completedAt := time.Now()
+			scope := urltest.MeasurementScope{}
 			if err == nil {
 				historyStorage.StoreDisplayHistory(outboundTag, measurement.Scope, &adapter.URLTestHistory{
-					Time:  time.Now(),
+					Time:  completedAt,
 					Delay: measurement.Delay,
 				})
+				historyStorage.StoreDisplayResult(outboundTag, scope, measurement.Delay, probeStart, completedAt, nil)
+				return
 			}
+			if !isGenuineProbeFailure(err) {
+				boxService.logFactory.Logger().Debug("urltest: node ", outboundTag, " not measured: ", err)
+				return
+			}
+			boxService.logFactory.Logger().Debug("urltest: node ", outboundTag, " failed: ", err)
+			historyStorage.StoreDisplayResult(outboundTag, scope, 0, probeStart, completedAt, nil)
 		}()
 	}
 	return &emptypb.Empty{}, nil
@@ -2798,7 +2829,12 @@ func (s *StartedService) readOutbounds() *OutboundList {
 			Tag:  detour.Tag(),
 			Type: detour.Type(),
 		}
-		if history := historyStorage.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP)); history != nil {
+		if result, loaded := historyStorage.LoadDisplayResult(group.RealTag(detour, N.NetworkTCP)); loaded {
+			// Terminal display state first: delay 0 with a completion time is a failed probe, which
+			// the success-only history below cannot represent.
+			item.UrlTestTime = result.CompletedAt.Unix()
+			item.UrlTestDelay = int32(result.Delay)
+		} else if history := historyStorage.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP)); history != nil {
 			item.UrlTestTime = history.Time.Unix()
 			item.UrlTestDelay = int32(history.Delay)
 		}
@@ -2818,4 +2854,21 @@ func (s *StartedService) readOutbounds() *OutboundList {
 		}
 	}
 	return &list
+}
+
+// isGenuineProbeFailure reports whether a failed probe is a fact about the NODE.
+//
+// The display terminal state must not turn management outcomes into node timeouts: an endpoint that
+// refused to wake because it is idle, this process ending the operation, and the caller going away are
+// all facts about the core, not about the node. Everything else - a refused connection, a handshake
+// that never completed, an HTTP answer that did not match, a target that rejected the probe - is the
+// probe failing to complete, which is what the client shows as "timeout".
+func isGenuineProbeFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if adapter.IsResourceSuspended(err) || adapter.IsOwnTeardown(err) || adapter.IsCallerCancellation(err) {
+		return false
+	}
+	return true
 }
