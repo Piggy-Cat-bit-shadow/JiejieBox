@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -149,7 +150,11 @@ func w7LibraryDial(t *testing.T, object interface {
 
 func TestX03AThousandNodeLibraryChangesOneNodePerRoundAndConverges(t *testing.T) {
 	const nodes = 1000
-	const rounds = 30
+	// The original W8 window asked for 1000 nodes x 100 rounds; the frozen fixture only reached 30
+	// and the delivery recorded 50 nodes x 100 rounds as the substitute. The assertion that made the
+	// 1000 x 100 run impossible was a SYNCHRONOUS publication check right after Box.Start - this
+	// fixture awaits the catalog's own convergence instead, so the original scale runs.
+	const rounds = 100
 	const failingRounds = 4
 
 	connectA := startW7ConnectProxy(t)
@@ -249,6 +254,16 @@ func TestX03AThousandNodeLibraryChangesOneNodePerRoundAndConverges(t *testing.T)
 		require.Equal(t, baselineOutbounds, len(boxInstance.Outbound().Outbounds()),
 			"round %d: no unowned outbound object may accumulate", round)
 		executedRounds++
+		if executedRounds%10 == 0 {
+			// The convergence CURVE, not only the endpoint: records/refs must stay pinned at the node
+			// count and the heap objects must not climb with the round number.
+			var sample runtime.MemStats
+			runtime.ReadMemStats(&sample)
+			stats := boxInstance.CatalogStats()
+			t.Logf("X03 curve round=%d records=%d refs=%d outbounds=%d heapObjects=%d goroutines=%d",
+				executedRounds, stats.Records, stats.Refs, len(boxInstance.Outbound().Outbounds()),
+				sample.HeapObjects, runtime.NumGoroutine())
+		}
 	}
 	t.Logf("X03 rounds: executed=%d failing=%d final records=%d refs=%d outbounds=%d fetches=%d",
 		executedRounds, failuresSeen, boxInstance.CatalogStats().Records, boxInstance.CatalogStats().Refs,
