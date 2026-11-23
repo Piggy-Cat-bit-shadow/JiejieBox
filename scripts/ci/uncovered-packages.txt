@@ -23,3 +23,9 @@
 ./common/suspendwatch
 ./common/tlsspoof
 ./common/windivert
+
+# --- measurement harness, run on demand by scripts/measure/w8/run.ps1, not a push-time gate: one
+# measurement point is five independent subprocesses and a full campaign is tens of minutes, and its
+# assertions are bounds on scheduling-dependent counts rather than a pass/fail contract. It is
+# reproducible from the packaged evidence root (06-verification/VERIFY.md).
+./internal/w8measure
