@@ -41,6 +41,33 @@
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Android Core ARM64",
+      "run_id": 45117131354,
+      "head_sha": "f7e4a70f58dd928957776a3e422641d3b74c441d",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/45117131354"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Mobile contract verification",
+      "run_id": 45115919013,
+      "head_sha": "303e083146c980b06bc3aadd09be9d2b4c8b8c83",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/45115919013"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
+      "run_id": 45115918933,
+      "head_sha": "303e083146c980b06bc3aadd09be9d2b4c8b8c83",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/45115918933"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Android Core ARM64",
       "run_id": 43713121151,
       "head_sha": "f512b8e8b02969ee80eb9d5878017384f26fec91",
       "event": "workflow_dispatch",
@@ -584,12 +611,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing",
       "branch": "dev",
-      "tip": "7246d061b907a01f42662a160bdd9d9522f0e7d8",
-      "pin": "7246d061b907",
+      "tip": "a9e81c9e8e8a1fdb3c41083ef4f7229012d4a036",
+      "pin": "a9e81c9e8e8a",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-21",
-      "note": "dev carries 077e91e badoption: Share compiled regular expressions across configs and 7246d06 its benchmarks: the option holds one canonical compiled *regexp.Regexp per expression through a weak-reference cache, Build returns the standard library's shallow copy so Longest stays per-holder, and cleanup is ABA-safe by entry identity. The pin was pushed by this window and a run at the new lock is recorded below."
+      "observed_at": "2026-11-23",
+      "note": "Moved by the final closeout: a9e81c9 adds the optional IncreaseBufferPermit seam to the copy engine (asked only at the real growth boundary, release run once on the copy's exit path) so the relay can hold a growth-capacity permit only while an enlarged buffer exists. Android Core and Mobile contract runs at this lock are recorded in parent_runs."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
@@ -653,12 +680,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/mieru",
       "branch": "main",
-      "tip": "0f0e75089c3bc6bee865fe7766c12ca453ac9db5",
-      "pin": "0f0e75089c3b",
+      "tip": "2c89d083c5ca0737f183f4ddf04cc255a25e3619",
+      "pin": "2c89d083c5ca",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-22",
-      "note": "Moved by the 15 closeout: the fork commit fixes the shared-underlay head-of-line blocking (bounded per-session queue, overflow closes that session instead of blocking the single reader). The parent recorded its Android Core run at this lock."
+      "observed_at": "2026-11-23",
+      "note": "Moved by the final closeout: 2c89d08 adds Session.CloseWrite (write-direction end frame negotiated through a reserved metadata bit, ErrWriteEndUnsupported for pre-extension peers). Android Core and Mobile contract runs at this lock are recorded in parent_runs."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/cronet-go",
