@@ -15,6 +15,12 @@ type peerRouter struct {
 	inet4Address netip.Addr
 	inet6Address netip.Addr
 	routes       atomic.Pointer[peerRoutes]
+	// detached is set while no wireguard-go Device is published (a suspended endpoint whose heavy
+	// chain was released). Flows that stay in the gVisor stack can still write packets; with no
+	// routes they fall through to the memory tun's unrouted handler, which must DROP them rather
+	// than answer ICMP: a suspension is a reversible pause, and injecting "no route" into a live
+	// flow would turn it into an error instead of a stall the reconnect can recover from.
+	detached atomic.Bool
 }
 
 type peerRoutes struct {
@@ -49,7 +55,28 @@ func (r *peerRouter) setPeers(allowedIPs *device.AllowedIPs, peers []*device.Pee
 		current.queue = r.memoryTun.NewOutboundQueue(current.write)
 		routes.queues[peer] = current
 	}
+	// Publish the routes BEFORE clearing the detached flag: a writer that observes "not detached"
+	// must be able to find a queue. The reverse order would leave a window where a packet passes
+	// the drop check and then finds no route.
 	previous := r.routes.Swap(routes)
+	r.detached.Store(false)
+	if previous != nil {
+		previous.close()
+	}
+}
+
+// clearPeers detaches every peer route. It is the first step of releasing a suspended endpoint's
+// heavy chain: after it returns, no packet from a flow that remains in the stack can reach a Peer
+// that belongs to the Device about to be closed.
+//
+// It does not wait for a queue handler that is already executing a batch (sing-tun's
+// OutboundQueue.Close has no such join), and it does not need to: the handler only holds Go
+// references to a stopped Peer, and Peer.WritePackets on a device that is no longer up stages
+// nothing that can be sent. The Device's own Close then waits for every goroutine it owns, so after
+// Close returns there is no live reader or writer of that Device at all.
+func (r *peerRouter) clearPeers() {
+	r.detached.Store(true)
+	previous := r.routes.Swap(nil)
 	if previous != nil {
 		previous.close()
 	}
@@ -80,6 +107,10 @@ func (r *peerRouter) route(packet []byte) *tun.OutboundQueue {
 
 func (r *peerRouter) writeUnrouted(packetBuffers []*buf.Buffer) {
 	defer buf.ReleaseMulti(packetBuffers)
+	if r.detached.Load() {
+		// Suspended: no Device is published, so the write is a stall, not a routing error.
+		return
+	}
 	replies := make([][]byte, 0, len(packetBuffers))
 	for _, packetBuffer := range packetBuffers {
 		packet := packetBuffer.Bytes()
@@ -98,6 +129,7 @@ func (r *peerRouter) writeUnrouted(packetBuffers []*buf.Buffer) {
 }
 
 func (r *peerRouter) close() error {
+	r.detached.Store(true)
 	routes := r.routes.Swap(nil)
 	if routes != nil {
 		routes.close()

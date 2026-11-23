@@ -27,6 +27,7 @@ import (
 	"github.com/sagernet/sing/service/pause"
 	"github.com/sagernet/wireguard-go/conn"
 	"github.com/sagernet/wireguard-go/device"
+	wgTun "github.com/sagernet/wireguard-go/tun"
 
 	"go4.org/netipx"
 )
@@ -36,13 +37,21 @@ type Endpoint struct {
 	peers          []peerConfig
 	ipcConf        string
 	allowedAddress []netip.Prefix
-	tunDevice      Device
-	returnDevice   *returnDeviceWrapper
-	device         atomic.Pointer[device.Device]
-	allowedIPs     *device.AllowedIPs
-	egressPool     *tun.UDPEgressPool
-	pause          pause.Manager
-	pauseCallback  *list.Element[pause.Callback]
+	// staticAllowedIPs answers Lookup/PreferredAddress from the configuration alone.
+	//
+	// It exists because the address a peer owns must keep the same answer while the heavy chain is
+	// released: the Device's AllowedIPs trie is emptied by Device.Close (RemoveAllPeers), so reading
+	// it after a suspend would turn every configured address into "not mine" and change routing.
+	// The trie is built in the same peer/prefixed order IpcSet uses, with one zero-value Peer per
+	// configured peer as the key. The returned *device.Peer is only ever compared with nil by the
+	// product (protocol/wireguard PreferredAddress); its identity is not part of the answer.
+	staticAllowedIPs *device.AllowedIPs
+	tunDevice        Device
+	device           atomic.Pointer[device.Device]
+	returnPath       atomic.Pointer[returnPathState]
+	egressPool       *tun.UDPEgressPool
+	pause            pause.Manager
+	pauseCallback    *list.Element[pause.Callback]
 	// deviceWakeCallback is the DeviceWake half of the recovery nudge. It is separate from
 	// pauseCallback because the two events mean different things; see onDeviceWake.
 	deviceWakeCallback *list.Element[pause.Callback]
@@ -53,6 +62,34 @@ type Endpoint struct {
 	// a Close that lands while the device is still being built cannot leave a live device behind
 	// a closed tun, and cannot resurrect a nil device pointer after teardown.
 	closing bool
+	// ---- heavy-chain lifecycle (W5 selective lazy) ----
+	//
+	// lazyEligible is the shape verdict computed at construction: private userspace, no listening
+	// port, no keepalive timer, every peer a configured IP endpoint. Only this shape may release the
+	// wireguard-go Device on suspend; everything else keeps the exact previous Down-only behaviour.
+	lazyEligible bool
+	// stackStarted records that tunDevice.Start has run. The gVisor stack is started exactly once;
+	// a rebuild creates a new Device over the same stack, it does not restart the stack.
+	stackStarted bool
+	// everPublished records that a heavy chain has been published at least once, so a missing
+	// device means "released by idle" rather than "never started". A never-started endpoint keeps
+	// its old error surface (the stack is not running, so a dial fails from the stack itself).
+	everPublished bool
+	// addressingReady gates Lookup: before the first publish the previous implementation had no
+	// address table at all, and a query answered nil.
+	addressingReady bool
+	// deferred records that the heavy chain was released by suspend and must be rebuilt on demand.
+	deferred bool
+	// activeUses counts calls that are currently creating a flow on the stack. It is the mutual
+	// exclusion between "a dial is in flight" and "release the device": suspend only releases when
+	// this is zero, otherwise it keeps the previous Down-only behaviour for that pause.
+	activeUses int
+	// buildAccess serialises builds against releases. A build and a release can both touch the bind's
+	// egress provider (the bind's Close calls SetEgressPort(0)), so they must never overlap. Lock
+	// order is always buildAccess -> stateAccess.
+	buildAccess sync.Mutex
+	// buildDeviceHook is the failure-injection seam for rebuild tests. Production never sets it.
+	buildDeviceHook func() error
 	// recovery is the runtime-lifecycle state: which peers are stale, and the worker that acts on
 	// it. See recovery.go and docs/fork/runtime-lifecycle-phase1.5.md.
 	recovery recoveryState
@@ -137,11 +174,37 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	if err = validateTunnelMTU(options.MTU, options.Address, options.MTUBoundedBy, options.MTUBoundedRequired); err != nil {
 		return nil, err
 	}
+	// The address table the product queries must not depend on a live Device (see the field comment).
+	staticAllowedIPs := &device.AllowedIPs{}
+	staticPeers := make([]*device.Peer, len(peers))
+	for peerIndex := range staticPeers {
+		staticPeers[peerIndex] = &device.Peer{}
+	}
+	for peerIndex, peer := range peers {
+		for _, allowedIP := range peer.allowedIPs {
+			staticAllowedIPs.Insert(allowedIP, staticPeers[peerIndex])
+		}
+	}
+	// Shape gating for the selective lazy release. Every condition is a reason the old code kept
+	// the Device resident for a purpose the release cannot preserve:
+	//   - a listen port is an address passive peers and monitoring rely on;
+	//   - keepalive is a timer whose phase a rebuild resets;
+	//   - a system stack configures host routes and ports;
+	//   - a peer without a configured endpoint is passive (inbound demand), and a domain peer starts
+	//     at post-start so a rebuild would re-resolve it at a different time.
+	lazyEligible := options.ListenPort == 0 && !options.System && len(peers) > 0
+	for _, peer := range peers {
+		if !peer.endpoint.IsValid() || peer.keepalive != 0 {
+			lazyEligible = false
+		}
+	}
 	return &Endpoint{
-		options:        options,
-		peers:          peers,
-		ipcConf:        ipcConf,
-		allowedAddress: allowedAddresses,
+		options:          options,
+		peers:            peers,
+		ipcConf:          ipcConf,
+		allowedAddress:   allowedAddresses,
+		staticAllowedIPs: staticAllowedIPs,
+		lazyEligible:     lazyEligible,
 	}, nil
 }
 
@@ -179,7 +242,6 @@ func (e *Endpoint) Initialize(memoryPressure func() tun.MemoryPressure) error {
 		return E.Cause(err, "create WireGuard device")
 	}
 	e.tunDevice = tunDevice
-	e.returnDevice = &returnDeviceWrapper{Device: tunDevice}
 	return nil
 }
 
@@ -206,187 +268,21 @@ func (e *Endpoint) Start(postStart bool) error {
 	if e.options.Dialer == nil {
 		return E.New("missing dialer for wireguard endpoint")
 	}
-	var bind conn.Bind
-	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
-	if isUDPListener {
-		listenerControl, egressEnabled := udpListener.UDPListenerControl()
-		// Only the bind gets the family-tolerant view. The egress pool keeps the raw control,
-		// where a per-member failure is already tolerated by the pool itself.
-		standardBind := conn.NewStdNetBind(familyTolerantListenerControl(listenerControl)).(*conn.StdNetBind)
-		if e.options.ListenPort == 0 && len(e.peers) == 1 && e.peers[0].endpoint.IsValid() {
-			standardBind.SetSinglePeerMode()
-		}
-		if egressEnabled {
-			// The egress pool dereferences three fields of this struct UNCONDITIONALLY, from
-			// wireguard-go's own goroutines: InterfaceMonitor at SetEgressPort (sing-tun
-			// udp_egress.go:119), InterfaceFinder at its bind and at Close (:125, :177, :83), and Logger
-			// on the warning path (:218). Their ZERO VALUE is therefore not "unset", it is a nil
-			// dereference inside RoutineTUNEventReader - reached from BindUpdate, which is reached from
-			// the recovery worker - where no recover can catch it and the process dies.
-			//
-			// MEASURED: a caller that sets only the fields it cares about panics the whole test binary
-			// the first time the bind opens a port.
-			//
-			// The in-tree callers are all safe - protocol/wireguard/endpoint.go, protocol/openvpn and
-			// protocol/tailscale each fill all three from their network manager - so this refuses
-			// exactly the configuration that would have crashed later, and refuses it as the
-			// configuration error it is, BEFORE a device exists. A check here rather than in sing-tun
-			// because the missing guard is in the pinned fork, which this repository does not write to.
-			egressPoolOptions := e.options.EgressPoolOptions
-			if egressPoolOptions.InterfaceMonitor == nil {
-				return E.New("missing InterfaceMonitor in EgressPoolOptions for wireguard endpoint ",
-					e.options.Tag, ": the UDP egress pool dereferences it when it takes a port (sing-tun ",
-					"udp_egress.go:119) and the failure would be a nil pointer dereference on ",
-					"wireguard-go's own goroutine rather than an error here")
-			}
-			if egressPoolOptions.InterfaceFinder == nil {
-				return E.New("missing InterfaceFinder in EgressPoolOptions for wireguard endpoint ",
-					e.options.Tag, ": the UDP egress pool registers an interface callback with it ",
-					"(sing-tun udp_egress.go:125) and the failure would be a nil pointer dereference on ",
-					"wireguard-go's own goroutine rather than an error here")
-			}
-			if egressPoolOptions.Logger == nil {
-				return E.New("missing Logger in EgressPoolOptions for wireguard endpoint ",
-					e.options.Tag, ": the UDP egress pool logs a per-member listen failure through it ",
-					"(sing-tun udp_egress.go:218), and a failure that has nothing to report it with is a ",
-					"nil pointer dereference instead of the warning it was meant to be")
-			}
-			egressPoolOptions.Control = listenerControl
-			e.egressPool = tun.NewUDPEgressPool(egressPoolOptions)
-			standardBind.SetEgressProvider(e.egressPool)
-		}
-		powerManager := service.FromContext[*powerreport.Manager](e.options.Context)
-		if powerManager != nil {
-			recorder := powerManager.Recorder()
-			if recorder != nil {
-				attribution := &powerreport.Attribution{Endpoint: e.options.Tag}
-				counter := recorder.TrafficCounter(powerreport.TrafficEndpoint, e.options.Tag)
-				standardBind.SetIOActivityFuncs(func(size int) {
-					counter.CountIn(int64(size))
-					recorder.Touch(powerreport.DirectionInbound, size, attribution)
-				}, func(size int) {
-					counter.CountOut(int64(size))
-					recorder.Touch(powerreport.DirectionOutbound, size, attribution)
-				})
-			}
-		}
-		bind = standardBind
-	} else {
-		var (
-			isConnect   bool
-			connectAddr netip.AddrPort
-			reserved    [3]uint8
-		)
-		if len(e.peers) == 1 {
-			reserved = e.peers[0].reserved
-			if e.peers[0].endpoint.IsValid() {
-				isConnect = true
-				connectAddr = e.peers[0].endpoint
-			}
-		}
-		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
-		if e.options.AmneziaWG.IsSet() {
-			// AWG protects the bytes after the message type; the Reserved-byte rewrite this bind
-			// performs for WARP-style peers would corrupt every protected header.
-			clientBind.SetAWGTransparent(true)
-		}
-		bind = clientBind
-	}
-	if isUDPListener || len(e.peers) > 1 {
-		for _, peer := range e.peers {
-			if peer.endpoint.IsValid() && peer.reserved != [3]uint8{} {
-				bind.SetReservedForEndpoint(peer.endpoint, peer.reserved)
-			}
-		}
-	}
-	err := e.tunDevice.Start()
+	// Builds and releases are serialised: they share the bind's egress provider, and a release must
+	// not be able to close a bind that a build is still installing. Lock order is buildAccess then
+	// stateAccess everywhere.
+	e.buildAccess.Lock()
+	defer e.buildAccess.Unlock()
+	bind, err := e.newBind()
 	if err != nil {
 		return err
 	}
-	logger := &device.Logger{
-		Verbosef: func(format string, args ...any) {
-			e.options.Logger.Debug(fmt.Sprintf(strings.ToLower(format), args...))
-		},
-		Errorf: func(format string, args ...any) {
-			e.options.Logger.Error(fmt.Sprintf(strings.ToLower(format), args...))
-		},
-	}
-	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
-	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
-	for peerIndex, peer := range e.peers {
-		if peer.destination.IsDomain() {
-			domainPeers[peer.publicKey] = &e.peers[peerIndex]
-		}
-	}
-	if len(domainPeers) > 0 {
-		wgDevice.SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
-			peer, found := domainPeers[publicKey]
-			if !found {
-				return nil, nil
-			}
-			addresses, lookupErr := e.options.ResolvePeer(peer.destination.Fqdn)
-			if lookupErr != nil {
-				return nil, lookupErr
-			}
-			endpoints := make([]conn.Endpoint, 0, len(addresses))
-			for _, address := range addresses {
-				destination := netip.AddrPortFrom(address, peer.destination.Port)
-				if peer.reserved != ([3]uint8{}) {
-					bind.SetReservedForEndpoint(destination, peer.reserved)
-				}
-				endpoint, parseErr := bind.ParseEndpoint(destination.String())
-				if parseErr != nil {
-					return nil, parseErr
-				}
-				endpoints = append(endpoints, endpoint)
-			}
-			return endpoints, nil
-		})
-	}
-	var ipcConf strings.Builder
-	ipcConf.WriteString(e.ipcConf)
-	for _, peer := range e.peers {
-		ipcConf.WriteString(peer.GenerateIpcLines())
-	}
-	err = wgDevice.IpcSet(ipcConf.String())
-	if err != nil {
-		wgDevice.Close()
-		// The IPC configuration is NOT included, and that is the point.
-		//
-		// # What was leaking
-		//
-		// This returned `E.Cause(err, "setup wireguard: \n", ipcConf.String())`, and that string
-		// begins `private_key=<hex>` and carries every peer's `preshared_key=<hex>`. A failed IpcSet
-		// is a ROUTINE event - a malformed allowed_ip, a key the kernel rejects, a port conflict -
-		// and each one put the device's identity key and every PSK into an error that the caller
-		// logs, wraps, or hands to an SDK. An operator pasting that error into a bug report, or a
-		// crash reporter shipping it, would disclose the keys themselves.
-		//
-		// # Why the fix is not a redaction pass
-		//
-		// Filtering the text would mean deciding, at the point of the error, which substrings are
-		// secret - and that decision is exactly the kind that goes stale: a new IPC field, a new key
-		// format, a peer option that carries a token. The configuration is therefore not passed at
-		// all. What is kept is everything an operator needs to locate the failure: the subsystem,
-		// the underlying parser error (which names the offending FIELD, not its value), and the peer
-		// count, so a multi-peer configuration can be narrowed down.
-		//
-		// The underlying error is NOT swallowed: it is the cause, so `errors.Is`/`errors.As` and the
-		// full text still work.
-		return E.Cause(err, "setup wireguard: configure device with ",
-			strconv.Itoa(len(e.peers)), " peer(s); the configuration itself is deliberately omitted from "+
-				"this error because it contains private key material")
-	}
-	if err = e.bindListenPort(wgDevice); err != nil {
-		wgDevice.Close()
+	if err = e.startStack(); err != nil {
 		return err
 	}
-	wgPeers := make([]*device.Peer, 0, len(e.peers))
-	for _, peer := range e.peers {
-		wgPeer, loaded := wgDevice.LookupActivePeer(peer.publicKey)
-		if loaded {
-			wgPeers = append(wgPeers, wgPeer)
-		}
+	wgDevice, wgPeers, err := e.buildDevice(bind)
+	if err != nil {
+		return err
 	}
 	// Register the pause callbacks BEFORE taking the lock.
 	//
@@ -469,8 +365,7 @@ func (e *Endpoint) Start(postStart bool) error {
 		wgDevice.Close()
 		return os.ErrClosed
 	}
-	e.tunDevice.SetDevice(wgDevice, wgPeers)
-	e.device.Store(wgDevice)
+	e.publishLocked(wgDevice, wgPeers)
 	e.pause = pauseManager
 	if registered {
 		// Published under the lock, in the same critical section as the `closing` check above: that
@@ -486,7 +381,6 @@ func (e *Endpoint) Start(postStart bool) error {
 		e.networkPaused = true
 		wgDevice.Down()
 	}
-	e.allowedIPs = wgDevice.AllowedIPs()
 	e.stateAccess.Unlock()
 
 	// Observe session transitions. Set AFTER the initial IpcSet, so the configuration's own
@@ -496,6 +390,260 @@ func (e *Endpoint) Start(postStart bool) error {
 	// must not call back into Device. It records state and nudges the recovery worker; nothing else.
 	wgDevice.SetSessionStateFunc(e.sessionStateChanged)
 	return nil
+}
+
+// startStack starts the gVisor stack exactly once. A rebuild creates a new wireguard-go Device
+// over the same stack; it must not restart the stack, because that would tear down every flow the
+// suspension contract promised to preserve.
+func (e *Endpoint) startStack() error {
+	e.stateAccess.Lock()
+	started := e.stackStarted
+	e.stateAccess.Unlock()
+	if started {
+		return nil
+	}
+	if err := e.tunDevice.Start(); err != nil {
+		return err
+	}
+	e.stateAccess.Lock()
+	e.stackStarted = true
+	e.stateAccess.Unlock()
+	return nil
+}
+
+// newBind builds one bind. It is called once per heavy chain: at Start and again on every rebuild,
+// because closing the Device closes the bind with it.
+//
+// The egress pool is NOT rebuilt: it is owned by the endpoint and only attached to the bind. The
+// bind's Close only calls SetEgressPort(0) on it, so a release/reopen pair does not churn the
+// interface registration. The pool's three mandatory callbacks are still validated here, before a
+// device exists, exactly as they were when this code lived in Start.
+func (e *Endpoint) newBind() (conn.Bind, error) {
+	var bind conn.Bind
+	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
+	if isUDPListener {
+		listenerControl, egressEnabled := udpListener.UDPListenerControl()
+		// Only the bind gets the family-tolerant view. The egress pool keeps the raw control,
+		// where a per-member failure is already tolerated by the pool itself.
+		standardBind := conn.NewStdNetBind(familyTolerantListenerControl(listenerControl)).(*conn.StdNetBind)
+		if e.options.ListenPort == 0 && len(e.peers) == 1 && e.peers[0].endpoint.IsValid() {
+			standardBind.SetSinglePeerMode()
+		}
+		if egressEnabled {
+			// The egress pool dereferences three fields of this struct UNCONDITIONALLY, from
+			// wireguard-go's own goroutines: InterfaceMonitor at SetEgressPort (sing-tun
+			// udp_egress.go:119), InterfaceFinder at its bind and at Close (:125, :177, :83), and Logger
+			// on the warning path (:218). Their ZERO VALUE is therefore not "unset", it is a nil
+			// dereference inside RoutineTUNEventReader - reached from BindUpdate, which is reached from
+			// the recovery worker - where no recover can catch it and the process dies.
+			//
+			// MEASURED: a caller that sets only the fields it cares about panics the whole test binary
+			// the first time the bind opens a port.
+			//
+			// The in-tree callers are all safe - protocol/wireguard/endpoint.go, protocol/openvpn and
+			// protocol/tailscale each fill all three from their network manager - so this refuses
+			// exactly the configuration that would have crashed later, and refuses it as the
+			// configuration error it is, BEFORE a device exists. A check here rather than in sing-tun
+			// because the missing guard is in the pinned fork, which this repository does not write to.
+			egressPoolOptions := e.options.EgressPoolOptions
+			if egressPoolOptions.InterfaceMonitor == nil {
+				return nil, E.New("missing InterfaceMonitor in EgressPoolOptions for wireguard endpoint ",
+					e.options.Tag, ": the UDP egress pool dereferences it when it takes a port (sing-tun ",
+					"udp_egress.go:119) and the failure would be a nil pointer dereference on ",
+					"wireguard-go's own goroutine rather than an error here")
+			}
+			if egressPoolOptions.InterfaceFinder == nil {
+				return nil, E.New("missing InterfaceFinder in EgressPoolOptions for wireguard endpoint ",
+					e.options.Tag, ": the UDP egress pool registers an interface callback with it ",
+					"(sing-tun udp_egress.go:125) and the failure would be a nil pointer dereference on ",
+					"wireguard-go's own goroutine rather than an error here")
+			}
+			if egressPoolOptions.Logger == nil {
+				return nil, E.New("missing Logger in EgressPoolOptions for wireguard endpoint ",
+					e.options.Tag, ": the UDP egress pool logs a per-member listen failure through it ",
+					"(sing-tun udp_egress.go:218), and a failure that has nothing to report it with is a ",
+					"nil pointer dereference instead of the warning it was meant to be")
+			}
+			if e.egressPool == nil {
+				egressPoolOptions.Control = listenerControl
+				e.egressPool = tun.NewUDPEgressPool(egressPoolOptions)
+			}
+			standardBind.SetEgressProvider(e.egressPool)
+		}
+		powerManager := service.FromContext[*powerreport.Manager](e.options.Context)
+		if powerManager != nil {
+			recorder := powerManager.Recorder()
+			if recorder != nil {
+				attribution := &powerreport.Attribution{Endpoint: e.options.Tag}
+				counter := recorder.TrafficCounter(powerreport.TrafficEndpoint, e.options.Tag)
+				standardBind.SetIOActivityFuncs(func(size int) {
+					counter.CountIn(int64(size))
+					recorder.Touch(powerreport.DirectionInbound, size, attribution)
+				}, func(size int) {
+					counter.CountOut(int64(size))
+					recorder.Touch(powerreport.DirectionOutbound, size, attribution)
+				})
+			}
+		}
+		bind = standardBind
+	} else {
+		var (
+			isConnect   bool
+			connectAddr netip.AddrPort
+			reserved    [3]uint8
+		)
+		if len(e.peers) == 1 {
+			reserved = e.peers[0].reserved
+			if e.peers[0].endpoint.IsValid() {
+				isConnect = true
+				connectAddr = e.peers[0].endpoint
+			}
+		}
+		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
+		if e.options.AmneziaWG.IsSet() {
+			// AWG protects the bytes after the message type; the Reserved-byte rewrite this bind
+			// performs for WARP-style peers would corrupt every protected header.
+			clientBind.SetAWGTransparent(true)
+		}
+		bind = clientBind
+	}
+	if isUDPListener || len(e.peers) > 1 {
+		for _, peer := range e.peers {
+			if peer.endpoint.IsValid() && peer.reserved != [3]uint8{} {
+				bind.SetReservedForEndpoint(peer.endpoint, peer.reserved)
+			}
+		}
+	}
+	return bind, nil
+}
+
+// newTunTarget gives one wireguard-go Device its private tun view.
+//
+// The gVisor-backed stack hands out a fresh attachment per Device, which is what makes "close the
+// Device without closing the stack" possible. Devices that are not attachment-capable (the system
+// stack and the package's test doubles) keep the historical shape: one tun object reused as the
+// wireguard-go tun. Those shapes are not eligible for the lazy release anyway.
+func (e *Endpoint) newTunTarget() wgTun.Device {
+	if provider, isProvider := e.tunDevice.(attachmentProvider); isProvider {
+		return provider.newAttachment()
+	}
+	return e.tunDevice
+}
+
+// buildDevice constructs one complete heavy chain: the tun target, the wireguard-go Device, the IPC
+// configuration and the up transition. The caller owns publication and the failure path (the
+// returned error already closed what this function built).
+func (e *Endpoint) buildDevice(bind conn.Bind) (*device.Device, []*device.Peer, error) {
+	logger := &device.Logger{
+		Verbosef: func(format string, args ...any) {
+			e.options.Logger.Debug(fmt.Sprintf(strings.ToLower(format), args...))
+		},
+		Errorf: func(format string, args ...any) {
+			e.options.Logger.Error(fmt.Sprintf(strings.ToLower(format), args...))
+		},
+	}
+	wgDevice := device.NewDevice(e.options.Context, &returnDeviceWrapper{Device: e.newTunTarget(), endpoint: e}, bind, logger, e.options.Workers)
+	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
+	for peerIndex, peer := range e.peers {
+		if peer.destination.IsDomain() {
+			domainPeers[peer.publicKey] = &e.peers[peerIndex]
+		}
+	}
+	if len(domainPeers) > 0 {
+		wgDevice.SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
+			peer, found := domainPeers[publicKey]
+			if !found {
+				return nil, nil
+			}
+			addresses, lookupErr := e.options.ResolvePeer(peer.destination.Fqdn)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			endpoints := make([]conn.Endpoint, 0, len(addresses))
+			for _, address := range addresses {
+				destination := netip.AddrPortFrom(address, peer.destination.Port)
+				if peer.reserved != ([3]uint8{}) {
+					bind.SetReservedForEndpoint(destination, peer.reserved)
+				}
+				endpoint, parseErr := bind.ParseEndpoint(destination.String())
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				endpoints = append(endpoints, endpoint)
+			}
+			return endpoints, nil
+		})
+	}
+	var ipcConf strings.Builder
+	ipcConf.WriteString(e.ipcConf)
+	for _, peer := range e.peers {
+		ipcConf.WriteString(peer.GenerateIpcLines())
+	}
+	err := wgDevice.IpcSet(ipcConf.String())
+	if err != nil {
+		wgDevice.Close()
+		// The IPC configuration is NOT included, and that is the point.
+		//
+		// # What was leaking
+		//
+		// This returned `E.Cause(err, "setup wireguard: \n", ipcConf.String())`, and that string
+		// begins `private_key=<hex>` and carries every peer's `preshared_key=<hex>`. A failed IpcSet
+		// is a ROUTINE event - a malformed allowed_ip, a key the kernel rejects, a port conflict -
+		// and each one put the device's identity key and every PSK into an error that the caller
+		// logs, wraps, or hands to an SDK. An operator pasting that error into a bug report, or a
+		// crash reporter shipping it, would disclose the keys themselves.
+		//
+		// # Why the fix is not a redaction pass
+		//
+		// Filtering the text would mean deciding, at the point of the error, which substrings are
+		// secret - and that decision is exactly the kind that goes stale: a new IPC field, a new key
+		// format, a peer option that carries a token. The configuration is therefore not passed at
+		// all. What is kept is everything an operator needs to locate the failure: the subsystem,
+		// the underlying parser error (which names the offending FIELD, not its value), and the peer
+		// count, so a multi-peer configuration can be narrowed down.
+		//
+		// The underlying error is NOT swallowed: it is the cause, so `errors.Is`/`errors.As` and the
+		// full text still work.
+		return nil, nil, E.Cause(err, "setup wireguard: configure device with ",
+			strconv.Itoa(len(e.peers)), " peer(s); the configuration itself is deliberately omitted from "+
+				"this error because it contains private key material")
+	}
+	if err = e.bindListenPort(wgDevice); err != nil {
+		wgDevice.Close()
+		return nil, nil, err
+	}
+	wgPeers := make([]*device.Peer, 0, len(e.peers))
+	for _, peer := range e.peers {
+		wgPeer, loaded := wgDevice.LookupActivePeer(peer.publicKey)
+		if loaded {
+			wgPeers = append(wgPeers, wgPeer)
+		}
+	}
+	return wgDevice, wgPeers, nil
+}
+
+// publishLocked makes a built chain the endpoint's live chain. It must be called with stateAccess
+// held and after the caller re-checked `closing`.
+func (e *Endpoint) publishLocked(wgDevice *device.Device, wgPeers []*device.Peer) {
+	e.tunDevice.SetDevice(wgDevice, wgPeers)
+	e.device.Store(wgDevice)
+	e.everPublished = true
+	e.deferred = false
+	e.addressingReady = true
+}
+
+// detachLocked removes the live chain from the endpoint and detaches the peer routes, so no packet
+// from a flow that stays in the stack can reach the Device that is about to be closed. It returns
+// the Device (nil when none was live); the caller closes it outside the lock.
+func (e *Endpoint) detachLocked() *device.Device {
+	wgDevice := e.device.Swap(nil)
+	if wgDevice == nil {
+		return nil
+	}
+	if provider, isProvider := e.tunDevice.(attachmentProvider); isProvider {
+		provider.clearDevice()
+	}
+	return wgDevice
 }
 
 // MinimumIPv6TunnelMTU is the smallest inner IP MTU over which IPv6 can be carried, from RFC 8200
@@ -658,7 +806,112 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 	if err := e.resumeForCaller(ctx); err != nil {
 		return nil, err
 	}
+	release, err := e.beginUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return e.tunDevice.DialContext(ctx, network, destination)
+}
+
+// beginUse is the flow-creation side of the release protocol.
+//
+// It holds buildAccess across BOTH the (possible) rebuild and the increment of activeUses. That
+// ordering is the whole mutual exclusion: a suspend also takes buildAccess before it may release
+// anything, so it can never observe "no device and no use" in the window between a rebuild
+// publishing a device and the dial starting to use it.
+func (e *Endpoint) beginUse(ctx context.Context) (func(), error) {
+	e.buildAccess.Lock()
+	defer e.buildAccess.Unlock()
+
+	e.stateAccess.Lock()
+	if e.closing {
+		e.stateAccess.Unlock()
+		return nil, os.ErrClosed
+	}
+	if wgDevice := e.device.Load(); wgDevice != nil {
+		if e.suspended.Load() {
+			e.suspended.Store(false)
+			if !e.networkPaused {
+				wgDevice.Up()
+			}
+		}
+		e.activeUses++
+		e.stateAccess.Unlock()
+		return e.releaseUse, nil
+	}
+	everPublished, deferred := e.everPublished, e.deferred
+	if !everPublished {
+		// Never started: the stack is not running either, so keep the endpoint's previous error
+		// surface (the dial fails from the stack, exactly as it did before this mechanism).
+		e.activeUses++
+		e.stateAccess.Unlock()
+		return e.releaseUse, nil
+	}
+	if deferred && adapter.IsBackgroundProbe(ctx) {
+		// A released chain is a suspended resource: the probe must not be what rebuilds it.
+		e.stateAccess.Unlock()
+		return nil, adapter.ErrResourceSuspended
+	}
+	// Demand: a caller that is not a background probe resumes the endpoint and pays the rebuild.
+	e.suspended.Store(false)
+	hook := e.buildDeviceHook
+	e.stateAccess.Unlock()
+
+	if hook != nil {
+		if hookErr := hook(); hookErr != nil {
+			return nil, E.Cause(hookErr, "rebuild wireguard device")
+		}
+	}
+	bind, err := e.newBind()
+	if err != nil {
+		return nil, err
+	}
+	wgDevice, wgPeers, err := e.buildDevice(bind)
+	if err != nil {
+		return nil, err
+	}
+	e.stateAccess.Lock()
+	if e.closing {
+		e.stateAccess.Unlock()
+		wgDevice.Close()
+		return nil, os.ErrClosed
+	}
+	e.publishLocked(wgDevice, wgPeers)
+	if e.networkPaused {
+		wgDevice.Down()
+	}
+	e.activeUses++
+	e.stateAccess.Unlock()
+	// Same ordering as Start: after the initial IpcSet, before any traffic drives a retry.
+	wgDevice.SetSessionStateFunc(e.sessionStateChanged)
+	e.options.Logger.Debug("wireguard[", e.options.Tag, "] rebuilt the wireguard-go device on demand")
+	return e.releaseUse, nil
+}
+
+func (e *Endpoint) releaseUse() {
+	e.stateAccess.Lock()
+	e.activeUses--
+	e.stateAccess.Unlock()
+}
+
+// acquireDevice hands out the CURRENT device for a caller that must not wake a released chain (a
+// rebind or an inbound packet write). It returns nil when no device is published, which every such
+// caller already had to handle.
+func (e *Endpoint) acquireDevice() (*device.Device, func(), error) {
+	e.stateAccess.Lock()
+	if e.closing {
+		e.stateAccess.Unlock()
+		return nil, nil, os.ErrClosed
+	}
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
+		e.stateAccess.Unlock()
+		return nil, nil, nil
+	}
+	e.activeUses++
+	e.stateAccess.Unlock()
+	return wgDevice, e.releaseUse, nil
 }
 
 // resumeForCaller wakes a suspended endpoint only for a caller that is allowed to.
@@ -692,57 +945,87 @@ func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	if err := e.resumeForCaller(ctx); err != nil {
 		return nil, err
 	}
+	release, err := e.beginUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return e.tunDevice.ListenPacket(ctx, destination)
 }
 
+// SetIdle applies the idle policy. true is the suspend path: the Device goes down and, for the
+// eligible shape, the heavy chain is released entirely. false only clears the suspension (and brings
+// a still-published device up); a released chain is rebuilt on the next real demand, which is what
+// makes the release useful instead of a costly stop/start on every pause boundary.
 func (e *Endpoint) SetIdle(idle bool) {
+	if idle {
+		e.suspend()
+	} else {
+		e.resume()
+	}
+}
+
+// suspend is the only reclamation point for the heavy chain.
+//
+// The pre-existing behaviour (Device.Down, keeping the Device and its 8.4 MB TUN-reader batch
+// resident) is preserved whenever the release would not be safe:
+//   - the shape is not eligible (listen port / keepalive / system / passive or domain peer);
+//   - a flow-creation call is in flight (activeUses > 0);
+//   - a return path is attached, so inbound packets would need the Device that is being closed;
+//   - a Close already won.
+func (e *Endpoint) suspend() {
+	e.buildAccess.Lock()
+	defer e.buildAccess.Unlock()
 	e.stateAccess.Lock()
-	defer e.stateAccess.Unlock()
-	wgDevice := e.device.Load()
-	if wgDevice == nil {
+	if e.suspended.Load() {
+		e.stateAccess.Unlock()
 		return
 	}
-	if idle {
-		if e.suspended.Load() {
-			return
-		}
-		e.suspended.Store(true)
-		wgDevice.Down()
-	} else {
-		e.resumeLocked(wgDevice)
+	e.suspended.Store(true)
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
+		e.stateAccess.Unlock()
+		return
 	}
+	wgDevice.Down()
+	release := e.lazyEligible && !e.closing && e.activeUses == 0 && e.returnPath.Load() == nil
+	if !release {
+		e.stateAccess.Unlock()
+		return
+	}
+	wgDevice = e.detachLocked()
+	e.deferred = true
+	e.stateAccess.Unlock()
+	// Close outside stateAccess: it waits for the device's own goroutines, and a pause callback
+	// that wants the lock must not be blocked behind that wait.
+	wgDevice.Close()
+	e.options.Logger.Debug("wireguard[", e.options.Tag, "] suspended: released the wireguard-go device (the stack and its flows are kept)")
 }
 
 func (e *Endpoint) resume() {
-	if !e.suspended.Load() {
-		return
-	}
 	e.stateAccess.Lock()
 	defer e.stateAccess.Unlock()
-	wgDevice := e.device.Load()
-	if wgDevice == nil {
-		return
-	}
-	e.resumeLocked(wgDevice)
-}
-
-func (e *Endpoint) resumeLocked(wgDevice *device.Device) {
 	if !e.suspended.Load() {
 		return
 	}
 	e.suspended.Store(false)
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
+		// A released chain: rebuilt on demand, not here. Waking it eagerly would spend the Device's
+		// 8.4 MB for a network event that may carry no traffic.
+		return
+	}
 	if !e.networkPaused {
 		wgDevice.Up()
 	}
 }
 
 func (e *Endpoint) Close() error {
-	// The closing flag is set under the lock Start takes to publish a device. A start that is
-	// still building sees it at that point and closes what it built instead of publishing it, so
-	// a Close landing mid-start cannot leave a live device behind a closed tun.
-	// Stop recovery first: a rebind must not be able to reopen a socket on an endpoint that is
-	// going away. The flag is set under the lock the worker reads, and the worker also observes the
-	// context, so this cannot leave a rebind in flight.
+	// The closing flag is set under the lock every publisher takes. A build that is still running
+	// when Close lands is NOT waited for here - the Start path is deliberately not blocked behind the
+	// expensive build - it re-checks `closing` under stateAccess at publish time and closes what it
+	// built instead of publishing. That check is the whole "no late publish" guarantee; a build takes
+	// nothing from the stack except its own attachment, so it cannot resurrect a closed endpoint.
 	e.closeRecovery()
 	if e.removeRegistration != nil {
 		e.removeRegistration()
@@ -762,9 +1045,12 @@ func (e *Endpoint) Close() error {
 	wgDevice := e.device.Swap(nil)
 	if wgDevice != nil {
 		wgDevice.Down()
-		wgDevice.Close()
 	}
 	e.stateAccess.Unlock()
+	if wgDevice != nil {
+		// Outside the lock: Device.Close waits for every goroutine it owns.
+		wgDevice.Close()
+	}
 
 	// Released to the manager only now that `stateAccess` is dropped. See the registration site:
 	// `UnregisterCallback` needs `pause.access`, which a concurrent `emit` holds while it waits for
@@ -784,24 +1070,47 @@ func (e *Endpoint) Close() error {
 		e.egressPool.Close()
 		e.egressPool = nil
 	}
-	if wgDevice != nil {
-		return nil
-	}
+	// The stack/tun is closed exactly once, whether or not a Device was ever published. For the
+	// lazy shape the Device's Close only detached its attachment, so this is what releases the
+	// stack; for the other Device kinds their own Close already ran and their close is idempotent.
 	return common.Close(e.tunDevice)
 }
 
+// lazyState reports whether a heavy chain is published and whether it was released by suspend. It
+// exists for the lifecycle tests and diagnostics, which must distinguish "never built" from
+// "released" without racing the publish.
+func (e *Endpoint) lazyState() (published bool, released bool) {
+	e.stateAccess.Lock()
+	defer e.stateAccess.Unlock()
+	return e.device.Load() != nil, e.deferred
+}
+
+// Lookup answers from configuration, not from the live Device, so the answer is identical before
+// Start, while published, while suspended, and after a rebuild.
+//
+// Exact previous semantics: nil before the first publish and after Close (there was no address
+// table then, and the Device's trie is emptied by its Close); the owning peer for a covered address
+// in between. The returned *device.Peer is a stable per-config key - the product only compares it
+// with nil (protocol/wireguard PreferredAddress), and its identity was never part of the answer.
 func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
-	if e.allowedIPs == nil {
+	e.stateAccess.Lock()
+	ready := e.addressingReady && !e.closing
+	e.stateAccess.Unlock()
+	if !ready || e.staticAllowedIPs == nil {
 		return nil
 	}
-	return e.allowedIPs.LookupFromPacket(netip.Addr{}, address, nil)
+	return e.staticAllowedIPs.LookupFromPacket(netip.Addr{}, address, nil)
 }
 
 func (e *Endpoint) BindUpdate() error {
-	wgDevice := e.device.Load()
+	wgDevice, release, err := e.acquireDevice()
+	if err != nil {
+		return err
+	}
 	if wgDevice == nil {
 		return nil
 	}
+	defer release()
 	return wgDevice.BindUpdate()
 }
 

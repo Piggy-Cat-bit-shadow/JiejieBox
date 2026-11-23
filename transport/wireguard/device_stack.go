@@ -17,18 +17,43 @@ import (
 )
 
 var _ Device = (*stackDevice)(nil)
+var _ attachmentProvider = (*stackDevice)(nil)
 
+// attachmentProvider is implemented by a Device that can hand each wireguard-go Device a private
+// tun view and can detach its peer routes. Only such a Device can release its heavy chain while
+// keeping its flows; see stackDevice.
+type attachmentProvider interface {
+	newAttachment() wgTun.Device
+	clearDevice()
+}
+
+// stackDevice owns the gVisor stack and the peer router. It is created at Initialize and lives for
+// the endpoint's lifetime.
+//
+// # Why the wireguard-go Device is NOT this object any more
+//
+// The heavy part of a live inner chain is the wireguard-go Device, not the stack: the Device's
+// RoutineReadFromTUN preallocates device.BatchSize() (128, from conn.IdealBatchSize) buffers of
+// MaxMessageSize (65,535 B), which is 128 x 65,535 ~= 8.4 MB, plus its queues and per-peer workers.
+// The gVisor stack costs ~47 KB and two goroutines (MEASURED, see wg_lazy_device_test.go).
+//
+// The stack also owns every established flow (tun.GoConn), and the product's suspension contract is
+// reversible: a device pause may suspend an on-demand tunnel whose flows are open but silent
+// (route/traffic_activity.go states that a COUNT is not activity), and the published platform
+// contract is that a pause "never terminates an active flow". Destroying the stack would terminate
+// them, so only the Device is destroyed on suspend; each Device gets a fresh stackAttachment that it
+// reads/writes/events through, and a detached attachment can no longer reach the stack.
 type stackDevice struct {
 	stack     *tun.Go
 	router    *peerRouter
 	mtu       uint32
-	events    chan wgTun.Event
-	closed    chan struct{}
-	closeOnce sync.Once
-	// sendAccess serialises a Start's event send against Close's close of the channel.
-	sendAccess   sync.Mutex
 	inet4Address netip.Addr
 	inet6Address netip.Addr
+	// closed/events are only used by the Device methods kept for interface satisfaction; wireguard-go
+	// talks to a stackAttachment, never to this object.
+	closed    chan struct{}
+	events    chan wgTun.Event
+	closeOnce sync.Once
 }
 
 func newStackDevice(options DeviceOptions) (*stackDevice, error) {
@@ -43,11 +68,36 @@ func newStackDevice(options DeviceOptions) (*stackDevice, error) {
 		stack:        stack,
 		router:       router,
 		mtu:          options.MTU,
-		events:       make(chan wgTun.Event, 1),
-		closed:       make(chan struct{}),
 		inet4Address: inet4Address,
 		inet6Address: inet6Address,
+		closed:       make(chan struct{}),
+		events:       make(chan wgTun.Event, 1),
 	}, nil
+}
+
+// newAttachment hands one wireguard-go Device its private view of the stack.
+//
+// The attachment always exists before the Device is constructed, and it is the only object the
+// Device's goroutines can call. A later suspend closes it; every method then fails with
+// os.ErrClosed and, crucially, Write can no longer inject a decrypted packet into the shared stack,
+// so a closed Device can never publish into a new one's flows.
+func (w *stackDevice) newAttachment() wgTun.Device {
+	attachment := &stackAttachment{
+		owner:  w,
+		events: make(chan wgTun.Event, 1),
+		closed: make(chan struct{}),
+	}
+	// Same shape the old Start used: publish the up event before the Device exists; it is buffered
+	// and consumed by the Device's own event worker.
+	attachment.events <- wgTun.EventUp
+	return attachment
+}
+
+// clearDevice detaches every peer route, so packets from flows that stay in the stack are dropped
+// silently while no Device is published. Without this, an open flow's next packet would be handed to
+// a Peer that belongs to a Device that is being closed.
+func (w *stackDevice) clearDevice() {
+	w.router.clearPeers()
 }
 
 func (w *stackDevice) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -118,27 +168,7 @@ func (w *stackDevice) SetDevice(device *device.Device, peers []*device.Peer) {
 }
 
 func (w *stackDevice) Start() error {
-	err := w.stack.Start()
-	if err != nil {
-		return err
-	}
-	// The send and the close of events are serialised by sendAccess.
-	//
-	// A select over the send and the closed channel is NOT enough: select picks uniformly among
-	// ready cases, so when both branches are ready - the buffered slot is empty AND the device is
-	// closing - it can choose the send, and if it chooses it after Close has closed the channel
-	// the process dies on "send on closed channel". Holding the same lock Close takes to publish
-	// the close makes the decision deterministic: the send either happens before the close or
-	// sees the closed channel and refuses.
-	w.sendAccess.Lock()
-	defer w.sendAccess.Unlock()
-	select {
-	case <-w.closed:
-		return os.ErrClosed
-	default:
-	}
-	w.events <- wgTun.EventUp
-	return nil
+	return w.stack.Start()
 }
 
 func (w *stackDevice) File() *os.File {
@@ -177,16 +207,79 @@ func (w *stackDevice) Events() <-chan wgTun.Event {
 func (w *stackDevice) Close() error {
 	var err error
 	w.closeOnce.Do(func() {
-		w.sendAccess.Lock()
-		defer w.sendAccess.Unlock()
-		// closed is published before events is closed so a later Start sees it immediately.
 		close(w.closed)
 		close(w.events)
+		err = E.Errors(w.stack.Close(), w.router.close())
 	})
-	err = E.Errors(w.stack.Close(), w.router.close())
 	return err
 }
 
 func (w *stackDevice) BatchSize() int {
 	return 1
+}
+
+// stackAttachment is one wireguard-go Device's private view of a stackDevice.
+//
+// It exists so "destroy the Device" and "destroy the stack" can be two different events. A
+// suspended endpoint closes the attachment and the Device, while the stack keeps its flows; the
+// next demand creates a new attachment for a new Device. See stackDevice's comment for why that
+// split is the contract.
+type stackAttachment struct {
+	owner     *stackDevice
+	events    chan wgTun.Event
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func (a *stackAttachment) File() *os.File {
+	return nil
+}
+
+// Read blocks exactly as the old stackDevice.Read did: this architecture injects outbound packets
+// through the peer router, so the wireguard-go TUN reader never receives one. It only has to stay
+// blocked until Close, and Close is what unblocks it.
+func (a *stackAttachment) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+	<-a.closed
+	return 0, os.ErrClosed
+}
+
+func (a *stackAttachment) Write(bufs [][]byte, offset int) (int, error) {
+	select {
+	case <-a.closed:
+		return 0, os.ErrClosed
+	default:
+	}
+	packets := make([][]byte, 0, len(bufs))
+	for _, packet := range bufs {
+		packets = append(packets, packet[offset:])
+	}
+	return a.owner.router.memoryTun.WritePackets(packets)
+}
+
+func (a *stackAttachment) Flush() error {
+	return nil
+}
+
+func (a *stackAttachment) MTU() (int, error) {
+	return int(a.owner.mtu), nil
+}
+
+func (a *stackAttachment) Name() (string, error) {
+	return "sing-box", nil
+}
+
+func (a *stackAttachment) Events() <-chan wgTun.Event {
+	return a.events
+}
+
+func (a *stackAttachment) BatchSize() int {
+	return 1
+}
+
+func (a *stackAttachment) Close() error {
+	a.closeOnce.Do(func() {
+		close(a.closed)
+		close(a.events)
+	})
+	return nil
 }

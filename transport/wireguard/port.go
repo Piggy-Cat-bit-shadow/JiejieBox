@@ -2,12 +2,12 @@ package wireguard
 
 import (
 	"net/netip"
-	"sync/atomic"
 
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/gtcpip/header"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/wireguard-go/device"
+	wgTun "github.com/sagernet/wireguard-go/tun"
 )
 
 func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
@@ -23,10 +23,18 @@ func (e *Endpoint) UpstreamPort() any {
 }
 
 func (e *Endpoint) WritePackets(packets [][]byte) error {
-	wgDevice := e.device.Load()
+	wgDevice, release, err := e.acquireDevice()
+	if err != nil {
+		return err
+	}
 	if wgDevice == nil {
 		return E.New("WireGuard device is not ready")
 	}
+	defer release()
+	// Preserved from the pre-lazy path: an inbound packet is demand, so a suspended (but still
+	// resident) device is brought up before the packet is injected. A RELEASED chain never reaches
+	// here - the eligible shape has no inbound demand - and fails closed above instead of rebuilding
+	// the heavy chain from a packet path.
 	e.resume()
 	packetRefs := make([]*device.InputPacketRef, 0, len(packets))
 	refs := make([]device.InputPacketRef, len(packets))
@@ -64,7 +72,7 @@ func (e *Endpoint) WritePackets(packets [][]byte) error {
 	if len(unmatchedRefs) == 0 {
 		return nil
 	}
-	state := e.returnDevice.state.Load()
+	state := e.returnPath.Load()
 	if state == nil {
 		return nil
 	}
@@ -98,23 +106,23 @@ func (e *Endpoint) AttachReturn(returnPath tun.Return) error {
 		headroom:   headroom,
 	}
 	for {
-		currentState := e.returnDevice.state.Load()
+		currentState := e.returnPath.Load()
 		if currentState != nil {
 			if currentState.returnPath == returnPath {
 				return nil
 			}
 			return E.New("return path already attached")
 		}
-		if e.returnDevice.state.CompareAndSwap(nil, newState) {
+		if e.returnPath.CompareAndSwap(nil, newState) {
 			return nil
 		}
 	}
 }
 
 func (e *Endpoint) DetachReturn(returnPath tun.Return) error {
-	currentState := e.returnDevice.state.Load()
+	currentState := e.returnPath.Load()
 	if currentState != nil && currentState.returnPath == returnPath {
-		e.returnDevice.state.CompareAndSwap(currentState, nil)
+		e.returnPath.CompareAndSwap(currentState, nil)
 	}
 	return nil
 }
@@ -124,13 +132,19 @@ type returnPathState struct {
 	headroom   int
 }
 
+// returnDeviceWrapper is the wgTun.Device one wireguard-go Device is built with. It is created per
+// build, not per endpoint: the previous shape kept a single wrapper for the endpoint's lifetime,
+// which would let a stale Device reach whatever attachment a later rebuild installed.
+//
+// Write is the half that belongs to the endpoint rather than to one Device: a return path attached
+// to the endpoint must receive decrypted packets whichever Device decrypted them.
 type returnDeviceWrapper struct {
-	Device
-	state atomic.Pointer[returnPathState]
+	wgTun.Device
+	endpoint *Endpoint
 }
 
 func (d *returnDeviceWrapper) Write(bufs [][]byte, offset int) (int, error) {
-	state := d.state.Load()
+	state := d.endpoint.returnPath.Load()
 	if state == nil || len(bufs) == 0 {
 		return d.Device.Write(bufs, offset)
 	}
