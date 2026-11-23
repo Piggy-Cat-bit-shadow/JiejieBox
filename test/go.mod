@@ -225,7 +225,7 @@ require (
 //
 // The current revision also carries the bufio splice fix (a Pipe2 setup failure must fall back
 // rather than claim the handover); the root's pin comment names the commit and the reason.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261121123313-7246d061b907
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261123041012-a9e81c9e8e8a
 
 // Adds the accept-loop recovery (040), the Go stack's Start/Close handshake, and the IPv6-only
 // re-bind self-heal. Same fork revision as the root module: the test module runs integration tests
