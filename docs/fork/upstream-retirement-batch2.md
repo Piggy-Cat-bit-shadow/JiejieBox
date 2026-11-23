@@ -27,7 +27,7 @@ Measured, not assumed: batch 1 compared stable patch-ids at upstream tip `a13dbe
 | spec | kind | commits | last touched | trigger | regression | upstream | upstream commit | disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 002 | code | 2 | 2026-11-02 | transport/v2rayxhttp/client.go:253: // that trim happens locally in applyMeta, not globally here (lx: SPEC 002). | transport/v2rayxhttp/url_test.go, transport/v2rayxhttp/xhtt… | fork-only | - | HOLD |
-| 015 | code | 1 | 2026-09-28 | daemon/started_service.go:1169: // SPEC 015 §3.5): the UI then shows a proxy list that is missing groups the | none names this patch | fork-only | - | HOLD |
+| 015 | code | 1 | 2026-09-28 | daemon/started_service.go:1186: // SPEC 015 §3.5): the UI then shows a proxy list that is missing groups the | none names this patch | fork-only | - | HOLD |
 | 016 | code | 1 | 2026-10-08 | experimental/libbox/command_types_race_test.go:59: // TestConnectionsConcurrentApplyAndReadIsRaceFree is the SPEC 016 r… | experimental/libbox/command_types_race_test.go | fork-only | - | HOLD |
 | 022 | code | 1 | 2026-10-08 | transport/v2rayxhttp/conn.go:668: // channel is effectively free (SPEC 022 #7). | none names this patch | fork-only | - | HOLD |
 | 038 | analysis | 1 | 2026-10-08 | docs/fork/lx-residual-bug-sweep.md:99: ## SPEC 038: why no signature was changed | none names this patch | fork-only | - | ANALYSIS |
@@ -43,9 +43,9 @@ Measured, not assumed: batch 1 compared stable patch-ids at upstream tip `a13dbe
 | 080 | code | 1 | 2026-11-09 | transport/wireguard/device_awg.go:130: // AmneziaWG 3.x (SPEC 080) | none names this patch | fork-only | - | HOLD |
 | 082 | code | 3 | 2026-11-02 | common/badh2/stream_error.go:2: // conns our transports build on top of HTTP/2 bodies (lx: SPEC 082). | transport/v2rayxhttp/breaker_test.go, transport/v2rayxhttp/… | fork-only | - | HOLD |
 | 094 | code | 4 | 2026-11-02 | common/httpclient/http3_transport.go:839: // implementation (`transport/v2rayxhttp`, SPEC 094) takes the same position … | common/httpclient/http3_verdict_evidence_test.go, transport… | fork-only | - | HOLD |
-| 097 | code | 1 | 2026-09-28 | daemon/started_service.go:2806: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
+| 097 | code | 1 | 2026-09-28 | daemon/started_service.go:2842: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
 | 104 | code | 2 | 2026-11-02 | common/tls/std_config_quic_lx.go:17: // config (lx: SPEC 104). It first asks STDConfig(); when that refuses, it unwraps | transport/v2rayxhttp/http1_test.go, transport/v2rayxhttp/ht… | fork-only | - | HOLD |
-| 106 | code | 1 | 2026-09-28 | daemon/started_service.go:2806: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
+| 106 | code | 1 | 2026-09-28 | daemon/started_service.go:2842: // adapter.IdleStateReporter (WG/AWG suspend, SPEC 097/106). This fork has no | none names this patch | fork-only | - | HOLD |
 | 119 | analysis | 1 | 2026-10-10 | docs/fork/v016-handoff-310af9e69.md:332: SPEC 119 or 121. | none names this patch | fork-only | - | ANALYSIS |
 | 120 | analysis | 1 | 2026-10-10 | docs/fork/v016-final-closure-ledger.md:420: to absorb for them. SPEC 120 (MTU alignment) was addressed in this and the … | none names this patch | fork-only | - | ANALYSIS |
 | 122 | analysis | 2 | 2026-11-02 | docs/fork/audit-b1-handoff.md:58: / **SPEC 122 — uTLS retains TLS1.3 handshake state for the connection lifetime** / On… | none names this patch | fork-only | - | ANALYSIS |
