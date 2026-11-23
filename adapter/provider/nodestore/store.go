@@ -325,7 +325,13 @@ type recordPayload struct {
 func (b *Builder) appendRecord(input recordPayload) (uint32, error) {
 	payload := input.payload
 	size := len(payload.Bytes)
-	if size > int(^uint32(0)) {
+	// The payload length is bounded by what a chunk index can address. Written as a uint64
+	// comparison because the previous form, `size > int(^uint32(0))`, does not COMPILE on a 32-bit
+	// target: the constant 4294967295 overflows int there, so every GOARCH=386/arm build of this
+	// package failed - including the arm legacy libbox.aar the Android client builds next to the
+	// arm64 one. On a 32-bit target the condition is simply never true, which is correct: an int
+	// there cannot exceed MaxInt32.
+	if uint64(size) > uint64(^uint32(0)) {
 		return 0, errors.New("nodestore: record too large")
 	}
 	var chunkIndex uint32
