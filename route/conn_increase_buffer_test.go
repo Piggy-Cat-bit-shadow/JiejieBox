@@ -379,3 +379,41 @@ func TestCopyGrowthDecisionIsCheapToEvaluate(t *testing.T) {
 	require.Less(t, time.Since(start), time.Second,
 		"resolving the threshold 10000 times must be effectively free")
 }
+
+// TestTheCopyThresholdFollowsTheCopyDestination pins the CALL SITE, not just the helper.
+//
+// The helper has always taken the destination writer, and its own tests always passed the
+// tuned writer in that position. What the relay actually passed was the other end of the
+// copy, so each direction resolved the OTHER direction's tuning: the only opted-in writers
+// today are Native Naive INBOUND connections, whose padding needs the larger buffer on the
+// copy that writes into them (the download direction), and they were growing the upload
+// direction instead. A helper that is right and a call site that is swapped looks exactly
+// like a working feature, so the order is asserted where it is spelled.
+func TestTheCopyThresholdFollowsTheCopyDestination(t *testing.T) {
+	source := readRouteSource(t, "conn.go")
+
+	require.Contains(t, source,
+		"m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)",
+		"the upload copy writes to remoteConn, so remoteConn must be the destination argument")
+	require.Contains(t, source,
+		"m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)",
+		"the download copy writes to conn, so conn must be the destination argument")
+
+	// And the two calls must be the ones feeding their own direction's copy: upload's
+	// threshold goes to the goroutine whose destination is remoteConn.
+	uploadIndex := indexOf(t, source, "m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)")
+	downloadIndex := indexOf(t, source, "m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)")
+	require.Less(t, uploadIndex, downloadIndex, "upload is resolved first, as the comments say")
+
+	// Behavioural half: with the corrected order a tuned destination writer resolves to the
+	// early threshold in the direction that writes into it, and the opposite direction keeps
+	// the library default.
+	tuned := fakeTunedConn{early: true}
+	ordinary := untunedConn{}
+	require.Equal(t, int64(earlyConnectionBufferIncreaseAfter),
+		connectionIncreaseBufferAfter(nil, tuned, nil),
+		"the direction that writes into the padded writer grows early")
+	require.Equal(t, int64(bufio.DefaultIncreaseBufferAfter),
+		connectionIncreaseBufferAfter(nil, ordinary, nil),
+		"the direction that writes into an ordinary writer keeps the default")
+}

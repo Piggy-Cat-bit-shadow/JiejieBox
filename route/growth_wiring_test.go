@@ -1,14 +1,16 @@
 package route
 
 // The relay copy-growth budget's wiring: the manager installs one budget when it
-// starts, both copy directions resolve their threshold through it, and the permit is
-// released when the direction's copy returns.
+// starts, both copy directions resolve their threshold and growth seam through it, and
+// the permit is acquired and released at the actual growth boundary by the copy engine.
 //
 // The budget itself (common/resourceguard/growth.go) is tested at its own boundary.
 // What these tests pin is the part that only the route layer can get wrong: that the
 // production manager actually installs it, that the pressure source is the process
 // guard when one exists, that a granted direction keeps the pre-existing thresholds,
-// and that neither direction forgot to consult the budget or to release its permit.
+// and that neither direction forgets to hand the seam to its copy. The seam is not an
+// acquired permit: resolving it must not consume capacity (see
+// route/conn_growth_seam_test.go for the end-to-end quiet-flow regression).
 
 import (
 	"context"
@@ -64,47 +66,73 @@ func TestConnectionManagerGrowthBudgetUsesTheGuardPressure(t *testing.T) {
 	require.NotNil(t, manager.growth)
 	require.Equal(t, resourceguard.LevelCritical, manager.growth.Stats().Level)
 
-	// At Critical the growth policy admits no new ordinary direction.
-	threshold, permit := manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
-	require.Equal(t, resourceguard.CopyGrowthNever, threshold)
-	require.Nil(t, permit)
-	require.NotPanics(t, permit.Release)
+	// Resolving the seam does not consume capacity; asking it at the growth boundary
+	// under Critical is what refuses.
+	threshold, seam := manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
+	require.Equal(t, resourceguard.CopyGrowthDefault, threshold)
+	require.NotNil(t, seam)
+	release, granted := seam()
+	require.False(t, granted, "Critical must refuse an ordinary direction at the growth boundary")
+	require.Nil(t, release)
+	require.Zero(t, manager.growth.Stats().InUse)
 
 	level.Store(uint32(resourceguard.LevelNormal))
 	require.Eventually(t, func() bool {
 		return manager.growth.Stats().Level == resourceguard.LevelNormal
 	}, time.Second, time.Millisecond, "the budget must follow the guard down after its dwell")
-	threshold, permit = manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
+	threshold, seam = manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
 	require.Equal(t, resourceguard.CopyGrowthDefault, threshold)
-	require.NotNil(t, permit)
-	permit.Release()
+	require.NotNil(t, seam)
+	release, granted = seam()
+	require.True(t, granted)
+	require.NotNil(t, release)
+	require.Equal(t, 1, manager.growth.Stats().InUse)
+	release()
+	require.Zero(t, manager.growth.Stats().InUse)
 }
 
 // TestConnectionManagerGrowthThresholdKeepsPerFlowDecisions is the compatibility half:
-// a granted direction receives exactly the threshold connectionIncreaseBufferAfter
-// answered, the budget is consulted per direction (so the second direction can be
-// refused without touching the first), and a geometry-required writer keeps its early
-// growth without consuming a shared slot.
+// a direction receives exactly the threshold connectionIncreaseBufferAfter answered,
+// the seam is consulted per direction (so the second growth can be refused without
+// touching the first), resolving a seam consumes nothing, and a geometry-required
+// writer keeps its early growth without consuming a shared slot.
 func TestConnectionManagerGrowthThresholdKeepsPerFlowDecisions(t *testing.T) {
 	manager := NewConnectionManager(log.NewNOPFactory().Logger())
 	manager.growth = resourceguard.NewGrowthBudget(resourceguard.GrowthConfig{Flows: 1}, nil)
 
-	firstThreshold, firstPermit := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
+	firstThreshold, firstSeam := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
 	require.Equal(t, int64(1)*resourceguard.CopyGrowthDefault, firstThreshold)
-	require.NotNil(t, firstPermit)
+	require.NotNil(t, firstSeam)
+	require.Zero(t, manager.growth.Stats().InUse,
+		"resolving a direction's seam must not consume a permit; only the growth boundary may")
 
-	// One slot: the other direction of the same connection is refused, which is the
-	// bound doing its job rather than an inconsistency between the two directions.
-	secondThreshold, secondPermit := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
-	require.Equal(t, resourceguard.CopyGrowthNever, secondThreshold)
-	require.Nil(t, secondPermit)
+	secondThreshold, secondSeam := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
+	require.Equal(t, resourceguard.CopyGrowthDefault, secondThreshold)
+	require.NotNil(t, secondSeam)
+
+	// The first direction actually grows: it takes the one slot.
+	firstRelease, firstGranted := firstSeam()
+	require.True(t, firstGranted)
+	require.NotNil(t, firstRelease)
+	require.Equal(t, 1, manager.growth.Stats().InUse)
+
+	// One slot: the other direction of the same connection is refused when it reaches
+	// its own growth boundary, which is the bound doing its job rather than an
+	// inconsistency between the two directions.
+	secondRelease, secondGranted := secondSeam()
+	require.False(t, secondGranted)
+	require.Nil(t, secondRelease)
 
 	// A writer whose framing needs the larger buffer keeps it and takes no slot.
-	geometryThreshold, geometryPermit := manager.growthThreshold(trafficclass.ClassDefault, nil, fakeTunedConn{early: true}, untunedConn{})
+	geometryThreshold, geometrySeam := manager.growthThreshold(trafficclass.ClassDefault, nil, fakeTunedConn{early: true}, untunedConn{})
 	require.Equal(t, resourceguard.CopyGrowthImmediate, geometryThreshold)
-	require.Nil(t, geometryPermit)
+	require.NotNil(t, geometrySeam)
+	geometryRelease, geometryGranted := geometrySeam()
+	require.True(t, geometryGranted, "geometry-required growth must never be refused by the ordinary cap")
+	require.Nil(t, geometryRelease)
+	require.Equal(t, 1, manager.growth.Stats().InUse, "a geometry direction must not charge the shared cap")
 
-	firstPermit.Release()
+	firstRelease()
 	stats := manager.growth.Stats()
 	require.Equal(t, 0, stats.InUse)
 	require.Equal(t, uint64(1), stats.Granted)
@@ -114,19 +142,21 @@ func TestConnectionManagerGrowthThresholdKeepsPerFlowDecisions(t *testing.T) {
 	require.Equal(t, uint64(0), stats.DoubleReleases)
 }
 
-// TestBothCopyDirectionsConsumeAndReleaseTheBudget is the structural guard for the
-// call site: the two directions of a connection are independent permits, each must be
-// resolved through the budget, and each must be released in the goroutine that owns
-// that direction's copy. A future edit that drops one of the four statements would
-// leave the pool with a permit nobody returns, and this fails first.
-func TestBothCopyDirectionsConsumeAndReleaseTheBudget(t *testing.T) {
+// TestBothCopyDirectionsHandTheirSeamsToTheCopy is the structural guard for the call
+// site: the two directions of a connection are independent, each must resolve its own
+// threshold and seam, and each must hand its seam to the copy engine that owns the
+// release. A future edit that drops one of the statements would leave one direction
+// ungated (or, worse, acquiring a permit nobody releases), and this fails first.
+func TestBothCopyDirectionsHandTheirSeamsToTheCopy(t *testing.T) {
 	content, err := os.ReadFile("conn.go")
 	require.NoError(t, err)
 	source := string(content)
 
-	require.Contains(t, source, "uploadIncreaseBufferAfter, uploadGrowthPermit := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)")
-	require.Contains(t, source, "downloadIncreaseBufferAfter, downloadGrowthPermit := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)")
-	require.Contains(t, source, "defer uploadGrowthPermit.Release()")
-	require.Contains(t, source, "defer downloadGrowthPermit.Release()")
+	require.Contains(t, source, "uploadIncreaseBufferAfter, uploadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)")
+	require.Contains(t, source, "downloadIncreaseBufferAfter, downloadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)")
+	require.Contains(t, source, "teardown, uploadGrowthBoundary)")
+	require.Contains(t, source, "teardown, downloadGrowthBoundary)")
+	require.NotContains(t, source, "defer uploadGrowthBoundary")
+	require.NotContains(t, source, "defer downloadGrowthBoundary")
 	require.Contains(t, source, "m.growth = resourceguard.NewGrowthBudget(resourceguard.DefaultGrowthConfig(), pressure)")
 }

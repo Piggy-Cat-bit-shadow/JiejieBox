@@ -12,41 +12,50 @@ import (
 //
 // # What it bounds
 //
-// route/conn.go copies each direction of a proxied stream with
-// bufio.CopyWithIncreateBuffer, and sing grows the read buffer once the direction
-// has copied IncreaseBufferAfter bytes: from buf.BufferSize to the MTU-sized (or
-// 65535-byte) buffer. The threshold is chosen per flow at copy start
-// (connectionIncreaseBufferAfter: 1 for a writer that opted in for geometry
-// reasons, otherwise bufio.DefaultIncreaseBufferAfter), and NOTHING bounds how
-// many flows are grown at the same time. Every grown flow retains roughly one
-// larger read buffer for as long as it is copying, so N concurrent bulk streams
-// cost N enlarged buffers: a desktop with a few hundred streams, or a phone
-// pushing a sync and a backup at once, pays it without any policy seeing the sum.
+// route/conn.go copies each direction of a proxied stream with sing's copy engine, and
+// sing grows the read buffer once the direction has copied IncreaseBufferAfter bytes:
+// from buf.BufferSize to the MTU-sized (or 65535-byte) buffer. The threshold is chosen
+// per direction (connectionIncreaseBufferAfter: 1 for a writer that opted in for
+// geometry reasons, otherwise bufio.DefaultIncreaseBufferAfter), and NOTHING bounds how
+// many directions are grown at the same time. Every grown direction retains roughly one
+// larger read buffer for as long as it is copying, so N concurrent bulk streams cost N
+// enlarged buffers: a desktop with a few hundred streams, or a phone pushing a sync and
+// a backup at once, pays it without any policy seeing the sum.
 //
-// GrowthBudget is that missing sum. It hands out one permit per copy DIRECTION
-// (the two directions of a connection are independent in the copy engine, and
-// each has its own buffer, so they are counted separately) and returns a
-// threshold for that direction:
+// GrowthBudget is that missing sum. It hands out one permit per copy DIRECTION (the two
+// directions of a connection are independent in the copy engine, and each has its own
+// buffer, so they are counted separately):
 //
-//	permit granted    the direction grows exactly as it did before
-//	                  (bufio.DefaultIncreaseBufferAfter, or 1 for an opted-in
-//	                  writer)
-//	permit refused    the direction does not grow at all (threshold 0, which
-//	                  sing reads as "never grow")
+//	permit granted    the direction grows at its configured threshold and holds the
+//	                  permit while the enlarged buffer lives
+//	permit refused    the direction keeps the small buffer and is re-asked at the copy
+//	                  engine's bounded retry milestone
 //
 // A refused direction still copies correctly; it just keeps the small buffer.
 // That is the reason this may deny growth at all: it is a memory choice, not a
 // correctness one.
 //
-// # Why the permit is held for the whole copy
+// # When a permit is taken, and when it returns
 //
-// sing's latch is one-shot and inside the copy loop: once the threshold is
-// crossed the direction uses the larger buffer until it ends, and the route layer
-// has no callback to ask again. A "lease" that expired would therefore free the
-// count while the memory stayed grown, which is a bound that lies. The permit is
-// released when the direction's copy returns (the route wiring releases it in
-// connectionCopy's defer), so permits live exactly as long as the enlarged buffers
-// do.
+// A permit is taken at the copy engine's ACTUAL growth boundary, not when the copy
+// starts. GrowthBoundary hands the copy loop a seam
+// (bufio.IncreaseBufferPermit); sing calls it only after the direction has copied
+// IncreaseBufferAfter bytes, and only then does this package count the direction and
+// hand out a permit. A direction that never copies that many bytes - an idle
+// keep-alive, a tunnel waiting for a request, a long poll - therefore holds nothing for
+// its whole life, and cannot starve a later bulk direction of growth.
+//
+// The permit lives exactly as long as the direction uses the enlarged buffer: the copy
+// engine keeps the release returned by the seam and calls it once when the outer copy
+// returns (EOF, read error, write error and handshake restart included), after the last
+// enlarged buffer has been written. route/conn.go no longer releases anything itself,
+// because it no longer acquires anything itself.
+//
+// A refusal is not permanent. The copy engine re-asks at a bounded milestone
+// (max(IncreaseBufferAfter, 1 MiB) further bytes), so a direction refused while the
+// pool was full can still grow once another direction's permit returns. That is still
+// no queue and no wait: a refused direction keeps copying on the small buffer, and the
+// decision is never made on the data path more often than the milestone.
 //
 // # Fairness: the interactive reserve
 //
@@ -59,10 +68,8 @@ import (
 // way: a reserve is a priority, not a second unlimited pool.
 //
 // Short flows are otherwise unaffected: a transfer that ends before the threshold
-// never grows a buffer, so the cap neither helps nor costs it. A refused flow's
-// permit is refused at the start of its copy - there is no queue and no wait,
-// because delaying a relay's data path to decide about a buffer would trade a
-// measurable latency cost for an unmeasurable memory gain.
+// never grows a buffer, so the cap neither helps nor costs it, and (after the
+// growth-boundary wiring) it never even asks this policy.
 //
 // # Pressure
 //
@@ -75,22 +82,17 @@ import (
 // untrue; a rising level stops NEW growth, and the already-grown directions shed
 // when their copies end.
 //
-// # Wiring (owned by the network window)
+// # Wiring
 //
-// This type is written and tested here; route/conn.go is the network window's file,
-// so the production wiring is theirs. The intended wiring, one call per direction,
-// is:
+// route/conn.go resolves one threshold and one seam per copy DIRECTION:
 //
-//	// before starting connectionCopy for a direction:
-//	threshold, permit := m.growth.Admit(metadata.TrafficClass, base == earlyConnectionBufferIncreaseAfter)
-//	if permit != nil {
-//		defer permit.Release()
-//	}
-//	// connectionCopy then uses threshold instead of base
+//	threshold, seam := m.growthThreshold(class, dialer, destination, source)
+//	// connectionCopy passes both to bufio.CopyWithIncreateBufferPermit
 //
-// where base is the existing connectionIncreaseBufferAfter call for that
-// direction. A nil *GrowthBudget keeps today's thresholds (see Admit), so a Box
-// without a budget behaves exactly as before.
+// The threshold is connectionIncreaseBufferAfter's answer (1 for a writer whose framing
+// needs the early larger buffer, bufio.DefaultIncreaseBufferAfter otherwise). The seam
+// is GrowthBoundary, or nil when no budget is installed; nil keeps the pre-existing
+// unconditional growth.
 type GrowthBudget struct {
 	config   GrowthConfig
 	pressure func() Level
@@ -201,9 +203,18 @@ const (
 	CopyGrowthDefault int64 = bufio.DefaultIncreaseBufferAfter
 )
 
-// Admit decides whether one copy direction may use an enlarged buffer and returns
-// the threshold to hand to bufio.CopyWithIncreateBuffer, plus the permit to release
-// when the direction ends.
+// Admit decides whether one copy direction may use an enlarged buffer NOW and returns
+// the threshold that decision implies, plus the permit to release when the direction
+// ends. It counts the permit immediately, so production code must call it at the actual
+// growth boundary - GrowthBoundary is the seam that does that. Calling Admit when a copy
+// starts would reintroduce the G07 defect: a direction that never grows would hold a
+// permit for its whole life.
+//
+// The returned threshold is the one the decision implies (CopyGrowthDefault on a grant,
+// CopyGrowthImmediate for a geometry direction, CopyGrowthNever on a refusal). The
+// growth-boundary wiring uses the grant/refusal outcome rather than this value, because
+// the threshold it passes to the copy engine is connectionIncreaseBufferAfter's answer
+// and a refusal now means "keep the small buffer", not "never try again".
 //
 // geometryRequired marks a direction whose writer (or outbound) asked for early
 // growth because its framing needs the larger buffer, through
@@ -264,6 +275,35 @@ func (b *GrowthBudget) Admit(class trafficclass.Class, geometryRequired bool) (i
 		b.peak = b.used
 	}
 	return CopyGrowthDefault, &GrowthPermit{budget: b, reserved: reserved}
+}
+
+// GrowthBoundary returns the seam one copy direction hands to sing at its growth
+// boundary. It is the production way to ask this budget: the seam is invoked by the copy
+// engine only after the direction has copied IncreaseBufferAfter bytes, never when the
+// copy starts, so a quiet direction charges nothing.
+//
+// On a grant the seam returns the permit's idempotent Release as the release function;
+// the copy engine calls it exactly once when the copy returns, after the enlarged
+// buffer has been written. On a refusal it returns granted=false, the direction keeps
+// the small buffer and the engine re-asks at its bounded retry milestone.
+//
+// geometryRequired marks a writer whose framing needs the early larger buffer. Such a
+// direction is always granted and takes no ordinary permit; Admit still counts it in
+// GeometryNeeded for diagnosis.
+//
+// A nil *GrowthBudget returns a nil seam, which is the copy engine's "grow exactly as
+// before" behaviour.
+func (b *GrowthBudget) GrowthBoundary(class trafficclass.Class, geometryRequired bool) bufio.IncreaseBufferPermit {
+	if b == nil {
+		return nil
+	}
+	return func() (func(), bool) {
+		_, permit := b.Admit(class, geometryRequired)
+		if permit != nil {
+			return permit.Release, true
+		}
+		return nil, geometryRequired
+	}
 }
 
 // release returns one permit to the pool.

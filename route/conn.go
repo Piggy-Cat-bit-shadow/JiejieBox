@@ -119,7 +119,8 @@ type ConnectionManager struct {
 	// See trafficsched.Scheduler for the ownership reasoning.
 	scheduler *trafficsched.Scheduler
 	// growth bounds how many flow directions may hold an enlarged copy buffer at
-	// once, and answers the per-direction threshold the copy engine uses.
+	// once, answers the per-direction threshold the copy engine uses, and provides the
+	// growth-boundary seam that decides at the actual moment of growth.
 	//
 	// It is installed in Start, not here: the pressure source is the process guard
 	// (iOS Network Extension, registered by the oomkiller service) and it only exists
@@ -610,21 +611,30 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	if m.kickWriteHandshake(ctx, remoteConn, conn, serverFirst, true, &done, onClose) {
 		return
 	}
-	// Each copy direction resolves its OWN threshold, because the reason to grow early
-	// is a property of the WRITER that copy feeds.
+	// Each copy direction resolves its OWN threshold and growth seam, because the reason
+	// to grow early is a property of the WRITER that copy feeds.
 	//
 	// The upload copy (conn -> remoteConn) ends at the outbound's writer; the download
 	// copy (remoteConn -> conn) ends at the inbound's writer. Resolving once and reusing
 	// the value for both - which is what an inbound-type check did - applied the inbound
 	// writer's tuning to the outbound direction as well.
 	//
-	// The shared growth budget may only refuse growth, never widen it: a granted
-	// direction gets exactly the threshold above, and a refused one gets 0 (sing reads
-	// that as "never grow"). The permit lives as long as the direction's copy, which is
-	// released inside the goroutine below - see resourceguard.GrowthBudget for why the
-	// lifetime cannot be shorter.
-	uploadIncreaseBufferAfter, uploadGrowthPermit := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)
-	downloadIncreaseBufferAfter, downloadGrowthPermit := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)
+	// The arguments follow the copy: growthThreshold's `destination` is the end the copy
+	// WRITES to. It used to be the other end for both directions, which handed each
+	// direction the other one's tuning: the only opted-in writers today are the Native
+	// Naive INBOUND connections (protocol/naive), whose padding needs the larger buffer on
+	// the copy that writes INTO them - the download direction - and they were instead
+	// growing the upload direction, which writes to an ordinary outbound writer. The
+	// per-direction seam below made that visible; the argument order is fixed with it.
+	//
+	// The shared growth budget may only refuse growth, never widen it. It is NOT asked
+	// here: the seam is handed to the copy engine and asked at the actual growth
+	// boundary, so a direction that never copies enough bytes holds no permit and a
+	// direction that does grow holds exactly one until its copy returns. The release is
+	// owned by the copy engine's exit path, which is why neither goroutine below has a
+	// deferred Release. See resourceguard.GrowthBudget.GrowthBoundary.
+	uploadIncreaseBufferAfter, uploadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)
+	downloadIncreaseBufferAfter, downloadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)
 	uploadWriter, uploadFlow := m.uploadStreamGate(conn, remoteConn, metadata.TrafficClass)
 	// One teardown for this flow, shared by both copy directions and by the half-close observer.
 	//
@@ -633,30 +643,34 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	// two participants, and the observer is a third. See conn_halfclose.go.
 	teardown := newFlowTeardown(ctx, onClose, conn, remoteConn)
 	go func() {
-		defer uploadGrowthPermit.Release()
-		m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow, teardown)
+		m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow, teardown, uploadGrowthBoundary)
 	}()
 	go func() {
-		defer downloadGrowthPermit.Release()
-		m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil, teardown)
+		m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil, teardown, downloadGrowthBoundary)
 	}()
 }
 
 // growthThreshold resolves the copy-buffer threshold for one direction and returns the
-// growth-budget permit that must live as long as that direction's copy.
+// growth-boundary seam that direction's copy asks only when it actually needs to grow.
 //
 // The budget never chooses the base threshold: connectionIncreaseBufferAfter already
 // answers what the writer needs (1 for a direction whose framing requires the larger
 // buffer, bufio.DefaultIncreaseBufferAfter otherwise), and the budget only decides
-// whether the direction may grow at all under the shared cap and the current pressure
-// level. A nil budget, or a manager that never started, therefore keeps the exact
-// pre-existing thresholds and hands back no permit.
-func (m *ConnectionManager) growthThreshold(class trafficclass.Class, dialer N.Dialer, destination net.Conn, source net.Conn) (int64, *resourceguard.GrowthPermit) {
+// whether the direction may grow when the copy engine reaches that point. A nil budget,
+// or a manager that never started, therefore keeps the exact pre-existing thresholds and
+// returns a nil seam, which means unconditional growth exactly as before.
+//
+// The second result is a seam, not an acquired permit. It is passed to
+// bufio.CopyWithIncreateBufferPermit, which asks it at the actual growth boundary and
+// calls the release it returns exactly once when the direction's copy returns. That is
+// what separates "configured to try to grow" from "holds an enlarged buffer": a
+// direction that never reaches the threshold never touches the budget.
+func (m *ConnectionManager) growthThreshold(class trafficclass.Class, dialer N.Dialer, destination net.Conn, source net.Conn) (int64, bufio.IncreaseBufferPermit) {
 	base := connectionIncreaseBufferAfter(dialer, destination, source)
 	if m.growth == nil {
 		return base, nil
 	}
-	return m.growth.Admit(class, base == earlyConnectionBufferIncreaseAfter)
+	return base, m.growth.GrowthBoundary(class, base == earlyConnectionBufferIncreaseAfter)
 }
 
 // uploadStreamGate decides whether this upload flow is scheduled, and returns the writer the copy
@@ -1165,7 +1179,15 @@ func (s *packetBatchLengths) int64s(n int) []int64 {
 	return make([]int64, n)
 }
 
-func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, increaseBufferAfter int64, done *atomic.Bool, onClose N.CloseHandlerFunc, copyWriter io.Writer, flow *trafficsched.Flow, teardown *flowTeardown) {
+// connectionCopy runs one direction of a proxied stream.
+//
+// growthBoundary is optional so the call sites that predate it stay valid: it is the
+// seam growthThreshold resolved for THIS direction, and it is handed to the copy engine
+// unchanged. The engine owns its release: it asks the seam only at the actual growth
+// boundary and runs the returned release exactly once when this copy returns. The
+// variadic form keeps a nil seam (no budget) and every test call site working without a
+// conditional at the data path.
+func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, increaseBufferAfter int64, done *atomic.Bool, onClose N.CloseHandlerFunc, copyWriter io.Writer, flow *trafficsched.Flow, teardown *flowTeardown, growthBoundary ...bufio.IncreaseBufferPermit) {
 	if flow != nil {
 		// Releasing the flow is what lets a close unblock this goroutine, and what removes it from
 		// the scheduler's queues so a torn-down connection cannot hold a lane.
@@ -1174,7 +1196,11 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 	if copyWriter == nil {
 		copyWriter = destination
 	}
-	_, err := bufio.CopyWithIncreateBuffer(copyWriter, source, increaseBufferAfter, bufio.DefaultBatchSize)
+	var permit bufio.IncreaseBufferPermit
+	if len(growthBoundary) > 0 {
+		permit = growthBoundary[0]
+	}
+	_, err := bufio.CopyWithIncreateBufferPermit(copyWriter, source, increaseBufferAfter, bufio.DefaultBatchSize, permit)
 	if err != nil {
 		common.Close(source, destination)
 	} else {
