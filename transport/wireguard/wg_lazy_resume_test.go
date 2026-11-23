@@ -24,9 +24,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// awgObfuscationProfile is a full AWG profile: AWG shares this endpoint's device lifecycle, so the
+// release/rebuild contract has to be proved on the obfuscated path too, not only on plain WG.
+func awgObfuscationProfile() option.AmneziaWGOptions {
+	return option.AmneziaWGOptions{
+		Jc:                     4,
+		Jmin:                   40,
+		Jmax:                   70,
+		S1:                     55,
+		S2:                     42,
+		S3:                     40,
+		S4:                     12,
+		H1:                     "1",
+		H2:                     "2",
+		H3:                     "3",
+		H4:                     "4",
+		HeaderProtectionKey:    testPrivateKey,
+		ContentPaddingAddition: "10-100",
+		RandomTrailers:         true,
+		DisableCookies:         true,
+	}
+}
+
+// lazyResumeCases is the pair of transports this contract is proved on.
+func lazyResumeCases() []struct {
+	name string
+	awg  option.AmneziaWGOptions
+} {
+	return []struct {
+		name string
+		awg  option.AmneziaWGOptions
+	}{
+		{name: "wireguard"},
+		{name: "amneziawg", awg: awgObfuscationProfile()},
+	}
+}
+
 // TestARetainedFlowRebuildsAReleasedChainWithoutANewDial is the regression the review reproduced.
 func TestARetainedFlowRebuildsAReleasedChainWithoutANewDial(t *testing.T) {
-	pair := lazyStartPair(t, option.AmneziaWGOptions{})
+	for _, testCase := range lazyResumeCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			testRetainedFlowRebuildsChain(t, testCase.awg)
+		})
+	}
+}
+
+func testRetainedFlowRebuildsChain(t *testing.T, awg option.AmneziaWGOptions) {
+	pair := lazyStartPair(t, awg)
 	first := pair.dial(t)
 	defer first.Close()
 	pair.exchange(t, first, "before-idle", 10*time.Second)
@@ -54,7 +98,15 @@ func TestARetainedFlowRebuildsAReleasedChainWithoutANewDial(t *testing.T) {
 // TestAWakeWithoutTrafficDoesNotRebuildTheChain is the saving half, stated as its own test so a fix
 // for the case above cannot pass by rebuilding eagerly on every wake.
 func TestAWakeWithoutTrafficDoesNotRebuildTheChain(t *testing.T) {
-	pair := lazyStartPair(t, option.AmneziaWGOptions{})
+	for _, testCase := range lazyResumeCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			testWakeWithoutTrafficKeepsTheChainReleased(t, testCase.awg)
+		})
+	}
+}
+
+func testWakeWithoutTrafficKeepsTheChainReleased(t *testing.T, awg option.AmneziaWGOptions) {
+	pair := lazyStartPair(t, awg)
 	first := pair.dial(t)
 	defer first.Close()
 	pair.exchange(t, first, "before-idle", 10*time.Second)
@@ -73,7 +125,15 @@ func TestAWakeWithoutTrafficDoesNotRebuildTheChain(t *testing.T) {
 // TestAReleasedChainSurvivesRepeatedSuspendResume keeps the retained flow usable across several
 // pause/wake cycles, so the rebuild is not a one-shot recovery.
 func TestAReleasedChainSurvivesRepeatedSuspendResume(t *testing.T) {
-	pair := lazyStartPair(t, option.AmneziaWGOptions{})
+	for _, testCase := range lazyResumeCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			testRepeatedSuspendResume(t, testCase.awg)
+		})
+	}
+}
+
+func testRepeatedSuspendResume(t *testing.T, awg option.AmneziaWGOptions) {
+	pair := lazyStartPair(t, awg)
 	first := pair.dial(t)
 	defer first.Close()
 	pair.exchange(t, first, "round-0", 10*time.Second)
