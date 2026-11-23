@@ -44,9 +44,9 @@ type attachmentProvider interface {
 // them, so only the Device is destroyed on suspend; each Device gets a fresh stackAttachment that it
 // reads/writes/events through, and a detached attachment can no longer reach the stack.
 type stackDevice struct {
-	stack     *tun.Go
-	router    *peerRouter
-	mtu       uint32
+	stack        *tun.Go
+	router       *peerRouter
+	mtu          uint32
 	inet4Address netip.Addr
 	inet6Address netip.Addr
 	// closed/events are only used by the Device methods kept for interface satisfaction; wireguard-go

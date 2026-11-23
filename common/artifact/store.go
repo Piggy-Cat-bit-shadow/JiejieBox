@@ -780,8 +780,6 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-
-
 // replaceManifest rewrites a version's manifest in place, atomically and only when the provenance
 // actually changed.
 //

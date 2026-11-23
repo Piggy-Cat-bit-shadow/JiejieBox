@@ -30,11 +30,11 @@ type writeEndSession struct {
 	closeWrites atomic.Int32
 }
 
-func (s *writeEndSession) Read(_ []byte) (int, error)  { return 0, nil }
-func (s *writeEndSession) Write(b []byte) (int, error) { return len(b), nil }
-func (s *writeEndSession) Close() error                { s.closed.Add(1); return nil }
-func (s *writeEndSession) LocalAddr() net.Addr         { return &net.TCPAddr{} }
-func (s *writeEndSession) RemoteAddr() net.Addr        { return &net.TCPAddr{} }
+func (s *writeEndSession) Read(_ []byte) (int, error)       { return 0, nil }
+func (s *writeEndSession) Write(b []byte) (int, error)      { return len(b), nil }
+func (s *writeEndSession) Close() error                     { s.closed.Add(1); return nil }
+func (s *writeEndSession) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (s *writeEndSession) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
 func (s *writeEndSession) SetDeadline(time.Time) error      { return nil }
 func (s *writeEndSession) SetReadDeadline(time.Time) error  { return nil }
 func (s *writeEndSession) SetWriteDeadline(time.Time) error { return nil }
