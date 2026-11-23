@@ -250,12 +250,20 @@ func TestDeferredBuildRacingCloseIsDiscarded(t *testing.T) {
 	// Wait until the factory is actually inside its build, so Close provably races it.
 	require.Eventually(t, func() bool { return builds.Load() == 1 }, 2*time.Second, time.Millisecond)
 	// Close must NOT wait for the build: it returns while the factory is still inside it.
-	closedByCaller := make(chan struct{})
-	go func() {
-		close(closedByCaller)
-		require.NoError(t, instance.Close())
-	}()
-	<-closedByCaller
+	//
+	// The signal has to come AFTER Close returns, and it has to be bounded. Signalling before the
+	// call made the assertion below racy (the dial could reach a deferred that was still open) and
+	// left a goroutine that could block in Close forever once the test had finished - under
+	// `-race` on a loaded machine that turned into a package-wide timeout. Waiting on a result
+	// channel with a deadline both proves the property and cannot leak.
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- instance.Close() }()
+	select {
+	case closeErr := <-closeResult:
+		require.NoError(t, closeErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close waited for an in-flight build instead of discarding it")
+	}
 	_, closedErr := instance.DialContext(context.Background(), N.NetworkTCP,
 		M.SocksaddrFrom(netip.MustParseAddr("10.42.0.2"), 1))
 	require.ErrorIs(t, closedErr, errDeviceClosed)
