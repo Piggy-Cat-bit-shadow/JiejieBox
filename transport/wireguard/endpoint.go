@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	N "github.com/sagernet/sing/common/network"
 	"net"
 	"net/netip"
 	"os"
@@ -80,6 +81,15 @@ type Endpoint struct {
 	addressingReady bool
 	// deferred records that the heavy chain was released by suspend and must be rebuilt on demand.
 	deferred bool
+	// udpAssociations counts the UDP associations that are still open through this endpoint.
+	//
+	// It is an OWNERSHIP boundary for the release, not a statistic. A released chain keeps the stack
+	// and its flows but destroys the Device; TCP survives that because the transport retransmits, so
+	// the demand path can rebuild the chain and the flow continues. UDP has no retransmission: one
+	// datagram IS the request, and the independent review measured a single post-wake request timing
+	// out even though the Device rebuilt. Releasing under a live UDP association therefore turns a
+	// wake into data loss, and the association is exactly the thing that still needs the Device.
+	udpAssociations atomic.Int32
 	// activeUses counts calls that are currently creating a flow on the stack. It is the mutual
 	// exclusion between "a dial is in flight" and "release the device": suspend only releases when
 	// this is zero, otherwise it keeps the previous Down-only behaviour for that pause.
@@ -817,7 +827,14 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 		return nil, err
 	}
 	defer release()
-	return e.tunDevice.DialContext(ctx, network, destination)
+	conn, dialErr := e.tunDevice.DialContext(ctx, network, destination)
+	if dialErr != nil {
+		return nil, dialErr
+	}
+	if N.NetworkName(network) == N.NetworkUDP {
+		return e.trackUDPAssociation(conn), nil
+	}
+	return conn, nil
 }
 
 // beginUse is the flow-creation side of the release protocol.
@@ -956,7 +973,11 @@ func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return nil, err
 	}
 	defer release()
-	return e.tunDevice.ListenPacket(ctx, destination)
+	conn, listenErr := e.tunDevice.ListenPacket(ctx, destination)
+	if listenErr != nil {
+		return nil, listenErr
+	}
+	return e.trackUDPAssociationPacket(conn), nil
 }
 
 // SetIdle applies the idle policy. true is the suspend path: the Device goes down and, for the
@@ -994,7 +1015,8 @@ func (e *Endpoint) suspend() {
 		return
 	}
 	wgDevice.Down()
-	release := e.lazyEligible && !e.closing && e.activeUses == 0 && e.returnPath.Load() == nil
+	release := e.lazyEligible && !e.closing && e.activeUses == 0 && e.returnPath.Load() == nil &&
+		e.udpAssociations.Load() == 0
 	if !release {
 		e.stateAccess.Unlock()
 		return
@@ -1261,4 +1283,42 @@ func (c peerConfig) GenerateIpcLines() string {
 		ipcLines.WriteString("\npersistent_keepalive_interval=" + F.ToString(c.keepalive))
 	}
 	return ipcLines.String()
+}
+
+// udpAssociationConn marks one open UDP association for the release boundary.
+//
+// The wrapper is deliberately transparent: callers keep the net.Conn/net.PacketConn they were given,
+// and only Close is intercepted, because that is the moment the association stops needing the Device.
+type udpAssociationConn struct {
+	net.Conn
+	endpoint *Endpoint
+	once     sync.Once
+}
+
+func (c *udpAssociationConn) Close() error {
+	c.once.Do(func() { c.endpoint.udpAssociations.Add(-1) })
+	return c.Conn.Close()
+}
+
+type udpAssociationPacketConn struct {
+	net.PacketConn
+	endpoint *Endpoint
+	once     sync.Once
+}
+
+func (c *udpAssociationPacketConn) Close() error {
+	c.once.Do(func() { c.endpoint.udpAssociations.Add(-1) })
+	return c.PacketConn.Close()
+}
+
+// trackUDPAssociation counts the association BEFORE returning it, so a suspend racing the caller
+// cannot observe "no association" and release the Device under it.
+func (e *Endpoint) trackUDPAssociation(conn net.Conn) net.Conn {
+	e.udpAssociations.Add(1)
+	return &udpAssociationConn{Conn: conn, endpoint: e}
+}
+
+func (e *Endpoint) trackUDPAssociationPacket(conn net.PacketConn) net.PacketConn {
+	e.udpAssociations.Add(1)
+	return &udpAssociationPacketConn{PacketConn: conn, endpoint: e}
 }
