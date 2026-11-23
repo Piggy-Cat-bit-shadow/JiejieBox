@@ -386,7 +386,15 @@ VERIFIED_ANDROID_SHA="9816e0068c82397e0ae48966cec982c0fd3dee18"
 # The compile half is the Apple client workflow, which builds the source the client branch resolves
 # to; a run at this client revision is recorded in release/pin-runs.json with the rest of this
 # round's evidence. It is not a device or TestFlight result.
-VERIFIED_APPLE_SHA="79d09f67eecc3533af100b18ff770ef8ba5fb9b1"
+#
+# Moved from 79d09f6 to cb56592 for the node-timeout attack round: ONE derivation change
+# (`hasResult` also accepts a positive delay without a completion time, so a delay is never hidden as
+# "never tested"). No Libbox surface and no call-site change. Layer 4 was RUN against the checkout this
+# gitlink names (no submodules), not inherited:
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root C:\Deepseek\sing-box-for-apple
+#   {"scanned": 487, "violations": [], "interface_methods": 3, "error": ""}
+VERIFIED_APPLE_SHA="cb56592ece39c520cc06cb1b870b29bf002ef65f"
 
 client_root=""
 skip_client=0
