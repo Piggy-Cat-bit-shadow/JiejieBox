@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,14 +50,14 @@ import (
 
 // w8CycleSample is one instrumented point of a long run.
 type w8CycleSample struct {
-	Round      int    `json:"round"`
-	HeapAlloc  uint64 `json:"heap_alloc"`
+	Round       int    `json:"round"`
+	HeapAlloc   uint64 `json:"heap_alloc"`
 	HeapObjects uint64 `json:"heap_objects"`
-	RSS        uint64 `json:"rss"`
-	PeakRSS    uint64 `json:"peak_rss"`
-	Handles    uint64 `json:"handles"`
-	Goroutines int    `json:"goroutines"`
-	Extra      int    `json:"extra"`
+	RSS         uint64 `json:"rss"`
+	PeakRSS     uint64 `json:"peak_rss"`
+	Handles     uint64 `json:"handles"`
+	Goroutines  int    `json:"goroutines"`
+	Extra       int    `json:"extra"`
 }
 
 // w8SampleNow reads the natural state at the end of a round, without a collection.
@@ -246,16 +247,43 @@ func TestW8LongProviderUpdate(t *testing.T) {
 	require.NotNil(t, providerManager, "no provider manager in the Box context")
 	provider, loaded := providerManager.Get("w8-provider")
 	require.True(t, loaded, "the provider was not built")
-	require.Len(t, provider.Outbounds(), nodes, "the provider did not publish every node")
+	// A provider with no cache downloads its first document on its own goroutine: Start must not
+	// block on a subscription URL (see ProviderRemote.StartContext). Asserting the full node list
+	// straight after Start therefore raced the first fetch and failed on every fresh run. Wait for
+	// the publish the way a real client does, and record how long it took.
+	firstPublishStart := time.Now()
+	require.Eventually(t, func() bool {
+		return len(provider.Outbounds()) == nodes
+	}, 30*time.Second, 20*time.Millisecond, "the provider did not publish every node")
+	row["first_publish_ms"] = time.Since(firstPublishStart).Milliseconds()
 	updater, isUpdater := provider.(adapter.ProviderUpdater)
 	require.True(t, isUpdater, "the remote provider is not updatable")
 
 	samples := make([]w8CycleSample, 0, rounds/sampleEvery+2)
 	started := time.Now()
 	updateFailures := 0
+	updateBusyRounds := 0
 	for round := 1; round <= rounds; round++ {
 		served.Store(w8CycleProviderDocument(nodes, round%nodes, 30000+round))
-		if updateErr := updater.Update(); updateErr != nil {
+		// A concurrent refresh (the provider's own timer, or the first fetch that produced the
+		// initial publish) makes the provider refuse this attempt with "provider is updating".
+		// That is the documented single-flight contract, not a failure: a real caller retries
+		// later. Retry within a bounded window and record the deferrals separately.
+		var updateErr error
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			updateErr = updater.Update()
+			if updateErr == nil || !strings.Contains(updateErr.Error(), "provider is updating") {
+				break
+			}
+			if time.Now().After(deadline) {
+				updateBusyRounds++
+				updateErr = nil
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if updateErr != nil {
 			updateFailures++
 			if updateFailures < 4 {
 				t.Logf("round %d: provider update failed: %v", round, updateErr)
@@ -269,6 +297,7 @@ func TestW8LongProviderUpdate(t *testing.T) {
 	row["samples"] = samples
 	row["elapsed_ms"] = float64(elapsed.Nanoseconds()) / 1e6
 	row["update_failures"] = updateFailures
+	row["update_busy_rounds"] = updateBusyRounds
 	row["updates_per_second"] = float64(rounds) / elapsed.Seconds()
 	require.Zero(t, updateFailures, "a provider update failed")
 	require.GreaterOrEqual(t, len(samples), 2, "not enough samples to see a trend")

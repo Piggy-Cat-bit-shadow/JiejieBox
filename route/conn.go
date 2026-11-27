@@ -691,7 +691,9 @@ func (p growthPlan) seamFor(budget *resourceguard.GrowthBudget, source io.Reader
 	if budget == nil {
 		return nil
 	}
-	return budget.GrowthBoundaryBuffers(p.class, p.geometry, growthBuffersForDirection(source, destination))
+	return budget.GrowthBoundaryFor(p.class, p.geometry, func() int {
+		return growthBuffersForDirection(source, destination)
+	})
 }
 
 type growthPlan struct {
@@ -1235,7 +1237,9 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 			// Resolved here, with the operands this copy is about to start from: the
 			// engine strips counting/replaceable wrappers and then decides whether to
 			// vectorise, so the weight must be asked of the same layer it will use.
-			permit = m.growth.GrowthBoundaryBuffers(plan.class, plan.geometry, growthBuffersForDirection(source, copyWriter))
+			permit = m.growth.GrowthBoundaryFor(plan.class, plan.geometry, func() int {
+				return growthBuffersForDirection(source, copyWriter)
+			})
 		}
 	}
 	_, err := bufio.CopyWithIncreateBufferPermit(copyWriter, source, increaseBufferAfter, bufio.DefaultBatchSize, permit)

@@ -325,10 +325,29 @@ func (b *GrowthBudget) GrowthBoundary(class trafficclass.Class, geometryRequired
 // The permit is still taken only at the actual growth boundary; `buffers` only sets
 // how many units that permit costs.
 func (b *GrowthBudget) GrowthBoundaryBuffers(class trafficclass.Class, geometryRequired bool, buffers int) bufio.IncreaseBufferPermit {
+	return b.GrowthBoundaryFor(class, geometryRequired, func() int { return buffers })
+}
+
+// GrowthBoundaryFor is GrowthBoundaryBuffers with the weight resolved when the seam is
+// INVOKED, at the copy engine's growth boundary, instead of when the seam is built.
+//
+// A writer's vectorisability is not always a constant. Protocol wrappers such as
+// common/tlsfragment.Conn and common/tlsspoof.Conn answer WriterReplaceable=false until
+// their first write and true afterwards, and the copy engine asks
+// CreateVectorisedWriter only after that first write, at the growth boundary. A weight
+// sampled at copy start therefore answers for a different writer state than the one the
+// engine acts on, and charges 1 unit for a direction that then holds DefaultBatchSize
+// buffers. Resolving it here, immediately before the engine makes the same decision on
+// the same operands, keeps the charge equal to what is held.
+func (b *GrowthBudget) GrowthBoundaryFor(class trafficclass.Class, geometryRequired bool, weight func() int) bufio.IncreaseBufferPermit {
 	if b == nil {
 		return nil
 	}
 	return func() (func(), bool) {
+		buffers := 1
+		if weight != nil {
+			buffers = weight()
+		}
 		_, permit := b.AdmitBuffers(class, geometryRequired, buffers)
 		if permit != nil {
 			return permit.Release, true

@@ -59,8 +59,8 @@ func TestGrowthThresholdAsksForTheDirectionWeight(t *testing.T) {
 	content, err := os.ReadFile("conn.go")
 	require.NoError(t, err)
 	source := string(content)
-	require.Contains(t, source, "GrowthBoundaryBuffers(plan.class, plan.geometry, growthBuffersForDirection(source, copyWriter))",
-		"the weight must be resolved from the operands the copy engine uses")
+	require.Contains(t, source, "GrowthBoundaryFor(plan.class, plan.geometry, func() int {",
+		"the weight must be resolved from the operands the copy engine uses, at the boundary")
 	require.Contains(t, source, "growthBuffersForDirection(source, copyWriter)")
 }
 
