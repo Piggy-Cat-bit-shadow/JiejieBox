@@ -1659,9 +1659,25 @@ def check_apple_runner_selection():
         with open(path, encoding="utf-8") as handle:
             jobs = (yaml.safe_load(handle) or {}).get("jobs") or {}
         for name in names:
+            job = jobs.get(name) or {}
+            mapping = job.get("secrets")
+            passed = mapping.get("APPLE_RUNNER_TOKEN") if isinstance(mapping, dict) else None
             report("%s: %s hands the runner token to the called workflow" % (label, name),
-                   (jobs.get(name) or {}).get("secrets") == "inherit",
-                   "secrets=%s" % (jobs.get(name) or {}).get("secrets"))
+                   passed == "${{ secrets.APPLE_RUNNER_TOKEN }}",
+                   "secrets=%s" % (mapping,))
+            # `inherit` reads as "give the callee what the caller has", and what the caller has is
+            # every secret in the repository - handed to a workflow that checks out submodules and
+            # runs third-party actions. The explicit list is the whole point of the narrower form.
+            report("%s: %s passes an explicit secret list, not `inherit`" % (label, name),
+                   mapping != "inherit",
+                   "secrets=%s" % (mapping,))
+            if name == "macos":
+                # client-macos.yml reads these in its deep checks; narrowing the mapping without
+                # carrying them would fail a release build rather than a test.
+                report("kernel release: macos keeps the bench credentials it used to inherit",
+                       isinstance(mapping, dict)
+                       and {"NAIVE_BENCH_USER", "NAIVE_BENCH_PASS"} <= set(mapping),
+                       "secrets=%s" % (mapping,))
 
 
 def check_kernel_release_graph():
