@@ -670,7 +670,31 @@ func (m *ConnectionManager) growthThreshold(class trafficclass.Class, dialer N.D
 	if m.growth == nil {
 		return base, nil
 	}
-	return base, m.growth.GrowthBoundary(class, base == earlyConnectionBufferIncreaseAfter)
+	return base, m.growth.GrowthBoundaryBuffers(class, base == earlyConnectionBufferIncreaseAfter, growthBuffersForDirection(destination, source))
+}
+
+// growthBuffersForDirection reports how many grown buffers one copy direction will
+// hold, which is what the growth budget must charge.
+//
+// The predicates are the copy engine's own: a direction enters the vectorised loop
+// only when CreateVectorisedReadWaiter(source) AND CreateVectorisedWriter(destination)
+// both succeed (sing common/bufio/copy_direct.go), and that loop allocates
+// DefaultBatchSize grown buffers per read. Charging one unit per direction - the
+// pre-P2-01 model - therefore under-counted exactly these directions by 8x, and the
+// budget's documented byte cap was really 8x larger on the direct TCP path.
+//
+// The probe is a type assertion plus, on some platforms, a small wrapper allocation;
+// it runs once per copy direction at setup, never on the data path. A direction whose
+// writer is wrapped (the scheduler gate) may be over-charged, which is the safe side:
+// it can only make the budget refuse earlier.
+func growthBuffersForDirection(destination net.Conn, source net.Conn) int {
+	if _, ok := bufio.CreateVectorisedReadWaiter(source); !ok {
+		return 1
+	}
+	if _, ok := bufio.CreateVectorisedWriter(destination); !ok {
+		return 1
+	}
+	return bufio.DefaultBatchSize
 }
 
 // uploadStreamGate decides whether this upload flow is scheduled, and returns the writer the copy

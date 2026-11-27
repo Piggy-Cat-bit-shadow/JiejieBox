@@ -115,13 +115,17 @@ type GrowthBudget struct {
 // GrowthConfig is the growth policy at LevelNormal. Other levels are derived from it
 // by growthPlanFor, so a change here moves every level together.
 type GrowthConfig struct {
-	// Flows is how many copy directions may hold an enlarged buffer at LevelNormal.
-	// It is the only number an operator would tune, and it is expressed in flows
-	// because that is what the policy can see: one buffer per direction. Zero (or
-	// less) disables ordinary growth entirely; a nil *GrowthBudget, not a zero
-	// config, is how "keep the old behaviour" is spelled.
+	// Flows is the cap in GROWN-BUFFER UNITS at LevelNormal, one unit being one
+	// enlarged copy buffer (~64 KiB). It is not a count of directions: the copy
+	// engine's vectorised path holds DefaultBatchSize grown buffers per direction,
+	// so a vectorised direction is charged 8 units and a plain single-buffer
+	// direction is charged 1. Charging what the direction actually holds is what
+	// keeps the documented byte cap true; a per-direction count would under-count
+	// the vectorised path by the batch size.
+	// Zero (or less) disables ordinary growth entirely; a nil *GrowthBudget, not a
+	// zero config, is how "keep the old behaviour" is spelled.
 	Flows int
-	// InteractiveReserve is how many permits beyond Flows high-priority classes may
+	// InteractiveReserve is how many UNITS beyond Flows high-priority classes may
 	// use, so a bulk burst cannot keep an interactive flow on the small buffer.
 	InteractiveReserve int
 }
@@ -129,11 +133,13 @@ type GrowthConfig struct {
 // DefaultGrowthConfig is the policy until the exclusive performance window says
 // otherwise.
 //
-// 256 concurrent grown directions is deliberately far above a steady state (a
-// phone or desktop proxies a handful of bulk streams at once) and below the burst
-// that motivated this work (hundreds of flows from one sync). At ~64 KiB per grown
-// direction the cap is ~16 MiB, which is the number this policy is actually
-// about; it is a bound on top of the per-flow behaviour, not a replacement for it.
+// 256 units is 16 MiB of grown buffers at ~64 KiB per unit, which is the number
+// this policy is actually about; it is a bound on top of the per-flow behaviour,
+// not a replacement for it. Because a vectorised direction is charged one unit per
+// buffer it holds (DefaultBatchSize = 8), that is ~32 simultaneously grown
+// vectorised directions, or 256 plain single-buffer directions. The earlier
+// per-direction reading of this number under-counted the vectorised path by 8x,
+// which is exactly what the P2-01 measurement found.
 //
 // These are POLICY defaults, not measurements. Choosing them by feel is exactly
 // what the stage-03 record refused to do for the relay path, which is why the
@@ -227,6 +233,17 @@ const (
 // A nil *GrowthBudget keeps the pre-existing thresholds and returns no permit, so
 // a Box without a budget behaves exactly as before it existed.
 func (b *GrowthBudget) Admit(class trafficclass.Class, geometryRequired bool) (int64, *GrowthPermit) {
+	return b.AdmitBuffers(class, geometryRequired, 1)
+}
+
+// AdmitBuffers is Admit with the number of GROWN BUFFERS this direction will hold.
+//
+// The copy engine decides how many buffers a grown direction keeps: a single-buffer
+// direction holds one, and the vectorised path allocates DefaultBatchSize of them per
+// read. The budget has to charge that same number, or the byte cap it documents is
+// fiction: 256 "directions" of a vectorised copy is 128 MiB, not the 16 MiB the config
+// promises. Callers that cannot tell pass 1, which is the old behaviour exactly.
+func (b *GrowthBudget) AdmitBuffers(class trafficclass.Class, geometryRequired bool, buffers int) (int64, *GrowthPermit) {
 	if geometryRequired {
 		if b != nil {
 			b.access.Lock()
@@ -237,6 +254,9 @@ func (b *GrowthBudget) Admit(class trafficclass.Class, geometryRequired bool) (i
 	}
 	if b == nil {
 		return CopyGrowthDefault, nil
+	}
+	if buffers < 1 {
+		buffers = 1
 	}
 	level := LevelNormal
 	if b.pressure != nil {
@@ -255,26 +275,29 @@ func (b *GrowthBudget) Admit(class trafficclass.Class, geometryRequired bool) (i
 	// of a cap it just lowered. Checking only reservedUsed missed exactly that case:
 	// Flows=4/InteractiveReserve=2 at Normal, four permits out, Armed is 2+1, and an
 	// interactive direction took the fifth.
-	if b.used >= plan.flows+plan.reserve {
+	//
+	// The check is on the whole charge: a direction that needs 8 units is refused when
+	// only 7 are free, and is never admitted "half grown".
+	if b.used+buffers > plan.flows+plan.reserve {
 		b.refused++
 		return CopyGrowthNever, nil
 	}
-	if b.used >= plan.flows {
-		// The ordinary cap is reached. A high-priority flow may still draw on the
+	if b.used+buffers > plan.flows {
+		// The ordinary cap would be crossed. A high-priority flow may still draw on the
 		// reserve up to the current total; anything else keeps the small buffer.
-		if !highPriority || b.reservedUsed >= plan.reserve {
+		if !highPriority || b.reservedUsed+buffers > plan.reserve {
 			b.refused++
 			return CopyGrowthNever, nil
 		}
 		reserved = true
-		b.reservedUsed++
+		b.reservedUsed += buffers
 	}
-	b.used++
+	b.used += buffers
 	b.granted++
 	if b.used > b.peak {
 		b.peak = b.used
 	}
-	return CopyGrowthDefault, &GrowthPermit{budget: b, reserved: reserved}
+	return CopyGrowthDefault, &GrowthPermit{budget: b, reserved: reserved, units: buffers}
 }
 
 // GrowthBoundary returns the seam one copy direction hands to sing at its growth
@@ -294,11 +317,19 @@ func (b *GrowthBudget) Admit(class trafficclass.Class, geometryRequired bool) (i
 // A nil *GrowthBudget returns a nil seam, which is the copy engine's "grow exactly as
 // before" behaviour.
 func (b *GrowthBudget) GrowthBoundary(class trafficclass.Class, geometryRequired bool) bufio.IncreaseBufferPermit {
+	return b.GrowthBoundaryBuffers(class, geometryRequired, 1)
+}
+
+// GrowthBoundaryBuffers is GrowthBoundary for a direction that will hold `buffers`
+// grown buffers per read, which is what the caller must know before the copy starts.
+// The permit is still taken only at the actual growth boundary; `buffers` only sets
+// how many units that permit costs.
+func (b *GrowthBudget) GrowthBoundaryBuffers(class trafficclass.Class, geometryRequired bool, buffers int) bufio.IncreaseBufferPermit {
 	if b == nil {
 		return nil
 	}
 	return func() (func(), bool) {
-		_, permit := b.Admit(class, geometryRequired)
+		_, permit := b.AdmitBuffers(class, geometryRequired, buffers)
 		if permit != nil {
 			return permit.Release, true
 		}
@@ -306,16 +337,22 @@ func (b *GrowthBudget) GrowthBoundary(class trafficclass.Class, geometryRequired
 	}
 }
 
-// release returns one permit to the pool.
-func (b *GrowthBudget) release(reserved bool) {
+// release returns a permit's units to the pool.
+func (b *GrowthBudget) release(reserved bool, units int) {
+	if units < 1 {
+		units = 1
+	}
 	b.access.Lock()
-	b.used--
+	b.used -= units
 	if reserved {
-		b.reservedUsed--
+		b.reservedUsed -= units
 	}
 	if b.used < 0 {
 		// Defensive: an over-release is a bookkeeping defect, not a policy state.
 		b.used = 0
+		b.reservedUsed = 0
+	}
+	if b.reservedUsed < 0 {
 		b.reservedUsed = 0
 	}
 	b.released++
@@ -336,6 +373,7 @@ func (b *GrowthBudget) noteDoubleRelease() {
 type GrowthPermit struct {
 	budget   *GrowthBudget
 	reserved bool
+	units    int
 	released atomic.Bool
 }
 
@@ -349,14 +387,16 @@ func (p *GrowthPermit) Release() {
 		p.budget.noteDoubleRelease()
 		return
 	}
-	p.budget.release(p.reserved)
+	p.budget.release(p.reserved, p.units)
 }
 
 // GrowthStats is a consistent snapshot of the growth policy.
 //
 // The identities a reader can rely on:
 //
-//	InUse            == Granted - Released, and never above the current cap
+//	InUse            == the units currently held, never above the current cap. It counts
+//	                    UNITS (one per grown buffer), not directions: a vectorised
+//	                    direction holds DefaultBatchSize of them.
 //	ReservedInUse    <= min(Reserve, InUse)
 //	DoubleReleases   == 0
 type GrowthStats struct {
