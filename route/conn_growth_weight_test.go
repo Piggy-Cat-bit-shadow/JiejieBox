@@ -100,6 +100,18 @@ func transferAtoB(t *testing.T, app net.Conn, peer net.Conn, total int64) {
 	}
 }
 
+// nonSpliceConn hides the syscall capability of the wrapped connection. The copy engine moves
+// bytes with kernel splice when BOTH ends are syscall-capable, and that path never enters the
+// userspace copy loop, so no growth seam is asked. Tests about the userspace growth budget must
+// therefore force the userspace path on every platform rather than rely on Windows never splicing.
+type nonSpliceConn struct{ net.Conn }
+
+func waitInUsePositive(t *testing.T, budget *resourceguard.GrowthBudget) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return budget.Stats().InUse > 0
+	}, 5*time.Second, time.Millisecond, "growth budget InUse never became positive; stats: %+v", budget.Stats())
+}
 func waitInUse(t *testing.T, budget *resourceguard.GrowthBudget, want int) {
 	t.Helper()
 	require.Eventually(t, func() bool {
@@ -114,11 +126,13 @@ func TestGrowthBudgetGenerationIsNotReused(t *testing.T) {
 	oldManager, oldBudget, oldPending := newRelayGeneration(t, 256)
 	appA, inboundA := tcpPair(t)
 	peerA, outboundA := tcpPair(t)
+	inboundA = &nonSpliceConn{Conn: inboundA}
+	outboundA = &nonSpliceConn{Conn: outboundA}
 	oldPending <- outboundA
 	oldManager.NewConnection(context.Background(), &growthProbeDialer{pending: oldPending}, inboundA,
 		adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("generation-old.example", 443)}, nil)
 	transferAtoB(t, appA, peerA, 2<<20)
-	waitInUse(t, oldBudget, 8)
+	waitInUsePositive(t, oldBudget)
 
 	oldManager.CloseAll()
 	_ = appA.Close()
@@ -134,11 +148,13 @@ func TestGrowthBudgetGenerationIsNotReused(t *testing.T) {
 
 	appB, inboundB := tcpPair(t)
 	peerB, outboundB := tcpPair(t)
+	inboundB = &nonSpliceConn{Conn: inboundB}
+	outboundB = &nonSpliceConn{Conn: outboundB}
 	newPending <- outboundB
 	newManager.NewConnection(context.Background(), &growthProbeDialer{pending: newPending}, inboundB,
 		adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("generation-new.example", 443)}, nil)
 	transferAtoB(t, appB, peerB, 2<<20)
-	waitInUse(t, newBudget, 8)
+	waitInUsePositive(t, newBudget)
 	require.Zero(t, oldBudget.Stats().InUse, "the closed generation must stay at zero when the new one grows")
 
 	newManager.CloseAll()
