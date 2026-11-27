@@ -103,19 +103,23 @@ func contractProblems(document workflowDocument, raw string) []string {
 	if !strings.Contains(gate.Run, "$LASTEXITCODE") {
 		problems = append(problems, "the gate step does not read the real exit code")
 	}
-	if !strings.Contains(gate.Run, "throw") {
-		problems = append(problems, "a non-zero gate is not turned into a failure")
-	}
-	markerLine, throwLine := -1, -1
+	// The presence check must be LINE-BASED too: a comment mentioning "thrown" is not a failure path,
+	// and deleting the real throw must be caught even when the comment survives (review X15-03).
+	throwLine := -1
 	for index, line := range strings.Split(gate.Run, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if markerLine < 0 && strings.Contains(line, "Set-Content") && strings.Contains(line, "memory-gate.exit.txt") {
-			markerLine = index
-		}
-		// A THROW STATEMENT starts the line; the word inside a comment must not count, or a comment
-		// mentioning "thrown" would be read as the failure path.
-		if throwLine < 0 && strings.HasPrefix(trimmed, "throw") {
+		if strings.HasPrefix(strings.TrimSpace(line), "throw") {
 			throwLine = index
+			break
+		}
+	}
+	if throwLine < 0 {
+		problems = append(problems, "a non-zero gate is not turned into a failure: no throw statement")
+	}
+	markerLine := -1
+	for index, line := range strings.Split(gate.Run, "\n") {
+		if strings.Contains(line, "Set-Content") && strings.Contains(line, "memory-gate.exit.txt") {
+			markerLine = index
+			break
 		}
 	}
 	if markerLine < 0 {
@@ -211,5 +215,18 @@ func TestTheContractRejectsAMissingUploadPath(t *testing.T) {
 		"")
 	problems := contractProblems(document, text)
 	require.NotEmpty(t, problems, "an upload that omits the exit marker must be rejected")
+	t.Logf("mutant rejected: %v", problems)
+}
+
+// TestTheContractRejectsADeletedThrowWithASurvivingComment is review X15-03: removing the actual
+// failure path while a comment still says "thrown" must be rejected, because the gate would report a
+// non-zero exit and the step would carry on green.
+func TestTheContractRejectsADeletedThrowWithASurvivingComment(t *testing.T) {
+	_, raw := readGateWorkflow(t)
+	document, text := mutate(t, raw,
+		"          if ($gateExit -ne 0) {\n            throw \"the memory budget gate failed with exit code $gateExit; the ledger and its verdict are attached to this run\"\n          }\n",
+		"          # the failure path was removed; the comment below still says it is thrown\n")
+	problems := contractProblems(document, text)
+	require.NotEmpty(t, problems, "deleting the throw must be rejected even when a comment still mentions it")
 	t.Logf("mutant rejected: %v", problems)
 }
