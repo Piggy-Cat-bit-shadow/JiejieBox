@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -149,26 +150,61 @@ func (c connectionObject) MarshalJSON() ([]byte, error) {
 	} else {
 		rule = "final"
 	}
-	return json.Marshal(map[string]any{
-		"id": c.ID,
-		"metadata": map[string]any{
-			"network":         c.Metadata.Network,
-			"type":            inbound,
-			"sourceIP":        c.Metadata.Source.Addr,
-			"destinationIP":   c.Metadata.Destination.Addr,
-			"sourcePort":      F.ToString(c.Metadata.Source.Port),
-			"destinationPort": F.ToString(c.Metadata.Destination.Port),
-			"host":            domain,
-			"dnsMode":         "normal",
-			"processPath":     processPath,
+	// One struct, not two map[string]any graphs. encoding/json writes a struct's fields in
+	// declaration order and a map's keys in sorted order, so the declaration below is the
+	// map's sorted key order and the bytes are identical - which
+	// TestConnectionsDocumentIsByteIdenticalToTheMapShape pins. The maps were the dominant
+	// allocation at scale: for 10 000 connections the two per-item maps were 43.6 MiB of a
+	// 70.7 MiB snapshot (P2-02 measurement), because every entry allocates a map header and
+	// its bucket before the encoder sees it.
+	return json.Marshal(connectionDocument{
+		Chains:      c.Chain,
+		Download:    c.Download.Load(),
+		ID:          c.ID,
+		Metadata: connectionMetadataDocument{
+			DestinationIP:   c.Metadata.Destination.Addr,
+			DestinationPort: F.ToString(c.Metadata.Destination.Port),
+			DNSMode:         "normal",
+			Host:            domain,
+			Network:         c.Metadata.Network,
+			ProcessPath:     processPath,
+			SourceIP:        c.Metadata.Source.Addr,
+			SourcePort:      F.ToString(c.Metadata.Source.Port),
+			Type:            inbound,
 		},
-		"upload":      c.Upload.Load(),
-		"download":    c.Download.Load(),
-		"start":       c.CreatedAt,
-		"chains":      c.Chain,
-		"rule":        rule,
-		"rulePayload": "",
+		Rule:        rule,
+		RulePayload: "",
+		Start:       c.CreatedAt,
+		Upload:      c.Upload.Load(),
 	})
+}
+
+// connectionDocument is the JSON shape of one connection, declared in the byte order the
+// previous map-based encoder produced (maps are written with sorted keys).
+type connectionDocument struct {
+	Chains      []string                    `json:"chains"`
+	Download    int64                       `json:"download"`
+	ID          uuid.UUID                   `json:"id"`
+	Metadata    connectionMetadataDocument  `json:"metadata"`
+	Rule        string                      `json:"rule"`
+	RulePayload string                      `json:"rulePayload"`
+	Start       time.Time                   `json:"start"`
+	Upload      int64                       `json:"upload"`
+}
+
+// connectionMetadataDocument is the metadata object, also in sorted-key order:
+// destinationIP, destinationPort, dnsMode, host, network, processPath, sourceIP,
+// sourcePort, type.
+type connectionMetadataDocument struct {
+	DestinationIP   netip.Addr `json:"destinationIP"`
+	DestinationPort string     `json:"destinationPort"`
+	DNSMode         string     `json:"dnsMode"`
+	Host            string     `json:"host"`
+	Network         string     `json:"network"`
+	ProcessPath     string     `json:"processPath"`
+	SourceIP        netip.Addr `json:"sourceIP"`
+	SourcePort      string     `json:"sourcePort"`
+	Type            string     `json:"type"`
 }
 
 func getConnections(ctx context.Context, trafficManager *trafficcontrol.Manager) func(w http.ResponseWriter, r *http.Request) {
