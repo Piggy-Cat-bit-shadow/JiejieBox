@@ -120,6 +120,7 @@ func crossSystemContext(t *testing.T, directory string, recorder *crossSystemRec
 	t.Helper()
 	inboundRegistry := inbound.NewRegistry()
 	protocolhttp.RegisterInbound(inboundRegistry)
+	protocolsocks.RegisterInbound(inboundRegistry)
 	outboundRegistry := outbound.NewRegistry()
 	protocoldirect.RegisterOutbound(outboundRegistry)
 	protocolblock.RegisterOutbound(outboundRegistry)
