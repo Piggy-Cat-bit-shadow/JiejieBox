@@ -7,6 +7,12 @@ name: apple-tls-verify
 
 on:
   workflow_call:
+    # Declared, not inherited: the caller passes this one secret explicitly, and GitHub refuses a
+    # named secret the called workflow does not declare. `required: false` keeps the fallback
+    # honest - a repository without the secret builds on the hosted image instead of failing.
+    secrets:
+      APPLE_RUNNER_TOKEN:
+        required: false
 
 permissions:
   contents: read

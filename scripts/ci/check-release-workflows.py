@@ -1635,6 +1635,15 @@ def check_apple_runner_selection():
         report("%s: select-runner receives the token and nothing else reads it" % label,
                "APPLE_RUNNER_TOKEN" in env and text.count("secrets.APPLE_RUNNER_TOKEN") == 1,
                "references=%d" % text.count("secrets.APPLE_RUNNER_TOKEN"))
+        # A caller passing a secret by NAME is refused at startup when the called workflow does not
+        # declare it - the run does not fail, it never starts, and the failure names no job. That
+        # happened to this wiring once already. The declaration is part of the contract.
+        declares = {"APPLE_RUNNER_TOKEN"}
+        if label == "macos core":
+            declares |= {"NAIVE_BENCH_USER", "NAIVE_BENCH_PASS"}
+        declared = ((on.get("workflow_call") or {}).get("secrets") or {})
+        report("%s: the called workflow declares every secret its caller names" % label,
+               declares <= set(declared), "declared=%s" % sorted(declared))
         report("%s: no job names a hosted macOS image directly" % label,
                not [name for name, job in jobs.items()
                     if str(job.get("runs-on", "")).startswith("macos")],

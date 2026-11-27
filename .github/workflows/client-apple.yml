@@ -46,6 +46,12 @@ name: Apple client
 # known-good, a path filter for Apple-related sources can be added.
 on:
   workflow_call:
+    # Declared, not inherited: kernel-release.yml passes this one secret by name, and GitHub
+    # refuses a named secret the called workflow does not declare. `required: false` is the
+    # fallback contract - without it the selector uses the hosted image, it does not fail.
+    secrets:
+      APPLE_RUNNER_TOKEN:
+        required: false
     inputs:
       apple_client_sha:
         type: string

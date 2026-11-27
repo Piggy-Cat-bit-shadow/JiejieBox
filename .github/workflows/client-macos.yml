@@ -63,6 +63,16 @@ name: macOS arm64
 # changes is ready for validation.
 on:
   workflow_call:
+    # Declared, not inherited: kernel-release.yml passes these by name, and GitHub refuses a named
+    # secret the called workflow does not declare. APPLE_RUNNER_TOKEN is the runner selector's; the
+    # bench pair is what the deep checks read, and it used to arrive through `inherit`.
+    secrets:
+      APPLE_RUNNER_TOKEN:
+        required: false
+      NAIVE_BENCH_USER:
+        required: false
+      NAIVE_BENCH_PASS:
+        required: false
   workflow_dispatch:
     inputs:
       deep_checks:
