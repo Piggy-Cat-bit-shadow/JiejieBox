@@ -413,36 +413,11 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 	verification, err := verifyGateInputs(budget, summary, flags.selfCheck, flags.sourceSHA)
 	if err != nil && errors.Is(err, ErrUncertifiableBudget) {
 		// The budget cannot certify this session, but that is a statement about the BUDGET, not
-		// about the evidence. Evaluate it anyway and put the per-rule verdict in the report: a
-		// hand-written canary must be able to prove the EVALUATOR fails, not merely that the gate
-		// refuses unprovenanced budgets. The exit stays non-zero either way - a passing
-		// non-reference budget still cannot certify - but the report now says which rule failed.
-		results := evaluateBudget(budget, records)
-		uncertifiable := gateReport{
-			SchemaVersion:  gateSchemaVersion,
-			GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
-			BudgetPath:     budgetPath,
-			BudgetBaseline: budget.Baseline,
-			Output:         flags.output,
-			Source:         captureSourceIdentity(captureBuildIdentity()),
-			GoVersion:      summary.GoVersion,
-			GOOS:           summary.GOOS,
-			GOARCH:         summary.GOARCH,
-			Tags:           summary.Tags,
-			Runs:           runIDs(records),
-			RecordCount:    len(records),
-			Results:        results,
-			Verification:   &verification,
-			Error:          err.Error(),
-		}
-		uncertifiable.summarise()
-		if writeErr := writeGateReport(flags.output+".gate.json", uncertifiable); writeErr != nil {
-			return writeErr
-		}
-		if uncertifiable.Failed > 0 {
-			return fmt.Errorf("the budget cannot certify a candidate (%v) and %d rule(s) failed when it was evaluated anyway",
-				err, uncertifiable.Failed)
-		}
+		// about the evidence. Evaluate it anyway and write ONE report carrying the per-rule
+		// verdict: a hand-written canary must be able to prove the EVALUATOR fails, not merely
+		// that the gate refuses unprovenanced budgets. The refusal reason stays in the report and
+		// the exit is non-zero either way - a passing non-reference budget still cannot certify.
+		return writeUncertifiableReport(flags, budgetPath, budget, records, summary, verification, err)
 	}
 	if err != nil {
 		// The refusal is the verdict, so it is written down as one: an exit code alone leaves the
@@ -499,6 +474,39 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 			"and a skipped rule is not a pass")
 	}
 	return nil
+}
+
+// writeUncertifiableReport evaluates a budget that cannot certify and writes the single report that
+// IS the verdict. It exists as its own function so the branch cannot fall through into the refusal
+// path below, which would re-write the same file with an empty result set and lose the per-rule
+// diagnostics (INC-04-A).
+func writeUncertifiableReport(flags *runFlags, budgetPath string, budget budgetFile, records []recordMap, summary ledgerSummary, verification gateVerification, refusal error) error {
+	report := gateReport{
+		SchemaVersion:  gateSchemaVersion,
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		BudgetPath:     budgetPath,
+		BudgetBaseline: budget.Baseline,
+		Output:         flags.output,
+		Source:         captureSourceIdentity(captureBuildIdentity()),
+		GoVersion:      summary.GoVersion,
+		GOOS:           summary.GOOS,
+		GOARCH:         summary.GOARCH,
+		Tags:           summary.Tags,
+		Runs:           runIDs(records),
+		RecordCount:    len(records),
+		Results:        evaluateBudget(budget, records),
+		Verification:   &verification,
+		Error:          refusal.Error(),
+	}
+	report.summarise()
+	if err := writeGateReport(flags.output+".gate.json", report); err != nil {
+		return err
+	}
+	if report.Failed > 0 {
+		return fmt.Errorf("the budget cannot certify a candidate (%v) and %d rule(s) failed when it was evaluated anyway",
+			refusal, report.Failed)
+	}
+	return fmt.Errorf("the gate refused to compare: %w", refusal)
 }
 
 // defaultBudgetPath is the checked-in budget, relative to the module root, which is what the gate

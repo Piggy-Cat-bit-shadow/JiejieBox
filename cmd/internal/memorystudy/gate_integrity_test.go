@@ -75,6 +75,28 @@ func activityList(list []string) []any {
 	return encoded
 }
 
+// stampLedgerIdentity gives every stage record the identity block a real ledger carries, so the
+// gate can get past requireCandidateIdentity and reach the budget-provenance decision this test is
+// about. detected_by=declared is only accepted together with an explicit -source-sha assertion.
+func stampLedgerIdentity(records []recordMap, sha string) {
+	for _, record := range records {
+		identity, _ := record["identity"].(map[string]any)
+		if identity == nil {
+			identity = map[string]any{}
+			record["identity"] = identity
+		}
+		identity["source"] = map[string]any{
+			"sha":         sha,
+			"detected_by": detectedByDeclared,
+		}
+		identity["build"] = map[string]any{
+			"goos":       runtime.GOOS,
+			"goarch":     runtime.GOARCH,
+			"go_version": runtime.Version(),
+		}
+	}
+}
+
 // completeSession is a ledger with every planned run present: the POSITIVE control for the checker.
 func completeSession(t *testing.T, repetitions int) (*session, *runFlags) {
 	t.Helper()
@@ -285,6 +307,95 @@ func TestBudgetStructureIsRefusedWhenItCannotFail(t *testing.T) {
 	summary := ledgerSummary{SHA: strings.Repeat("b", 40), Runs: []string{"run-a"}}
 	if err = requireReferenceProvenance(legacyBudget, summary, false); err == nil {
 		t.Fatal("a legacy budget must be refused as a certification reference")
+	}
+}
+
+// TestAnUncertifiableBudgetKeepsItsDiagnostics pins INC-04-A: the refusal report for an
+// uncertifiable budget must be the SINGLE report written, with the per-rule results intact. The
+// gate used to write that report and then fall through to the refusal branch, which re-wrote the
+// same path from an empty result set, so a budget whose rules passed or were skipped lost the
+// diagnostic that said so.
+func TestAnUncertifiableBudgetKeepsItsDiagnostics(t *testing.T) {
+	current, _ := completeSession(t, 1)
+
+	cases := []struct {
+		name       string
+		metric     string
+		max        any
+		required   bool
+		wantStatus string
+	}{
+		{"passing", "readings.diagnostic_metric", 2, true, statusOK},
+		{"missing", "readings.this_metric_does_not_exist", 1, true, statusFailed},
+		{"skipped", "readings.this_metric_does_not_exist", 1, false, statusUnsupported},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{
+				"schema_version": legacyBudgetSchemaVersion,
+				"baseline":       map[string]any{"goos": runtime.GOOS, "goarch": runtime.GOARCH},
+				"rules": []map[string]any{{
+					"id": "diagnostic", "case": "empty", "nodes": 0, "groups": 0,
+					"node_proto": "direct", "gc_mode": "forced", "stage": "close",
+					"metric": testCase.metric, "max": testCase.max, "required": testCase.required,
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			budget, err := readBudgetFile(writeTestBudget(t, string(body)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			records := current.records
+			if testCase.name == "passing" {
+				// The synthetic ledger carries no readings, so a "passing" rule needs a value the
+				// fixture actually produced. Clone the records and give one stage a reading rather
+				// than weakening the rule to optional.
+				cloned := make([]recordMap, len(records))
+				for index, record := range records {
+					copied := make(recordMap, len(record)+1)
+					for key, value := range record {
+						copied[key] = value
+					}
+					cloned[index] = copied
+				}
+				for index := range cloned {
+					cloned[index]["readings"] = map[string]any{"diagnostic_metric": float64(1)}
+				}
+				records = cloned
+			}
+			directory := t.TempDir()
+			flags := &runFlags{output: filepath.Join(directory, testCase.name+".jsonl")}
+			summary, err := summariseLedger(records)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refusal := requireReferenceProvenance(budget, summary, false)
+			if !errors.Is(refusal, ErrUncertifiableBudget) {
+				t.Fatalf("the fixture is not an uncertifiable budget: %v", refusal)
+			}
+			if gateErr := writeUncertifiableReport(flags, "budget.json", budget, records, summary, gateVerification{}, refusal); gateErr == nil {
+				t.Fatal("an uncertifiable budget produced no error")
+			}
+			content, readErr := os.ReadFile(flags.output + ".gate.json")
+			if readErr != nil {
+				t.Fatalf("no gate report: %v", readErr)
+			}
+			var report gateReport
+			if err = json.Unmarshal(content, &report); err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Results) != 1 {
+				t.Fatalf("the per-rule diagnostics were lost: results=%d", len(report.Results))
+			}
+			if report.Results[0].Status != testCase.wantStatus {
+				t.Fatalf("rule status %q, want %q (%+v)", report.Results[0].Status, testCase.wantStatus, report.Results[0])
+			}
+			if report.Error == "" {
+				t.Fatal("the refusal reason is missing from the report")
+			}
+		})
 	}
 }
 

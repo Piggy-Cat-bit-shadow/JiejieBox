@@ -263,6 +263,7 @@ func TestW8LongProviderUpdate(t *testing.T) {
 	started := time.Now()
 	updateFailures := 0
 	updateBusyRounds := 0
+	completedUpdates := 0
 	for round := 1; round <= rounds; round++ {
 		served.Store(w8CycleProviderDocument(nodes, round%nodes, 30000+round))
 		// A concurrent refresh (the provider's own timer, or the first fetch that produced the
@@ -288,6 +289,8 @@ func TestW8LongProviderUpdate(t *testing.T) {
 			if updateFailures < 4 {
 				t.Logf("round %d: provider update failed: %v", round, updateErr)
 			}
+		} else {
+			completedUpdates++
 		}
 		if round%sampleEvery == 0 || round == rounds {
 			samples = append(samples, w8SampleNow(round, len(provider.Outbounds())))
@@ -298,8 +301,15 @@ func TestW8LongProviderUpdate(t *testing.T) {
 	row["elapsed_ms"] = float64(elapsed.Nanoseconds()) / 1e6
 	row["update_failures"] = updateFailures
 	row["update_busy_rounds"] = updateBusyRounds
-	row["updates_per_second"] = float64(rounds) / elapsed.Seconds()
+	row["completed_updates"] = completedUpdates
+	// The rate must describe UPDATES THAT COMPLETED, not rounds attempted: a persistently busy
+	// provider completes none and would otherwise report a healthy rate while every round was
+	// deferred.
+	row["updates_per_second"] = float64(completedUpdates) / elapsed.Seconds()
 	require.Zero(t, updateFailures, "a provider update failed")
+	require.Equal(t, rounds, completedUpdates,
+		"%d of %d rounds completed: a busy/deferred round is not a published update and must not pass",
+		completedUpdates, rounds)
 	require.GreaterOrEqual(t, len(samples), 2, "not enough samples to see a trend")
 	first := samples[0]
 	last := samples[len(samples)-1]
