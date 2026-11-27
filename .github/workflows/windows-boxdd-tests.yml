@@ -179,8 +179,14 @@ jobs:
           & "$env:RUNNER_TEMP\memorystudy.exe" -gate -runs 3 `
               -output "$env:RUNNER_TEMP\memory-gate.jsonl" `
               -budget cmd\internal\memorystudy\testdata\budget.json
-          if ($LASTEXITCODE -ne 0) {
-            throw "the memory budget gate failed with exit code $LASTEXITCODE; the ledger and its verdict are attached to this run"
+          $gateExit = $LASTEXITCODE
+          # The gate can refuse BEFORE it writes its report (a missing run, a truncated ledger, two
+          # identities in one file). In that case an artifact list of only the gate's own outputs would
+          # be empty, and the upload step would be the only remaining witness of the failure - so the
+          # exit code is written down unconditionally, in this step, before anything is thrown.
+          "gate_exit=$gateExit" | Set-Content -LiteralPath "$env:RUNNER_TEMP\memory-gate.exit.txt" -Encoding utf8
+          if ($gateExit -ne 0) {
+            throw "the memory budget gate failed with exit code $gateExit; the ledger and its verdict are attached to this run"
           }
 
       - name: upload the ledger and its verdict
@@ -189,10 +195,15 @@ jobs:
         with:
           name: memory-budget-ledger
           path: |
+            ${{ runner.temp }}/memory-gate.exit.txt
             ${{ runner.temp }}/memory-gate.jsonl
             ${{ runner.temp }}/memory-gate.jsonl.d/
             ${{ runner.temp }}/memory-gate.jsonl.gate.json
-          if-no-files-found: warn
+          # A run that produced NO evidence at all must fail: `warn` let a job that silently wrote
+          # nothing stay green, which is the exact "green while proving nothing" shape this gate exists
+          # to refuse. The exit marker above is written before any failure is thrown, so a FAILING gate
+          # still uploads its diagnosis and only true silence fails here.
+          if-no-files-found: error
 
   windows-daemon-tests:
     name: boxdd security tests (windows)
