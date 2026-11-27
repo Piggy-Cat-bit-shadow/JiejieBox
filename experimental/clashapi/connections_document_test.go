@@ -39,7 +39,6 @@ func TestConnectionsDocumentKeepsTheMapByteOrder(t *testing.T) {
 		Source:      M.SocksaddrFrom(netip.MustParseAddr("10.0.0.2"), 50123),
 		Destination: M.SocksaddrFrom(netip.MustParseAddr("93.184.216.34"), 443),
 		Domain:      "example.com",
-
 	}
 
 	encoded, err := json.Marshal(item)

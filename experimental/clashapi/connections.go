@@ -158,9 +158,9 @@ func (c connectionObject) MarshalJSON() ([]byte, error) {
 	// 70.7 MiB snapshot (P2-02 measurement), because every entry allocates a map header and
 	// its bucket before the encoder sees it.
 	return json.Marshal(connectionDocument{
-		Chains:      c.Chain,
-		Download:    c.Download.Load(),
-		ID:          c.ID,
+		Chains:   c.Chain,
+		Download: c.Download.Load(),
+		ID:       c.ID,
 		Metadata: connectionMetadataDocument{
 			DestinationIP:   c.Metadata.Destination.Addr,
 			DestinationPort: F.ToString(c.Metadata.Destination.Port),
@@ -182,14 +182,14 @@ func (c connectionObject) MarshalJSON() ([]byte, error) {
 // connectionDocument is the JSON shape of one connection, declared in the byte order the
 // previous map-based encoder produced (maps are written with sorted keys).
 type connectionDocument struct {
-	Chains      []string                    `json:"chains"`
-	Download    int64                       `json:"download"`
-	ID          uuid.UUID                   `json:"id"`
-	Metadata    connectionMetadataDocument  `json:"metadata"`
-	Rule        string                      `json:"rule"`
-	RulePayload string                      `json:"rulePayload"`
-	Start       time.Time                   `json:"start"`
-	Upload      int64                       `json:"upload"`
+	Chains      []string                   `json:"chains"`
+	Download    int64                      `json:"download"`
+	ID          uuid.UUID                  `json:"id"`
+	Metadata    connectionMetadataDocument `json:"metadata"`
+	Rule        string                     `json:"rule"`
+	RulePayload string                     `json:"rulePayload"`
+	Start       time.Time                  `json:"start"`
+	Upload      int64                      `json:"upload"`
 }
 
 // connectionMetadataDocument is the metadata object, also in sorted-key order:

@@ -1,11 +1,13 @@
 package route
 
 import (
+	"io"
 	"net"
 	"os"
 	"testing"
 
 	B "github.com/sagernet/sing/common/bufio"
+	N "github.com/sagernet/sing/common/network"
 
 	"github.com/stretchr/testify/require"
 )
@@ -49,12 +51,65 @@ func TestGrowthBufferGeometrySeesAPlainWriter(t *testing.T) {
 		"a writer that cannot be vectorised holds one grown buffer")
 }
 
-// The production seam must be built with the resolved weight rather than the old
-// per-direction call, which is the defect P2-01 measured.
+// The production seam must be built from the copy operands, not from the raw route
+// arguments: the engine strips counting/replaceable wrappers and decides after that
+// (MD-005). The structural assertion pins the call site; the behavioural one below
+// proves the probe really unwraps.
 func TestGrowthThresholdAsksForTheDirectionWeight(t *testing.T) {
 	content, err := os.ReadFile("conn.go")
 	require.NoError(t, err)
-	require.Contains(t, string(content),
-		"GrowthBoundaryBuffers(class, base == earlyConnectionBufferIncreaseAfter, growthBuffersForDirection(destination, source))",
-		"the seam must be sized by the direction geometry, not by a bare direction count")
+	source := string(content)
+	require.Contains(t, source, "GrowthBoundaryBuffers(plan.class, plan.geometry, growthBuffersForDirection(source, copyWriter))",
+		"the weight must be resolved from the operands the copy engine uses")
+	require.Contains(t, source, "growthBuffersForDirection(source, copyWriter)")
+}
+
+// countedConn is a counting wrapper shaped like the ones the production path puts in
+// front of the copy: it hides the vectorised capability of the inner connection, but it
+// is unwrappable, and sing strips exactly these layers before it decides.
+type countedConn struct {
+	net.Conn
+	read  int64
+	write int64
+}
+
+func (c *countedConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.read += int64(n)
+	return n, err
+}
+
+func (c *countedConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	c.write += int64(n)
+	return n, err
+}
+
+func (c *countedConn) UnwrapReader() (io.Reader, []N.CountFunc) {
+	return c.Conn, []N.CountFunc{func(n int64) {}}
+}
+
+func (c *countedConn) UnwrapWriter() (io.Writer, []N.CountFunc) {
+	return c.Conn, []N.CountFunc{func(n int64) {}}
+}
+
+// TestGrowthBufferGeometryUnwrapsTheCountingLayer is MD-005: the tracker's counting
+// connection (and the sniffing cached connection) sits in front of the real socket, so a
+// probe of the wrapper says "not vectorisable" while the engine, after unwrapping,
+// vectorises and holds eight buffers. The weight must be asked of the unwrapped layer.
+func TestGrowthBufferGeometryUnwrapsTheCountingLayer(t *testing.T) {
+	client, server := tcpPair(t)
+	defer client.Close()
+	defer server.Close()
+
+	countedSource := &countedConn{Conn: server}
+	countedDestination := &countedConn{Conn: client}
+
+	// The wrapper itself is not vectorisable - this is the layer that used to be probed.
+	_, wrapperVectorised := B.CreateVectorisedWriter(countedDestination)
+	require.False(t, wrapperVectorised, "the counting wrapper must hide the vectorised writer")
+
+	// The engine unwraps to the socket, so the direction really does hold the batch.
+	require.Equal(t, B.DefaultBatchSize, growthBuffersForDirection(countedSource, countedDestination),
+		"the weight must be resolved after the counting layer is stripped")
 }

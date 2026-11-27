@@ -68,8 +68,9 @@ func TestConnectionManagerGrowthBudgetUsesTheGuardPressure(t *testing.T) {
 
 	// Resolving the seam does not consume capacity; asking it at the growth boundary
 	// under Critical is what refuses.
-	threshold, seam := manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
+	threshold, plan := manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
 	require.Equal(t, resourceguard.CopyGrowthDefault, threshold)
+	seam := plan.seamFor(manager.growth, untunedConn{}, untunedConn{})
 	require.NotNil(t, seam)
 	release, granted := seam()
 	require.False(t, granted, "Critical must refuse an ordinary direction at the growth boundary")
@@ -80,8 +81,9 @@ func TestConnectionManagerGrowthBudgetUsesTheGuardPressure(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return manager.growth.Stats().Level == resourceguard.LevelNormal
 	}, time.Second, time.Millisecond, "the budget must follow the guard down after its dwell")
-	threshold, seam = manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
+	threshold, plan = manager.growthThreshold(trafficclass.ClassBulk, nil, untunedConn{}, untunedConn{})
 	require.Equal(t, resourceguard.CopyGrowthDefault, threshold)
+	seam = plan.seamFor(manager.growth, untunedConn{}, untunedConn{})
 	require.NotNil(t, seam)
 	release, granted = seam()
 	require.True(t, granted)
@@ -100,13 +102,15 @@ func TestConnectionManagerGrowthThresholdKeepsPerFlowDecisions(t *testing.T) {
 	manager := NewConnectionManager(log.NewNOPFactory().Logger())
 	manager.growth = resourceguard.NewGrowthBudget(resourceguard.GrowthConfig{Flows: 1}, nil)
 
-	firstThreshold, firstSeam := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
+	firstThreshold, firstPlan := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
+	firstSeam := firstPlan.seamFor(manager.growth, untunedConn{}, untunedConn{})
 	require.Equal(t, int64(1)*resourceguard.CopyGrowthDefault, firstThreshold)
 	require.NotNil(t, firstSeam)
 	require.Zero(t, manager.growth.Stats().InUse,
 		"resolving a direction's seam must not consume a permit; only the growth boundary may")
 
-	secondThreshold, secondSeam := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
+	secondThreshold, secondPlan := manager.growthThreshold(trafficclass.ClassDefault, nil, untunedConn{}, untunedConn{})
+	secondSeam := secondPlan.seamFor(manager.growth, untunedConn{}, untunedConn{})
 	require.Equal(t, resourceguard.CopyGrowthDefault, secondThreshold)
 	require.NotNil(t, secondSeam)
 
@@ -124,7 +128,8 @@ func TestConnectionManagerGrowthThresholdKeepsPerFlowDecisions(t *testing.T) {
 	require.Nil(t, secondRelease)
 
 	// A writer whose framing needs the larger buffer keeps it and takes no slot.
-	geometryThreshold, geometrySeam := manager.growthThreshold(trafficclass.ClassDefault, nil, fakeTunedConn{early: true}, untunedConn{})
+	geometryThreshold, geometryPlan := manager.growthThreshold(trafficclass.ClassDefault, nil, fakeTunedConn{early: true}, untunedConn{})
+	geometrySeam := geometryPlan.seamFor(manager.growth, untunedConn{}, fakeTunedConn{early: true})
 	require.Equal(t, resourceguard.CopyGrowthImmediate, geometryThreshold)
 	require.NotNil(t, geometrySeam)
 	geometryRelease, geometryGranted := geometrySeam()
@@ -152,10 +157,10 @@ func TestBothCopyDirectionsHandTheirSeamsToTheCopy(t *testing.T) {
 	require.NoError(t, err)
 	source := string(content)
 
-	require.Contains(t, source, "uploadIncreaseBufferAfter, uploadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)")
-	require.Contains(t, source, "downloadIncreaseBufferAfter, downloadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)")
-	require.Contains(t, source, "teardown, uploadGrowthBoundary)")
-	require.Contains(t, source, "teardown, downloadGrowthBoundary)")
+	require.Contains(t, source, "uploadIncreaseBufferAfter, uploadGrowthPlan := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)")
+	require.Contains(t, source, "downloadIncreaseBufferAfter, downloadGrowthPlan := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)")
+	require.Contains(t, source, "teardown, uploadGrowthPlan)")
+	require.Contains(t, source, "teardown, downloadGrowthPlan)")
 	require.NotContains(t, source, "defer uploadGrowthBoundary")
 	require.NotContains(t, source, "defer downloadGrowthBoundary")
 	require.Contains(t, source, "m.growth = resourceguard.NewGrowthBudget(resourceguard.DefaultGrowthConfig(), pressure)")

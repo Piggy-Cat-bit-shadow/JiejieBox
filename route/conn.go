@@ -633,8 +633,8 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	// direction that does grow holds exactly one until its copy returns. The release is
 	// owned by the copy engine's exit path, which is why neither goroutine below has a
 	// deferred Release. See resourceguard.GrowthBudget.GrowthBoundary.
-	uploadIncreaseBufferAfter, uploadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)
-	downloadIncreaseBufferAfter, downloadGrowthBoundary := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)
+	uploadIncreaseBufferAfter, uploadGrowthPlan := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)
+	downloadIncreaseBufferAfter, downloadGrowthPlan := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)
 	uploadWriter, uploadFlow := m.uploadStreamGate(conn, remoteConn, metadata.TrafficClass)
 	// One teardown for this flow, shared by both copy directions and by the half-close observer.
 	//
@@ -643,10 +643,10 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	// two participants, and the observer is a third. See conn_halfclose.go.
 	teardown := newFlowTeardown(ctx, onClose, conn, remoteConn)
 	go func() {
-		m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow, teardown, uploadGrowthBoundary)
+		m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow, teardown, uploadGrowthPlan)
 	}()
 	go func() {
-		m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil, teardown, downloadGrowthBoundary)
+		m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil, teardown, downloadGrowthPlan)
 	}()
 }
 
@@ -665,36 +665,41 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 // calls the release it returns exactly once when the direction's copy returns. That is
 // what separates "configured to try to grow" from "holds an enlarged buffer": a
 // direction that never reaches the threshold never touches the budget.
-func (m *ConnectionManager) growthThreshold(class trafficclass.Class, dialer N.Dialer, destination net.Conn, source net.Conn) (int64, bufio.IncreaseBufferPermit) {
+func (m *ConnectionManager) growthThreshold(class trafficclass.Class, dialer N.Dialer, destination net.Conn, source net.Conn) (int64, growthPlan) {
 	base := connectionIncreaseBufferAfter(dialer, destination, source)
-	if m.growth == nil {
-		return base, nil
-	}
-	return base, m.growth.GrowthBoundaryBuffers(class, base == earlyConnectionBufferIncreaseAfter, growthBuffersForDirection(destination, source))
+	return base, growthPlan{class: class, geometry: base == earlyConnectionBufferIncreaseAfter}
 }
 
-// growthBuffersForDirection reports how many grown buffers one copy direction will
-// hold, which is what the growth budget must charge.
+// growthPlan is what one copy direction hands connectionCopy so IT can build the seam
+// from the operands the copy engine actually uses.
 //
-// The predicates are the copy engine's own: a direction enters the vectorised loop
-// only when CreateVectorisedReadWaiter(source) AND CreateVectorisedWriter(destination)
-// both succeed (sing common/bufio/copy_direct.go), and that loop allocates
-// DefaultBatchSize grown buffers per read. Charging one unit per direction - the
-// pre-P2-01 model - therefore under-counted exactly these directions by 8x, and the
-// budget's documented byte cap was really 8x larger on the direct TCP path.
-//
-// The probe is a type assertion plus, on some platforms, a small wrapper allocation;
-// it runs once per copy direction at setup, never on the data path. A direction whose
-// writer is wrapped (the scheduler gate) may be over-charged, which is the safe side:
-// it can only make the budget refuse earlier.
-func growthBuffersForDirection(destination net.Conn, source net.Conn) int {
-	if _, ok := bufio.CreateVectorisedReadWaiter(source); !ok {
-		return 1
+// The seam cannot be built here: growthThreshold sees the inbound and outbound
+// connections, but the copy engine starts from the wrapped writer the router chose
+// (scheduler gate, tracker's counting connection) and then strips the counting and
+// replaceable layers itself before deciding whether to vectorise. Building the seam
+// here therefore answered for a layer the engine never reads or writes, which is how a
+// counted direction was charged 1 unit while holding 8 buffers (MD-005). The weight is
+// resolved inside connectionCopy, after the wrappers exist and with the same unwrapping
+// the engine performs.
+// seamFor resolves the plan into the seam the copy engine calls. Tests use it with
+// their own operands; connectionCopy calls the same path with the operands the engine
+// will actually copy from.
+func (p growthPlan) seamFor(budget *resourceguard.GrowthBudget, source io.Reader, destination io.Writer) bufio.IncreaseBufferPermit {
+	if p.seam != nil {
+		return p.seam
 	}
-	if _, ok := bufio.CreateVectorisedWriter(destination); !ok {
-		return 1
+	if budget == nil {
+		return nil
 	}
-	return bufio.DefaultBatchSize
+	return budget.GrowthBoundaryBuffers(p.class, p.geometry, growthBuffersForDirection(source, destination))
+}
+
+type growthPlan struct {
+	class    trafficclass.Class
+	geometry bool
+	// seam is an explicit override for tests; production leaves it nil so the budget
+	// is asked with the runtime weight.
+	seam bufio.IncreaseBufferPermit
 }
 
 // uploadStreamGate decides whether this upload flow is scheduled, and returns the writer the copy
@@ -1211,7 +1216,7 @@ func (s *packetBatchLengths) int64s(n int) []int64 {
 // boundary and runs the returned release exactly once when this copy returns. The
 // variadic form keeps a nil seam (no budget) and every test call site working without a
 // conditional at the data path.
-func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, increaseBufferAfter int64, done *atomic.Bool, onClose N.CloseHandlerFunc, copyWriter io.Writer, flow *trafficsched.Flow, teardown *flowTeardown, growthBoundary ...bufio.IncreaseBufferPermit) {
+func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, increaseBufferAfter int64, done *atomic.Bool, onClose N.CloseHandlerFunc, copyWriter io.Writer, flow *trafficsched.Flow, teardown *flowTeardown, growth ...growthPlan) {
 	if flow != nil {
 		// Releasing the flow is what lets a close unblock this goroutine, and what removes it from
 		// the scheduler's queues so a torn-down connection cannot hold a lane.
@@ -1221,8 +1226,17 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 		copyWriter = destination
 	}
 	var permit bufio.IncreaseBufferPermit
-	if len(growthBoundary) > 0 {
-		permit = growthBoundary[0]
+	if len(growth) > 0 {
+		plan := growth[0]
+		switch {
+		case plan.seam != nil:
+			permit = plan.seam
+		case m.growth != nil:
+			// Resolved here, with the operands this copy is about to start from: the
+			// engine strips counting/replaceable wrappers and then decides whether to
+			// vectorise, so the weight must be asked of the same layer it will use.
+			permit = m.growth.GrowthBoundaryBuffers(plan.class, plan.geometry, growthBuffersForDirection(source, copyWriter))
+		}
 	}
 	_, err := bufio.CopyWithIncreateBufferPermit(copyWriter, source, increaseBufferAfter, bufio.DefaultBatchSize, permit)
 	if err != nil {
