@@ -1285,40 +1285,14 @@ func (c peerConfig) GenerateIpcLines() string {
 	return ipcLines.String()
 }
 
-// udpAssociationConn marks one open UDP association for the release boundary.
-//
-// The wrapper is deliberately transparent: callers keep the net.Conn/net.PacketConn they were given,
-// and only Close is intercepted, because that is the moment the association stops needing the Device.
-type udpAssociationConn struct {
-	net.Conn
-	endpoint *Endpoint
-	once     sync.Once
-}
-
-func (c *udpAssociationConn) Close() error {
-	c.once.Do(func() { c.endpoint.udpAssociations.Add(-1) })
-	return c.Conn.Close()
-}
-
-type udpAssociationPacketConn struct {
-	net.PacketConn
-	endpoint *Endpoint
-	once     sync.Once
-}
-
-func (c *udpAssociationPacketConn) Close() error {
-	c.once.Do(func() { c.endpoint.udpAssociations.Add(-1) })
-	return c.PacketConn.Close()
-}
-
 // trackUDPAssociation counts the association BEFORE returning it, so a suspend racing the caller
-// cannot observe "no association" and release the Device under it.
+// cannot observe "no association" and release the Device under it. The wrapper itself is chosen by
+// the object's real capabilities in endpoint_association.go - embedding only net.Conn/net.PacketConn
+// would hide the packet/waiter fast paths the product selects by type assertion.
 func (e *Endpoint) trackUDPAssociation(conn net.Conn) net.Conn {
-	e.udpAssociations.Add(1)
-	return &udpAssociationConn{Conn: conn, endpoint: e}
+	return wrapUDPAssociationConn(conn, e)
 }
 
 func (e *Endpoint) trackUDPAssociationPacket(conn net.PacketConn) net.PacketConn {
-	e.udpAssociations.Add(1)
-	return &udpAssociationPacketConn{PacketConn: conn, endpoint: e}
+	return wrapUDPAssociationPacket(conn, e)
 }
