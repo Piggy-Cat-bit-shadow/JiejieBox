@@ -78,6 +78,11 @@ jobs:
   macos:
     needs: freeze
     uses: ./.github/workflows/client-macos.yml
+    # The called workflow's runner selector reads APPLE_RUNNER_TOKEN to decide between this
+    # account's Mac and the hosted image. A reusable workflow receives no secret it is not handed,
+    # so without this the selector would always fall back to the hosted image - which is exactly
+    # the queue this pipeline is trying to escape.
+    secrets: inherit
   windows:
     needs: freeze
     uses: ./.github/workflows/windows-core-amd64.yml
@@ -97,6 +102,9 @@ jobs:
     uses: ./.github/workflows/client-apple.yml
     with:
       apple_client_sha: ${{ needs.freeze.outputs.apple_sha }}
+    # Same reason as `macos` above: the selector's token is a secret, and a called workflow gets
+    # only the secrets it is explicitly handed.
+    secrets: inherit
 
   stage:
     needs: [freeze, verify, contract, linux, macos, windows, desktop, android, apple]

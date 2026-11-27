@@ -67,6 +67,7 @@ AUDIT = os.path.join(WF, "client-desktop-windows-runtime-audit.yml")
 LINUX = os.path.join(WF, "server-linux-amd64.yml")
 MOBILE = os.path.join(WF, "mobile-contract.yml")
 APPLE = os.path.join(WF, "client-apple.yml")
+APPLE_RUNNER = os.path.join(REPO, "scripts", "ci", "apple-runner.sh")
 PREPARE = os.path.join(WF, "release-prepare.yml")
 GATE = os.path.join(REPO, "scripts", "ci", "release-artifacts.sh")
 ACCEPTANCE = os.path.join(REPO, "scripts", "ci", "verify-release-acceptance.sh")
@@ -1363,6 +1364,47 @@ def check_release_prepare():
 # build into the single macOS job, and the trap in that fix is GitHub's `needs` semantics: a job
 # whose dependency was SKIPPED is skipped too, silently, so the mode would look wired and never run.
 
+# Which runner a job lands on stopped being a literal once the Apple producers started preferring
+# this account's own Mac. The substitution is one shape - the JSON label list a selection job
+# publishes - and the checker reads it rather than restating it, because the alternative is a
+# classification that silently stops matching when the wiring changes.
+_MACOS_SELECTOR = re.compile(
+    r"^\$\{\{\s*fromJSON\(needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)\)\s*\}\}$")
+
+
+def _apple_runner_script():
+    if not os.path.isfile(APPLE_RUNNER):
+        return ""
+    with open(APPLE_RUNNER, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _macos_runner(spec, jobs, chooser):
+    """True when a job's `runs-on` lands on a macOS image.
+
+    Two accepted forms. The literal `macos-*` label is the original one, and the jobs that keep it
+    are still hosted jobs. The second resolves the runner from a selection job, and is accepted
+    only when that job runs on ubuntu, declares the output being read, runs the chooser script,
+    and the chooser names a hosted macOS image as its fallback. Without those conditions the
+    expression could resolve to anything and this check would be certifying a label it cannot read.
+    """
+    text = str(spec or "").strip()
+    if text.startswith("macos"):
+        return True
+    match = _MACOS_SELECTOR.match(text)
+    if not match:
+        return False
+    selector = jobs.get(match.group(1)) or {}
+    if str(selector.get("runs-on", "")) != "ubuntu-latest":
+        return False
+    if match.group(2) not in (selector.get("outputs") or {}):
+        return False
+    steps = "\n".join(str(step.get("run") or "") for step in selector.get("steps") or [])
+    if "apple-runner.sh" not in steps:
+        return False
+    return "macos-latest" in chooser and "macos-26" in chooser
+
+
 def _apple_plan(workflow):
     """Evaluate which jobs run, and on how many macOS runners, for each input combination.
 
@@ -1372,6 +1414,7 @@ def _apple_plan(workflow):
     result 'skipped', which is exactly the trap this check exists for.
     """
     jobs = workflow.get("jobs") or {}
+    chooser = _apple_runner_script()
     order = []
     pending = list(jobs)
 
@@ -1423,7 +1466,7 @@ def _apple_plan(workflow):
             if evaluate(job.get("if", "always()"), dict(inputs, build_selfsign=True), results):
                 results[name] = "success"
                 planned.append(name)
-                if str(job.get("runs-on", "")).startswith("macos"):
+                if _macos_runner(job.get("runs-on"), jobs, chooser):
                     mac_jobs.append(name)
             else:
                 results[name] = "skipped"
@@ -1531,6 +1574,94 @@ def check_apple_single_runner_mode():
     report("apple single-runner: the macOS job's timeout is bounded",
            (macos.get("timeout-minutes") or 0) > 0 and macos.get("timeout-minutes") <= 120,
            "timeout-minutes=%s" % macos.get("timeout-minutes"))
+
+
+def check_apple_runner_selection():
+    """The Apple producers prefer this account's own Mac and still work without it.
+
+    The failure this guards is the queue that started it: `macos-latest` was assigned no runner
+    for hours ("The job was not acquired by Runner of type hosted"), and a job whose labels match
+    no idle runner WAITS instead of falling back. A selection job makes the choice explicit, and
+    there are three ways it rots without any build failing:
+
+      * the hosted fallback disappears - the selector always returns the self-hosted labels, so
+        every Apple build waits for a Mac that may be asleep. That is the original bug with an
+        extra job in front of it;
+      * the token never arrives - a called workflow receives no secret it was not handed, so one
+        missing `secrets: inherit` pins every release build to the fallback while the selector
+        still looks wired. The run log would show a warning nobody reads;
+      * the build jobs read the token - the credential belongs to the job that makes the choice,
+        not to the jobs that check out and execute arbitrary source.
+
+    The chooser's own branches are asserted from its text rather than re-implemented here; the
+    three answers it can give (self-hosted, hosted, hosted-because-unreadable) are the contract.
+    """
+    script = _apple_runner_script()
+    report("apple runner: the chooser script exists", bool(script), APPLE_RUNNER)
+    if not script:
+        return
+
+    report("apple runner: the hosted fallback still names the images the jobs used",
+           "macos-latest" in script and "macos-26" in script)
+    report("apple runner: the self-hosted pool is addressed by label, not by an image name",
+           "self-hosted" in script and "APPLE_RUNNER_LABEL" in script and "${pool}" in script,
+           "the label list is built from the pool variable, so no image name can leak into it")
+    report("apple runner: every uncertainty falls back to the hosted image",
+           "APPLE_RUNNER_TOKEN is not set" in script
+           and "could not be read" in script
+           and script.count("hosted_reason") >= 4)
+    # The fail-safe direction is the whole point: a selector that can fail CLOSED turns one expired
+    # token into an Apple pipeline that never builds, and it fails as a queue, not as an error.
+    report("apple runner: an unset token is not an error",
+           re.search(r'if \[ -z "\$\{GH_TOKEN:-\}" \]; then\n  hosted_reason', script) is not None)
+
+    for label, path in (("apple", APPLE),
+                        ("macos core", os.path.join(WF, "client-macos.yml")),
+                        ("apple tls", os.path.join(WF, "apple-tls-verify.yml"))):
+        if not os.path.isfile(path):
+            report("%s: the workflow exists" % label, False, path)
+            continue
+        text, workflow, on = load(path)
+        jobs = workflow.get("jobs") or {}
+        selector = jobs.get("select-runner") or {}
+        steps = selector.get("steps") or []
+        body = "\n".join(str(step.get("run") or "") for step in steps)
+        env = "\n".join(str(step.get("env") or "") for step in steps)
+        report("%s: select-runner runs off the macOS fleet" % label,
+               str(selector.get("runs-on", "")) == "ubuntu-latest",
+               "runs-on=%s" % selector.get("runs-on"))
+        report("%s: select-runner runs the one chooser implementation" % label,
+               "apple-runner.sh" in body)
+        report("%s: select-runner receives the token and nothing else reads it" % label,
+               "APPLE_RUNNER_TOKEN" in env and text.count("secrets.APPLE_RUNNER_TOKEN") == 1,
+               "references=%d" % text.count("secrets.APPLE_RUNNER_TOKEN"))
+        report("%s: no job names a hosted macOS image directly" % label,
+               not [name for name, job in jobs.items()
+                    if str(job.get("runs-on", "")).startswith("macos")],
+               ", ".join(name for name, job in jobs.items()
+                         if str(job.get("runs-on", "")).startswith("macos")) or "none")
+        report("%s: every macOS job resolves its runner through the selector" % label,
+               all(_macos_runner(job.get("runs-on"), jobs, script)
+                   for job in jobs.values()
+                   if str(job.get("runs-on", "")).strip() != "ubuntu-latest"),
+               ", ".join("%s -> %s" % (name, job.get("runs-on"))
+                         for name, job in jobs.items()
+                         if str(job.get("runs-on", "")).strip() != "ubuntu-latest"))
+
+    # The callers have to hand the secret over, or the selector is decorative in exactly the
+    # pipeline that matters (a release) while working in the one that does not (a dispatch).
+    for label, path, names in (
+            ("kernel release", os.path.join(WF, "kernel-release.yml"), ("macos", "apple")),
+            ("specialist verification", os.path.join(WF, "specialist-verification.yml"), ("apple-tls",))):
+        if not os.path.isfile(path):
+            report("%s: the workflow exists" % label, False, path)
+            continue
+        with open(path, encoding="utf-8") as handle:
+            jobs = (yaml.safe_load(handle) or {}).get("jobs") or {}
+        for name in names:
+            report("%s: %s hands the runner token to the called workflow" % (label, name),
+                   (jobs.get(name) or {}).get("secrets") == "inherit",
+                   "secrets=%s" % (jobs.get(name) or {}).get("secrets"))
 
 
 def check_kernel_release_graph():
@@ -1661,6 +1792,8 @@ def main(argv=None):
     check_gh_token()
     print()
     check_release_prepare()
+    print()
+    check_apple_runner_selection()
     print()
     check_apple_single_runner_mode()
     check_kernel_release_graph()

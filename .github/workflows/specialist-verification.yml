@@ -30,3 +30,6 @@ jobs:
   apple-tls:
     if: inputs.suite == 'apple-tls'
     uses: ./.github/workflows/apple-tls-verify.yml
+    # The called workflow's runner selector reads APPLE_RUNNER_TOKEN to decide between this
+    # account's Mac and the hosted image; a reusable workflow receives only what it is handed.
+    secrets: inherit

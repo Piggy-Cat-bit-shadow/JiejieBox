@@ -118,11 +118,34 @@ env:
   CGO_ENABLED_TARGET: '1'
 
 jobs:
+  # The same selection the Apple GUI pipeline makes, for the same reason: `runs-on` cannot say
+  # "this machine while it is awake, the hosted image otherwise", and a job whose labels match no
+  # idle runner waits in the queue instead of falling back. `client-apple.yml` carries the full
+  # reasoning; the decision itself is `scripts/ci/apple-runner.sh` in both places.
+  select-runner:
+    name: select the macOS runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runner: ${{ steps.select.outputs.runner }}
+      runner_macos_26: ${{ steps.select.outputs.runner_macos_26 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: select the Apple runner
+        id: select
+        env:
+          GH_TOKEN: ${{ secrets.APPLE_RUNNER_TOKEN }}
+        run: ./scripts/ci/apple-runner.sh
+
   macos-arm64:
     # Native macOS runner: a darwin binary cross-compiled on Linux cannot be
     # executed, so none of the runtime verification below would be possible, and
     # the Cronet/CGO profile is not reliably cross-compilable at all.
-    runs-on: macos-latest
+    #
+    # Which native macOS runner is select-runner's answer, not this file's, and that job is a
+    # dependency for exactly one reason: a job cannot read an output of a job it does not need.
+    needs: select-runner
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5

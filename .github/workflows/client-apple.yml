@@ -251,6 +251,34 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Which macOS runner the build jobs get.
+  #
+  # `runs-on` is a label list, not a preference: a job whose labels match no idle runner waits in
+  # the queue instead of falling back to another image, which is how this pipeline sat for hours
+  # waiting for a hosted macOS image. The owner's Mac is a repository runner labelled
+  # `jiejie-apple` and it answers immediately while it is awake; when it is not, the hosted image
+  # has to be the answer. That choice cannot be written in `runs-on`, so it is made here, once, and
+  # published as the outputs the macOS jobs consume.
+  #
+  # The token is optional on purpose. Without `APPLE_RUNNER_TOKEN` - or when the API refuses it -
+  # the decision is the hosted image, so a checkout that never configured the secret builds exactly
+  # as it did before this job existed. The whole decision, including the fallback images, lives in
+  # `scripts/ci/apple-runner.sh` rather than in this file.
+  select-runner:
+    name: select the macOS runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runner: ${{ steps.select.outputs.runner }}
+      runner_macos_26: ${{ steps.select.outputs.runner_macos_26 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: select the Apple runner
+        id: select
+        env:
+          GH_TOKEN: ${{ secrets.APPLE_RUNNER_TOKEN }}
+        run: ./scripts/ci/apple-runner.sh
+
   # Libbox is compiled ONCE per commit and shared by both GUI jobs and by the local publish.
   #
   # It is the most expensive step in the Apple pipeline and depends only on the source commit - no
@@ -259,13 +287,15 @@ jobs:
   # framework matches the commit being released, not merely trust an artifact name. The manifest's
   # apple_release field additionally records the shared UI selection for local TestFlight publishing.
   libbox:
-    needs: resolve-apple-source
+    needs: [resolve-apple-source, select-runner]
     # RUNS ONLY FOR iOS. The iOS product cannot build the framework itself without extending its
     # own job, and the dual-platform path shares this one build between both GUI jobs. A macOS-ONLY
     # run does NOT come here: it builds the framework inside the single macOS job, because that
     # mode exists precisely because a second macOS runner may never be assigned.
     if: ${{ inputs.build_ios }}
-    runs-on: macos-latest
+    # select-runner decides this; the literal label it replaces is the hosted fallback it still
+    # returns when the Mac is offline.
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     timeout-minutes: 120
     outputs:
       artifact: ${{ env.LIBBOX_ARTIFACT }}
@@ -410,8 +440,10 @@ jobs:
     # Two real data dependencies, neither of them a false serialization:
     #   resolve-apple-source - this job consumes its published SHA
     #   libbox               - this job downloads the artifact it produced
-    needs: [resolve-apple-source, libbox]
-    runs-on: macos-latest
+    # select-runner is a third dependency and not a data one: it publishes the runner, and a job
+    # cannot read an output of a job it does not need.
+    needs: [resolve-apple-source, libbox, select-runner]
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     timeout-minutes: 120
     steps:
       - name: check out with submodules
@@ -737,8 +769,8 @@ jobs:
     # shared artifact exists to download, skipped means this job builds it itself, failure means
     # neither is true and the job must not run at all.
     if: ${{ !cancelled() && inputs.build_macos && (needs.libbox.result == 'success' || needs.libbox.result == 'skipped') }}
-    needs: [resolve-apple-source, libbox]
-    runs-on: macos-latest
+    needs: [resolve-apple-source, libbox, select-runner]
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     timeout-minutes: 120
     steps:
       - name: check out the parent repository
@@ -1161,7 +1193,7 @@ jobs:
 
   ios-selfsign:
     if: ${{ inputs.build_ios && inputs.build_selfsign }}
-    needs: [resolve-apple-source, libbox]
+    needs: [resolve-apple-source, libbox, select-runner]
     env:
       APPLE_CLIENT_DIR: clients/apple
       APPLE_CLIENT_PLATFORM: ios
@@ -1172,7 +1204,10 @@ jobs:
     # provides it (macos-14 fails at package resolution). `macos-latest` has been queueing this
     # experiment out for hours - "The job was not acquired by Runner of type hosted" - so the
     # build targets the newer image label directly; it is a separate pool from macos-latest.
-    runs-on: macos-26
+    #
+    # That is also why the selector publishes a SECOND output: the hosted fallback for this job is
+    # `macos-26`, not `macos-latest`, and the owner's Mac has to answer both. See select-runner.
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner_macos_26) }}
     timeout-minutes: 150
     steps:
       - name: check out with submodules

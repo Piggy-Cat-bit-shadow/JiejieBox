@@ -12,8 +12,27 @@ permissions:
   contents: read
 
 jobs:
+  # The same selection the Apple GUI pipeline makes: `runs-on` cannot express "this machine while
+  # it is awake, the hosted image otherwise". `client-apple.yml` carries the full reasoning and
+  # `scripts/ci/apple-runner.sh` is the decision in all three Apple producers.
+  select-runner:
+    name: select the macOS runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runner: ${{ steps.select.outputs.runner }}
+      runner_macos_26: ${{ steps.select.outputs.runner_macos_26 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: select the Apple runner
+        id: select
+        env:
+          GH_TOKEN: ${{ secrets.APPLE_RUNNER_TOKEN }}
+        run: ./scripts/ci/apple-runner.sh
+
   macos:
-    runs-on: macos-latest
+    needs: select-runner
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
