@@ -10,6 +10,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -284,5 +285,52 @@ func TestBudgetStructureIsRefusedWhenItCannotFail(t *testing.T) {
 	summary := ledgerSummary{SHA: strings.Repeat("b", 40), Runs: []string{"run-a"}}
 	if err = requireReferenceProvenance(legacyBudget, summary, false); err == nil {
 		t.Fatal("a legacy budget must be refused as a certification reference")
+	}
+}
+
+// TestAnUncertifiableBudgetIsStillEvaluated is the CI canary's contract.
+//
+// The canary budget is hand-written (schema/1, no provenance): it may never certify a
+// candidate, but the evaluator must still run on it, because a canary that is rejected by a
+// provenance check proves nothing about whether the evaluator can fail. The gate's refusal is
+// a sentinel, and the same budget evaluated against a ledger that lacks the required metric
+// must produce a failed rule - the report path in main.go writes exactly these results.
+func TestAnUncertifiableBudgetIsStillEvaluated(t *testing.T) {
+	current, _ := completeSession(t, 1)
+
+	canaryBody, err := json.Marshal(map[string]any{
+		"schema_version": legacyBudgetSchemaVersion,
+		"baseline":       map[string]any{"goos": runtime.GOOS, "goarch": runtime.GOARCH},
+		"rules": []map[string]any{{
+			"id": "canary-impossible", "case": "empty", "nodes": 0, "groups": 0,
+			"node_proto": "direct", "gc_mode": "forced", "stage": "close",
+			"metric": "readings.this_metric_does_not_exist", "max": 1, "required": true,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget, err := readBudgetFile(writeTestBudget(t, string(canaryBody)))
+	if err != nil {
+		t.Fatalf("the canary budget must stay readable: %v", err)
+	}
+	summary := ledgerSummary{SHA: strings.Repeat("a", 40), Runs: []string{"run-a"}}
+	refusal := requireReferenceProvenance(budget, summary, false)
+	if refusal == nil {
+		t.Fatal("an unprovenanced canary budget was accepted as a certification reference")
+	}
+	if !errors.Is(refusal, ErrUncertifiableBudget) {
+		t.Fatalf("the refusal is not the uncertifiable-budget sentinel: %v", refusal)
+	}
+
+	results := evaluateBudget(budget, current.records)
+	if len(results) != 1 {
+		t.Fatalf("the canary evaluated %d rules, want 1", len(results))
+	}
+	if results[0].ID != "canary-impossible" || results[0].Status != statusFailed {
+		t.Fatalf("the canary rule did not fail when the evaluator ran: %+v", results[0])
+	}
+	if !strings.Contains(results[0].Reason, "required evidence missing") {
+		t.Fatalf("the canary rule failed for the wrong reason: %q", results[0].Reason)
 	}
 }

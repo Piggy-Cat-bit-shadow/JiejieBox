@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -410,6 +411,39 @@ func runGate(flags *runFlags, stdout io.Writer) error {
 		return err
 	}
 	verification, err := verifyGateInputs(budget, summary, flags.selfCheck, flags.sourceSHA)
+	if err != nil && errors.Is(err, ErrUncertifiableBudget) {
+		// The budget cannot certify this session, but that is a statement about the BUDGET, not
+		// about the evidence. Evaluate it anyway and put the per-rule verdict in the report: a
+		// hand-written canary must be able to prove the EVALUATOR fails, not merely that the gate
+		// refuses unprovenanced budgets. The exit stays non-zero either way - a passing
+		// non-reference budget still cannot certify - but the report now says which rule failed.
+		results := evaluateBudget(budget, records)
+		uncertifiable := gateReport{
+			SchemaVersion:  gateSchemaVersion,
+			GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+			BudgetPath:     budgetPath,
+			BudgetBaseline: budget.Baseline,
+			Output:         flags.output,
+			Source:         captureSourceIdentity(captureBuildIdentity()),
+			GoVersion:      summary.GoVersion,
+			GOOS:           summary.GOOS,
+			GOARCH:         summary.GOARCH,
+			Tags:           summary.Tags,
+			Runs:           runIDs(records),
+			RecordCount:    len(records),
+			Results:        results,
+			Verification:   &verification,
+			Error:          err.Error(),
+		}
+		uncertifiable.summarise()
+		if writeErr := writeGateReport(flags.output+".gate.json", uncertifiable); writeErr != nil {
+			return writeErr
+		}
+		if uncertifiable.Failed > 0 {
+			return fmt.Errorf("the budget cannot certify a candidate (%v) and %d rule(s) failed when it was evaluated anyway",
+				err, uncertifiable.Failed)
+		}
+	}
 	if err != nil {
 		// The refusal is the verdict, so it is written down as one: an exit code alone leaves the
 		// reviewer with no record of which identity check refused and why.

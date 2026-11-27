@@ -164,7 +164,22 @@ jobs:
           if ($canaryExit -eq 0) {
             throw "the canary budget PASSED: the gate can no longer fail, so every other verdict is worthless"
           }
-          Write-Output "canary failed as required (exit $canaryExit)"
+          # A non-zero exit is not enough: an unprovenanced budget is refused before the evaluator
+          # runs, and a canary that is merely REJECTED proves nothing about whether the evaluator
+          # can fail. The report must carry the failing rule the canary declared.
+          $canaryReportPath = "$env:RUNNER_TEMP\canary-gate.jsonl.gate.json"
+          if (-not (Test-Path -LiteralPath $canaryReportPath)) {
+            throw "the canary gate report was not written: the gate refused before recording a verdict"
+          }
+          $canaryReport = Get-Content -LiteralPath $canaryReportPath -Raw | ConvertFrom-Json
+          $canaryFailedRules = @($canaryReport.results | Where-Object { $_.status -eq 'failed' })
+          if ($canaryReport.failed -lt 1 -or $canaryFailedRules.Count -lt 1) {
+            throw "the canary was refused before the evaluator ran (failed=$($canaryReport.failed)): a gate that never evaluates cannot prove it can fail"
+          }
+          if ($canaryFailedRules[0].id -ne 'canary-impossible') {
+            throw "the canary failed on rule '$($canaryFailedRules[0].id)', not on the impossible required metric"
+          }
+          Write-Output "canary failed as required (exit $canaryExit, rule=$($canaryFailedRules[0].id))"
           # The gate's non-zero exit is the EXPECTED result here, so the step must not inherit it:
           # GitHub appends `exit $LASTEXITCODE` to every pwsh step and a leftover 1 would fail the job.
           exit 0

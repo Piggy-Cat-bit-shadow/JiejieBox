@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -511,6 +512,11 @@ func requireBudgetComparable(budget budgetFile, summary ledgerSummary) (warnings
 	return warnings, nil
 }
 
+// ErrUncertifiableBudget marks a refusal about the BUDGET's standing rather than about this
+// session's evidence. The gate still EVALUATES such a budget so a hand-written canary can prove
+// the evaluator itself can fail; it simply may never certify a candidate.
+var ErrUncertifiableBudget = errors.New("the budget cannot certify a candidate")
+
 // requireReferenceProvenance refuses a budget that cannot certify a candidate.
 //
 // Two independent refusals, because they catch different mistakes:
@@ -526,14 +532,14 @@ func requireReferenceProvenance(budget budgetFile, summary ledgerSummary, selfCh
 	if budget.legacy || budget.Provenance == nil {
 		// A legacy budget is evaluated for compatibility (the CI canary is one), but it cannot be
 		// the reference this gate certifies against.
-		return fmt.Errorf("this budget is %s or carries no provenance; only a reference budget "+
-			"(captured with a manifest) may certify a candidate", describeBudgetVersion(budget))
+		return fmt.Errorf("%w: this budget is %s or carries no provenance; only a reference budget "+
+			"(captured with a manifest) may certify a candidate", ErrUncertifiableBudget, describeBudgetVersion(budget))
 	}
 	if budget.Provenance.Kind != provenanceReference {
-		return fmt.Errorf("this budget's provenance is %q, not %q: it was derived from a ledger "+
+		return fmt.Errorf("%w: this budget's provenance is %q, not %q: it was derived from a ledger "+
 			"(-write-budget -from) rather than captured as a reference. A budget derived from the "+
 			"candidate passes every rule by construction, so it cannot be the gate",
-			budget.Provenance.Kind, provenanceReference)
+			ErrUncertifiableBudget, budget.Provenance.Kind, provenanceReference)
 	}
 	if len(budget.Baseline.Runs) == 0 {
 		return fmt.Errorf("the reference budget names no baseline run; its provenance cannot be checked")
