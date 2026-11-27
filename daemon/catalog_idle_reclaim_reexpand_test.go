@@ -101,11 +101,13 @@ func TestCatalogAURLTestedNodeIsReclaimedThenReexpandedByNewBusiness(t *testing.
 	pressure.Store(int32(resourceguard.LevelCritical))
 	require.Eventually(t, func() bool { return guard.Level() == resourceguard.LevelCritical }, time.Second, time.Millisecond)
 
-	sweep := manager.ReclaimDeferredExpansions(ctx, outboundmgr.ReclaimCauseExplicit)
-	require.Equal(t, resourceguard.LevelCritical, sweep.Level)
-	require.GreaterOrEqual(t, sweep.Evicted, 1, "the idle measured node must be reclaimed under pressure: %+v", sweep)
+	// Drive the PRODUCTION trigger instead of calling the sweep directly: the memory pass /
+	// DEEP_IDLE walk asks every outbound for CloseIdleConnections, the catalog descriptor
+	// forwards that walk to NotifyIdleWalk, and its owner schedules the sweep. Calling
+	// ReclaimDeferredExpansions here would skip exactly the wiring this test is named after.
+	boxInstance.Router().TrimIdleResources()
 	require.Eventually(t, func() bool { return boxInstance.DeferredExpansionCount() == 0 }, 10*time.Second, time.Millisecond,
-		"the reclaimed node holds no expansion")
+		"the idle measured node must be reclaimed by the idle walk under pressure")
 	reclaimed := w7Observation(t, node)
 	require.False(t, reclaimed.Expanded, "the measured node's runtime must be gone: %+v", reclaimed)
 	require.Zero(t, reclaimed.Conns)
