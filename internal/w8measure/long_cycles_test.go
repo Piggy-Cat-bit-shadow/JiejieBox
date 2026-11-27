@@ -296,13 +296,15 @@ func TestW8LongProviderUpdate(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		switch {
+		case deferred:
+			// A single-flight refusal that outlived the retry window is a deferral, not a failed
+			// update: counting it as updateFailures would make the busy control fail on the
+			// wrong assertion and hide the real verdict (the round count).
 		case updateErr != nil:
 			updateFailures++
 			if updateFailures < 4 {
 				t.Logf("round %d: provider update failed: %v", round, updateErr)
 			}
-		case deferred:
-			// Counted above; no publication expected.
 		default:
 			// A nil error only says the call was accepted. Prove the round's document is the
 			// one the provider serves: the changed node's tag carries this round's port.

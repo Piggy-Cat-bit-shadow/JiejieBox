@@ -131,7 +131,8 @@ jobs:
       - name: prove the gate can fail
         shell: pwsh
         run: |
-          # A gate that has never failed is not evidence that it can. The canary is a budget whose
+          # Re-run marker for the final candidate revision (no behavioural change).
+# A gate that has never failed is not evidence that it can. The canary is a budget whose
           # single REQUIRED rule asks for a metric nothing produces, so the rule must report failed
           # evidence (not "skipped"), and the exit code must be non-zero: a zero exit here means the
           # evaluator, the ledger reader or the failure path regressed into "always green".
