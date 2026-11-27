@@ -53,9 +53,13 @@ func readGateWorkflow(t *testing.T) (workflowDocument, string) {
 	require.NoError(t, err)
 	content, err := os.ReadFile(path)
 	require.NoError(t, err, "the gate workflow must exist at %s", path)
+	// Normalise line endings: a Windows checkout can hand this file CRLF while the mutation anchors
+	// below are written with LF. The contract is about the YAML's content, not its encoding, and a
+	// platform-dependent test is a test that fails on the platform the gate actually runs on.
+	raw := strings.ReplaceAll(string(content), "\r\n", "\n")
 	var document workflowDocument
-	require.NoError(t, yaml.Unmarshal(content, &document), "the gate workflow must parse")
-	return document, string(content)
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &document), "the gate workflow must parse")
+	return document, raw
 }
 
 func memoryBudgetJob(document workflowDocument) (workflowJob, bool) {
