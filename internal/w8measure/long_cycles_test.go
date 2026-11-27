@@ -178,9 +178,16 @@ func w8CycleProviderDocument(nodes int, changedIndex int, changedPort int) []byt
 		if index == changedIndex {
 			port = changedPort
 		}
+		tag := fmt.Sprintf("node-%06d", index)
+		if index == changedIndex {
+			// The tag carries the port the round served, so "this round's document was
+			// published" is observable from the provider's outbound list instead of assumed
+			// from a nil Update() error.
+			tag = fmt.Sprintf("node-%06d-p%d", index, changedPort)
+		}
 		document.Outbounds[index] = socksNode{
 			Type:       "socks",
-			Tag:        fmt.Sprintf("node-%06d", index),
+			Tag:        tag,
 			Server:     "127.0.0.1",
 			ServerPort: port,
 			Version:    "5",
@@ -271,6 +278,7 @@ func TestW8LongProviderUpdate(t *testing.T) {
 		// That is the documented single-flight contract, not a failure: a real caller retries
 		// later. Retry within a bounded window and record the deferrals separately.
 		var updateErr error
+		deferred := false
 		deadline := time.Now().Add(2 * time.Second)
 		for {
 			updateErr = updater.Update()
@@ -278,19 +286,42 @@ func TestW8LongProviderUpdate(t *testing.T) {
 				break
 			}
 			if time.Now().After(deadline) {
+				// The single-flight refusal is a deferral, not a completed update: this round
+				// must not count towards completedUpdates, or a provider that never publishes
+				// would still report a healthy rate.
 				updateBusyRounds++
-				updateErr = nil
+				deferred = true
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if updateErr != nil {
+		switch {
+		case updateErr != nil:
 			updateFailures++
 			if updateFailures < 4 {
 				t.Logf("round %d: provider update failed: %v", round, updateErr)
 			}
-		} else {
-			completedUpdates++
+		case deferred:
+			// Counted above; no publication expected.
+		default:
+			// A nil error only says the call was accepted. Prove the round's document is the
+			// one the provider serves: the changed node's tag carries this round's port.
+			expectedTag := fmt.Sprintf("node-%06d-p%d", round%nodes, 30000+round)
+			published := false
+			for _, candidate := range provider.Outbounds() {
+				if strings.HasSuffix(candidate.Tag(), expectedTag) {
+					published = true
+					break
+				}
+			}
+			if !published {
+				updateFailures++
+				if updateFailures < 4 {
+					t.Logf("round %d: provider accepted the update but does not serve %q", round, expectedTag)
+				}
+			} else {
+				completedUpdates++
+			}
 		}
 		if round%sampleEvery == 0 || round == rounds {
 			samples = append(samples, w8SampleNow(round, len(provider.Outbounds())))

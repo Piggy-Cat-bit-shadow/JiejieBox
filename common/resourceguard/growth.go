@@ -414,12 +414,16 @@ func (p *GrowthPermit) Release() {
 // The identities a reader can rely on:
 //
 //	InUse            == the UNITS currently held (one unit per grown buffer; a vectorised
-//	                    direction holds DefaultBatchSize of them), never above the cap
-//	                    at the level this snapshot was taken in. A permit that was
+//	                    direction holds DefaultBatchSize of them). It never exceeds the
+//	                    cap that was in force when each permit was GRANTED; a permit
 //	                    granted under a looser level stays held until its copy ends, so
-//	                    InUse can sit above a cap that was just lowered - that is a
-//	                    drain, not a leak.
-//	ReservedInUse    <= min(Reserve, InUse)
+//	                    after a tightening InUse (and ReservedInUse) can each sit above
+//	                    the CURRENT cap - ordinary and reserve units drain separately,
+//	                    and that is a drain, not a leak. A new admission is judged
+//	                    against the current cap only.
+//	ReservedInUse    <= the reserve that was in force when those permits were granted,
+//	                    and <= InUse. Like InUse it can exceed the CURRENT reserve during
+//	                    a drain.
 //	Granted/Released count ADMISSION EVENTS, not units: one 8-unit permit adds 1 to
 //	                    Granted and 1 to Released. InUse is therefore NOT
 //	                    Granted - Released; derive it from the permits, not from these
