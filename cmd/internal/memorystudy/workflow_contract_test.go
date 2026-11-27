@@ -7,10 +7,14 @@ package main
 // after a non-zero exit, an artifact upload marked `if: always()`, and the `if-no-files-found` policy
 // that decides whether a run which wrote NOTHING is green or red.
 //
-// The independent review found exactly that hole: the upload step used the default `warn`, and the gate
-// can refuse before it writes its report (missing run, truncated ledger, mixed identity). Such a run
-// produced no artifacts and still reported success. These assertions pin the fixed contract, and they
-// are read-only reviewable: no workflow is dispatched and no network is used.
+// # Why the assertions are functions over a DOCUMENT plus a MUTATION sweep
+//
+// Independent review showed that a test which only looks for substrings can pass a workflow that has
+// regressed: moving the diagnosis marker AFTER the `throw` still contained both strings, and adding
+// `continue-on-error: true` to the gate step still passed. Both mutations silently destroy the
+// property being tested. So the contract is expressed as checks over (document, raw text), and the
+// tests below run deliberate mutations through the SAME checks and require them to fail. A check that
+// cannot reject its own mutation is not a check.
 
 import (
 	"os"
@@ -25,16 +29,17 @@ import (
 const workflowPath = "../../../.github/workflows/windows-boxdd-tests.yml"
 
 type workflowStep struct {
-	Name string            `yaml:"name"`
-	If   string            `yaml:"if"`
-	Run  string            `yaml:"run"`
-	Uses string            `yaml:"uses"`
-	With map[string]string `yaml:"with"`
+	Name            string            `yaml:"name"`
+	If              string            `yaml:"if"`
+	Run             string            `yaml:"run"`
+	Uses            string            `yaml:"uses"`
+	ContinueOnError *bool             `yaml:"continue-on-error"`
+	With            map[string]string `yaml:"with"`
 }
 
 type workflowJob struct {
 	Name            string         `yaml:"name"`
-	ContinueOnError bool           `yaml:"continue-on-error"`
+	ContinueOnError *bool          `yaml:"continue-on-error"`
 	Steps           []workflowStep `yaml:"steps"`
 }
 
@@ -53,35 +58,68 @@ func readGateWorkflow(t *testing.T) (workflowDocument, string) {
 	return document, string(content)
 }
 
-func findStep(t *testing.T, job workflowJob, name string) workflowStep {
-	t.Helper()
+func memoryBudgetJob(document workflowDocument) (workflowJob, bool) {
+	job, loaded := document.Jobs["memory-budget"]
+	return job, loaded
+}
+
+func stepNamed(job workflowJob, name string) (workflowStep, bool) {
 	for _, step := range job.Steps {
 		if step.Name == name {
-			return step
+			return step, true
 		}
 	}
-	t.Fatalf("the memory-budget job has no step named %q", name)
-	return workflowStep{}
+	return workflowStep{}, false
 }
 
-// TestTheGateWorkflowFailsTheJobWhenTheGateRefuses is the `throw` half of propagation.
-func TestTheGateWorkflowFailsTheJobWhenTheGateRefuses(t *testing.T) {
-	document, _ := readGateWorkflow(t)
-	job, loaded := document.Jobs["memory-budget"]
-	require.True(t, loaded, "the memory-budget job must exist")
-	step := findStep(t, job, "evaluate the budget")
-	require.Contains(t, step.Run, "-gate", "the step must run the gate")
-	require.Contains(t, step.Run, "$LASTEXITCODE", "the step must read the gate's real exit code")
-	require.Contains(t, step.Run, "throw", "a non-zero gate must throw, not be swallowed")
-	require.Contains(t, step.Run, "memory-gate.exit.txt",
-		"the exit code must be written down BEFORE the throw, so a pre-report refusal still leaves evidence")
-}
+// contractProblems returns every violation in the document. It never calls t.Fatal, so the mutation
+// tests can run it over a doctored document and inspect the result.
+func contractProblems(document workflowDocument, raw string) []string {
+	var problems []string
+	job, loaded := memoryBudgetJob(document)
+	if !loaded {
+		return append(problems, "the memory-budget job is missing")
+	}
+	if job.ContinueOnError != nil && *job.ContinueOnError {
+		problems = append(problems, "the memory-budget job sets continue-on-error")
+	}
+	for _, step := range job.Steps {
+		if step.ContinueOnError != nil && *step.ContinueOnError {
+			problems = append(problems, "step "+step.Name+" sets continue-on-error")
+		}
+	}
 
-// TestAMissingArtifactFailsTheJob is the upload half: silent emptiness must be red.
-func TestAMissingArtifactFailsTheJob(t *testing.T) {
-	document, _ := readGateWorkflow(t)
-	job, loaded := document.Jobs["memory-budget"]
-	require.True(t, loaded)
+	gate, found := stepNamed(job, "evaluate the budget")
+	if !found {
+		return append(problems, "the evaluate-the-budget step is missing")
+	}
+	if !strings.Contains(gate.Run, "-gate") {
+		problems = append(problems, "the gate step does not run -gate")
+	}
+	if !strings.Contains(gate.Run, "$LASTEXITCODE") {
+		problems = append(problems, "the gate step does not read the real exit code")
+	}
+	if !strings.Contains(gate.Run, "throw") {
+		problems = append(problems, "a non-zero gate is not turned into a failure")
+	}
+	markerLine, throwLine := -1, -1
+	for index, line := range strings.Split(gate.Run, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if markerLine < 0 && strings.Contains(line, "Set-Content") && strings.Contains(line, "memory-gate.exit.txt") {
+			markerLine = index
+		}
+		// A THROW STATEMENT starts the line; the word inside a comment must not count, or a comment
+		// mentioning "thrown" would be read as the failure path.
+		if throwLine < 0 && strings.HasPrefix(trimmed, "throw") {
+			throwLine = index
+		}
+	}
+	if markerLine < 0 {
+		problems = append(problems, "the gate step does not write the exit marker")
+	} else if throwLine >= 0 && markerLine > throwLine {
+		problems = append(problems, "the exit marker is written AFTER the throw, so a refused gate leaves no diagnosis")
+	}
+
 	var upload *workflowStep
 	for index := range job.Steps {
 		if strings.HasPrefix(job.Steps[index].Uses, "actions/upload-artifact") {
@@ -89,23 +127,85 @@ func TestAMissingArtifactFailsTheJob(t *testing.T) {
 			break
 		}
 	}
-	require.NotNil(t, upload, "the memory-budget job must upload its evidence")
-	require.Equal(t, "always()", strings.TrimSpace(upload.If),
-		"the upload must run even when the gate failed, otherwise the diagnosis is lost")
-	require.Equal(t, "error", upload.With["if-no-files-found"],
-		"a run that produced no evidence must fail; `warn` lets a silent run stay green")
-	require.Contains(t, upload.With["path"], "memory-gate.exit.txt",
-		"the uploaded set must include the exit marker written before the failure is thrown")
+	if upload == nil {
+		return append(problems, "the memory-budget job does not upload its evidence")
+	}
+	if strings.TrimSpace(upload.If) != "always()" {
+		problems = append(problems, "the upload step does not run when the gate failed")
+	}
+	if upload.With["if-no-files-found"] != "error" {
+		problems = append(problems, "a run that produced no evidence is not required to fail")
+	}
+	if !strings.Contains(upload.With["path"], "memory-gate.exit.txt") {
+		problems = append(problems, "the uploaded set does not include the exit marker")
+	}
+	return problems
 }
 
-// TestTheJobIsNotAllowedToFail keeps the two assertions above from being neutralised one level up.
-func TestTheJobIsNotAllowedToFail(t *testing.T) {
-	document, _ := readGateWorkflow(t)
-	job, loaded := document.Jobs["memory-budget"]
-	require.True(t, loaded)
-	require.False(t, job.ContinueOnError,
-		"continue-on-error would report a failed gate as a successful job")
-	for _, step := range job.Steps {
-		require.NotEqual(t, "continue-on-error", strings.TrimSpace(step.If))
-	}
+// TestTheGateWorkflowKeepsItsFailureContract runs the checks over the real workflow.
+func TestTheGateWorkflowKeepsItsFailureContract(t *testing.T) {
+	document, raw := readGateWorkflow(t)
+	require.Empty(t, contractProblems(document, raw), "the gate workflow must keep its failure-propagation contract")
+}
+
+// mutation applies one textual change and returns the re-parsed document plus the new text.
+func mutate(t *testing.T, raw string, old string, new string) (workflowDocument, string) {
+	t.Helper()
+	require.Contains(t, raw, old, "the mutation anchor must exist; otherwise the test proves nothing")
+	mutated := strings.Replace(raw, old, new, 1)
+	var document workflowDocument
+	require.NoError(t, yaml.Unmarshal([]byte(mutated), &document))
+	return document, mutated
+}
+
+// TestTheContractRejectsADiagnosisMovedAfterTheThrow is the review's first mutant: a marker written
+// after the throw is never reached, so a refused gate leaves the reviewer with nothing.
+func TestTheContractRejectsADiagnosisMovedAfterTheThrow(t *testing.T) {
+	document, raw := readGateWorkflow(t)
+	mutated, text := mutate(t, raw,
+		"          \"gate_exit=$gateExit\" | Set-Content -LiteralPath \"$env:RUNNER_TEMP\\memory-gate.exit.txt\" -Encoding utf8\n          if ($gateExit -ne 0) {",
+		"          if ($gateExit -ne 0) {")
+	mutatedAfterThrow, _ := mutate(t, text,
+		"          throw \"the memory budget gate failed with exit code $gateExit; the ledger and its verdict are attached to this run\"\n",
+		"          throw \"the memory budget gate failed with exit code $gateExit; the ledger and its verdict are attached to this run\"\n          \"gate_exit=$gateExit\" | Set-Content -LiteralPath \"$env:RUNNER_TEMP\\memory-gate.exit.txt\" -Encoding utf8\n")
+	require.Empty(t, contractProblems(document, raw))
+	problems := contractProblems(mutatedAfterThrow, text)
+	require.NotEmpty(t, problems, "moving the exit marker after the throw must be rejected")
+	t.Logf("mutant rejected: %v", problems)
+	_ = mutated
+}
+
+// TestTheContractRejectsAContinueOnErrorGate is the review's second mutant: marking the step
+// continue-on-error keeps the diagnosis but reports the job green.
+func TestTheContractRejectsAContinueOnErrorGate(t *testing.T) {
+	_, raw := readGateWorkflow(t)
+	document, text := mutate(t, raw,
+		"      - name: evaluate the budget\n        shell: pwsh\n",
+		"      - name: evaluate the budget\n        continue-on-error: true\n        shell: pwsh\n")
+	problems := contractProblems(document, text)
+	require.NotEmpty(t, problems, "a continue-on-error gate must be rejected")
+	t.Logf("mutant rejected: %v", problems)
+}
+
+// TestTheContractRejectsAWarnUpload is the third mutant: the original defect, back again.
+func TestTheContractRejectsAWarnUpload(t *testing.T) {
+	_, raw := readGateWorkflow(t)
+	document, text := mutate(t, raw,
+		"          if-no-files-found: error\n",
+		"          if-no-files-found: warn\n")
+	problems := contractProblems(document, text)
+	require.NotEmpty(t, problems, "a warn-on-missing-artifact upload must be rejected")
+	t.Logf("mutant rejected: %v", problems)
+}
+
+// TestTheContractRejectsAMissingUploadPath is the fourth mutant: the marker is written but never
+// uploaded, so the reviewer still cannot see it.
+func TestTheContractRejectsAMissingUploadPath(t *testing.T) {
+	_, raw := readGateWorkflow(t)
+	document, text := mutate(t, raw,
+		"            ${{ runner.temp }}/memory-gate.exit.txt\n",
+		"")
+	problems := contractProblems(document, text)
+	require.NotEmpty(t, problems, "an upload that omits the exit marker must be rejected")
+	t.Logf("mutant rejected: %v", problems)
 }
