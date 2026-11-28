@@ -28,6 +28,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +38,49 @@ import (
 // TestV05TheTwoResetsDifferOnlyInTheClassification pins the shape of the change: both resets run the
 // same body (one router reset, one generation advance), and the only observable difference is the
 // reclaim class handed to the connection manager. ReleaseMemory now shares ResetNetworkHard's class.
+// TestTheMemoryCrisisOpensTheWindowBeforeTheFlowsGo pins the ORDER, not just the end state.
+//
+// Opening the governor after reclaimAll is a real hole and reads as correct in any test that samples
+// the window afterwards: the physical close already runs on a disposer by then, so the applications
+// whose sockets were just closed are re-dialling while the window is still shut. The disposal hook
+// samples the window at the one instant that matters - after the connections are staged, before they
+// are gone - so "opened too late" fails here even though the window is open a moment later.
+func TestTheMemoryCrisisOpensTheWindowBeforeTheFlowsGo(t *testing.T) {
+	manager := newPowerHarness(t)
+	connections := NewConnectionManager(nil)
+	t.Cleanup(func() { _ = connections.Close() })
+	manager.connectionManager = connections
+
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+	})
+	ticket, err := connections.AcquireConnection(context.Background())
+	require.NoError(t, err)
+	_, err = ticket.TrackConn(client)
+	require.NoError(t, err)
+	require.Equal(t, 1, connections.Count())
+	require.False(t, connections.DialGovernorOpen())
+
+	var openWhileStaging atomic.Bool
+	var sampled atomic.Bool
+	connections.disposalStageHook = func() {
+		openWhileStaging.Store(connections.DialGovernorOpen())
+		sampled.Store(true)
+	}
+
+	manager.ReleaseMemory(context.Background())
+
+	require.True(t, sampled.Load(), "the fixture never reached the disposal stage")
+	require.True(t, openWhileStaging.Load(),
+		"the reconnect governor was still shut while the crisis was closing flows: the first wave of "+
+			"re-dials arrives exactly then, and a window opened afterwards does not cover it")
+}
+
+// TestTheMemoryCrisisHasItsOwnReclaimClass checks that the crisis, the drain and the dead path hand
+// the connection manager three DIFFERENT classes, and that only the crisis and the drain differ in
+// the governor window they open.
 func TestTheMemoryCrisisHasItsOwnReclaimClass(t *testing.T) {
 	type entry struct {
 		name string

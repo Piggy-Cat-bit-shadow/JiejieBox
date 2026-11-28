@@ -296,14 +296,16 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 			m.CloseAll()
 			return count
 		}
-		reclaimed := m.reclaimAll()
 		if policy.openGovernor {
-			// The connections are gone and their applications are about to ask for new ones.
-			// Without this the burst arrives unsmoothed, which on a device under memory pressure
-			// is the worst possible moment to add one.
+			// Open the window BEFORE the connections go, not after.
+			//
+			// The applications on those connections start re-dialling as soon as their socket
+			// closes, and the physical close runs on a disposer that is already running by the time
+			// reclaimAll returns. Opening the window afterwards would leave the first wave - the
+			// one this mechanism exists for - to arrive while it was still shut.
 			m.dialGovernor.open(time.Now())
 		}
-		return reclaimed
+		return m.reclaimAll()
 	}
 
 	now := time.Now()
