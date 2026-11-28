@@ -4,6 +4,79 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.56](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.56) — 2026-11-28
+
+### 本次更新
+
+v0.1.56 是 v0.1.55 之后的一个以**内存与增长预算**为主线的版本。上一版把"换网、证书重载、会话借用"三条边界补齐；本版继续沿"预算必须等于真实占用"的方向，把拷贝增长预算从"每方向 1 单位"改成"每个增长缓冲 1 单位"（向量化方向 8 单位），并让默认的 256 单位第一次等于真实的 16 MiB 上限，而不是旧注释里的"256 方向 × 64 KiB"。计费点从 copy 启动时移到真实的增长边界，权重按 copy engine 实际拿到手的操作数解析，因此 TLS 分片、嗅探缓存这类"首写后才可替换"的包装不再把 8 个缓冲按 1 个单位放行。配套的 `/connections` 快照从逐项 `map` 改成 struct 编码，10k 连接的一次快照少分配约 29%。
+
+内存线之外，本版还包含：Apple iOS 的 Go 运行时覆盖子系统与其门禁；Provider 的有界记录存储、原子发布与流式缓存；Catalog/Lazy 的闲置节点回收与 O(1) 释放；规则派生工件的字节绑定与版本修复；WireGuard/AWG 的链路保留与重建；MASQUE 会话退役释放；mieru 的写方向半关闭、接收预算与慢会话隔离；以及一批把"看起来通过"的测试改成"能失败"的门禁。
+
+### 一、增长预算与内存
+
+- **预算单位化**：`common/resourceguard` 的增长预算以「1 个 grown buffer = 1 单位」计，向量化方向一次增长持有 8 单位；`growthThreshold` 只返回计划，`connectionCopy` 在真实增长边界用 `GrowthBoundaryFor` 建立 seam，`AdmitBuffers` 按整单批准或拒绝。计划仍是 Normal 256 / Armed 128 / Critical 0 单位，默认真实上限从 **128 MiB** 降到 **16 MiB**。
+- **按实际操作数计费**：计费前的探测按 sing 的 `UnwrapCountReader/Writer` 解包，再判断向量化读等待器与写入器；`CounterConn` 单独包装不再被误判为 1 单位。
+- **权重在边界解析**：`tlsfragment.Conn`、`tlsspoof.Conn` 在首写前不可替换、首写后才可替换；权重改在 seam 被调用时求值，修掉了"计费 1、实际持有 8"的 8 倍低估（反例：C0 上 `expected 8 / actual 1`，本版通过）。
+- **代次与 reload**：新旧代预算不共享；真实 Box reload 用例验证旧代许可归零、新代从零开始，Windows 与 Linux（含内核 splice 的 0/8/16 形状）都通过。
+- **`/connections` 快照**：`experimental/clashapi` 用 struct 代替每项的 `map[string]any`，字节形状保持不变；10k 连接一次 HTTP 快照的总分配从 **74.2 MB 降到 52.4 MB（−29.4%）**，采样堆增量从 **45.7 MB 降到 34.6 MB**。
+- **G01/G03**：HTTP/2 空闲池裁剪、共享正则编译、TCP 嗅探缓冲从 2 KiB 起按需增长。
+- **clashapi**：代理与规则列表流式输出，WebSocket 帧高水位回收。
+- **Apple iOS 运行时覆盖**：新增 runtime overlay 子系统，按 gomobile target 记录并选择组 B（仅 iOS family 默认启用）；拒绝"能编译但会杀死目标"的覆盖常量；默认关闭 heap sampling 与 adaptive starting stack，并把它做成可选构建输入。
+
+### 二、Provider 与 Catalog
+
+- **Provider**：应用选项从快照改为有界 canonical record store；缓存文档每次获取只编码一次；path cache 流式化并复制订阅行；304 的 mtime 守卫绑定 cachefile 记录；`Close` 成为终态而不是尽力标志；预算按累计与精确编码校验；Opaque fallback 会显式上报而不是静默重建。
+- **Catalog/Lazy**：URLTest 后的闲置节点按**生产 idle walk** 回收，`dialing/leased/conns` 任一非零拒绝回收；`Put` 去重与最后一次 `Release` 收进同一临界区；作用域 id 与名称设上限，`Release` 改为 O(1)。
+
+### 三、规则与派生工件
+
+- SRSM 的哈希与解析绑定同一份字节；只解析仍匹配已验证版本的源字节；远程转换在重启后复用编译结果。
+- 派生工件版本目录在使用前校验并按需修复；`manifest` 在字节相同但来源不同时替换；未来时间戳用逻辑时钟压过；304 过期 URL 被拒绝；丢弃评估基于该版本**当前**的 manifest。
+
+### 四、传输与协议
+
+- **WireGuard/AWG**：释放重链时保留 UDP 关联与能力包装；私有 userspace 形状按需释放并重建；retained flow 能带回它曾被释放的 wireguard-go 设备。
+- **MASQUE**：真实会话退役时释放内层 device；内部 Go stack 首用构建而非 `Initialize`。
+- **mieru**：`Session.CloseWrite` 写方向半关闭（预扩展对端返回 `ErrWriteEndUnsupported`）；共享 underlay 的慢会话失败而不是阻塞读端；接收预算 clamp 到协议下限并接入客户端；Network Extension 的未读载荷预算与"无法生效时明说"。
+- **QUIC/hysteria2**：接收窗口策略；grant 状态命名；消费 sing-quic 的接收窗口拆分与 hysteria2 salamander XOR 修复。
+- **outbound**：HTTP 只准入门控到有效的 HTTP/1.x；SOCKS 在 Box 测量后保持 eager；共享 rebuild-record catalog；一次 Provider apply 只验证一张图后原子发布。
+
+### 五、守护进程与运行协调
+
+- G08：活 TCP + 活 UDP 关联下的整 Box reload；失败 reload 的恢复契约。
+- 手工探测的显示终态与"证据"绑定；错误答案的 timeout 不进入健康层；终态失败进入 group 订阅流。
+- Provider tag 在 metadata walk 前等待；千节点代次 churn 跑满 100 轮；overlap 不变量取代调度偶然性断言；生命周期 Scope 合一。
+
+### 六、客户端与 ABI
+
+- Libbox ABI 迁移的 9 个方法保持契约（`docs/fork/libbox-abi-contract.tsv`），客户端 gitlink 与已验证 revision 一致。
+- Apple `cb56592e`、Android `9816e00`、Desktop `cbd27f7`（Desktop 按 report 策略保留）、Dashboard `63a68d8`。
+- Apple 的启动策略写入 libbox provenance 并在打包产物中验证；运行时覆盖进入 release link flags。
+- Windows 安装器使用 Go 1.27.4；Desktop 客户端带上失败 URLTest 显示为 Timeout 的修复。
+
+### 七、门禁与证据
+
+- memorystudy 门禁：canary 必须被**评估**而不只是被拒绝；不可认证预算仍写逐规则结果；候选身份要佐证而不是相信账本；预算给出可存活的余量；混合协议夹具与 A/B 矩阵。
+- W8 独立测量：100 轮 × 1000 节点，逐轮校验该轮文档真的发布，busy 记为延后而不是完成。
+- workflow 契约的变异测试（含删除 throw）、pin-runs 证据、维护账本再生成。
+
+### 八、依赖与 pin
+
+| 依赖 | v0.1.55 | v0.1.56 |
+| --- | --- | --- |
+| sing | `a9e81c9e8e8a` | `987a8527862b`（SOCKS warm-handoff 取消/超时、LruCache、packet-too-big） |
+| sing-quic | `a1125fe50482` | `08d3812472b6`（hysteria2 salamander XOR、raw socket 交接） |
+| quic-go | `d51ec71bf0dd` | `61b6144fd83e`（packet codec/interceptor） |
+| sing-anytls | `b74ada19da50` | `460710636c7f`（控制帧写超时） |
+| mieru | `2c89d083c5ca` | `543072ab559b`（v3.40.0、PacketUnderlay 自死锁修复） |
+| sing-tun / utls / wireguard-go / cronet | 不变 | 不变 |
+
+### 九、验证与发布
+
+- 内核：Verify（含 race checks）、Release contract、Maintenance ledger、Mobile contract 全绿；Android ARM64 AAR、Windows x64 安装器、Apple Libbox / macOS DMG / iOS IPA（含自签）均在同一候选构建成功。
+- 平台：Windows/amd64、Linux/amd64、macOS arm64、iOS arm64；标签为 `release/DEFAULT_BUILD_TAGS_*` 对应集合。
+- 已知边界：X02 路由层的 keep-session 仍无生产消费者；Windows 下两条 HTTP/3 数据面用例在 v0.1.55 与本版同样失败（既有问题，非本版回归）；真机 NE footprint / Jetsam / 功耗、TestFlight 上传与客户端消费仍需设备与发布授权。
+
 ## [v0.1.55](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.55) — 2026-11-21
 
 ### 本次更新
