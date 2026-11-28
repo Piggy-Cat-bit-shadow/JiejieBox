@@ -30,6 +30,11 @@ import (
 // call site rather than implied by which method somebody happened to call.
 type ReclaimReason uint8
 
+// testHookAfterSchedulerRelease runs after the shaper release in Reclaim and before any
+// connection is reclaimed. Tests use it to sample the reconnect governor at the exact instant the
+// first flows can be closed by a released write; production leaves it nil.
+var testHookAfterSchedulerRelease func()
+
 const (
 	// ReclaimNetworkTransition is a path change: a new interface, a new gateway, a new SSID.
 	//
@@ -285,8 +290,20 @@ func reclaimPolicyFor(reason ReclaimReason) reclaimPolicy {
 // running to reclaim them as they fall silent.
 func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 	policy := reclaimPolicyFor(reason)
+	// Open the window FIRST, before anything that can close a connection.
+	//
+	// There are two such things and both run before the disposer: the shaper release below (a
+	// parked flow whose write is released with ErrClosed closes both ends of its copy) and
+	// reclaimAll itself. Opening the window between them, or after either, leaves the reconnects
+	// they provoke ungoverned - which is what the closeout audit found on the scheduler path.
+	if policy.openGovernor {
+		m.dialGovernor.open(time.Now())
+	}
 	if policy.releaseFlows && m.scheduler != nil {
 		m.scheduler.ReleaseAll()
+	}
+	if testHookAfterSchedulerRelease != nil {
+		testHookAfterSchedulerRelease()
 	}
 	if policy.closeAll {
 		if reason == ReclaimShutdown {
@@ -295,15 +312,6 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 			count := m.Count()
 			m.CloseAll()
 			return count
-		}
-		if policy.openGovernor {
-			// Open the window BEFORE the connections go, not after.
-			//
-			// The applications on those connections start re-dialling as soon as their socket
-			// closes, and the physical close runs on a disposer that is already running by the time
-			// reclaimAll returns. Opening the window afterwards would leave the first wave - the
-			// one this mechanism exists for - to arrive while it was still shut.
-			m.dialGovernor.open(time.Now())
 		}
 		return m.reclaimAll()
 	}
