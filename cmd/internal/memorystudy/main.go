@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// The gate writes one report per run. For a budget that cannot certify a candidate the report
+// still carries the per-rule results (see writeUncertifiableReport), because a canary that only
+// proves the gate refuses unprovenanced files would not prove the evaluator can fail.
 // main is the entry point for both halves of the instrument: the default mode plans and runs child
 // processes, and -child is the single-case process the planner starts.
 //
