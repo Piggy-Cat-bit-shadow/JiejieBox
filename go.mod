@@ -423,7 +423,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // table; the AWG classification, padding and rebind paths are untouched.
 replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.8.0-awg.4.0.20261116143700-7f8be415c871
 
-// 2026-11-28 memory-allocation round (commit 0a49540, branch mem-alloc-2026-11-28/sing-tun):
+// 2026-11-28 memory-allocation round (branch mem-alloc-2026-11-28/sing-tun, pinned below):
 // two allocations that never came back down. (1) ForwardStage.table is a Go map, and a Go map
 // never returns its bucket array when entries are deleted, so a burst of short flows that reached
 // flowTableCapacity (16384) left the stage holding those buckets for the life of the process; a
@@ -435,7 +435,7 @@ replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wire
 // through its own kqueue + recvmsg_x loop and never calls BatchRead/BatchWrite; those four arrays
 // are now built on first use (33,280 B at the NE MTU of 4064). The system and mixed stacks still
 // call them, so the machinery stays - only the eager allocation goes.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261128141453-20c5b778db26
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261128144125-13fc1d5f19f1
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //
