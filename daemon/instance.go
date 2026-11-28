@@ -330,5 +330,17 @@ func parseConfig(ctx context.Context, configContent string) (option.Options, err
 	if err != nil {
 		return option.Options{}, E.Cause(err, "decode config")
 	}
+	// option.Options.UnmarshalJSONContext keeps the document it was handed in RawMessage, which
+	// exists for the CLI's config-merge path (cmd/sing-box/cmd_run.go and cmd_rule_set_merge.go
+	// are the only two readers of the field). The daemon never merges, so keeping it means the
+	// profile is pinned for the service's whole lifetime - and it is pinned as a VIEW: the decoder
+	// hands UnmarshalJSONContext a sub-slice of the buffer stripJSONComments copied the document
+	// into, so len(RawMessage) is the parsed value's span while cap(RawMessage) is the whole file.
+	// Measured on this tree: a 4 MiB document left a 25-byte view with a 4 MiB cap, and a
+	// 5 MiB config left 5,266,072 B of live heap after a successful apply, with 5,128.23 kB of it
+	// attributed to the stripJSONComments buffer. Clearing the field costs one assignment and
+	// changes no marshalled output: RawMessage is `json:"-"`, so Options.MarshalJSONContext never
+	// emitted it in the first place.
+	options.RawMessage = nil
 	return options, nil
 }
