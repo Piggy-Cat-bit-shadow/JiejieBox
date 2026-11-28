@@ -1884,7 +1884,17 @@ func (r *NetworkManager) ReleaseMemory(ctx context.Context) {
 	// does not go through here remains independent on purpose (see memoryReclaimAccess).
 	r.memoryReclaimAccess.Lock()
 	defer r.memoryReclaimAccess.Unlock()
-	r.ResetNetwork(ctx)
+	// A memory release is the ONE entry point that may terminate a flow carrying traffic: it is the
+	// crisis step of the reclaim ladder, and the retention it has to be able to free is the per-flow
+	// one (grown copy buffers, goroutine stacks, sockets). Classified as a drain it can free none of
+	// that, and the ladder has no other destructive step.
+	//
+	// ResetNetwork is the drain: ReclaimNetworkTransition protects every stream that is not already
+	// silent, which is the correct answer to a path change and the wrong one to an OOM crisis. The
+	// doc says so in two places - docs/FAST-PATH-AND-MEMORY.md ("紧急路径 ... 执行网络释放 / 重置")
+	// and KNOWLEDGE/modules/power-mobile-lifecycle.md §4 ("真正的内存紧急状态") - and the drain
+	// refactor's own message claims ReleaseMemory's semantics are untouched. They were not.
+	r.ResetNetworkHard(ctx)
 	r.trimIdleOwners()
 }
 

@@ -231,7 +231,7 @@ require (
 // expression per pattern through a weak-reference cache, instead of BEING the compiled
 // object. Build() returns the same shallow copy the standard library's Regexp.Copy
 // returns, so a caller's Longest cannot change another holder's matching.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261128163112-e86e1f69ab73
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261128165201-d20f2265853a
 
 // Adds async read/write buffer pinning (correctness: the native side retains the pointer
 // until its completion callback) and the EarlyCopyBufferGrowth capability the upload copy
