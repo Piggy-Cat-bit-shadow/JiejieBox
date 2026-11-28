@@ -15,7 +15,7 @@ require (
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/miekg/dns v1.1.72
 	github.com/opencontainers/image-spec v1.1.0
-	github.com/sagernet/quic-go v0.61.0-sing-box-mod.13
+	github.com/sagernet/quic-go v0.61.0-sing-box-mod.15
 	github.com/sagernet/sing v0.9.7-0.20261110095940-27b73774b240
 	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
 	github.com/sagernet/sing-openvpn v0.1.1-0.20261110111939-ad7a6ce7d11b
@@ -225,7 +225,7 @@ require (
 //
 // The current revision also carries the bufio splice fix (a Pipe2 setup failure must fall back
 // rather than claim the handover); the root's pin comment names the commit and the reason.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261123041012-a9e81c9e8e8a
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261127181659-987a8527862b
 
 // Adds the accept-loop recovery (040), the Go stack's Start/Close handshake, and the IPv6-only
 // re-bind self-heal. Same fork revision as the root module: the test module runs integration tests
@@ -253,13 +253,13 @@ replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun
 // module does not inherit the root's replaces, so a test binary built from this module would
 // otherwise exercise a different QUIC stack than the one that ships. The revision adds
 // InitialPacketSizeCeiling, the hard packet-size ceiling applied after the ChromeParrot override.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261116151243-d51ec71bf0dd
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261127162329-61b6144fd83e
 
 // sing-quic carries that ceiling through qtls.QUICOptions. This module does not import it today,
 // so the replace is here to keep the two modules pinned to the same revision: the guard in
 // scripts/ci/check-go-module-integrity.sh fails when a fork the root builds drifts here, which is
 // how the test module was once found resolving a different sing-tun than the product ships.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261122231816-a1125fe50482
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261127162450-08d3812472b6
 
 // The cronet-go pin is a tree of modules, not one: see the root module for why every path the
 // repository publishes is pinned. A nested module does not inherit the root's replaces.
@@ -329,6 +329,6 @@ replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8
 
 replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.8.0-awg.4.0.20261116143700-7f8be415c871
 
-replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261120123305-b74ada19da50
+replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261127162140-460710636c7f
 
-replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261123042716-2c89d083c5ca
+replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261127173542-543072ab559b

@@ -60,7 +60,7 @@ require (
 	github.com/sagernet/gomobile v0.1.12
 	github.com/sagernet/netlink v0.0.0-20260814022025-64455d367bbf
 	github.com/sagernet/nftables v0.3.0-mod.4.0.20261114074246-0b310c3e010b
-	github.com/sagernet/quic-go v0.61.0-sing-box-mod.13
+	github.com/sagernet/quic-go v0.61.0-sing-box-mod.15
 	github.com/sagernet/sing v0.9.7-0.20261110095940-27b73774b240
 	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
 	github.com/sagernet/sing-cloudflared v0.1.4-0.20261108120326-83391fb7b139
@@ -231,7 +231,7 @@ require (
 // expression per pattern through a weak-reference cache, instead of BEING the compiled
 // object. Build() returns the same shallow copy the standard library's Regexp.Copy
 // returns, so a caller's Longest cannot change another holder's matching.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261123041012-a9e81c9e8e8a
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261127181659-987a8527862b
 
 // Adds async read/write buffer pinning (correctness: the native side retains the pointer
 // until its completion callback) and the EarlyCopyBufferGrowth capability the upload copy
@@ -336,7 +336,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // sing-quic calls for a socket hidden behind an obfuscation wrapper. It checks SO_TYPE first, so
 // the TCP socket under a UDP-over-TCP detour is never sized as a datagram socket, and it keeps
 // the library's SO_RCVBUFFORCE/SO_SNDBUFFORCE fallback instead of a hardcoded size.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261116151243-d51ec71bf0dd
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261127162329-61b6144fd83e
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
 // owned-DATAGRAM send path for Hysteria2 and TUIC.
@@ -356,7 +356,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // ConnectionReceiveWindow keep their "one value for both" meaning and still win when set; 6c2f947
 // adds the real-loopback matrix that proves 1/10/40 streams still deliver byte-exact payloads under
 // the lowered grant with immediate, throttled and paused readers.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261122231816-a1125fe50482
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261127162450-08d3812472b6
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
@@ -451,11 +451,11 @@ replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun
 
 replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261116171412-87a09712c441
 
-replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261120123305-b74ada19da50
+replace github.com/sagernet/sing-anytls => github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261127162140-460710636c7f
 
 // The 2026-11-21 pin (44aaf95) adds a per-session unread-payload byte counter that covers
 // recvChan, recvBuf, recvQueue and unreadBuf, releases it only as Read consumes bytes, and returns
 // it on every drop, duplicate, close and late-delivery path; and a byte quota that pauses the
 // EXCLUSIVE stream underlay's reader instead of allocating more. Library default stays disabled;
 // common/receivebudget is what turns it on, per Box.
-replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261123042716-2c89d083c5ca
+replace github.com/enfein/mieru/v3 => github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261127173542-543072ab559b

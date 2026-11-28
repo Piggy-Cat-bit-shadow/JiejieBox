@@ -23,9 +23,9 @@
   "go_modules": [
     {
       "module": "github.com/sagernet/sing",
-      "pinned": "a9e81c9e8e8a",
+      "pinned": "987a8527862b",
       "target": "github.com/Piggy-Cat-bit-shadow/sing",
-      "version": "v0.9.6-0.20261123041012-a9e81c9e8e8a"
+      "version": "v0.9.6-0.20261127181659-987a8527862b"
     },
     {
       "module": "github.com/sagernet/sing-tun",
@@ -35,15 +35,15 @@
     },
     {
       "module": "github.com/sagernet/sing-quic",
-      "pinned": "a1125fe50482",
+      "pinned": "08d3812472b6",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-quic",
-      "version": "v0.7.2-0.20261122231816-a1125fe50482"
+      "version": "v0.7.2-0.20261127162450-08d3812472b6"
     },
     {
       "module": "github.com/sagernet/quic-go",
-      "pinned": "d51ec71bf0dd",
+      "pinned": "61b6144fd83e",
       "target": "github.com/Piggy-Cat-bit-shadow/quic-go",
-      "version": "v0.61.1-0.20261116151243-d51ec71bf0dd"
+      "version": "v0.61.1-0.20261127162329-61b6144fd83e"
     },
     {
       "module": "github.com/metacubex/utls",
@@ -59,15 +59,15 @@
     },
     {
       "module": "github.com/sagernet/sing-anytls",
-      "pinned": "b74ada19da50",
+      "pinned": "460710636c7f",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-anytls",
-      "version": "v0.0.0-20261120123305-b74ada19da50"
+      "version": "v0.0.0-20261127162140-460710636c7f"
     },
     {
       "module": "github.com/enfein/mieru/v3",
-      "pinned": "2c89d083c5ca",
+      "pinned": "543072ab559b",
       "target": "github.com/Piggy-Cat-bit-shadow/mieru/v3",
-      "version": "v3.39.1-0.20261123042716-2c89d083c5ca"
+      "version": "v3.39.1-0.20261127173542-543072ab559b"
     },
     {
       "module": "github.com/sagernet/cronet-go",
@@ -89,6 +89,6 @@
       "pinned": "63a68d8cb2a7e18494b4022c70bbef2e5753014e"
     }
   ],
-  "release_version": "0.1.55",
+  "release_version": "0.1.56",
   "schema": 1
 }
