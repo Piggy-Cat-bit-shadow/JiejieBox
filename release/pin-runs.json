@@ -36,7 +36,7 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-28",
+  "recorded_at": "2026-11-29",
   "parent_runs": [
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
@@ -667,6 +667,15 @@
       "event": "push",
       "conclusion": "success",
       "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/45083784629"
+    },
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "linux-kernel-verify",
+      "run_id": 46177412290,
+      "head_sha": "9a33595420f688b412f0343b85fbf4849b094667",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/46177412290"
     }
   ],
   "child_runs": [],
@@ -674,12 +683,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing",
       "branch": "dev",
-      "tip": "987a8527862bd3770939dbd43a8329a5f5d5d520",
-      "pin": "987a8527862b",
+      "tip": "b94641703f75c98f39ca8d5b63112a84a8c2ca7a",
+      "pin": "b94641703f75",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-28",
-      "note": "0.1.56 preparation: dev tip; SOCKS warm-handoff cancellation/timeout, LruCache repairs, packet-too-big tolerance."
+      "observed_at": "2026-11-29",
+      "note": "06 round: the pin carries the canceler unconnected-batch forwarding, the cached-first-packet drain, its nested regression and the zero-length first-packet handshake fix (r6/sing)."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
