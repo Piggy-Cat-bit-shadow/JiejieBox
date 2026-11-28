@@ -76,8 +76,8 @@ github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261127173542-543072ab559b h
 github.com/Piggy-Cat-bit-shadow/mieru/v3 v3.39.1-0.20261127173542-543072ab559b/go.mod h1:zJBUCsi5rxyvHM8fjFf+GLaEl4OEjjBXr1s5F6Qd3hM=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261127162329-61b6144fd83e h1:aEks70e9bx8R7fdVrvPKOiYaARgnWB2C/xXhEKee2rs=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261127162329-61b6144fd83e/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
-github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261128165201-d20f2265853a h1:UmTIRMJQskoKf4X2tOp4uUSehLQ6QJVoR/uYmv3cdSc=
-github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261128165201-d20f2265853a/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
+github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261128173244-5625b6a16a50 h1:AkIc19sYX3wA4YRsNXY5/YLMFMBpk0yDJYPc3xbUWlY=
+github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261128173244-5625b6a16a50/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
 github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261127162140-460710636c7f h1:l1vvNGAEZ51JQ0K3s03JCcrdRtlX4MpKpoNAmHxT5IQ=
 github.com/Piggy-Cat-bit-shadow/sing-anytls v0.0.0-20261127162140-460710636c7f/go.mod h1:ZjH8X9awKp6xdfgbJJZXH76Q0RNbDxxV/fgkXvt083o=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261127162450-08d3812472b6 h1:b0y8o8X/XGrwp7S56oMp0cBP9Nla0k/HM1Pm9n2FFNw=
