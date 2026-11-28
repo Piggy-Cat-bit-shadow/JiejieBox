@@ -53,6 +53,17 @@ const (
 	// ReclaimShutdown is teardown. Everything goes, including active streams, because there is
 	// nothing left to serve them.
 	ReclaimShutdown
+	// ReclaimMemoryPressure is the reclaim ladder's crisis step: the process is about to die of
+	// memory pressure and the per-flow retention has to go with everything else.
+	//
+	// It is destructive like ReclaimDeadPath, and it is a separate reason because the two are
+	// destructive for DIFFERENT situations and one of them is not durable. A dead path means the
+	// device has no default interface, so a reconnect cannot succeed and there is nothing to
+	// smooth. Memory pressure routinely arrives on a device that is perfectly ONLINE: every app
+	// whose socket was just closed re-dials immediately, and that herd is exactly what the dial
+	// governor exists for. Reusing ReclaimDeadPath here would have closed the flows without
+	// opening the window, turning a memory emergency into a reconnect storm.
+	ReclaimMemoryPressure
 )
 
 // How long a connection must have been silent before a transition may reclaim it.
@@ -223,6 +234,12 @@ type reclaimPolicy struct {
 	releaseFlows bool
 	// drain marks the transition boundary and starts the sweep.
 	drain bool
+	// openGovernor opens the reconnect governor's window even though this is not a drain.
+	//
+	// It exists for ReclaimMemoryPressure: a destructive pass whose connections WILL be re-dialled
+	// at once, on a device that may well be online. A drain opens the window because it invalidates
+	// connections; this one does too, for a different reason.
+	openGovernor bool
 }
 
 // drainGrace and sweepEvery resolve the production windows, with the test overrides applied.
@@ -248,6 +265,8 @@ func reclaimPolicyFor(reason ReclaimReason) reclaimPolicy {
 		return reclaimPolicy{provenIdleFor: drainIdleGrace, releaseFlows: false}
 	case ReclaimDeadPath:
 		return reclaimPolicy{closeAll: true, releaseFlows: true}
+	case ReclaimMemoryPressure:
+		return reclaimPolicy{closeAll: true, releaseFlows: true, openGovernor: true}
 	default:
 		return reclaimPolicy{closeAll: true, releaseFlows: true}
 	}
@@ -277,7 +296,14 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 			m.CloseAll()
 			return count
 		}
-		return m.reclaimAll()
+		reclaimed := m.reclaimAll()
+		if policy.openGovernor {
+			// The connections are gone and their applications are about to ask for new ones.
+			// Without this the burst arrives unsmoothed, which on a device under memory pressure
+			// is the worst possible moment to add one.
+			m.dialGovernor.open(time.Now())
+		}
+		return reclaimed
 	}
 
 	now := time.Now()

@@ -21,14 +21,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestReleaseMemoryHandsTheConnectionManagerADrainReason pins the classification at the seam.
+// TestReleaseMemoryHandsTheConnectionManagerTheMemoryPressureReason pins the classification at the
+// seam.
 //
-// ReleaseMemory -> ResetNetwork -> performTransitionLocked(..., recoveredFromConfirmedOffline=false)
-// -> resetNetworkLocked -> Reclaim(reason). On a healthy network `networkIsConfirmedOffline()` is
-// false, so the reason is ReclaimNetworkTransition, which is the DRAIN policy: only connections
-// silent for drainIdleGrace are reclaimed and kernel-owned ones are protected. The OOM crisis step
-// therefore reaches the same policy as a Wi-Fi roam.
-func TestReleaseMemoryHandsTheConnectionManagerADrainReason(t *testing.T) {
+// The bug this pins: ReleaseMemory -> ResetNetwork -> performTransitionLocked(..., false) ->
+// resetNetworkLocked -> Reclaim(ReclaimNetworkTransition) on a healthy network, which is the DRAIN
+// policy - only connections silent for drainIdleGrace are reclaimed and kernel-owned ones are
+// protected. The OOM crisis step therefore reached the same policy as a Wi-Fi roam and could not
+// free the per-flow retention it exists for.
+//
+// The fix does not reuse ReclaimDeadPath either: that reason is documented as a device with no
+// default interface at all, and memory pressure arrives on a device that is usually online. It gets
+// its own class so the reconnect governor can be opened for it without opening it for a dead path.
+func TestReleaseMemoryHandsTheConnectionManagerTheMemoryPressureReason(t *testing.T) {
 	manager := newPowerHarness(t)
 	capture := &reclaimReasonCapture{reasons: make(chan ReclaimReason, 4)}
 	manager.connectionManager = capture
@@ -37,10 +42,9 @@ func TestReleaseMemoryHandsTheConnectionManagerADrainReason(t *testing.T) {
 
 	select {
 	case reason := <-capture.reasons:
-		require.Equal(t, ReclaimDeadPath, reason,
-			"the memory-release entry handed the connection manager %v; ReclaimDeadPath is the only "+
-				"policy that closes an active stream, and the crisis step is documented as the "+
-				"destructive one", reason)
+		require.Equal(t, ReclaimMemoryPressure, reason,
+			"the memory-release entry handed the connection manager %v; the crisis step needs the "+
+				"destructive memory-pressure class, and neither the drain nor the dead path's class", reason)
 	case <-time.After(10 * time.Second):
 		t.Fatal("ReleaseMemory never reached the connection manager")
 	}

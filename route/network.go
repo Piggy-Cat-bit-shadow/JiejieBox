@@ -1343,6 +1343,22 @@ func (r *NetworkManager) ResetNetworkHard(ctx context.Context) {
 	r.performTransitionLocked(ctx, token, true)
 }
 
+// resetNetworkForMemoryPressure runs the reset body as the memory crisis's destructive pass.
+//
+// It is not ResetNetworkHard: that one is a dead path and classifies as ReclaimDeadPath, whose
+// documented meaning is a device with no default interface. Memory pressure is destructive on a
+// device that is usually online, and the two need different policies even though both close
+// everything - see ReclaimMemoryPressure.
+func (r *NetworkManager) resetNetworkForMemoryPressure(ctx context.Context) {
+	r.resetRunAccess.Lock()
+	defer r.resetRunAccess.Unlock()
+	_, token := r.recomputeNetworkEnvironment()
+	if token == noTransition {
+		token = r.beginTransition()
+	}
+	r.performTransitionLockedWithReason(ctx, token, ReclaimMemoryPressure)
+}
+
 // beginTransition claims the epoch for a transition that is about to perform a reset.
 //
 // # Why the epoch is claimed separately from the reset body
@@ -1621,6 +1637,19 @@ const (
 )
 
 func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromConfirmedOffline bool) {
+	reason := ReclaimNetworkTransition
+	if recoveredFromConfirmedOffline || r.networkIsConfirmedOffline() {
+		reason = ReclaimDeadPath
+	}
+	r.resetNetworkLockedWithReason(ctx, reason)
+}
+
+// resetNetworkLockedWithReason is the reset body with the reclaim class already decided.
+//
+// The split exists for the memory crisis: it is destructive like a dead path, but it happens on a
+// device that is usually online, so it cannot borrow ReclaimDeadPath's meaning or its policy (see
+// ReclaimMemoryPressure). Everything else still classifies from the transition, above.
+func (r *NetworkManager) resetNetworkLockedWithReason(ctx context.Context, reason ReclaimReason) {
 	// The router is assigned on the initialize stage, and a reset can arrive before the manager
 	// has reached it: the command protocol publishes the instance before Start finishes, so a
 	// network-change RPC in that window (a Wi-Fi to cellular handover during tunnel startup, for
@@ -1662,10 +1691,6 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromCo
 		// The adapter interface cannot express the policy without the reason type, and widening it
 		// would force every test double to grow a method it has no opinion about. The capability is
 		// therefore asked for directly, and its absence falls back to the previous behaviour.
-		reason := ReclaimNetworkTransition
-		if recoveredFromConfirmedOffline || r.networkIsConfirmedOffline() {
-			reason = ReclaimDeadPath
-		}
 		if reclaimer, isReclaimer := r.connectionManager.(networkTransitionReclaimer); isReclaimer {
 			reclaimer.Reclaim(reason)
 		} else {
@@ -1711,7 +1736,17 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromCo
 // superseded transition's token is ignored by commitTransition exactly as it was when the commit was
 // deferred.
 func (r *NetworkManager) performTransitionLocked(ctx context.Context, token transitionToken, recoveredFromConfirmedOffline bool) {
-	r.resetNetworkLocked(ctx, recoveredFromConfirmedOffline)
+	reason := ReclaimNetworkTransition
+	if recoveredFromConfirmedOffline || r.networkIsConfirmedOffline() {
+		reason = ReclaimDeadPath
+	}
+	r.performTransitionLockedWithReason(ctx, token, reason)
+}
+
+// performTransitionLockedWithReason is the transition body with the reclaim class decided by the
+// caller, for the one entry that is not a network change: the memory crisis.
+func (r *NetworkManager) performTransitionLockedWithReason(ctx context.Context, token transitionToken, reason ReclaimReason) {
+	r.resetNetworkLockedWithReason(ctx, reason)
 	r.commitTransition(token)
 	if !r.networkIsPaused() {
 		r.notifyNetworkChangeListeners(ctx)
@@ -1891,10 +1926,14 @@ func (r *NetworkManager) ReleaseMemory(ctx context.Context) {
 	//
 	// ResetNetwork is the drain: ReclaimNetworkTransition protects every stream that is not already
 	// silent, which is the correct answer to a path change and the wrong one to an OOM crisis. The
-	// doc says so in two places - docs/FAST-PATH-AND-MEMORY.md ("紧急路径 ... 执行网络释放 / 重置")
-	// and KNOWLEDGE/modules/power-mobile-lifecycle.md §4 ("真正的内存紧急状态") - and the drain
-	// refactor's own message claims ReleaseMemory's semantics are untouched. They were not.
-	r.ResetNetworkHard(ctx)
+	// contract says so in adapter/network.go - "the aggressive pass: it resets the network and
+	// releases everything reusable ... the right answer to a genuine OOM" - and in
+	// common/runtimecoord/platform_events.go, "the reset-shaped pass ... only earned by pressure that
+	// is about to end the process". Both contradicted the code before this change.
+	//
+	// The reason is its own, not ReclaimDeadPath: memory pressure arrives on a device that is
+	// usually online, so it must open the reconnect governor's window while a dead path need not.
+	r.resetNetworkForMemoryPressure(ctx)
 	r.trimIdleOwners()
 }
 
