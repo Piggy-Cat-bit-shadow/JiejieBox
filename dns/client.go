@@ -110,6 +110,20 @@ type Client struct {
 	nxdomainCache     *freelru.Cache[nxdomainCacheKey, *nxdomainCacheEntry]
 	cacheLock         compatible.Map[dnsExchangeKey, chan struct{}]
 	backgroundRefresh compatible.Map[dnsCacheKey, struct{}]
+	// cacheBytes is the configured byte budget for the two in-memory caches, or 0 to
+	// derive it from the entry capacity. See cache_budget.go.
+	cacheBytes int
+	// cacheBudget is the byte ledger SHARED by the exact cache and the name-level
+	// negative cache, so the two of them together cannot retain more than one budget.
+	// It is created by whichever cache initialises first and is never re-created: a
+	// second budget would start at zero while the first still holds charges.
+	cacheBudget *cacheByteBudget
+	// cacheBudgetAccess serialises one store protocol - reserve the new charge, remove
+	// the entry being replaced, add the new one - and the purge. It is required because
+	// freelru does NOT report a same-key overwrite to OnEvict, so the charge of the
+	// replaced entry has to be returned by an explicit Remove, and two concurrent stores
+	// of one key must not both believe they removed the previous entry.
+	cacheBudgetAccess sync.Mutex
 	// storePreCommitHook is the test seam described on ClientOptions.TestStorePreCommitHook. Nil in
 	// production.
 	storePreCommitHook func()
@@ -122,7 +136,12 @@ type ClientOptions struct {
 	DisableExpire     bool
 	OptimisticTimeout time.Duration
 	CacheCapacity     uint32
-	ClientSubnet      netip.Prefix
+	// CacheBytes bounds the bytes the in-memory caches retain. Zero derives it from
+	// CacheCapacity (cacheBytesPerEntry, clamped to [minimumCacheBytes,
+	// maximumCacheBytes]); a non-zero value is used as given. The entry-count limit is
+	// always applied as well - this is a second bound, not a replacement.
+	CacheBytes   int
+	ClientSubnet netip.Prefix
 	// EventBus, when set, receives one attributable event per query outcome.
 	EventBus *EventBus
 	RDRC     func() adapter.RDRCStore
@@ -189,7 +208,7 @@ type ClientOptions struct {
 }
 
 func NewClient(options ClientOptions) *Client {
-	cacheCapacity := max(options.CacheCapacity, 1024)
+	cacheCapacity := max(options.CacheCapacity, defaultCacheEntries)
 	client := &Client{
 		ctx:                options.Context,
 		timeout:            options.Timeout,
@@ -197,6 +216,7 @@ func NewClient(options ClientOptions) *Client {
 		disableExpire:      options.DisableExpire,
 		optimisticTimeout:  options.OptimisticTimeout,
 		cacheCapacity:      cacheCapacity,
+		cacheBytes:         options.CacheBytes,
 		clientSubnet:       options.ClientSubnet,
 		eventBus:           options.EventBus,
 		initRDRCFunc:       options.RDRC,
@@ -704,7 +724,28 @@ func (c *Client) initializeMemoryCache() {
 	if c.disableCache || c.cache != nil {
 		return
 	}
+	c.initializeCacheBudget()
 	c.cache = common.Must1(freelru.New[dnsCacheKey, *dns.Msg](c.cacheCapacity, maphash.NewHasher[dnsCacheKey]().Hash32, true))
+	// The one release path for the exact cache's charges: freelru calls this for
+	// eviction, explicit removal, Purge and PurgeExpired. A same-key overwrite is NOT
+	// reported here, which is why storeCache removes the previous entry first.
+	c.cache.SetOnEvict(func(_ dnsCacheKey, message *dns.Msg) {
+		c.cacheBudget.Release(estimateDNSResponseBytes(message))
+	})
+}
+
+// initializeCacheBudget creates the byte ledger the two in-memory caches share. It is
+// called by whichever cache initialises first and keeps the existing ledger: replacing it
+// would zero the charges the other cache still holds.
+func (c *Client) initializeCacheBudget() {
+	if c.cacheBudget != nil {
+		return
+	}
+	limit := c.cacheBytes
+	if limit <= 0 {
+		limit = cacheByteLimitForCapacity(c.cacheCapacity)
+	}
+	c.cacheBudget = newCacheByteBudget(limit)
 }
 
 func extractNegativeTTL(response *dns.Msg) (uint32, bool) {
@@ -1493,12 +1534,21 @@ func (c *Client) TrimExpiredCaches() int {
 }
 
 func (c *Client) ClearCache() {
+	// One critical section for both purges and the ledger reset: a store that landed
+	// between the two purges would add a charge after the reset and leave the ledger
+	// describing an entry that no longer exists.
+	c.cacheBudgetAccess.Lock()
 	// A clear that left name-wide NXDOMAIN verdicts behind would answer subsequent
 	// queries from exactly the state the caller asked to discard.
 	c.clearNXDomainCache()
 	if c.cache != nil {
 		c.cache.Purge()
 	}
+	// Every purge above returns its charges through OnEvict. A non-zero remainder would
+	// be an accounting defect, and carrying it forward would permanently shrink the
+	// cache for the rest of the process; converge to zero and count it instead.
+	c.cacheBudget.settle()
+	c.cacheBudgetAccess.Unlock()
 	if c.dnsCache != nil {
 		err := c.dnsCache.ClearDNSCache()
 		if err != nil && c.logger != nil {
@@ -1530,11 +1580,27 @@ func (c *Client) storeCache(key dnsCacheKey, message *dns.Msg, timeToLive uint32
 	if c.cache == nil {
 		return
 	}
+	// Reserve the charge BEFORE the copy: a response the budget cannot admit is not
+	// copied at all, and the entries already cached are left untouched rather than
+	// evicted for it. The estimate is computed from the source message, which is
+	// content-identical to the copy the cache stores, so the release on eviction
+	// returns exactly what was reserved.
+	if !c.cacheBudget.Reserve(estimateDNSResponseBytes(message)) {
+		return
+	}
+	c.cacheBudgetAccess.Lock()
+	// Remove before Add. freelru replaces the value of an existing key without calling
+	// OnEvict, so an overwrite would strand the previous entry's charge and shrink the
+	// usable budget for the rest of the process. Remove returns the old charge through
+	// OnEvict; a concurrent reader that removes the same lapsed entry first makes this a
+	// no-op, so the charge is returned exactly once either way.
+	c.cache.Remove(key)
 	if c.disableExpire {
 		c.cache.Add(key, message.Copy())
 	} else {
 		c.cache.AddWithLifetime(key, message.Copy(), time.Second*time.Duration(timeToLive))
 	}
+	c.cacheBudgetAccess.Unlock()
 }
 
 // lookupToExchangeWithSource is lookupToExchange plus the DNS environment generation the answer was

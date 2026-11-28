@@ -114,9 +114,18 @@ func (c *Client) initializeNXDomainCache() {
 	if capacity == 0 {
 		return
 	}
+	// The SAME ledger as the exact cache: a separate one would let the two caches each
+	// retain the whole budget, which is exactly the aggregate this bound exists for.
+	c.initializeCacheBudget()
 	c.nxdomainCache = common.Must1(freelru.New[nxdomainCacheKey, *nxdomainCacheEntry](
 		capacity, maphash.NewHasher[nxdomainCacheKey]().Hash32, true,
 	))
+	c.nxdomainCache.SetOnEvict(func(_ nxdomainCacheKey, entry *nxdomainCacheEntry) {
+		if entry == nil {
+			return
+		}
+		c.cacheBudget.Release(estimateDNSResponseBytes(entry.response))
+	})
 }
 
 // nxdomainKeyFrom builds the name-scoped key from an ordinary cache key, dropping
@@ -176,16 +185,28 @@ func (c *Client) storeNXDomain(key dnsCacheKey, response *mDNS.Msg, timeToLive u
 		return
 	}
 
+	// The same reserve-then-copy protocol as storeCache, against the same budget: a
+	// verdict the budget cannot admit is not copied at all, and the entry it replaces (a
+	// refresh of the same name) is removed first so its charge is returned through
+	// OnEvict rather than stranded by the overwrite. The estimate is taken from the
+	// source response; the stored copy is content-identical, so the eviction returns
+	// exactly the charge that was reserved.
+	if !c.cacheBudget.Reserve(estimateDNSResponseBytes(response)) {
+		return
+	}
 	entry := &nxdomainCacheEntry{
 		response:    response.Copy(),
 		negativeTTL: time.Second * time.Duration(soaTTL),
 	}
+	c.cacheBudgetAccess.Lock()
+	c.nxdomainCache.Remove(nxdomainKeyFrom(key))
 	// Mirror storeCache exactly. Under disable_expire the ordinary cache stores WITHOUT a
 	// lifetime, and freelru's Get() skips anything that has one - so registering a lifetime
 	// here would leave the entry present in the map but unreachable, and the two caches
 	// would disagree about the same client configuration.
 	if c.disableExpire {
 		c.nxdomainCache.Add(nxdomainKeyFrom(key), entry)
+		c.cacheBudgetAccess.Unlock()
 		return
 	}
 	c.nxdomainCache.AddWithLifetime(
@@ -193,6 +214,7 @@ func (c *Client) storeNXDomain(key dnsCacheKey, response *mDNS.Msg, timeToLive u
 		entry,
 		time.Second*time.Duration(soaTTL),
 	)
+	c.cacheBudgetAccess.Unlock()
 }
 
 // loadNXDomain answers the current question from a recorded name verdict.
