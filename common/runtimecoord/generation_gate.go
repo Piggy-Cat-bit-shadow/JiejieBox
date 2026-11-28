@@ -160,6 +160,17 @@ func (g *GenerationGate) applyTransition(ctx context.Context) uint64 {
 	epoch := g.registration.currentEpoch()
 	g.resetAccess.Lock()
 	defer g.resetAccess.Unlock()
+	// Re-check under the lock, not only at the entry points.
+	//
+	// The entry checks are a fast path, and a fast path is not a seal: BeforeDial observes
+	// Snapshot() (which reports a CLOSED registration as stale) and only then reaches here, so a
+	// Close() that returns in between would still be followed by the owner's destructive action -
+	// exactly the race this guard exists to prevent. Close() calls remove() synchronously, so once
+	// it has returned this check sees the removal. A transition already inside this critical
+	// section when Close begins is allowed to finish: it started while the owner was alive.
+	if g.registration.Closed() {
+		return epoch
+	}
 	if g.resetDone && g.resetEpoch >= epoch {
 		return g.resetEpoch
 	}

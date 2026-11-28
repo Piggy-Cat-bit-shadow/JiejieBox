@@ -53,3 +53,50 @@ func TestGenerationGateDoesNotRunTheOwnerActionAfterClose(t *testing.T) {
 		"a closed owner ran its destructive network-change action after Close; the gate cannot tell "+
 			"'this generation is unhandled' from 'this owner no longer exists'")
 }
+
+// TestCloseLandedBetweenTheSnapshotAndTheActionIsStillRespected pins the interleaving the entry
+// checks cannot cover, and is why the guard also sits inside applyTransition.
+//
+// BeforeDial observes Snapshot() and only then reaches the action. A close that returns in that gap
+// is exactly the race the entry check looks like it prevents: the entry check already passed, the
+// snapshot already reported the closed registration as stale, and the owner is about to be told to
+// tear down a transport it no longer owns. The test puts Close() in that gap deterministically with
+// the existing snapshot hook instead of relying on timing.
+func TestCloseLandedBetweenTheSnapshotAndTheActionIsStillRespected(t *testing.T) {
+	coordinator := New()
+	defer coordinator.Close()
+	var resets atomic.Int32
+	gate := NewGenerationGate(coordinator, "e-life/close-in-the-gap", func(context.Context) {
+		resets.Add(1)
+	})
+	require.NotNil(t, gate)
+
+	coordinator.Advance(1)
+
+	// Close() runs after the snapshot and before the gate decides what to do with it.
+	previous := testHookAfterGenerationSnapshot
+	t.Cleanup(func() { testHookAfterGenerationSnapshot = previous })
+	testHookAfterGenerationSnapshot = func() {
+		testHookAfterGenerationSnapshot = previous
+		gate.Close()
+	}
+
+	_ = gate.BeforeDial(context.Background())
+
+	require.Zero(t, resets.Load(),
+		"a Close that returned between the generation snapshot and the action was ignored: the "+
+			"owner was made to run its destructive transition after its own teardown")
+
+	// Control: a live registration with the same hook installed still runs its transition once.
+	liveCoordinator := New()
+	defer liveCoordinator.Close()
+	var liveResets atomic.Int32
+	liveGate := NewGenerationGate(liveCoordinator, "e-life/close-in-the-gap/live", func(context.Context) {
+		liveResets.Add(1)
+	})
+	liveCoordinator.Advance(1)
+	testHookAfterGenerationSnapshot = func() { testHookAfterGenerationSnapshot = previous }
+	_ = liveGate.BeforeDial(context.Background())
+	require.EqualValues(t, 1, liveResets.Load(),
+		"a live registration stopped running its transition, so the guard is over-broad")
+}
