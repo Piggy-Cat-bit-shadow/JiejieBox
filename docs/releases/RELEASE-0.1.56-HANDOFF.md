@@ -49,3 +49,16 @@
 - Satelite Android 客户端 `0.1.56`：独立仓库发布（`versionName=0.1.56`、`coreCommit=b3c3606b7…`、`versionCode=68`），由该仓库的 `Release APK` 工作流产出签名 APK。
 - TestFlight / App Store Connect：使用已发布的 Libbox manifest 与 Apple SHA，在 Mac 上按 `docs/TESTFLIGHT-MAC.md` 执行；Actions 成功不等于测试者可用。
 - Windows 安装器的公开消费、真实设备 NE footprint / Jetsam / 功耗仍未取证。
+
+## Satelite Android 0.1.56（独立仓库）
+
+- 客户端提交：`e0672e46111bb1b6dedf8ba2a5c0614f33e1606a`（`versionName=0.1.56`、`versionCode=68`、`coreCommit=b3c3606b767d4ce39d970b0c29d5067b6db533ab`）
+- tag：`v0.1.56`（附注 tag），剥离后即上述客户端提交
+- Release：https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.56
+- 运行：[`Release APK` run 46119900157](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/46119900157)（tag push 触发，`head_sha=e0672e4`，success）
+- 公开资产（5 个）：
+  - `satelite-one-0.1.56-arm64-v8a-signed-v0.1.56.apk`（31.3 MB，SHA-256 `4eb4f23162822e37d91fee51740324ba4b5692fed7d9b787927800d731f850bc`）
+  - `satelite-one-0.1.56-x86_64-signed-v0.1.56.apk`（33.4 MB，SHA-256 `f8881b2d2f7f2a760dbc1065419a9b26784843d0591b8e620b38db400cf09eb8`）
+  - `SHA256SUMS.txt`、`build-info.json`、`apksigner-verify.txt`
+- `build-info.json` 记录 `core_aar_sha256=94bbfcca6539fba324f2112b73a1a38a0f26ac1441495520c69f92267d328b2f`、`core_aar_size=128149122`、
+  `signature_state=signed-by-user`，且 `core_commit` 与内核 tag 剥离 SHA 一致。
