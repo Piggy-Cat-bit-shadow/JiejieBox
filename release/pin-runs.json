@@ -36,8 +36,17 @@
     "and the gitlinks, the lock snapshots them, and `pin`/`head_sha` here only say which run or",
     "observation was about which revision."
   ],
-  "recorded_at": "2026-11-23",
+  "recorded_at": "2026-11-28",
   "parent_runs": [
+    {
+      "repo": "Piggy-Cat-bit-shadow/JiejieBox",
+      "workflow": "Release contract verification",
+      "run_id": 46103991806,
+      "head_sha": "82fb109fd3360e9df4f90a16d1e2518d5787f297",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/46103991806"
+    },
     {
       "repo": "Piggy-Cat-bit-shadow/JiejieBox",
       "workflow": "Android Core ARM64",
@@ -665,12 +674,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing",
       "branch": "dev",
-      "tip": "a9e81c9e8e8a1fdb3c41083ef4f7229012d4a036",
-      "pin": "a9e81c9e8e8a",
+      "tip": "987a8527862bd3770939dbd43a8329a5f5d5d520",
+      "pin": "987a8527862b",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-23",
-      "note": "Moved by the final closeout: a9e81c9 adds the optional IncreaseBufferPermit seam to the copy engine (asked only at the real growth boundary, release run once on the copy's exit path) so the relay can hold a growth-capacity permit only while an enlarged buffer exists. Android Core and Mobile contract runs at this lock are recorded in parent_runs."
+      "observed_at": "2026-11-28",
+      "note": "0.1.56 preparation: dev tip; SOCKS warm-handoff cancellation/timeout, LruCache repairs, packet-too-big tolerance."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
@@ -679,28 +688,27 @@
       "pin": "f23ebd654a75",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-20",
-      "note": "dev integrates the two prepared patches and their tests: UDP NAT entries cancel the dial they launched on every close path (idle sweep, explicit Close, capacity eviction); the Linux netlink monitor reopens its subscription with 1s->30s backoff after a read error and emits one update after recovery. The follow-up commit closes the install-after-Close window: setSocket refuses under the same lock Close uses and closes the socket it opened, and a controlled test pauses recovery before the install and runs Close in that window (red before the fix, 3.5s; green after, 3.0s). The pin was moved by release-freeze.py apply and needs a run at the new lock before the release gate is satisfied."
+      "observed_at": "2026-11-28"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-quic",
       "branch": "main",
-      "tip": "a1125fe504820e36db11bd854c323932f30561af",
-      "pin": "a1125fe50482",
+      "tip": "08d3812472b69168476f98f2db25f740fe08fd25",
+      "pin": "08d3812472b6",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-23",
-      "note": "main adds hysteria2 clientConn.CloseWrite: QUIC FIN without CancelRead, so client TCP half-close can read the response; Mieru remains without a half-close primitive."
+      "observed_at": "2026-11-28",
+      "note": "0.1.56 preparation: hysteria2 salamander XOR, raw-socket hand-off, packet interceptor."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/quic-go",
       "branch": "sagernet",
-      "tip": "d51ec71bf0dddf9faf2c7b15c9d9582f2b6ad36e",
-      "pin": "d51ec71bf0dd",
+      "tip": "61b6144fd83e7c9d50a97c23ac3f0fd8d7a8cb30",
+      "pin": "61b6144fd83e",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-17",
-      "note": "sagernet's tip exports SetDesiredBufferSizes(syscall.RawConn) for a socket hidden behind a conn wrapper; the datagram check keeps the TCP socket of a UDP-over-TCP detour out of it."
+      "observed_at": "2026-11-28",
+      "note": "0.1.56 preparation: packet codec/interceptor, ErrNoMoreStreams."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/utls",
@@ -709,7 +717,7 @@
       "pin": "87a09712c441",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-17"
+      "observed_at": "2026-11-28"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/wireguard-go",
@@ -718,28 +726,26 @@
       "pin": "7f8be415c871",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-17",
-      "note": "awg3-inject carries upstream's noise double-response guard, the IPv6 payload-length widening and the GRO virtio-header clear, plus the review round's targeted GRO test; the AWG classification, padding and rebind paths are untouched."
+      "observed_at": "2026-11-28"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-anytls",
       "branch": "main",
-      "tip": "b74ada19da50ccab469f3103a937f27489b2f6c3",
-      "pin": "b74ada19da50",
+      "tip": "460710636c7f86d14d80b9b1461e68fc92c59a58",
+      "pin": "460710636c7f",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-20",
-      "note": "main carries b74ada1 fix(client): cancel and reject session creations on a network change. Reset cleared only established sessions and left the shared creation in c.pending, so demand on the NEW network attached to a TLS handshake parked on the old path and waited for it (or inherited its failure). A pendingCreation now has an abandoned channel and its own cancel: Reset clears c.pending, releases attached waiters and cancels the creation context; a result that arrives after the abandon is removed from the pool, closed and never published; the demand retries once against the new generation. Close abandons a pending creation too. Tests reset_creation_test.go: cancellation, new-demand-after-Reset, late-result rejection, waiter retry. The pin was moved by hand and needs a run at the new lock before the release gate is satisfied."
+      "observed_at": "2026-11-28",
+      "note": "0.1.56 preparation: control-frame write deadline under the write lock."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/mieru",
       "branch": "main",
-      "tip": "2c89d083c5ca0737f183f4ddf04cc255a25e3619",
-      "pin": "2c89d083c5ca",
+      "tip": "543072ab559b412738ce7d5ce47709ca9ba234a1",
+      "pin": "543072ab559b",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-23",
-      "note": "Moved by the final closeout: 2c89d08 adds Session.CloseWrite (write-direction end frame negotiated through a reserved metadata bit, ErrWriteEndUnsupported for pre-extension peers). Android Core and Mobile contract runs at this lock are recorded in parent_runs."
+      "observed_at": "2026-11-28"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/cronet-go",
@@ -747,49 +753,46 @@
       "tip": "b9f445ddb1f427669d1967884bf01baefb13a2a2",
       "pin": "b9f445ddb1f4",
       "relation": "identical",
-      "policy": "update",
-      "observed_at": "2026-11-17",
-      "note": "The publish line `go` carries the Go 1.27.4 cgo-archive fix; the pin and the branch tip are the same publish commit."
+      "policy": "controlled",
+      "observed_at": "2026-11-28"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-apple",
       "branch": "main",
       "tip": "cb56592ece39c520cc06cb1b870b29bf002ef65f",
-      "pin": "cb56592ece39",
+      "pin": "cb56592ece39c520cc06cb1b870b29bf002ef65f",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-20",
-      "note": "Moved to 5998e5e for the 0.1.55 preparation: one UI-only Swift change (ApplicationLibrary/Views/Setting/CoreView.swift drops the configuration status section), no Go surface in experimental/libbox and no Libbox call-site change. Layer 4 was re-run against that checkout (742 files, 0 violations, 3 interface methods). The compile half is the Apple client workflow dispatched at this candidate with input 5998e5e; its run id is named in the release clearance record. Not device or TestFlight evidence."
+      "observed_at": "2026-11-28"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-android",
       "branch": "main",
       "tip": "9816e0068c82397e0ae48966cec982c0fd3dee18",
-      "pin": "9816e0068c82",
+      "pin": "9816e0068c82397e0ae48966cec982c0fd3dee18",
       "relation": "identical",
       "policy": "update",
-      "observed_at": "2026-11-14",
-      "note": "main is at the pinned window-03 integration revision; nothing moved since the pin was taken."
+      "observed_at": "2026-11-28"
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
       "branch": "main",
-      "tip": "cbd27f73d7ad0e94e1732ff0f06d1eb41f4f0d46",
-      "pin": "cbd27f73d7ad",
-      "relation": "identical",
+      "tip": "7b682595fa982d1393cba14fb2edf24bf04eda4b",
+      "pin": "cbd27f73d7ad0e94e1732ff0f06d1eb41f4f0d46",
+      "relation": "behind",
       "policy": "report",
-      "observed_at": "2026-11-20",
-      "note": "main carries 1a1c98e chore: build the Windows client and daemon with Go 1.27.4: version.json go_version moves go1.26.8 -> go1.27.4, which the Windows installer workflow reads for setup-go and the daemon build (build_boxdd inside the pinned core checkout). The tree still records the dashboard gitlink b6e3193. Its build evidence is the Windows installer job of this candidate release run, which also records the daemon provenance; release-kind artifacts stay the release workflow's job."
+      "observed_at": "2026-11-28",
+      "note": "report policy: main is 5 commits ahead (version bumps, Linux package rename); the release keeps the pinned Windows client."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-box-dashboard",
       "branch": "main",
       "tip": "63a68d8cb2a7e18494b4022c70bbef2e5753014e",
-      "pin": "63a68d8cb2a7",
+      "pin": "63a68d8cb2a7e18494b4022c70bbef2e5753014e",
       "relation": "identical",
       "policy": "report",
-      "observed_at": "2026-11-15",
-      "note": "Follows the Desktop pin: 1bd68313's tree names this gitlink, so the nested pin is the branch tip. Still not readable by verify.yml; kernel-release's freeze job reads it with submodules checked out."
+      "observed_at": "2026-11-28",
+      "note": "Follows the Desktop pin; read by kernel-release's freeze with submodules checked out."
     }
   ],
   "not_covered": [
