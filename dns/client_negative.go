@@ -191,14 +191,22 @@ func (c *Client) storeNXDomain(key dnsCacheKey, response *mDNS.Msg, timeToLive u
 	// OnEvict rather than stranded by the overwrite. The estimate is taken from the
 	// source response; the stored copy is content-identical, so the eviction returns
 	// exactly the charge that was reserved.
+	//
+	// The reserve belongs INSIDE cacheBudgetAccess, exactly as in storeCache. ClearCache
+	// purges under that mutex and then calls settle(), which forces the ledger to zero; a
+	// reservation taken outside it can land between the purge and the reset and be
+	// swallowed, and returning that charge on eviction is afterwards counted as an excess
+	// release. An independent reviewer found this second instance after the one in
+	// storeCache was closed - the window is per reservation site, not per cache.
+	c.cacheBudgetAccess.Lock()
 	if !c.cacheBudget.Reserve(estimateDNSResponseBytes(response)) {
+		c.cacheBudgetAccess.Unlock()
 		return
 	}
 	entry := &nxdomainCacheEntry{
 		response:    response.Copy(),
 		negativeTTL: time.Second * time.Duration(soaTTL),
 	}
-	c.cacheBudgetAccess.Lock()
 	c.nxdomainCache.Remove(nxdomainKeyFrom(key))
 	// Mirror storeCache exactly. Under disable_expire the ordinary cache stores WITHOUT a
 	// lifetime, and freelru's Get() skips anything that has one - so registering a lifetime

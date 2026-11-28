@@ -276,7 +276,9 @@ func TestTheByteBudgetUnderConcurrentStores(t *testing.T) {
 // counted as an excess release - the observable this test asserts on.
 //
 // An independent reviewer reproduced the swallow with a separate harness (ledger 0 B against 793 B
-// actually cached, excess 1). Run with -race.
+// actually cached, excess 1), and then found a SECOND instance of it: the negative cache has its
+// own reserve site, so closing one store protocol closed the window for the exact cache only. The
+// workers below therefore drive both caches. Run with -race.
 func TestTheByteBudgetIsExactWhenAClearRacesTheStores(t *testing.T) {
 	client := budgetTestClient(t, 128, 32<<10)
 	var wait sync.WaitGroup
@@ -287,7 +289,11 @@ func TestTheByteBudgetIsExactWhenAClearRacesTheStores(t *testing.T) {
 			random := rand.New(rand.NewSource(int64(worker) + 101))
 			for iteration := 0; iteration < 300; iteration++ {
 				key := budgetTestKey(fmt.Sprintf("race-%d-%d.example.", worker, random.Intn(16)), mDNS.TypeTXT)
-				client.storeCache(key, budgetTestResponse(t, 1+random.Intn(4), 20+random.Intn(100)), 300)
+				if worker%2 == 0 {
+					client.storeCache(key, budgetTestResponse(t, 1+random.Intn(4), 20+random.Intn(100)), 300)
+					continue
+				}
+				client.storeNXDomain(key, budgetTestNXDomain(t), 300)
 			}
 		}(worker)
 	}
