@@ -23,9 +23,9 @@
   "go_modules": [
     {
       "module": "github.com/sagernet/sing",
-      "pinned": "5625b6a16a50",
+      "pinned": "b94641703f75",
       "target": "github.com/Piggy-Cat-bit-shadow/sing",
-      "version": "v0.9.6-0.20261128173244-5625b6a16a50"
+      "version": "v0.9.6-0.20261128181600-b94641703f75"
     },
     {
       "module": "github.com/sagernet/sing-tun",
