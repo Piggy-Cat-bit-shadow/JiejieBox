@@ -1689,6 +1689,45 @@ def check_apple_runner_selection():
                        "secrets=%s" % (mapping,))
 
 
+def check_apple_go_cache():
+    """The Apple producers keep no Actions cache of the Go module tree.
+
+    This is a cost contract, not a correctness one, and it exists because the cost was invisible:
+    the pipeline looked busy rather than slow.
+
+      * the macOS archive alone is 4.6 GB, and the repository's five entries sat at 9.97 GB
+        against GitHub's 10 GB limit - so every upload evicted some other workflow's cache;
+      * on this account's own Mac the POST-JOB upload took 7m48s of an 11m29s job, while the
+        build that was supposedly being accelerated took 2m30s;
+      * that Mac keeps ~/go/pkg/mod warm between runs, so the archive saved nothing there and
+        was paid for twice - once uploading it, once evicting someone else.
+
+    A hosted fallback pays a cold module download instead. That path is the exception, and it is
+    still cheaper than paying the upload on every Mac job. The check is text-only: it does not
+    measure size, it forbids the declaration whose size was measured.
+    """
+    for label, path in (("apple", APPLE),
+                        ("macos core", os.path.join(WF, "client-macos.yml")),
+                        ("apple tls", os.path.join(WF, "apple-tls-verify.yml"))):
+        if not os.path.isfile(path):
+            report("%s: the workflow exists for the cache check" % label, False, path)
+            continue
+        text, workflow, on = load(path)
+        steps = [step for job in (workflow.get("jobs") or {}).values()
+                 for step in (job.get("steps") or [])
+                 if str(step.get("uses", "")).startswith("actions/setup-go")]
+        values = [(step.get("with") or {}).get("cache") for step in steps]
+        report("%s: every setup-go step disables the Go cache" % label,
+               bool(steps) and all(str(value).lower() == "false" for value in values),
+               "%d step(s), cache=%s" % (len(steps), values))
+        # `cache-dependency-path` is inert once the cache is off, and leaving it behind is how a
+        # reader concludes the key still matters and turns the cache back on to "fix" it.
+        stale = [(step.get("with") or {}) for step in steps
+                 if "cache-dependency-path" in (step.get("with") or {})]
+        report("%s: no cache key configuration is left behind" % label,
+               not stale, str(stale))
+
+
 def check_kernel_release_graph():
     with open(os.path.join(WF, "kernel-release.yml"), encoding="utf-8") as handle:
         workflow = yaml.safe_load(handle)
@@ -1819,6 +1858,8 @@ def main(argv=None):
     check_release_prepare()
     print()
     check_apple_runner_selection()
+    print()
+    check_apple_go_cache()
     print()
     check_apple_single_runner_mode()
     check_kernel_release_graph()

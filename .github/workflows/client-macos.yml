@@ -163,11 +163,11 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
-          # Only go.sum is listed. The reference and bench harnesses that use other
-          # modules are deep checks and must not widen the cache key of the normal
-          # fast path.
-          cache-dependency-path: go.sum
+          # Discarded deliberately, not by default: "apple go cache" in
+          # scripts/ci/check-release-workflows.py owns the measurement. The archive is
+          # 4.6 GB, this Mac keeps ~/go/pkg/mod warm between runs, and the upload alone
+          # cost 7m48s of an 11m29s job while the build took 2m30s.
+          cache: false
 
       # -----------------------------------------------------------------------
       # Cheap static checks.

@@ -49,8 +49,11 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
+          # Discarded deliberately, not by default: "apple go cache" in
+          # scripts/ci/check-release-workflows.py owns the measurement. The archive is
+          # 4.6 GB, this Mac keeps ~/go/pkg/mod warm between runs, and the upload alone
+          # cost 7m48s of an 11m29s job while the build took 2m30s.
+          cache: false
       - name: Apple TLS handshake and fd-leak tests
         if: matrix.arch == 'arm64'
         run: |
