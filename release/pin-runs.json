@@ -683,12 +683,12 @@
     {
       "repo": "Piggy-Cat-bit-shadow/sing",
       "branch": "dev",
-      "tip": "b94641703f75c98f39ca8d5b63112a84a8c2ca7a",
+      "tip": "987a8527862bd3770939dbd43a8329a5f5d5d520",
       "pin": "b94641703f75",
-      "relation": "identical",
+      "relation": "ahead",
       "policy": "update",
       "observed_at": "2026-11-29",
-      "note": "06 round: the pin carries the canceler unconnected-batch forwarding, the cached-first-packet drain, its nested regression and the zero-length first-packet handshake fix (r6/sing)."
+      "note": "06 round: the pin is ahead of dev by 4 commits. It carries the canceler unconnected-batch forwarding, the cached-first-packet drain, its nested regression and the zero-length first-packet handshake fix, all on r6/sing (pin == that branch tip). dev is unchanged and is the branch a merged release would take."
     },
     {
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
