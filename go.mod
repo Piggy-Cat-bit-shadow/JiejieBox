@@ -435,7 +435,7 @@ replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wire
 // through its own kqueue + recvmsg_x loop and never calls BatchRead/BatchWrite; those four arrays
 // are now built on first use (33,280 B at the NE MTU of 4064). The system and mixed stacks still
 // call them, so the machinery stays - only the eager allocation goes.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261128131729-7cfb3049a9da
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.9.7-0.20261128132724-376f9ced2ebe
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //

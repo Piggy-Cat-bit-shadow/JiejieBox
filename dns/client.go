@@ -1585,10 +1585,19 @@ func (c *Client) storeCache(key dnsCacheKey, message *dns.Msg, timeToLive uint32
 	// evicted for it. The estimate is computed from the source message, which is
 	// content-identical to the copy the cache stores, so the release on eviction
 	// returns exactly what was reserved.
+	//
+	// The reserve belongs INSIDE the store protocol's critical section, not before it.
+	// ClearCache purges under the same mutex and then calls settle(), which forces the
+	// ledger to zero; a reservation taken between the purge and the reset would be
+	// swallowed by it, and returning that charge when the entry is later evicted would
+	// then be counted as an excess release - the ledger would describe less than the
+	// cache actually holds for the rest of the process. An independent reviewer found
+	// that window with the reserve outside the lock.
+	c.cacheBudgetAccess.Lock()
 	if !c.cacheBudget.Reserve(estimateDNSResponseBytes(message)) {
+		c.cacheBudgetAccess.Unlock()
 		return
 	}
-	c.cacheBudgetAccess.Lock()
 	// Remove before Add. freelru replaces the value of an existing key without calling
 	// OnEvict, so an overwrite would strand the previous entry's charge and shrink the
 	// usable budget for the rest of the process. Remove returns the old charge through

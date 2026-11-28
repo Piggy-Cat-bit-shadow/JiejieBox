@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -266,6 +267,45 @@ func TestTheByteBudgetUnderConcurrentStores(t *testing.T) {
 	client.ClearCache()
 	require.Zero(t, client.cacheBudget.Used())
 	require.Zero(t, client.cacheBudget.ExcessReleases())
+}
+
+// TestTheByteBudgetIsExactWhenAClearRacesTheStores closes the gap the test above leaves: it only
+// clears AFTER the workers stop. ClearCache purges under the store protocol's mutex and then
+// forces the ledger to zero, so a reservation taken outside that mutex can land between the purge
+// and the reset and be swallowed. Returning that charge when the entry is evicted is afterwards
+// counted as an excess release - the observable this test asserts on.
+//
+// An independent reviewer reproduced the swallow with a separate harness (ledger 0 B against 793 B
+// actually cached, excess 1). Run with -race.
+func TestTheByteBudgetIsExactWhenAClearRacesTheStores(t *testing.T) {
+	client := budgetTestClient(t, 128, 32<<10)
+	var wait sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		wait.Add(1)
+		go func(worker int) {
+			defer wait.Done()
+			random := rand.New(rand.NewSource(int64(worker) + 101))
+			for iteration := 0; iteration < 300; iteration++ {
+				key := budgetTestKey(fmt.Sprintf("race-%d-%d.example.", worker, random.Intn(16)), mDNS.TypeTXT)
+				client.storeCache(key, budgetTestResponse(t, 1+random.Intn(4), 20+random.Intn(100)), 300)
+			}
+		}(worker)
+	}
+	wait.Add(1)
+	go func() {
+		defer wait.Done()
+		for round := 0; round < 60; round++ {
+			client.ClearCache()
+			runtime.Gosched()
+		}
+	}()
+	wait.Wait()
+
+	client.ClearCache()
+	require.Zero(t, client.cacheBudget.Used(), "the ledger holds charges after a full purge")
+	require.Zero(t, client.cacheBudget.ExcessReleases(),
+		"a reservation was swallowed by a purge and released afterwards")
+	require.EqualValues(t, budgetTestContents(t, client), client.cacheBudget.Used())
 }
 
 // TestTheByteBudgetDefaultScalesWithCapacity pins the derivation the product uses, and the
