@@ -114,6 +114,14 @@ func (g *GenerationGate) BeforeDial(ctx context.Context) uint64 {
 	if g == nil || g.registration == nil {
 		return 0
 	}
+	// A CLOSED registration reports stale forever, which is the right answer to "is this pool
+	// current" and the wrong one to "does this generation still need its transition": the owner is
+	// gone, so running its destructive action here tears down something the owner no longer owns.
+	// The transport-level pools guard this explicitly (transport/v2rayhttp close_retire_test.go);
+	// this is the same rule at the protocol-level gate.
+	if g.registration.Closed() {
+		return g.registration.currentEpoch()
+	}
 	epoch, stale := g.registration.Snapshot()
 	if testHookAfterGenerationSnapshot != nil {
 		testHookAfterGenerationSnapshot()
@@ -133,6 +141,12 @@ func (g *GenerationGate) BeforeDial(ctx context.Context) uint64 {
 // transition ledger (resetEpoch) is the authority on whether this epoch's destructive action ran.
 func (g *GenerationGate) NetworkChanged(ctx context.Context) {
 	if g == nil || g.registration == nil {
+		return
+	}
+	// Same rule as BeforeDial: a listener callback that lands after the owner closed must not run
+	// the owner's destructive action and mark the epoch handled on behalf of a registration nobody
+	// is waiting for.
+	if g.registration.Closed() {
 		return
 	}
 	g.applyTransition(ctx)
